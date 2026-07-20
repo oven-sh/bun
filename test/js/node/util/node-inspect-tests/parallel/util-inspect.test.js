@@ -1188,24 +1188,14 @@ test("no assertion failures 2", () => {
     assert.strictEqual(inspect(a, { depth: -1 }), "[Foo]");
     delete a[Symbol.toStringTag];
     Object.setPrototypeOf(a, null);
-    // TODO: null prototypes
-    // assert.strictEqual(inspect(a, { depth: -1 }), '[Foo: null prototype]');
-    assert.strictEqual(inspect(a, { depth: -1 }), "[Object: null prototype]");
+    assert.strictEqual(inspect(a, { depth: -1 }), "[Foo: null prototype]");
     delete a.foo;
-    assert.strictEqual(
-      inspect(a, { depth: -1 }),
-      // TODO: '[Foo: null prototype] {}');
-      "[Object: null prototype] {}",
-    );
+    assert.strictEqual(inspect(a, { depth: -1 }), "[Foo: null prototype] {}");
     Object.defineProperty(a, Symbol.toStringTag, {
       value: "ABC",
       configurable: true,
     });
-    assert.strictEqual(
-      inspect(a, { depth: -1 }),
-      // TODO: '[Foo: null prototype] [ABC] {}'
-      "[Object: null prototype] [ABC] {}",
-    );
+    assert.strictEqual(inspect(a, { depth: -1 }), "[Foo: null prototype] [ABC] {}");
     Object.defineProperty(a, Symbol.toStringTag, {
       value: "Foo",
       configurable: true,
@@ -1269,11 +1259,7 @@ test("no assertion failures 2", () => {
       util.inspect({ a: { b: new ArraySubclass([1, [2], 3]) } }, { depth: 1 }),
       "{ a: { b: [ArraySubclass] } }",
     );
-    assert.strictEqual(
-      util.inspect(Object.setPrototypeOf(x, null)),
-      // TODO: '[ObjectSubclass: null prototype] { foo: 42 }'
-      "[Object: null prototype] { foo: 42 }",
-    );
+    assert.strictEqual(util.inspect(Object.setPrototypeOf(x, null)), "[ObjectSubclass: null prototype] { foo: 42 }");
   }
 
   // Empty and circular before depth.
@@ -1811,7 +1797,7 @@ test("no assertion failures 2", () => {
     })("a");
     assert.strictEqual(util.inspect(args), "[Arguments] { '0': 'a' }");
   }
-});
+}, 30_000);
 
 test("util.inspect stack overflow handling", () => {
   // Test that a long linked list can be inspected without throwing an error.
@@ -3259,3 +3245,34 @@ function mustCall(fn, criteria = 1) {
   });
   return _return;
 }
+
+test("null prototype objects keep their constructor name", () => {
+  class Foo {}
+  assert.strictEqual(util.inspect(Object.setPrototypeOf(new Foo(), null)), "[Foo: null prototype] {}");
+  assert.strictEqual(util.format("%s", Object.setPrototypeOf(new Foo(), null)), "[Foo: null prototype] {}");
+
+  const withProp = Object.setPrototypeOf(new Foo(), null);
+  withProp.x = 1;
+  assert.strictEqual(util.inspect(withProp), "[Foo: null prototype] { x: 1 }");
+
+  class ObjectSubclass {}
+  const sub = new ObjectSubclass();
+  sub.foo = 42;
+  assert.strictEqual(util.inspect(Object.setPrototypeOf(sub, null)), "[ObjectSubclass: null prototype] { foo: 42 }");
+
+  // Objects that never had a class keep the generic label.
+  assert.strictEqual(util.inspect(Object.create(null)), "[Object: null prototype] {}");
+  assert.strictEqual(util.inspect({ __proto__: null }), "[Object: null prototype] {}");
+
+  // Chained prototype changes still report the original constructor.
+  class Bar {}
+  const chained = new Foo();
+  Object.setPrototypeOf(chained, Bar.prototype);
+  Object.setPrototypeOf(chained, null);
+  assert.strictEqual(util.inspect(chained), "[Foo: null prototype] {}");
+
+  // Symbol.toStringTag combines with the recovered name.
+  const tagged = Object.setPrototypeOf(new Foo(), null);
+  Object.defineProperty(tagged, Symbol.toStringTag, { value: "ABC", configurable: true });
+  assert.strictEqual(util.inspect(tagged), "[Foo: null prototype] [ABC] {}");
+});

@@ -391,7 +391,7 @@ impl ValkeyClient {
         // We compute the count first, then drain by `read_item`.
         let pipelineable_count: usize = {
             let mut total: usize = 0;
-            for command in command::iter_entries(&self.queue) {
+            for command in self.queue.iter() {
                 if !command
                     .promise
                     .meta

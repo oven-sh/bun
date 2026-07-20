@@ -117,13 +117,6 @@ pub struct Entry {
 
 pub(crate) type EntryQueue = LinearFifo<Entry, DynamicBuffer<Entry>>;
 
-/// Iterate every readable element across both halves of a possibly-wrapped ring buffer.
-pub(crate) fn iter_entries(q: &EntryQueue) -> impl Iterator<Item = &Entry> {
-    let first = q.readable_slice(0);
-    let second = q.readable_slice(first.len());
-    first.iter().chain(second.iter())
-}
-
 impl Entry {
     // Create an Offline by serializing the Valkey command directly
     pub fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, RedisError> {

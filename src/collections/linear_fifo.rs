@@ -430,6 +430,15 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
+    /// Iterate every readable element in FIFO order across both halves of a
+    /// possibly-wrapped ring. `readable_slice(0)` alone yields only the first
+    /// contiguous segment.
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        let first = self.readable_slice(0);
+        let second = self.readable_slice(first.len());
+        first.iter().chain(second.iter())
+    }
+
     /// Discard first `count` items in the fifo
     pub fn discard(&mut self, count: usize) {
         debug_assert!(count <= self.count);
@@ -1100,6 +1109,26 @@ mod tests {
 
     // Exhaustively remove every valid offset from a wrapped layout and compare
     // against a reference `Vec`. Uses a fresh FIFO per offset (remove mutates).
+    #[test]
+    fn iter_visits_both_halves_of_wrapped_ring() {
+        let mut fifo = WrapFifo::init();
+        for v in 0..12 {
+            fifo.write_item(v).unwrap();
+        }
+        for _ in 0..8 {
+            fifo.read_item().unwrap();
+        }
+        for v in 100..110 {
+            fifo.write_item(v).unwrap();
+        }
+        assert!(fifo.buf_len() - fifo.head < fifo.count, "must be wrapped");
+        assert!(fifo.readable_slice(0).len() < fifo.readable_length());
+
+        let got: Vec<i32> = fifo.iter().copied().collect();
+        assert_eq!(got, fifo_to_vec(&fifo));
+        assert_eq!(got.len(), fifo.readable_length());
+    }
+
     #[test]
     fn ordered_remove_item_wrapped_all_offsets_match_reference() {
         // Build the same wrapped layout as the tail-branch test: head=8, count=14.

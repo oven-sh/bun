@@ -54,6 +54,8 @@ export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount
 
 export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
 
+export const mimallocHeapNewCount = $newRustFunction("UnsafeObject.rs", "jsMimallocHeapNewCount", 0);
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",

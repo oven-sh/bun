@@ -37,6 +37,21 @@ pub(crate) static HEAP_NEW_COUNT: core::sync::atomic::AtomicUsize =
 pub(crate) static HEAP_DESTROY_COUNT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 
+/// Cumulative `mi_heap_new` calls made through `MimallocArena` since process
+/// start. Debug-only instrumentation for allocation-regression tests; returns
+/// 0 in release builds.
+#[inline]
+pub fn heap_new_count() -> usize {
+    #[cfg(debug_assertions)]
+    {
+        HEAP_NEW_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        0
+    }
+}
+
 // ── Debug-only thread-ownership guard ─────────────────────────────────────
 //
 // `bun_alloc` sits below `bun_core` in the crate graph, so we cannot reuse

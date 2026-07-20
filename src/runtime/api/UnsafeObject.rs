@@ -81,6 +81,16 @@ fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JS
     Ok(JSValue::js_number(bytes as f64))
 }
 
+/// Exposed via `bun:internal-for-testing` so allocation-regression tests can
+/// assert a code path creates O(1) mimalloc heaps, not O(n). Debug-only; reads
+/// a zero constant in release builds.
+pub(crate) fn js_mimalloc_heap_new_count(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(bun_alloc::heap_new_count() as f64))
+}
+
 #[bun_jsc::host_fn]
 fn dump_mimalloc(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // Print the process-wide mimalloc stats to stderr via

@@ -189,7 +189,7 @@ impl StdAllocator {
 // `bumpalo::Bump` is kept as `Bump` for genuinely bump-only scratch (parser
 // node stores that are never resized and where the no-op `deallocate` is the
 // point).
-pub use mimalloc_arena::MimallocArena;
+pub use mimalloc_arena::{MimallocArena, heap_new_count};
 pub type Arena = MimallocArena;
 /// `bumpalo::Bump` — kept for genuinely bump-only scratch that's never resized.
 pub type Bump = bumpalo::Bump;

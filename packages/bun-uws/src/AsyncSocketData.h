@@ -19,6 +19,8 @@
 #ifndef UWS_ASYNCSOCKETDATA_H
 #define UWS_ASYNCSOCKETDATA_H
 
+#include "libusockets.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -38,7 +40,7 @@ struct BackPressure {
     }
     BackPressure(const BackPressure &) = delete;
     BackPressure &operator=(const BackPressure &) = delete;
-    ~BackPressure() { std::free(buf); }
+    ~BackPressure() { us_free(buf); }
 
     /* Unsent bytes. data() points at length() contiguous bytes. */
     size_t length() const { return tail - head; }
@@ -111,14 +113,14 @@ private:
         size_t newCap = std::max(std::max(cap * 2, live + n), MIN_CAPACITY);
         char *nb;
         if (head == 0) {
-            /* realloc may extend in place (mimalloc, glibc mremap). */
-            nb = (char *) std::realloc(buf, newCap);
+            /* mi_realloc may extend in place. */
+            nb = (char *) us_realloc(buf, newCap);
             if (!nb) std::abort();
         } else {
-            nb = (char *) std::malloc(newCap);
+            nb = (char *) us_malloc(newCap);
             if (!nb) std::abort();
             if (live) std::memcpy(nb, buf + head, live);
-            std::free(buf);
+            us_free(buf);
             head = 0;
             tail = live;
         }
@@ -127,7 +129,7 @@ private:
     }
 
     void release() {
-        std::free(buf);
+        us_free(buf);
         buf = nullptr;
         cap = 0;
     }

@@ -3721,11 +3721,11 @@ pub struct Resolver {
     pub query_last_ok: Cell<bool>,
     /// Snapshot of `config_watcher::generation()` when `channel` was created.
     pub config_generation: Cell<u64>,
-    /// Last `setLocalAddress()` IPv4 (host order, 0 = unset); replayed after
+    /// Last `setLocalAddress()` IPv4 (host order); replayed after
     /// `reset_channel()` so a config-change recreate doesn't drop the binding.
-    pub local_ip4: Cell<u32>,
-    /// Last `setLocalAddress()` IPv6 (all-zero = unset); see `local_ip4`.
-    pub local_ip6: Cell<[u8; 16]>,
+    pub local_ip4: Cell<Option<u32>>,
+    /// Last `setLocalAddress()` IPv6; see `local_ip4`.
+    pub local_ip6: Cell<Option<[u8; 16]>>,
 
     pub event_loop_timer: JsCell<EventLoopTimer>,
 
@@ -4087,8 +4087,8 @@ impl Resolver {
             is_servers_default: Cell::new(true),
             query_last_ok: Cell::new(true),
             config_generation: Cell::new(super::config_watcher::generation()),
-            local_ip4: Cell::new(0),
-            local_ip6: Cell::new([0u8; 16]),
+            local_ip4: Cell::new(None),
+            local_ip6: Cell::new(None),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::DNSResolver,
             )),
@@ -4898,13 +4898,11 @@ impl Resolver {
         let Some(channel) = self.channel.get() else {
             return;
         };
-        let ip4 = self.local_ip4.get();
-        if ip4 != 0 {
+        if let Some(ip4) = self.local_ip4.get() {
             // SAFETY: `channel` is the live handle owned by this resolver.
             c_ares::ares_set_local_ip4(unsafe { &mut *channel }, ip4);
         }
-        let ip6 = self.local_ip6.get();
-        if ip6 != [0u8; 16] {
+        if let Some(ip6) = self.local_ip6.get() {
             // SAFETY: `channel` is live; `ip6` is the 16-byte in6_addr.
             unsafe { c_ares::ares_set_local_ip6(channel, ip6.as_ptr()) };
         }
@@ -5834,13 +5832,12 @@ impl Resolver {
             return Err(global_this.throw_not_enough_arguments("setLocalAddress", 1, 0));
         }
 
-        // Coerce and stash all arguments before touching the channel:
-        // `get_channel()` can destroy the current channel on a config-change
-        // generation bump, and the coercions below can re-enter it via user
-        // `toString`, so holding a raw `*mut Channel` across them is a UAF.
-        let first_af = self.stash_local_address(global_this, arguments[0])?;
-        if arguments.len() >= 2 && !arguments[1].is_undefined() {
-            let second_af = self.stash_local_address(global_this, arguments[1])?;
+        // Parse and validate all arguments before mutating any state or
+        // touching the channel: `get_channel()` can destroy the channel on a
+        // config-change bump, and the coercions can re-enter it via `toString`.
+        let (first_af, first_addr) = Self::parse_local_address(global_this, arguments[0])?;
+        let second = if arguments.len() >= 2 && !arguments[1].is_undefined() {
+            let (second_af, second_addr) = Self::parse_local_address(global_this, arguments[1])?;
             if first_af == second_af {
                 return match first_af {
                     x if x == c_ares::AF::INET => Err(global_this.throw_invalid_arguments(
@@ -5852,17 +5849,27 @@ impl Resolver {
                     _ => unreachable!(),
                 };
             }
-        }
+            Some((second_af, second_addr))
+        } else {
+            None
+        };
 
+        // All coercions done; commit and apply.
+        self.commit_local_address(first_af, first_addr);
+        if let Some((af, addr)) = second {
+            self.commit_local_address(af, addr);
+        }
         let _ = self.get_channel_or_error(global_this)?;
         self.replay_local_address();
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Parse one `setLocalAddress` argument and stash it on `self.local_ip4`/
-    /// `local_ip6`. Runs JS coercions; must not be called while a raw
-    /// `*mut Channel` is held.
-    fn stash_local_address(&self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<c_int> {
+    /// Coerce one `setLocalAddress` argument to `(family, 16-byte addr)`.
+    /// Runs JS; must not be called while a raw `*mut Channel` is held.
+    fn parse_local_address(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<(c_int, [u8; 16])> {
         let str_ = value.to_slice(global_this)?;
         // ZigStringSlice has no `into_owned_slice_z`; build the
         // NUL-terminated buffer inline.
@@ -5871,32 +5878,14 @@ impl Resolver {
         slice.push(0);
 
         let mut addr = [0u8; 16];
-
-        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
-        if unsafe {
-            c_ares::ares_inet_pton(
-                c_ares::AF::INET,
-                slice.as_ptr().cast::<c_char>(),
-                addr.as_mut_ptr().cast(),
-            )
-        } == 1
-        {
-            self.local_ip4
-                .set(u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]));
-            return Ok(c_ares::AF::INET);
-        }
-
-        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
-        if unsafe {
-            c_ares::ares_inet_pton(
-                c_ares::AF::INET6,
-                slice.as_ptr().cast::<c_char>(),
-                addr.as_mut_ptr().cast(),
-            )
-        } == 1
-        {
-            self.local_ip6.set(addr);
-            return Ok(c_ares::AF::INET6);
+        for af in [c_ares::AF::INET, c_ares::AF::INET6] {
+            // SAFETY: FFI; `slice` is NUL-terminated; `addr` is a 16-byte stack buffer.
+            if unsafe {
+                c_ares::ares_inet_pton(af, slice.as_ptr().cast::<c_char>(), addr.as_mut_ptr().cast())
+            } == 1
+            {
+                return Ok((af, addr));
+            }
         }
 
         Err(jsc::Error::INVALID_IP_ADDRESS.throw(
@@ -5906,6 +5895,15 @@ impl Resolver {
                 bstr::BStr::new(&slice[..slice.len() - 1])
             ),
         ))
+    }
+
+    fn commit_local_address(&self, af: c_int, addr: [u8; 16]) {
+        if af == c_ares::AF::INET {
+            self.local_ip4
+                .set(Some(u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]])));
+        } else {
+            self.local_ip6.set(Some(addr));
+        }
     }
 
     fn set_channel_servers(
@@ -5924,10 +5922,9 @@ impl Resolver {
             return Err(global_this.throw_invalid_argument_type("setServers", "servers", "array"));
         }
 
-        // Build the full server list from JS before touching the channel:
-        // `get_channel()` can destroy the current channel on a config-change
-        // generation bump, and the per-element coercions below can re-enter it
-        // via user getters/toString.
+        // Build the full list before fetching the channel: `get_channel()`
+        // can destroy it on a config-change bump, and the per-element
+        // coercions below can re-enter it via user getters/toString.
         let mut triples_iterator = argument.array_iterator(global_this)?;
         let mut entries: Vec<c_ares::struct_ares_addr_port_node> =
             Vec::with_capacity(triples_iterator.len as usize);

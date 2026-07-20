@@ -343,7 +343,11 @@ impl ArrayBuffer {
     /// prototype method: a fresh `Uint8Array` over the same backing store,
     /// length clamped to `view.byteLength`. Returns `view` itself when no
     /// narrowing is needed.
-    pub fn create_subarray(global: &JSGlobalObject, view: JSValue, length: usize) -> JsResult<JSValue> {
+    pub fn create_subarray(
+        global: &JSGlobalObject,
+        view: JSValue,
+        length: usize,
+    ) -> JsResult<JSValue> {
         crate::host_fn::from_js_host_call(global, || {
             Bun__createUint8ArraySubarray(global, view, length)
         })

@@ -181,11 +181,9 @@ console.log(JSON.stringify(Bun.$.braces("echo {a,b}")));`,
   });
 });
 
-// A `{...}` group with no unquoted comma of its own is not a brace expansion
-// in bash: it is literal text. The brace lexer used to tokenize `{}` / `{x}`
-// as Open/Close regardless, so when one appeared inside an outer expanding
-// group the nested expander saw a zero-variant expansion and stopped without
-// returning to the parent, dropping the rest of the word.
+// A `{...}` group with no top-level comma is literal text in bash. The brace
+// lexer used to tokenize it as Open/Close regardless, so a nested `{}` became
+// a zero-variant expansion and the expander dropped the rest of the word.
 describe("comma-less brace group is literal (bash 5.2)", () => {
   const cases: [string, string[]][] = [
     // Regressions: the `{}` (and the tail after it) was truncated.
@@ -212,10 +210,8 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
   }
 
   test("shell: literal {} inside an expanding group keeps the tail", async () => {
-    // Run in a subprocess so the pre-fix index-out-of-bounds panic on
-    // `}{,` / `{foo},x` is observed as a non-zero exit instead of killing
-    // the test runner. `echo` is a shell builtin so the argv words are
-    // observed exactly as the expander produced them on every platform.
+    // Subprocess so the pre-fix `}{,` panic is observed as a non-zero exit;
+    // `echo` is a builtin so argv is observed exactly on every platform.
     const script = `
       const { $ } = require("bun");
       $.nothrow();

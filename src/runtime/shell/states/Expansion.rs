@@ -319,10 +319,9 @@ impl Expansion {
         }
         let count = count as usize;
         let expanded: Vec<Vec<u8>> = if count == 0 {
-            // None of the `{...}` groups formed a brace expansion (no top-level
-            // comma, or unbalanced); emit the word unchanged. `expand` would
-            // index into `out[0]` of an empty slice here. `current_out` itself
-            // is kept for the glob transition below.
+            // No `{...}` group formed an expansion (no top-level comma, or
+            // unbalanced); emit the word unchanged. `expand` would index
+            // `out[0]` of an empty slice here. Keep `current_out` for glob.
             vec![me.current_out.clone()]
         } else {
             let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();

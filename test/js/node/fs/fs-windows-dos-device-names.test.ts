@@ -1,7 +1,6 @@
-// Win32 redirects reserved DOS device names (NUL, CON, PRN, AUX, COM1-9,
-// LPT1-9) to the corresponding device regardless of directory prefix. Bun's
-// NtCreateFile open path must do the same so `fs.writeFileSync("nul", ...)`
-// does not create a literal `nul` file that Explorer and cmd cannot delete.
+// Win32 redirects reserved DOS device names to the device regardless of
+// directory prefix; Bun's NtCreateFile path must match so writeFileSync("nul")
+// does not create a literal `nul` file Explorer and cmd cannot delete.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";

@@ -3474,6 +3474,217 @@ describe("createWriteStream", () => {
       }
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/31763
+  it("coalesces many small writes via _writev (issue #31763)", async () => {
+    const streamPath = join(tmpdirSync(), "writev-batching.bin");
+    const stream = createWriteStream(streamPath);
+
+    // fs.WriteStream exposes a working _writev; the regression disabled it.
+    expect(typeof stream._writev).toBe("function");
+
+    // Count how many chunks each drain path consumes.
+    const writevSpy = spyOn(stream, "_writev");
+
+    const CHUNK_COUNT = 5000; // comfortably past IOV_MAX so batching is forced
+    const chunk = Buffer.from("0123456789\n"); // 11 bytes
+    let written = 0;
+
+    const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject);
+    stream.on("finish", resolve);
+
+    const pump = () => {
+      while (written < CHUNK_COUNT) {
+        written++;
+        if (!stream.write(chunk)) {
+          stream.once("drain", pump);
+          return;
+        }
+      }
+      stream.end();
+    };
+    pump();
+    await done;
+
+    // Output is byte-for-byte correct regardless of how it was batched.
+    expect(statSync(streamPath).size).toBe(CHUNK_COUNT * chunk.length);
+    expect(readFileSync(streamPath)).toEqual(Buffer.concat(new Array(CHUNK_COUNT).fill(chunk)));
+
+    // _writev must have been used, and it must have handled batches larger
+    // than IOV_MAX without erroring.
+    expect(writevSpy).toHaveBeenCalled();
+    const maxBatch = Math.max(...writevSpy.mock.calls.map(args => (args[0] as unknown[]).length));
+    expect(maxBatch).toBeGreaterThan(1024);
+  });
+
+  // https://github.com/oven-sh/bun/issues/31763
+  // With no `start`, the retry position must stay undefined, not
+  // `undefined + bytesWritten === NaN` (coerced to offset 0 by the binding).
+  it.each(["write", "writev"])("partial %s retry does not corrupt the file (issue #31763)", async method => {
+    const streamPath = join(tmpdirSync(), `partial-${method}.bin`);
+    const payload = Buffer.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    const positions: unknown[] = [];
+    let first = true;
+
+    // Simulate a short write on the first syscall, then a clean retry,
+    // delegating to the real fs so bytes actually land on disk.
+    const customFs: any = {
+      open: fs.open,
+      close: fs.close,
+      write(fd, data, offset, length, position, cb) {
+        positions.push(position);
+        if (first) {
+          first = false;
+          const half = Math.floor(length / 2);
+          fs.write(fd, data, offset, half, position, (err, written) => cb(err, written, data));
+          return;
+        }
+        fs.write(fd, data, offset, length, position, cb);
+      },
+      writev(fd, chunks, position, cb) {
+        positions.push(position);
+        if (first) {
+          first = false;
+          // Write only the first chunk, report it as a partial write.
+          fs.writev(fd, [chunks[0]], position, (err, written) => cb(err, written, chunks));
+          return;
+        }
+        fs.writev(fd, chunks, position, cb);
+      },
+    };
+
+    const stream = createWriteStream(streamPath, { fs: customFs } as any);
+    const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject);
+    stream.on("finish", resolve);
+    if (method === "writev") {
+      // Force the buffered writev path with a cork + multiple writes.
+      stream.cork();
+      stream.write(payload.subarray(0, 10));
+      stream.write(payload.subarray(10));
+      stream.uncork();
+      stream.end();
+    } else {
+      stream.end(payload);
+    }
+    await done;
+
+    // A NaN -> 0 retry offset would overwrite the head; the bytes must be intact.
+    expect(readFileSync(streamPath)).toEqual(payload);
+    // The retry must never pass NaN as the position.
+    expect(positions.some(p => typeof p === "number" && Number.isNaN(p))).toBe(false);
+  });
+});
+
+describe("fs.writev past IOV_MAX", () => {
+  // https://github.com/oven-sh/bun/issues/31763
+  // writev(2)/pwritev(2) reject more than IOV_MAX (1024) iovecs with EINVAL;
+  // Bun must batch the syscall so fs.writev behaves like Node's.
+  const makeBuffers = (n: number) => {
+    const buffers = new Array<Buffer>(n);
+    for (let i = 0; i < n; i++) buffers[i] = Buffer.from([i & 0xff]);
+    return buffers;
+  };
+
+  it.each([1023, 1024, 1025, 2000, 5000])("writevSync handles %d buffers", count => {
+    const p = join(tmpdirSync(), `writev-sync-${count}.bin`);
+    const fd = openSync(p, "w");
+    try {
+      const buffers = makeBuffers(count);
+      expect(writevSync(fd, buffers)).toBe(count);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p)).toEqual(Buffer.concat(makeBuffers(count)));
+  });
+
+  it("writevSync with a position handles more than IOV_MAX buffers", () => {
+    const p = join(tmpdirSync(), "pwritev-sync.bin");
+    const fd = openSync(p, "w");
+    const prefix = "prefix";
+    try {
+      writeSync(fd, prefix, 0);
+      const buffers = makeBuffers(3000);
+      expect(writevSync(fd, buffers, prefix.length)).toBe(3000);
+    } finally {
+      closeSync(fd);
+    }
+    const out = readFileSync(p);
+    expect(out.subarray(0, prefix.length).toString()).toBe(prefix);
+    expect(out.subarray(prefix.length)).toEqual(Buffer.concat(makeBuffers(3000)));
+  });
+
+  it("async fs.writev handles more than IOV_MAX buffers", async () => {
+    const p = join(tmpdirSync(), "writev-async.bin");
+    const fd = openSync(p, "w");
+    let written: number;
+    try {
+      const buffers = makeBuffers(2500);
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.writev(fd, buffers, (err, w) => (err ? reject(err) : resolve(w)));
+      written = await promise;
+    } finally {
+      closeSync(fd);
+    }
+    expect(written).toBe(2500);
+    expect(readFileSync(p)).toEqual(Buffer.concat(makeBuffers(2500)));
+  });
+});
+
+// readv(2)/preadv(2) reject more than IOV_MAX (1024) iovecs with EINVAL.
+// Node (libuv) caps the batch and returns a short read instead of erroring;
+// Windows reads every buffer through libuv, so these POSIX tests don't apply.
+describe.skipIf(isWindows)("fs.readv past IOV_MAX", () => {
+  const COUNT = 1025;
+  const IOV_MAX = 1024;
+
+  const makeFile = (name: string) => {
+    const p = join(tmpdirSync(), name);
+    writeFileSync(p, Buffer.concat(Array.from({ length: COUNT }, (_, i) => Buffer.from([i & 0xff]))));
+    return p;
+  };
+  const makeBuffers = () => Array.from({ length: COUNT }, () => Buffer.alloc(1));
+
+  it("readvSync caps at IOV_MAX buffers and returns a short read", () => {
+    const fd = openSync(makeFile("readv-sync.bin"), "r");
+    const buffers = makeBuffers();
+    try {
+      // First call short-reads at the cap; a second call drains the rest.
+      expect(readvSync(fd, buffers)).toBe(IOV_MAX);
+      expect(readvSync(fd, buffers.slice(IOV_MAX))).toBe(COUNT - IOV_MAX);
+    } finally {
+      closeSync(fd);
+    }
+    expect(Buffer.concat(buffers)).toEqual(
+      Buffer.concat(Array.from({ length: COUNT }, (_, i) => Buffer.from([i & 0xff]))),
+    );
+  });
+
+  it("readvSync with a position caps at IOV_MAX buffers", () => {
+    const fd = openSync(makeFile("preadv-sync.bin"), "r");
+    const buffers = makeBuffers();
+    try {
+      expect(readvSync(fd, buffers, 1)).toBe(IOV_MAX);
+    } finally {
+      closeSync(fd);
+    }
+    expect(buffers[0]).toEqual(Buffer.from([1]));
+    expect(buffers[IOV_MAX - 1]).toEqual(Buffer.from([IOV_MAX & 0xff]));
+  });
+
+  it("async fs.readv caps at IOV_MAX buffers", async () => {
+    const fd = openSync(makeFile("readv-async.bin"), "r");
+    let bytesRead: number;
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.readv(fd, makeBuffers(), (err, n) => (err ? reject(err) : resolve(n)));
+      bytesRead = await promise;
+    } finally {
+      closeSync(fd);
+    }
+    expect(bytesRead).toBe(IOV_MAX);
+  });
 });
 
 describe("fs/promises", () => {

@@ -4644,65 +4644,131 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
     }
 }
 
+/// Maximum number of iovecs a single `writev(2)`/`pwritev(2)`/`readv(2)`/
+/// `preadv(2)` may reference on POSIX. The kernel rejects a larger array with
+/// `EINVAL`, so `writev`/`pwritev` below batch the vectors into groups of at
+/// most this many and loop, while `readv`/`preadv` cap at one batch and
+/// return a short read (matching libuv's `uv__fs_read`). `1024` is
+/// `IOV_MAX`/`UIO_MAXIOV` on every POSIX target Bun supports (Linux, macOS,
+/// the BSDs). The Windows path batches in `sys_uv` instead (see
+/// `sys_uv::pwritev`).
+#[cfg(unix)]
+const POSIX_IOV_MAX: usize = 1024;
+
+/// Single `pwritev(2)` call — no IOV_MAX batching. Callers that may exceed
+/// `POSIX_IOV_MAX` should use [`pwritev`].
+#[cfg(unix)]
+#[inline]
+fn pwritev_one(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize> {
+    // SAFETY: `PlatformIoVecConst` is layout-compatible with `libc::iovec`
+    // (asserted above); `pwritev(2)` only reads through `iov_base`.
+    // Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: single `pwritev$NOCANCEL`, no
+        // EINTR retry (surfaces EINTR to caller).
+        // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
+        // (ptr, len) pair of layout-compatible iovecs (asserted above).
+        let rc = unsafe {
+            nocancel::pwritev(
+                fd.native(),
+                vecs.as_ptr().cast::<libc::iovec>(),
+                vecs.len() as core::ffi::c_int,
+                offset,
+            )
+        };
+        if rc < 0 {
+            return Err(Error::from_code_int(last_errno(), Tag::pwritev));
+        }
+        Ok(rc as usize)
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // SAFETY: `PlatformIoVecConst` is layout-identical to `libc::iovec`.
+        unsafe {
+            linux_syscall::pwritev(fd, vecs.as_ptr().cast::<libc::iovec>(), vecs.len(), offset)
+        }
+        .map_err(|e| Error::from_code_int(e, Tag::pwritev))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        let rc = unsafe {
+            libc::pwritev(
+                fd.native(),
+                vecs.as_ptr().cast::<libc::iovec>(),
+                vecs.len() as core::ffi::c_int,
+                offset,
+            )
+        };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::pwritev));
+        }
+        return Ok(rc as usize);
+    }
+}
+
 /// `bun.sys.pwritev` — gather-write at `offset`. Returns bytes written
 /// (may be less than the sum of `vecs` lengths on a short write).
+///
+/// When `vecs.len()` exceeds `POSIX_IOV_MAX` the vectors are written in
+/// batches and the bytes accumulated, matching libuv (and the Windows
+/// `sys_uv` path) and avoiding the kernel's `EINVAL` for oversized iovec
+/// arrays. A short write of any batch stops the loop, preserving
+/// `pwritev(2)`'s partial-write contract for callers that retry.
 pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize> {
     #[cfg(unix)]
     {
-        // SAFETY: `PlatformIoVecConst` is layout-compatible with `libc::iovec`
-        // (asserted above); `pwritev(2)` only reads through `iov_base`.
-        // Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
-        #[cfg(target_os = "macos")]
-        {
-            // macOS: single `pwritev$NOCANCEL`, no
-            // EINTR retry (surfaces EINTR to caller).
-            // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
-            // (ptr, len) pair of layout-compatible iovecs (asserted above).
-            let rc = unsafe {
-                nocancel::pwritev(
-                    fd.native(),
-                    vecs.as_ptr().cast::<libc::iovec>(),
-                    vecs.len() as core::ffi::c_int,
-                    offset,
-                )
-            };
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::pwritev));
-            }
-            return Ok(rc as usize);
+        if vecs.len() <= POSIX_IOV_MAX {
+            return pwritev_one(fd, vecs, offset);
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVecConst` is layout-identical to `libc::iovec`.
-            return unsafe {
-                linux_syscall::pwritev(fd, vecs.as_ptr().cast::<libc::iovec>(), vecs.len(), offset)
-            }
-            .map_err(|e| Error::from_code_int(e, Tag::pwritev));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            let rc = unsafe {
-                libc::pwritev(
-                    fd.native(),
-                    vecs.as_ptr().cast::<libc::iovec>(),
-                    vecs.len() as core::ffi::c_int,
-                    offset,
-                )
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
+
+        let mut total_written: usize = 0;
+        let mut remaining = vecs;
+        let mut position = offset;
+
+        while !remaining.is_empty() {
+            let chunk_len = remaining.len().min(POSIX_IOV_MAX);
+            let chunk = &remaining[..chunk_len];
+            let chunk_capacity: usize = chunk.iter().map(|v| v.len).sum();
+
+            let bytes_written = match pwritev_one(fd, chunk, position) {
+                Ok(n) => n,
+                // Surface the error only if nothing has been written yet;
+                // otherwise report the partial progress so the caller retries.
+                Err(e) => {
+                    if total_written == 0 {
+                        return Err(e);
+                    }
+                    break;
                 }
-                return Err(Error::from_code_int(e, Tag::pwritev));
+            };
+            total_written += bytes_written;
+
+            // Short write: stop so the caller resumes from the right offset.
+            if bytes_written < chunk_capacity {
+                break;
             }
-            return Ok(rc as usize);
+
+            remaining = &remaining[chunk_len..];
+            // A negative `offset` is the "use the current file offset" sentinel;
+            // keep it across batches instead of turning it into an explicit
+            // offset (matches `sys_uv::pwritev`).
+            if position >= 0 {
+                position += bytes_written as i64;
+            }
         }
+
+        Ok(total_written)
     }
     #[cfg(windows)]
     {
         // `PlatformIoVecConst` is layout-identical to `uv_buf_t` on Windows
-        // (asserted below), so the slice forwards as-is.
+        // (asserted below), so the slice forwards as-is. `sys_uv::pwritev`
+        // already batches by `MAX_IOVEC_COUNT`.
         sys_uv::pwritev(fd, vecs, offset)
     }
 }
@@ -4786,44 +4852,85 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
 pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(unix)]
     {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
-            // the descriptor table. Single shot, surfaces EINTR.
-            let rc = unsafe {
-                nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
-            };
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::writev).with_fd(fd));
-            }
-            return Ok(rc as usize);
+        if vecs.len() <= POSIX_IOV_MAX {
+            return writev_one(fd, vecs);
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`.
-            return unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
-                .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            // SAFETY: see above.
-            let rc =
-                unsafe { libc::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
+
+        // More iovecs than the kernel accepts in one writev(2) — write in
+        // batches (matching libuv / the Windows `sys_uv` path). writev(2) is
+        // sequential, so each batch resumes at the current file offset; a
+        // short write stops the loop to keep the caller's retry ordering.
+        let mut total_written: usize = 0;
+        let mut remaining = vecs;
+
+        while !remaining.is_empty() {
+            let chunk_len = remaining.len().min(POSIX_IOV_MAX);
+            let chunk = &remaining[..chunk_len];
+            let chunk_capacity: usize = chunk.iter().map(|v| v.iov_len).sum();
+
+            let bytes_written = match writev_one(fd, chunk) {
+                Ok(n) => n,
+                Err(e) => {
+                    if total_written == 0 {
+                        return Err(e);
+                    }
+                    break;
                 }
-                return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
+            };
+            total_written += bytes_written;
+
+            if bytes_written < chunk_capacity {
+                break;
             }
-            return Ok(rc as usize);
+
+            remaining = &remaining[chunk_len..];
         }
+
+        Ok(total_written)
     }
     #[cfg(not(unix))]
     {
         // TODO(windows): route through `uv_fs_write` with `uv_buf_t[]`.
         let _ = (fd, vecs);
         Err(Error::from_code_int(libc::ENOSYS, Tag::writev))
+    }
+}
+
+/// Single `writev(2)` call — no IOV_MAX batching. Callers that may exceed
+/// `POSIX_IOV_MAX` should use [`writev`].
+#[cfg(unix)]
+#[inline]
+fn writev_one(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
+        // the descriptor table. Single shot, surfaces EINTR.
+        let rc =
+            unsafe { nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            return Err(Error::from_code_int(last_errno(), Tag::writev).with_fd(fd));
+        }
+        Ok(rc as usize)
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
+            .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        // SAFETY: see above.
+        let rc =
+            unsafe { libc::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
+        }
+        return Ok(rc as usize);
     }
 }
 
@@ -4836,6 +4943,9 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
     #[cfg(unix)]
     {
+        // readv(2) rejects more than IOV_MAX iovecs with EINVAL; cap to one
+        // batch and return a short read, matching libuv's `uv__fs_read`.
+        let vecs = &vecs[..vecs.len().min(POSIX_IOV_MAX)];
         #[cfg(target_os = "macos")]
         {
             // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
@@ -4885,6 +4995,8 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     }
     #[cfg(unix)]
     {
+        // See `readv`: cap at IOV_MAX and return a short read.
+        let vecs = &vecs[..vecs.len().min(POSIX_IOV_MAX)];
         #[cfg(target_os = "macos")]
         {
             // SAFETY: see `readv`. Single shot.

@@ -445,8 +445,12 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     if (!write && !writev) {
       throw $ERR_INVALID_ARG_TYPE("options.fs.write", "function", write);
     }
+    // Only keep the batched `_writev` path when the fs provides `writev`;
+    // otherwise fall back to per-chunk `_write`. Matches Node.js.
+    if (!writev) {
+      this._writev = undefined;
+    }
   } else {
-    this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
 
@@ -510,7 +514,10 @@ function writeAll(data, size, pos, cb, retries = 0) {
 
     retries = bytesWritten ? 0 : retries + 1;
     size -= bytesWritten;
-    pos += bytesWritten;
+    // Only advance an explicit position; `undefined` means "current file
+    // offset", and `undefined + bytesWritten` would be `NaN` (coerced to
+    // offset 0 by the binding, overwriting the file head on retry).
+    if (pos !== undefined) pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {
@@ -525,7 +532,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 }
 
 function writevAll(chunks, size, pos, cb, retries = 0) {
-  this[kFs].writev(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
+  this[kFs].writev(this.fd, chunks, pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
       er = null;
@@ -540,7 +547,10 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
 
     retries = bytesWritten ? 0 : retries + 1;
     size -= bytesWritten;
-    pos += bytesWritten;
+    // Only advance an explicit position; `undefined` means "current file
+    // offset", and `undefined + bytesWritten` would be `NaN` (coerced to
+    // offset 0 by the binding, overwriting the file head on retry).
+    if (pos !== undefined) pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {

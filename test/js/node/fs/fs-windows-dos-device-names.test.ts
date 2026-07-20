@@ -33,7 +33,7 @@ async function runInTempDir(body: string) {
   return { stdout, stderr, exitCode };
 }
 
-test.skipIf(!isWindows)("fs.writeFileSync to a reserved DOS device name does not create a file", async () => {
+test.skipIf(!isWindows).concurrent("fs.writeFileSync to a reserved DOS device name does not create a file", async () => {
   const { stdout, stderr, exitCode } = await runInTempDir(`
       // CON/PRN/COM*/LPT* may not be openable for write on every CI host, so
       // an error is acceptable for them; the point is no file is created.
@@ -83,7 +83,7 @@ test.skipIf(!isWindows)("fs.writeFileSync to a reserved DOS device name does not
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!isWindows)("fs.readFileSync from a bare reserved name reads the device", async () => {
+test.skipIf(!isWindows).concurrent("fs.readFileSync from a bare reserved name reads the device", async () => {
   const { stdout, stderr, exitCode } = await runInTempDir(`
     for (const n of ["nul", "NUL", "Nul"]) {
       console.log(n, JSON.stringify(fs.readFileSync(n, "utf8")));
@@ -100,7 +100,7 @@ test.skipIf(!isWindows)("fs.readFileSync from a bare reserved name reads the dev
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!isWindows)("trailing dots and spaces on the final component are stripped", async () => {
+test.skipIf(!isWindows).concurrent("trailing dots and spaces on the final component are stripped", async () => {
   const { stdout, stderr, exitCode } = await runInTempDir(`
       for (const n of ["foo.", "foo ", "foo. ", "foo..", "foo.bar.", ".foo."]) {
         console.log(JSON.stringify(n), entriesAfter(n, () => fs.writeFileSync(n, "x")));
@@ -126,7 +126,7 @@ test.skipIf(!isWindows)("trailing dots and spaces on the final component are str
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!isWindows)("fs.writeFileSync to os.devNull writes to the null device", async () => {
+test.skipIf(!isWindows).concurrent("fs.writeFileSync to os.devNull writes to the null device", async () => {
   // os.devNull on Windows is `\\.\nul`; it must open `\??\nul` via
   // NtCreateFile rather than be passed through as a Win32 path NT rejects.
   const { stdout, stderr, exitCode } = await runInTempDir(`
@@ -140,7 +140,7 @@ test.skipIf(!isWindows)("fs.writeFileSync to os.devNull writes to the null devic
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!isWindows)("Bun.write to a bare reserved name writes to the device", async () => {
+test.skipIf(!isWindows).concurrent("Bun.write to a bare reserved name writes to the device", async () => {
   const { stdout, stderr, exitCode } = await runInTempDir(`
     for (const n of ["nul", "Nul", "nul "]) {
       await Bun.write(n, "hello");

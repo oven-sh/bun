@@ -727,7 +727,9 @@ describe("expect()", () => {
       expect(new Date(NaN)).toEqual(new Date(NaN));
       expect(new Date(NaN)).toStrictEqual(new Date(NaN));
       expect(new Date(NaN)).not.toEqual(new Date(0));
+      expect(new Date(NaN)).not.toStrictEqual(new Date(0));
       expect(new Date(0)).not.toEqual(new Date(NaN));
+      expect(new Date(0)).not.toStrictEqual(new Date(NaN));
     }
 
     class Date2 extends Date {

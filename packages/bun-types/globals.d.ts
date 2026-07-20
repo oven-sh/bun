@@ -2022,9 +2022,7 @@ interface BunFetchRequestInit extends RequestInit {
    * Not part of the Fetch API specification.
    * @experimental
    */
-  store?:
-    | { type: "dir"; path: string }
-    | { type: "memory"; ttl?: number; max?: number };
+  store?: { type: "dir"; path: string } | { type: "memory"; ttl?: number; max?: number };
 
   /**
    * Force the underlying HTTP version. `"http2"` advertises only `h2` in

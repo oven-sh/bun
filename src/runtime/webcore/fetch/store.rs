@@ -295,9 +295,7 @@ fn dir_entry_path(dir: &[u8], key: u64) -> Vec<u8> {
 fn body_is_text(bytes: &[u8]) -> bool {
     // Require valid UTF-8 and no embedded NULs; anything else round-trips
     // through base64 so the JSON stays hand-editable.
-    !bytes.is_empty()
-        && strings::index_of_char(bytes, 0).is_none()
-        && strings::is_valid_utf8(bytes)
+    !bytes.is_empty() && strings::index_of_char(bytes, 0).is_none() && strings::is_valid_utf8(bytes)
 }
 
 fn write_json_body(out: &mut Vec<u8>, bytes: Option<&[u8]>) {
@@ -381,12 +379,7 @@ fn write_dir_entry(dir: &[u8], req: &StoredRequest, resp: &StoredResponse) -> bu
     let _ = write!(&mut out, "{}", bun_core::time::milli_timestamp());
     out.extend_from_slice(b"}\n");
 
-    let file = bun_sys::File::openat(
-        Fd::cwd(),
-        &path,
-        O::WRONLY | O::CREAT | O::TRUNC,
-        0o644,
-    )?;
+    let file = bun_sys::File::openat(Fd::cwd(), &path, O::WRONLY | O::CREAT | O::TRUNC, 0o644)?;
     file.write_all(&out)?;
     Ok(())
 }

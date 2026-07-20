@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -163,11 +163,7 @@ describe("fetch store", () => {
       cwd: String(srcDir),
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const out = JSON.parse(stdout.trim());
     expect(out).toEqual({ a: "ok1", b: "ok1", hits: 1 });
@@ -195,11 +191,7 @@ describe("fetch store", () => {
       cwd: String(srcDir),
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({ a: "m1", b: "m1", hits: 1 });
     expect(exitCode).toBe(0);
@@ -227,11 +219,7 @@ describe("fetch store", () => {
       cwd: String(srcDir),
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({ a: "bf1", b: "bf1", hits: 1 });
     expect(exitCode).toBe(0);

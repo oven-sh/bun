@@ -326,6 +326,200 @@ impl bun_ptr::RefCounted for JSValkeyClient {
     }
 }
 
+/// Connection parameters extracted from a `valkey://` / `redis://` URL.
+struct ParsedValkeyUrl {
+    address: valkey::Address,
+    username: Box<[u8]>,
+    password: Box<[u8]>,
+    database: u32,
+    tls_from_scheme: bool,
+}
+
+/// Parse a Valkey/Redis connection URL into owned connection parameters.
+///
+/// Accepts `redis[s]://`, `valkey[s]://`, `*+unix://`, `*+tls://` (see
+/// [`valkey::Protocol::MAP`]). A bare `host[:port][/db]` with no scheme is
+/// prefixed with `valkey://` before parsing. Throws a JS `TypeError` for
+/// malformed URLs / unknown schemes / bad port / bad db index.
+fn parse_valkey_url(
+    global_object: &JSGlobalObject,
+    url_str: &BunString,
+) -> JsResult<ParsedValkeyUrl> {
+    let mut fallback_url_buf = [0u8; 2048];
+
+    // Parse and validate the URL using `URL::from_string`, which returns null for invalid URLs
+    // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
+    // that URL.fromString returns null if the protocol is not specified. This is not, in-fact,
+    // the case right now and I do not understand why. It will take some work in JSC to
+    // understand why this is happening, but since I need to uncork valkey, I'm adding this as
+    // a stop-gap.
+    let parsed_url: NonNull<URL> = 'get_url: {
+        let url_slice = url_str.to_utf8();
+        let url_byte_slice = url_slice.slice();
+
+        if url_byte_slice.is_empty() {
+            return Err(global_object.throw_invalid_arguments(format_args!("Invalid URL format")));
+        }
+
+        if strings::contains(url_byte_slice, b"://") {
+            break 'get_url match URL::from_utf8(url_byte_slice) {
+                Some(u) => u,
+                None => {
+                    return Err(
+                        global_object.throw_invalid_arguments(format_args!("Invalid URL format"))
+                    );
+                }
+            };
+        }
+
+        let corrected_url = 'get_url_slice: {
+            use std::io::Write;
+            let mut cursor = &mut fallback_url_buf[..];
+            let start_len = cursor.len();
+            // No NUL terminator needed here — we immediately re-parse via fromUTF8.
+            if write!(&mut cursor, "valkey://").is_err() || cursor.write_all(url_byte_slice).is_err()
+            {
+                return Err(
+                    global_object.throw_invalid_arguments(format_args!("URL is too long."))
+                );
+            }
+            let written = start_len - cursor.len();
+            break 'get_url_slice &fallback_url_buf[..written];
+        };
+
+        match URL::from_utf8(corrected_url) {
+            Some(u) => u,
+            None => {
+                return Err(
+                    global_object.throw_invalid_arguments(format_args!("Invalid URL format"))
+                );
+            }
+        }
+    };
+    // SAFETY: `from_utf8` heap-allocates; release on scope exit.
+    let _parsed_url_drop = scopeguard::guard(parsed_url, |p| unsafe { URL::destroy(p.as_ptr()) });
+    // `_parsed_url_drop` keeps the heap `URL` live for this scope, so the
+    // `BackRef` liveness invariant holds; `Deref` encapsulates the single
+    // `NonNull::as_ref` site.
+    let parsed_url = bun_ptr::BackRef::from(parsed_url);
+
+    // Extract protocol string
+    let protocol_str = parsed_url.protocol();
+    let protocol_utf8 = protocol_str.to_utf8();
+    // Remove the trailing ':' from protocol (e.g., "redis:" -> "redis")
+    let p = protocol_utf8.slice();
+    let protocol_slice = if !p.is_empty() && p[p.len() - 1] == b':' {
+        &p[..p.len() - 1]
+    } else {
+        p
+    };
+
+    let uri: valkey::Protocol = if !protocol_slice.is_empty() {
+        match valkey::Protocol::MAP.get(protocol_slice) {
+            Some(v) => *v,
+            None => return Err(global_object.throw(format_args!(
+                "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, redis+unix, redis+tls+unix",
+            ))),
+        }
+    } else {
+        valkey::Protocol::Standalone
+    };
+
+    // Extract all URL components
+    let username_str = parsed_url.username();
+    let username_utf8 = username_str.to_utf8();
+
+    let password_str = parsed_url.password();
+    let password_utf8 = password_str.to_utf8();
+
+    let hostname_str = parsed_url.host();
+    let hostname_utf8 = hostname_str.to_utf8();
+
+    let pathname_str = parsed_url.pathname();
+    let pathname_utf8 = pathname_str.to_utf8();
+
+    // Determine hostname based on protocol type
+    let hostname_slice: &[u8] = if uri.is_unix() {
+        // For unix sockets, the path is in the pathname
+        if pathname_utf8.slice().is_empty() {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "Expected unix socket path after valkey+unix:// or valkey+tls+unix://",
+            )));
+        }
+        pathname_utf8.slice()
+    } else {
+        hostname_utf8.slice()
+    };
+
+    let port: u16 = if uri.is_unix() {
+        0
+    } else {
+        'brk: {
+            let port_value = parsed_url.port();
+            // URL.port() returns u32::MAX if port is not set
+            if port_value == u32::MAX {
+                // No port specified, use default
+                break 'brk 6379;
+            } else {
+                // Port was explicitly specified
+                if port_value == 0 {
+                    // Port 0 is invalid for TCP connections (though it's allowed for unix sockets)
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Port 0 is not valid for TCP connections",
+                    )));
+                }
+                if port_value > 65535 {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Invalid port number in URL. Port must be a number between 0 and 65535",
+                    )));
+                }
+                break 'brk u16::try_from(port_value).expect("int cast");
+            }
+        }
+    };
+
+    // Copy strings into owned buffers since the URL object will be deinitialized
+    let username = Box::<[u8]>::from(username_utf8.slice());
+    let password = Box::<[u8]>::from(password_utf8.slice());
+    let hostname = Box::<[u8]>::from(hostname_slice);
+
+    // Parse database number from pathname (e.g., "/1" -> database 1)
+    let database: u32 = if uri.is_unix() {
+        // For unix sockets the pathname is the socket path, not a db index.
+        0
+    } else {
+        let path = pathname_utf8.slice();
+        if path.len() > 1 {
+            match bun_core::fmt::parse_int::<u32>(&path[1..], 10) {
+                Ok(n) => n,
+                Err(_) => {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Invalid database number in Redis URL: {}",
+                        bun_core::fmt::quote(&path[1..]),
+                    )));
+                }
+            }
+        } else {
+            0
+        }
+    };
+
+    Ok(ParsedValkeyUrl {
+        address: if uri.is_unix() {
+            valkey::Address::Unix(hostname)
+        } else {
+            valkey::Address::Host {
+                host: hostname,
+                port,
+            }
+        },
+        username,
+        password,
+        database,
+        tls_from_scheme: uri.is_tls(),
+    })
+}
+
 impl JSValkeyClient {
     #[inline]
     pub fn ref_(&self) {
@@ -401,214 +595,32 @@ impl JSValkeyClient {
         Self::create(global_object, callframe.arguments(), js_this)
     }
 
-    /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
+    /// Heap-allocate a fresh client in the initial `Disconnected` state.
     ///
-    /// This whole client needs a refactor.
-    pub fn create_no_js_no_pubsub(
-        global_object: &JSGlobalObject,
-        arguments: &[JSValue],
-    ) -> JsResult<*mut JSValkeyClient> {
-        let global_object = GlobalRef::from(global_object);
+    /// The single construction site for the `JSValkeyClient` struct literal —
+    /// shared by both JS construction (`create_no_js_no_pubsub`) and
+    /// `.duplicate()` (`clone_without_connecting`). `_subscription_ctx` is a
+    /// placeholder here; properly initialized later by [`bind_js`](Self::bind_js).
+    #[allow(clippy::too_many_arguments)]
+    fn new_disconnected(
+        global_object: GlobalRef,
+        address: valkey::Address,
+        username: Box<[u8]>,
+        password: Box<[u8]>,
+        database: u32,
+        tls: valkey::TLS,
+        flags: valkey::ConnectionFlags,
+        max_retries: u32,
+        connection_timeout_ms: u32,
+        idle_timeout_interval_ms: u32,
+    ) -> *mut JSValkeyClient {
         let vm: &'static VirtualMachine = global_object.bun_vm();
-        let vm_ref = vm;
-
-        let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
-            arguments[0].to_bun_string(&global_object)?
-        } else {
-            let env = vm_ref.env_loader();
-            match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
-                Some(url) => BunString::borrow_utf8(url),
-                None => BunString::static_(b"valkey://localhost:6379"),
-            }
-        };
-        // `defer url_str.deref();` — bun_core::String drops on scope exit.
-        let mut fallback_url_buf = [0u8; 2048];
-
-        // Parse and validate the URL using `URL::from_string`, which returns null for invalid URLs
-        // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
-        // that URL.fromString returns null if the protocol is not specified. This is not, in-fact,
-        // the case right now and I do not understand why. It will take some work in JSC to
-        // understand why this is happening, but since I need to uncork valkey, I'm adding this as
-        // a stop-gap.
-        let parsed_url: NonNull<URL> = 'get_url: {
-            let url_slice = url_str.to_utf8();
-            let url_byte_slice = url_slice.slice();
-
-            if url_byte_slice.is_empty() {
-                return Err(
-                    global_object.throw_invalid_arguments(format_args!("Invalid URL format"))
-                );
-            }
-
-            if strings::contains(url_byte_slice, b"://") {
-                break 'get_url match URL::from_utf8(url_byte_slice) {
-                    Some(u) => u,
-                    None => {
-                        return Err(global_object
-                            .throw_invalid_arguments(format_args!("Invalid URL format")));
-                    }
-                };
-            }
-
-            let corrected_url = 'get_url_slice: {
-                use std::io::Write;
-                let mut cursor = &mut fallback_url_buf[..];
-                let start_len = cursor.len();
-                // No NUL terminator needed here — we immediately re-parse via fromUTF8.
-                if write!(&mut cursor, "valkey://").is_err()
-                    || cursor.write_all(url_byte_slice).is_err()
-                {
-                    return Err(
-                        global_object.throw_invalid_arguments(format_args!("URL is too long."))
-                    );
-                }
-                let written = start_len - cursor.len();
-                break 'get_url_slice &fallback_url_buf[..written];
-            };
-
-            match URL::from_utf8(corrected_url) {
-                Some(u) => u,
-                None => {
-                    return Err(
-                        global_object.throw_invalid_arguments(format_args!("Invalid URL format"))
-                    );
-                }
-            }
-        };
-        // SAFETY: `from_utf8` heap-allocates; release on scope exit.
-        let _parsed_url_drop =
-            scopeguard::guard(parsed_url, |p| unsafe { URL::destroy(p.as_ptr()) });
-        // `_parsed_url_drop` keeps the heap `URL` live for this scope, so the
-        // `BackRef` liveness invariant holds; `Deref` encapsulates the single
-        // `NonNull::as_ref` site.
-        let parsed_url = bun_ptr::BackRef::from(parsed_url);
-
-        // Extract protocol string
-        let protocol_str = parsed_url.protocol();
-        let protocol_utf8 = protocol_str.to_utf8();
-        // Remove the trailing ':' from protocol (e.g., "redis:" -> "redis")
-        let p = protocol_utf8.slice();
-        let protocol_slice = if !p.is_empty() && p[p.len() - 1] == b':' {
-            &p[..p.len() - 1]
-        } else {
-            p
-        };
-
-        let uri: valkey::Protocol = if !protocol_slice.is_empty() {
-            match valkey::Protocol::MAP.get(protocol_slice) {
-                Some(v) => *v,
-                None => return Err(global_object.throw(format_args!(
-                    "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, redis+unix, redis+tls+unix",
-                ))),
-            }
-        } else {
-            valkey::Protocol::Standalone
-        };
-
-        // Extract all URL components
-        let username_str = parsed_url.username();
-        let username_utf8 = username_str.to_utf8();
-
-        let password_str = parsed_url.password();
-        let password_utf8 = password_str.to_utf8();
-
-        let hostname_str = parsed_url.host();
-        let hostname_utf8 = hostname_str.to_utf8();
-
-        let pathname_str = parsed_url.pathname();
-        let pathname_utf8 = pathname_str.to_utf8();
-
-        // Determine hostname based on protocol type
-        let hostname_slice: &[u8] = if uri.is_unix() {
-            // For unix sockets, the path is in the pathname
-            if pathname_utf8.slice().is_empty() {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "Expected unix socket path after valkey+unix:// or valkey+tls+unix://",
-                )));
-            }
-            pathname_utf8.slice()
-        } else {
-            hostname_utf8.slice()
-        };
-
-        let port: u16 = if uri.is_unix() {
-            0
-        } else {
-            'brk: {
-                let port_value = parsed_url.port();
-                // URL.port() returns u32::MAX if port is not set
-                if port_value == u32::MAX {
-                    // No port specified, use default
-                    break 'brk 6379;
-                } else {
-                    // Port was explicitly specified
-                    if port_value == 0 {
-                        // Port 0 is invalid for TCP connections (though it's allowed for unix sockets)
-                        return Err(global_object.throw_invalid_arguments(format_args!(
-                            "Port 0 is not valid for TCP connections",
-                        )));
-                    }
-                    if port_value > 65535 {
-                        return Err(global_object.throw_invalid_arguments(format_args!(
-                            "Invalid port number in URL. Port must be a number between 0 and 65535",
-                        )));
-                    }
-                    break 'brk u16::try_from(port_value).expect("int cast");
-                }
-            }
-        };
-
-        let options = if arguments.len() >= 2
-            && !arguments[1].is_undefined_or_null()
-            && arguments[1].is_object()
-        {
-            parse_valkey_options_from_js(&global_object, arguments[1])?
-        } else {
-            valkey::Options::default()
-        };
-
-        // Copy strings into owned buffers since the URL object will be deinitialized
-        let username = Box::<[u8]>::from(username_utf8.slice());
-        let password = Box::<[u8]>::from(password_utf8.slice());
-        let hostname = Box::<[u8]>::from(hostname_slice);
-
-        // Parse database number from pathname (e.g., "/1" -> database 1)
-        let database: u32 = if uri.is_unix() {
-            // For unix sockets the pathname is the socket path, not a db index.
-            0
-        } else {
-            let path = pathname_utf8.slice();
-            if path.len() > 1 {
-                match bun_core::fmt::parse_int::<u32>(&path[1..], 10) {
-                    Ok(n) => n,
-                    Err(_) => {
-                        return Err(global_object.throw_invalid_arguments(format_args!(
-                            "Invalid database number in Redis URL: {}",
-                            bun_core::fmt::quote(&path[1..]),
-                        )));
-                    }
-                }
-            } else {
-                0
-            }
-        };
-
-        bun_core::analytics::Features::VALKEY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-
-        // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
-        Ok(JSValkeyClient::new(JSValkeyClient {
+        JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
                 vm,
-                address: if uri.is_unix() {
-                    valkey::Address::Unix(hostname)
-                } else {
-                    valkey::Address::Host {
-                        host: hostname,
-                        port,
-                    }
-                },
+                address,
                 username,
                 password,
                 in_flight: command::PromiseQueue::init(),
@@ -618,23 +630,12 @@ impl JSValkeyClient {
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
-                tls: if !options.tls.is_none() {
-                    options.tls
-                } else if uri.is_tls() {
-                    valkey::TLS::Enabled
-                } else {
-                    valkey::TLS::None
-                },
+                tls,
                 database,
-                flags: valkey::ConnectionFlags {
-                    enable_auto_reconnect: options.enable_auto_reconnect,
-                    enable_offline_queue: options.enable_offline_queue,
-                    enable_auto_pipelining: options.enable_auto_pipelining,
-                    ..Default::default()
-                },
-                max_retries: options.max_retries,
-                connection_timeout_ms: options.connection_timeout_ms,
-                idle_timeout_interval_ms: options.idle_timeout_ms,
+                flags,
+                max_retries,
+                connection_timeout_ms,
+                idle_timeout_interval_ms,
                 write_buffer: Default::default(),
                 read_buffer: Default::default(),
                 reply_scanner: Default::default(),
@@ -651,7 +652,66 @@ impl JSValkeyClient {
             reconnect_timer: JsCell::new(Timer::EventLoopTimer::init_paused(
                 Timer::Tag::ValkeyConnectionReconnect,
             )),
-        }))
+        })
+    }
+
+    /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
+    pub fn create_no_js_no_pubsub(
+        global_object: &JSGlobalObject,
+        arguments: &[JSValue],
+    ) -> JsResult<*mut JSValkeyClient> {
+        let global_object = GlobalRef::from(global_object);
+        let vm: &'static VirtualMachine = global_object.bun_vm();
+
+        let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
+            arguments[0].to_bun_string(&global_object)?
+        } else {
+            let env = vm.env_loader();
+            match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
+                Some(url) => BunString::borrow_utf8(url),
+                None => BunString::static_(b"valkey://localhost:6379"),
+            }
+        };
+        // `defer url_str.deref();` — bun_core::String drops on scope exit.
+
+        let parsed = parse_valkey_url(&global_object, &url_str)?;
+
+        let options = if arguments.len() >= 2
+            && !arguments[1].is_undefined_or_null()
+            && arguments[1].is_object()
+        {
+            parse_valkey_options_from_js(&global_object, arguments[1])?
+        } else {
+            valkey::Options::default()
+        };
+
+        let tls = if !options.tls.is_none() {
+            options.tls
+        } else if parsed.tls_from_scheme {
+            valkey::TLS::Enabled
+        } else {
+            valkey::TLS::None
+        };
+
+        bun_core::analytics::Features::VALKEY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
+        Ok(Self::new_disconnected(
+            global_object,
+            parsed.address,
+            parsed.username,
+            parsed.password,
+            parsed.database,
+            tls,
+            valkey::ConnectionFlags {
+                enable_auto_reconnect: options.enable_auto_reconnect,
+                enable_offline_queue: options.enable_offline_queue,
+                enable_auto_pipelining: options.enable_auto_pipelining,
+                ..Default::default()
+            },
+            options.max_retries,
+            options.connection_timeout_ms,
+            options.idle_timeout_ms,
+        ))
     }
 
     /// Wire a freshly-allocated client to its JS wrapper: sets `this_value` and
@@ -684,71 +744,37 @@ impl JSValkeyClient {
         &self,
         global_object: &JSGlobalObject,
     ) -> Result<*mut JSValkeyClient, bun_alloc::AllocError> {
-        let global_object = GlobalRef::from(global_object);
-        let vm: &'static VirtualMachine = global_object.bun_vm();
-
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
 
-        let username: Box<[u8]> = Box::<[u8]>::from(&client.username[..]);
-        let password: Box<[u8]> = Box::<[u8]>::from(&client.password[..]);
-
-        Ok(JSValkeyClient::new(JSValkeyClient {
-            ref_count: bun_ptr::RefCount::init(),
-            _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
-            client: JsCell::new(valkey::ValkeyClient {
-                vm,
-                address: client.address.clone(),
-                username,
-                password,
-                in_flight: command::PromiseQueue::init(),
-                queue: command::EntryQueue::init(),
-                status: valkey::Status::Disconnected,
-                handshake: valkey::Handshake::default(),
-                socket: Socket::SocketTcp(uws::SocketTCP {
-                    socket: uws::InternalSocket::Detached,
-                }),
-                tls: client.tls.clone(),
-                database: client.database,
-                flags: valkey::ConnectionFlags {
-                    // If the user manually closed the connection, then duplicating a closed client
-                    // means the new client remains finalized.
-                    is_manually_closed: client.flags.is_manually_closed,
-                    enable_offline_queue: sub_ctx
-                        .saved_flags
-                        .map(|s| s.enable_offline_queue)
-                        .unwrap_or(client.flags.enable_offline_queue),
-                    needs_to_open_socket: true,
-                    enable_auto_reconnect: client.flags.enable_auto_reconnect,
-                    is_reconnecting: false,
-                    enable_auto_pipelining: sub_ctx
-                        .saved_flags
-                        .map(|s| s.enable_auto_pipelining)
-                        .unwrap_or(client.flags.enable_auto_pipelining),
-                    // Duplicating a finalized client means it stays finalized.
-                    finalized: client.flags.finalized,
-                    ..Default::default()
-                },
-                max_retries: client.max_retries,
-                connection_timeout_ms: client.connection_timeout_ms,
-                idle_timeout_interval_ms: client.idle_timeout_interval_ms,
-                write_buffer: Default::default(),
-                read_buffer: Default::default(),
-                reply_scanner: Default::default(),
-                retry_attempts: 0,
-                auto_flusher: Default::default(),
-            }),
-            global_object,
-            this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::default()),
-            _secure: JsCell::new(None),
-            timer: JsCell::new(Timer::EventLoopTimer::init_paused(
-                Timer::Tag::ValkeyConnectionTimeout,
-            )),
-            reconnect_timer: JsCell::new(Timer::EventLoopTimer::init_paused(
-                Timer::Tag::ValkeyConnectionReconnect,
-            )),
-        }))
+        Ok(Self::new_disconnected(
+            GlobalRef::from(global_object),
+            client.address.clone(),
+            Box::from(&client.username[..]),
+            Box::from(&client.password[..]),
+            client.database,
+            client.tls.clone(),
+            valkey::ConnectionFlags {
+                // If the user manually closed the connection, then duplicating a closed client
+                // means the new client remains finalized.
+                is_manually_closed: client.flags.is_manually_closed,
+                enable_offline_queue: sub_ctx
+                    .saved_flags
+                    .map(|s| s.enable_offline_queue)
+                    .unwrap_or(client.flags.enable_offline_queue),
+                enable_auto_pipelining: sub_ctx
+                    .saved_flags
+                    .map(|s| s.enable_auto_pipelining)
+                    .unwrap_or(client.flags.enable_auto_pipelining),
+                enable_auto_reconnect: client.flags.enable_auto_reconnect,
+                // Duplicating a finalized client means it stays finalized.
+                finalized: client.flags.finalized,
+                ..Default::default()
+            },
+            client.max_retries,
+            client.connection_timeout_ms,
+            client.idle_timeout_interval_ms,
+        ))
     }
 
     pub fn add_subscription(&self) {

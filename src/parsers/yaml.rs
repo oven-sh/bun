@@ -3315,10 +3315,8 @@ impl MappingProps {
                 for existing_idx in candidates.iter() {
                     let existing_key = self.list[*existing_idx as usize].key.as_ref().unwrap();
                     if yaml_merge_key_expr_eql(existing_key, merge_key) {
-                        // A duplicate key within this same merge source keeps
-                        // its later value (the source mapping itself resolves
-                        // that way); a key already present before this merge
-                        // keeps its existing value.
+                        // Duplicate from this merge source: later value wins.
+                        // Key present before this merge: existing value wins.
                         if (*existing_idx as usize) >= pre_merge_len {
                             self.list[*existing_idx as usize].value = merge_prop.value;
                         }

@@ -4441,6 +4441,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     return Ok(ctx.done(self));
                 }
 
@@ -4785,6 +4788,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     return Ok((
                         indent_indicator.unwrap_or(IndentIndicator::DEFAULT),
                         chomp.unwrap_or(Chomp::DEFAULT),
@@ -5008,6 +5014,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let __c = Enc::wide(self.next());
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     // Official yaml-test-suite JEF9/02: trailing indentation
                     // at EOF without a final break counts as one trailing
                     // empty line for chomping (matches eemeli/yaml + js-yaml).
@@ -5098,7 +5107,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut __c = first;
         loop {
             match __c {
-                0 => return Ok(ctx.done()?),
+                0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
+                    return Ok(ctx.done()?);
+                }
                 0x0D => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
@@ -5698,6 +5712,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let c = Enc::wide(self.next());
             match c {
                 0 => {
+                    // [1] c-printable excludes U+0000. `next()` returns NUL as
+                    // the EOF sentinel, so a literal NUL in the input must be
+                    // rejected here rather than silently ending the stream.
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     let start = self.pos;
                     break 'next Token::eof(self.token_init(start));
                 }

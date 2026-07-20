@@ -1011,7 +1011,7 @@ async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>
   const env: Record<string, string> = { ...bunEnv, ...extraEnv, PIDFILE: pidfile, BAT: `${dir}\\run.bat` };
   if (!("BUN_FEATURE_FLAG_NO_ORPHANS" in extraEnv)) delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   const bun = Bun.spawn({
-    cmd: [bunExe(), ...(bunfig ? ["-c", `${dir}\\bunfig.toml`] : []), ...argv, `${dir}\\outer.js`],
+    cmd: [bunExe(), ...(bunfig ? [`--config=${dir}\\bunfig.toml`] : []), ...argv, `${dir}\\outer.js`],
     env,
     stdout: "ignore",
     stderr: "ignore",

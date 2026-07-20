@@ -5589,9 +5589,7 @@ describe.concurrent.each(["write", "writev"] as const)(
         const view = new Uint8Array(ab);
         view.fill(0x42);
         view.fill(0x41, 16, 48);
-        const p = new Promise<{ e: any; n: number }>(r =>
-          fs.write(fh.fd, view, 16, 32, 0, (e, n) => r({ e, n })),
-        );
+        const p = new Promise<{ e: any; n: number }>(r => fs.write(fh.fd, view, 16, 32, 0, (e, n) => r({ e, n })));
         ab.resize(0);
         const { e, n } = await p;
         await fh.close();

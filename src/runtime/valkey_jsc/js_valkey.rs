@@ -36,22 +36,6 @@ bun_output::define_scoped_log!(debug, RedisJS, visible);
 
 type Socket = uws::AnySocket;
 
-/// +1-ref BoringSSL `SSL_CTX*` owned by this client (`TLS::Custom` only).
-/// Drops via `SSL_CTX_free`.
-pub(crate) struct OwnedSslCtx(NonNull<uws::SslCtx>);
-impl OwnedSslCtx {
-    #[inline]
-    pub(crate) fn as_ptr(&self) -> *mut uws::SslCtx {
-        self.0.as_ptr()
-    }
-}
-impl Drop for OwnedSslCtx {
-    fn drop(&mut self) {
-        // SAFETY: `self.0` is a +1-ref `SSL_CTX*` from `SSLContextCache::get_or_create`.
-        unsafe { boringssl::c::SSL_CTX_free(self.0.as_ptr()) }
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // SubscriptionCtx
 // ───────────────────────────────────────────────────────────────────────────
@@ -314,7 +298,7 @@ pub struct JSValkeyClient {
     pub _subscription_ctx: JsCell<SubscriptionCtx>,
     /// `us_ssl_ctx_t` for `tls: { …custom CA… }`. `tls: true` borrows
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this `None`.
-    pub _secure: JsCell<Option<OwnedSslCtx>>,
+    pub _secure: JsCell<Option<boringssl::c::OwnedSslCtx>>,
 
     pub timer: JsCell<Timer::EventLoopTimer>,
     pub reconnect_timer: JsCell<Timer::EventLoopTimer>,
@@ -1467,11 +1451,11 @@ impl JSValkeyClient {
                 // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
                 // stable address for the VM's lifetime, JS-thread-only.
                 let cache = unsafe { &mut (*state).ssl_ctx_cache };
+                // SAFETY: `get_or_create` returns a +1-ref `SSL_CTX*` (or null).
                 self._secure.set(
                     cache
                         .get_or_create(custom, &mut err)
-                        .and_then(NonNull::new)
-                        .map(OwnedSslCtx),
+                        .and_then(|p| unsafe { boringssl::c::OwnedSslCtx::from_raw(p) }),
                 );
             }
             self._secure.get().is_none()

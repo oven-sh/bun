@@ -103,69 +103,66 @@ describe("Bun.serve direct-stream large Buffer writes are sent zero-copy", () =>
     },
   );
 
-  test.skipIf(isWindows)(
-    "the held buffer survives a GC cycle while the write is draining",
-    async () => {
-      // The only GC root for the payload is the controller's
-      // m_pendingWriteValue WriteBarrier; drop the JS reference and force a
-      // synchronous collection mid-drain.
-      const expectedHash = sha1(makePayload(CHUNK_SIZE));
+  test.skipIf(isWindows)("the held buffer survives a GC cycle while the write is draining", async () => {
+    // The only GC root for the payload is the controller's
+    // m_pendingWriteValue WriteBarrier; drop the JS reference and force a
+    // synchronous collection mid-drain.
+    const expectedHash = sha1(makePayload(CHUNK_SIZE));
 
-      let wroteResult: number | undefined;
-      let handlerError: unknown;
-      const serverReady = Promise.withResolvers<void>();
+    let wroteResult: number | undefined;
+    let handlerError: unknown;
+    const serverReady = Promise.withResolvers<void>();
 
-      await using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller: any) {
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller: any) {
+              try {
+                let payload: Buffer | undefined = makePayload(CHUNK_SIZE);
+                wroteResult = controller.write(payload);
+                payload = undefined;
+                Bun.gc(true);
+                serverReady.resolve();
+                await controller.flush(true);
+                Bun.gc(true);
+                controller.end();
+              } catch (e) {
+                handlerError = e;
                 try {
-                  let payload: Buffer | undefined = makePayload(CHUNK_SIZE);
-                  wroteResult = controller.write(payload);
-                  payload = undefined;
-                  Bun.gc(true);
-                  serverReady.resolve();
-                  await controller.flush(true);
-                  Bun.gc(true);
                   controller.end();
-                } catch (e) {
-                  handlerError = e;
-                  try {
-                    controller.end();
-                  } catch {}
-                  serverReady.resolve();
-                }
-              },
-            } as any),
-          );
-        },
-      });
+                } catch {}
+                serverReady.resolve();
+              }
+            },
+          } as any),
+        );
+      },
+    });
 
-      const socket = net.connect(server.port, "127.0.0.1");
-      await once(socket, "connect");
-      socket.pause();
-      socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
-      await serverReady.promise;
+    const socket = net.connect(server.port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.pause();
+    socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    await serverReady.promise;
 
-      const chunks: Buffer[] = [];
-      socket.on("data", chunk => chunks.push(chunk));
-      const closed = once(socket, "close");
-      socket.resume();
-      await closed;
-      const received = Buffer.concat(chunks);
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    const closed = once(socket, "close");
+    socket.resume();
+    await closed;
+    const received = Buffer.concat(chunks);
 
-      expect(handlerError).toBeUndefined();
-      expect(wroteResult).toBeLessThan(0);
-      const headerEnd = received.indexOf("\r\n\r\n");
-      expect(headerEnd).toBeGreaterThan(0);
-      const body = dechunk(received.subarray(headerEnd + 4));
-      expect(body.length).toBe(CHUNK_SIZE);
-      expect(sha1(body)).toBe(expectedHash);
-    },
-  );
+    expect(handlerError).toBeUndefined();
+    expect(wroteResult).toBeLessThan(0);
+    const headerEnd = received.indexOf("\r\n\r\n");
+    expect(headerEnd).toBeGreaterThan(0);
+    const body = dechunk(received.subarray(headerEnd + 4));
+    expect(body.length).toBe(CHUNK_SIZE);
+    expect(sha1(body)).toBe(expectedHash);
+  });
 
   test("two large chunked writes deliver the exact bytes", async () => {
     const payload = makePayload(CHUNK_SIZE);

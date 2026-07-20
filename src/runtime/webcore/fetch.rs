@@ -2100,6 +2100,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 method,
                 url.href,
                 unix_socket_path.slice(),
+                proxy.as_ref().map(|p| p.href).unwrap_or(b""),
                 match headers.as_ref() {
                     Some(h) => h,
                     None => {

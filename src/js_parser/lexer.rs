@@ -3692,7 +3692,7 @@ lexer_impl_header! {
 
             // Slow path: do we need to re-scan the input as text?
             if is_big_integer_literal || is_invalid_legacy_octal_literal {
-                let text = self.raw();
+                let mut text = self.raw();
 
                 // Can't use a leading zero for bigint literals;
                 if is_big_integer_literal && self.is_legacy_octal_literal {
@@ -3711,6 +3711,7 @@ lexer_impl_header! {
                             i += 1;
                         }
                     }
+                    text = bytes;
                 }
 
                 // Store bigints as text to avoid precision loss;

@@ -1423,7 +1423,6 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     // and `FILE_OPEN_IF` via `OpenOrCreate`.
     let opts = WindowsOpenDirOptions {
         op: WindowsOpenDirOp::OpenOrCreate,
-        read_only: true,
         ..Default::default()
     };
     // tar entry paths are dir-relative (no drive/UNC/`\??\`) so `init` never

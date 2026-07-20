@@ -16,7 +16,6 @@ use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
 use bun_sys::Fd;
-use bun_url::PathnameScanner;
 
 use bun_http_types::URLPath::URLPath;
 
@@ -38,10 +37,7 @@ use bun_resolver::DirInfoRef;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::FileSystem;
 
-// peechy schema types: `StringPointer` lives in `bun_core::schema::api` (T0);
-// the route-config pair lives in `bun_options_types::schema::api`.
 mod api {
-    pub(crate) use bun_core::schema::api::StringPointer;
     pub(crate) use bun_options_types::schema::api::{LoadedRouteConfig, RouteConfig};
 }
 
@@ -111,18 +107,6 @@ impl RouteConfig {
             static_dir: Box::from(Self::DEFAULT_STATIC_DIR),
             routes_enabled: false,
             ..Default::default()
-        }
-    }
-
-    pub fn from_loaded_routes(loaded: api::LoadedRouteConfig) -> RouteConfig {
-        RouteConfig {
-            extensions: loaded.extensions,
-            routes_enabled: !loaded.dir.is_empty(),
-            static_dir_enabled: !loaded.static_dir.is_empty(),
-            dir: loaded.dir,
-            asset_prefix_path: loaded.asset_prefix,
-            static_dir: loaded.static_dir,
-            possible_dirs: Box::default(),
         }
     }
 
@@ -228,22 +212,6 @@ impl<'a> Router<'a> {
 
     pub fn get_entry_points(&self) -> &[&'static [u8]] {
         self.routes.list.items_filepath()
-    }
-
-    pub fn get_public_paths(&self) -> &[&'static [u8]] {
-        self.routes.list.items_public_path()
-    }
-
-    pub fn route_index_by_hash(&self, hash: u32) -> Option<usize> {
-        if hash == INDEX_ROUTE_HASH {
-            return self.routes.index_id;
-        }
-
-        self.routes
-            .list
-            .items_hash()
-            .iter()
-            .position(|&h| h == hash)
     }
 
     pub fn get_names(&self) -> &[&'static [u8]] {
@@ -391,10 +359,6 @@ impl RouteIndexList {
     #[inline]
     pub fn items_filepath(&self) -> &[&'static [u8]] {
         &self.filepath
-    }
-    #[inline]
-    pub fn items_public_path(&self) -> &[&'static [u8]] {
-        &self.public_path
     }
     #[inline]
     pub fn items_hash(&self) -> &[u32] {
@@ -940,14 +904,6 @@ impl TinyPtr {
     }
 
     #[inline]
-    pub fn to_string_pointer(self) -> api::StringPointer {
-        api::StringPointer {
-            offset: self.offset() as u32,
-            length: self.len() as u32,
-        }
-    }
-
-    #[inline]
     pub fn eql(a: TinyPtr, b: TinyPtr) -> bool {
         a == b
     }
@@ -1003,9 +959,6 @@ pub struct Route {
 
     pub has_uppercase: bool,
 }
-
-// TODO(b1): inherent assoc types unstable; module-level alias instead.
-pub type RoutePtr = TinyPtr;
 
 impl Route {
     pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
@@ -1471,20 +1424,6 @@ impl<'a> Match<'a> {
         // SAFETY: producers (`Routes::match_page*`) always set `params` to a
         // live caller-provided list that outlives the `Match`.
         unsafe { (*self.params).len() > 0 }
-    }
-
-    pub fn params_iterator(&self) -> PathnameScanner<'_> {
-        // SAFETY: see `has_params`.
-        PathnameScanner::init(self.pathname, self.name, unsafe { &*self.params })
-    }
-
-    pub fn name_with_basename<'s>(file_path: &'s [u8], dir: &[u8]) -> &'s [u8] {
-        let mut name = file_path;
-        if let Some(i) = strings::index_of(name, dir) {
-            name = &name[i + dir.len()..];
-        }
-
-        &name[0..name.len() - bun_paths::extension(name).len()]
     }
 
     pub fn pathname_without_leading_slash(&self) -> &[u8] {

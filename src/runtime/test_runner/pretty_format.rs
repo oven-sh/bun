@@ -1937,7 +1937,10 @@ impl<'a> Formatter<'a> {
                                 Err(_) => b"",
                             }
                         };
-                        if out_buf.len() > 2 {
+                        if out_buf == b"null" {
+                            // JSON.stringify(new Date(NaN)) is `null` (unquoted)
+                            out_buf = b"Invalid Date";
+                        } else if out_buf.len() > 2 {
                             // trim the quotes
                             out_buf = &out_buf[1..out_buf.len() - 1];
                         }

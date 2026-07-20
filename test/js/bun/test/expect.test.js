@@ -722,6 +722,14 @@ describe("expect()", () => {
     expect(d).toEqual(e);
     expect(e).toEqual(d);
 
+    if (isBun) {
+      // Two Invalid Dates are equal, matching Node.js (jest disagrees).
+      expect(new Date(NaN)).toEqual(new Date(NaN));
+      expect(new Date(NaN)).toStrictEqual(new Date(NaN));
+      expect(new Date(NaN)).not.toEqual(new Date(0));
+      expect(new Date(0)).not.toEqual(new Date(NaN));
+    }
+
     class Date2 extends Date {
       constructor() {
         // @ts-ignore

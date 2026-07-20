@@ -287,6 +287,8 @@ const cases: Case[] = [
   // Date.
   { name: "two equal dates", a: () => new Date(0), b: () => new Date(0), strict: true, loose: true },
   { name: "two different dates", a: () => new Date(0), b: () => new Date(1), strict: false, loose: false },
+  { name: "two invalid dates", a: () => new Date(NaN), b: () => new Date(NaN), strict: true, loose: true },
+  { name: "an invalid and a valid date", a: () => new Date(NaN), b: () => new Date(0), strict: false, loose: false },
   {
     name: "a date with an extra own property",
     a: () => withExtraProperty(new Date(0)),

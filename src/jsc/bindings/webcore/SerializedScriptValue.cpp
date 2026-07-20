@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "SerializedScriptValue.h"
+#include "BunClientData.h"
 #include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
@@ -1633,6 +1634,22 @@ private:
         VM& vm = m_lexicalGlobalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
+        // markAsUncloneable: reject a marked object anywhere in the graph (nested terminals
+        // come through dumpIfTerminal directly); ArrayBuffers/views serialize natively. The
+        // marker is a DontEnum JSC private name (node parity), invisible to user JS.
+        // A port in the transfer list is moved rather than cloned, so the marker doesn't
+        // apply to it — node lets `postMessage(port, [port])` through for a marked port.
+        if (value.isObject()) {
+            JSObject* obj = asObject(value);
+            if (!obj->inherits<JSArrayBuffer>() && !obj->inherits<JSArrayBufferView>()
+                && !(obj->inherits<JSMessagePort>() && m_transferredMessagePorts.contains(obj))
+                && obj->structure()->hasNonEnumerableProperties()
+                && obj->getDirect(vm, builtinNames(vm).isUncloneablePrivateName())) {
+                code = SerializationReturnCode::DataCloneError;
+                return true;
+            }
+        }
+
         if (isArray(value))
             return false;
 
@@ -1736,45 +1753,61 @@ private:
                 auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(scope, false);
 
-                String message;
-                PropertyDescriptor messageDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, messageDescriptor) && messageDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    message = messageDescriptor.value().toWTFString(m_lexicalGlobalObject);
+                // .message/.line/.column/.sourceURL: HTML spec + Node/WebKit read
+                // OWN data descriptors only (an inherited or accessor .message is
+                // NOT serialized). .stack: Node reads via [[Get]] to materialize
+                // V8's lazy accessor. Any getter/coercion/prepareStackTrace throw
+                // propagates out of postMessage/structuredClone (Node parity).
+                String message, sourceURL, stack;
+                unsigned line = 0, column = 0;
+                {
+                    // .message is ToString'd rather than gated on isString (node clones
+                    // `e.message = 42` as "42"). Reading it before .line also keeps a
+                    // Symbol message from reaching ErrorInstance's lazy materialization.
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value()) {
+                        message = d.value().toWTFString(m_lexicalGlobalObject);
+                        RETURN_IF_EXCEPTION(scope, false);
+                    }
                 }
+                // Trigger ErrorInstance's lazy materialization up front so a throwing
+                // prepareStackTrace propagates here instead of tripping the exception
+                // assertion inside JSObject::getOwnPropertyDescriptor.
+                errorInstance->materializeErrorInfoIfNeeded(vm);
                 RETURN_IF_EXCEPTION(scope, false);
-
-                unsigned line = 0;
-                PropertyDescriptor lineDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, lineDescriptor) && lineDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    line = lineDescriptor.value().toNumber(m_lexicalGlobalObject);
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isNumber())
+                        line = d.value().toNumber(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                unsigned column = 0;
-                PropertyDescriptor columnDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, columnDescriptor) && columnDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    column = columnDescriptor.value().toNumber(m_lexicalGlobalObject);
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isNumber())
+                        column = d.value().toNumber(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                String sourceURL;
-                PropertyDescriptor sourceURLDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, sourceURLDescriptor) && sourceURLDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    sourceURL = sourceURLDescriptor.value().toWTFString(m_lexicalGlobalObject);
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isString())
+                        sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                String stack;
-                PropertyDescriptor stackDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->stack, stackDescriptor) && stackDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    stack = stackDescriptor.value().toWTFString(m_lexicalGlobalObject);
+                {
+                    JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (v.isString())
+                        stack = v.toWTFString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
 
                 write(ErrorInstanceTag);
                 write(errorNameToSerializableErrorType(errorTypeString));
@@ -1792,8 +1825,10 @@ private:
                     write(index->value);
                     return true;
                 }
-                // MessagePort object could not be found in transferred message ports
-                code = SerializationReturnCode::ValidationError;
+                // MessagePort present in the message but not listed in the
+                // transfer list: node throws a DataCloneError with this message.
+                WebCore::propagateException(*m_lexicalGlobalObject, scope, Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s });
+                code = SerializationReturnCode::ExistingExceptionError;
                 return true;
             }
             if (auto* arrayBuffer = toPossiblySharedArrayBuffer(vm, obj)) {
@@ -4912,6 +4947,7 @@ private:
 
     JSValue readTerminal()
     {
+        const uint8_t* preTagPtr = m_ptr;
         SerializationTag tag = readTag();
         // if (!isTypeExposedToGlobalObject(*m_globalObject, tag))
         //     return JSValue();
@@ -5120,6 +5156,10 @@ private:
             }
             VM& vm = m_lexicalGlobalObject->vm();
             RegExp* regExp = RegExp::create(vm, pattern->string(), reFlags.value());
+            if (!regExp->isValid()) [[unlikely]] {
+                fail();
+                return JSValue();
+            }
             RegExpObject* obj = RegExpObject::create(vm, m_globalObject->regExpStructure(), regExp);
             addTerminalToObjectPool(obj);
             return obj;
@@ -5393,7 +5433,7 @@ private:
             // ?
 
         default:
-            m_ptr--; // Push the tag back
+            m_ptr = preTagPtr; // Push the tag back
             return JSValue();
         }
     }
@@ -5401,9 +5441,10 @@ private:
     template<SerializationTag Tag>
     bool consumeCollectionDataTerminationIfPossible()
     {
+        const uint8_t* savedPtr = m_ptr;
         if (readTag() == Tag)
             return true;
-        m_ptr--;
+        m_ptr = savedPtr;
         return false;
     }
 
@@ -6346,6 +6387,9 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
     HashSet<JSC::JSObject*> uniqueTransferables;
     for (auto& transferable : transferList) {
+        // markAsUntransferable marker: a DontEnum JSC private name (see markAsUncloneable).
+        if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
+            return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
         if (!uniqueTransferables.add(transferable.get()).isNewEntry) {
             if (toPossiblySharedArrayBuffer(vm, transferable.get())) {
                 return Exception { DataCloneError, "Transfer list contains duplicate ArrayBuffer"_s };
@@ -6368,7 +6412,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             continue;
         }
         if (auto port = JSMessagePort::toWrapped(vm, transferable.get())) {
-            if (port->isDetached())
+            if (port->isDetached() || port->isClosing())
                 return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
             messagePorts.append(WTF::move(port));
             continue;

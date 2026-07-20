@@ -1369,7 +1369,7 @@ pub enum Metadata {
 pub struct MetadataResolve {
     pub specifier: BabyString,
     pub import_kind: ImportKind,
-    pub err: bun_core::Error,
+    pub err: crate::Error,
 }
 
 impl Default for MetadataResolve {
@@ -1377,7 +1377,7 @@ impl Default for MetadataResolve {
         MetadataResolve {
             specifier: BabyString::new(0, 0),
             import_kind: ImportKind::default(),
-            err: bun_core::err!("ModuleNotFound"),
+            err: crate::Error::ModuleNotFound,
         }
     }
 }
@@ -1925,7 +1925,7 @@ impl Log {
         args: fmt::Arguments<'_>,
         specifier_arg: &[u8],
         import_kind: ImportKind,
-        err: bun_core::Error,
+        err: crate::Error,
     ) {
         let text = alloc_print(args);
         // TODO: fix this. this is stupid, the specifier should be returned by
@@ -1974,7 +1974,7 @@ impl Log {
         args: fmt::Arguments<'_>,
         specifier_arg: &[u8],
         import_kind: ImportKind,
-        err: bun_core::Error,
+        err: crate::Error,
     ) {
         // Always dupe the line_text from the source to ensure the Location data
         // outlives the source's backing memory (which may be arena-allocated).
@@ -2003,7 +2003,7 @@ impl Log {
             args,
             specifier_arg,
             import_kind,
-            bun_core::err!("ModuleNotFound"),
+            crate::Error::ModuleNotFound,
         )
     }
 
@@ -2091,12 +2091,16 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_zig_error_with_note(&mut self, err: bun_core::Error, note_args: fmt::Arguments<'_>) {
+    pub fn add_zig_error_with_note(
+        &mut self,
+        err_name: &'static str,
+        note_args: fmt::Arguments<'_>,
+    ) {
         self.errors += 1;
 
         let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
 
-        let data = self.tracked_range_data(None, Range::NONE, err.name().as_bytes());
+        let data = self.tracked_range_data(None, Range::NONE, err_name.as_bytes());
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -2896,7 +2900,7 @@ impl Source {
         self.path.name().fmt_identifier()
     }
 
-    pub fn identifier_name(&mut self) -> Result<&[u8], bun_core::Error> {
+    pub fn identifier_name(&mut self) -> crate::Result<&[u8]> {
         if !self.identifier_name.is_empty() {
             return Ok(&self.identifier_name);
         }
@@ -2936,7 +2940,7 @@ impl Source {
         }
     }
 
-    pub fn init_file(file: &PathContentsPair) -> Result<Source, bun_core::Error> {
+    pub fn init_file(file: &PathContentsPair) -> crate::Result<Source> {
         let mut source = Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),
@@ -2946,7 +2950,7 @@ impl Source {
         Ok(source)
     }
 
-    pub fn init_recycled_file(file: &PathContentsPair) -> Result<Source, bun_core::Error> {
+    pub fn init_recycled_file(file: &PathContentsPair) -> crate::Result<Source> {
         let mut source = Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),
@@ -3185,6 +3189,8 @@ pub mod base;
 pub mod binding;
 pub mod char_freq;
 pub mod e;
+pub mod error;
+pub use error::{Error, Result};
 pub mod expr;
 pub mod fold_string_addition;
 pub mod g;

@@ -238,18 +238,22 @@ describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
     return { line: lines.at(-1), stderr, exitCode };
   }
 
-  it("runs the child on a terminal, and hands it the preload it was given", async () => {
+  it.concurrent("runs the child on a terminal, and hands it the preload it was given", async () => {
     using dir = tempDir("ptyrun", { "empty.c": "int ptyrun_nothing;\n" });
     const ptyrun = join(String(dir), "ptyrun");
     // Somewhere for LD_PRELOAD to point that is real but does nothing. In a
     // trace this is the page tracer, which has to load into the traced binary
     // and not into ptyrun.
     const preload = join(String(dir), "empty.so");
-    await compile(["-o", ptyrun, join(import.meta.dir, "../../../../scripts/orderfile/ptyrun.c"), "-lutil"]);
-    await compile(["-shared", "-fPIC", "-o", preload, join(String(dir), "empty.c")]);
+    await Promise.all([
+      compile(["-o", ptyrun, join(import.meta.dir, "../../../../scripts/orderfile/ptyrun.c"), "-lutil"]),
+      compile(["-shared", "-fPIC", "-o", preload, join(String(dir), "empty.c")]),
+    ]);
 
-    const pty = await type([ptyrun, bunExe(), "-e", probe], { PTYRUN_PRELOAD: preload });
-    const pipe = await type([bunExe(), "-e", probe], {});
+    const [pty, pipe] = await Promise.all([
+      type([ptyrun, bunExe(), "-e", probe], { PTYRUN_PRELOAD: preload }),
+      type([bunExe(), "-e", probe], {}),
+    ]);
 
     expect({ pty: pty.line, pipe: pipe.line, ptyExit: pty.exitCode, pipeExit: pipe.exitCode }).toEqual({
       pty: `true 80 ${preload} hi`,
@@ -268,7 +272,7 @@ describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
  * earliest-touched ones, which is to say the hottest.
  */
 describe.skipIf(process.platform !== "linux" || !compiler)("page tracer", () => {
-  it("keeps the pages it recorded before the traced process execs a child", async () => {
+  it.concurrent("keeps the pages it recorded before the traced process execs a child", async () => {
     using dir = tempDir("pagetrace", { "child.c": "int main(void) { return 0; }\n" });
     const root = String(dir);
     const tracer = join(root, "pagetrace.so");
@@ -276,9 +280,11 @@ describe.skipIf(process.platform !== "linux" || !compiler)("page tracer", () => 
     const child = join(root, "child");
     const trace = join(root, "trace.bin");
 
-    await compile(["-shared", "-fPIC", "-o", tracer, join(import.meta.dir, "../../../../scripts/orderfile/pagetrace.c"), "-ldl"]); // prettier-ignore
-    await compile(["-o", fixture, join(import.meta.dir, "pagetrace-fixture.c")]);
-    await compile(["-o", child, join(root, "child.c")]);
+    await Promise.all([
+      compile(["-shared", "-fPIC", "-o", tracer, join(import.meta.dir, "../../../../scripts/orderfile/pagetrace.c"), "-ldl"]), // prettier-ignore
+      compile(["-o", fixture, join(import.meta.dir, "pagetrace-fixture.c")]),
+      compile(["-o", child, join(root, "child.c")]),
+    ]);
 
     // The fixture reads 32 pages of its own .rodata, execs `child` (dynamically
     // linked, so it inherits LD_PRELOAD), then reads one more.

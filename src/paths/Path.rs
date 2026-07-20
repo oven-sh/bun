@@ -122,9 +122,9 @@ pub mod options {
         MaxPathExceeded,
     }
 
-    impl From<Error> for bun_core::Error {
+    impl From<Error> for crate::Error {
         fn from(_e: Error) -> Self {
-            bun_core::err!("MaxPathExceeded")
+            crate::Error::MaxPathExceeded
         }
     }
 
@@ -675,7 +675,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         this
     }
 
-    pub fn init_fd_path(fd: Fd) -> Result<Self, bun_core::Error> {
+    pub fn init_fd_path(fd: Fd) -> crate::Result<Self> {
         match Kind::from_u8(KIND) {
             Kind::Abs => {}
             Kind::Rel => panic!("cannot create a relative path from getFdPath"),
@@ -707,9 +707,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     // FileNotFound (return_length==0 → -1) or
                     // NameTooLong (return_length>=buf.len → -2).
                     return Err(if n == -2 {
-                        bun_core::Error::intern("NameTooLong")
+                        crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
                     } else {
-                        bun_core::Error::intern("FileNotFound")
+                        crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                     });
                 }
                 let wide = &wslice[..n as usize];
@@ -727,7 +727,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // `fd_path_raw` returns 0 on misc failure — do not swallow as
                 // an empty path; propagate an error.
                 if n <= 0 {
-                    return Err(bun_core::Error::from_errno(9)); // EBADF — fd_path_raw surfaces no errno
+                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EBADF)); // EBADF — fd_path_raw surfaces no errno
                 }
                 let raw = &buf[..n as usize];
                 let trimmed = trim_input(TrimInputKind::Abs, raw);
@@ -744,9 +744,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // FileNotFound (return_length==0 → -1) or
                 // NameTooLong (return_length>=buf.len → -2).
                 return Err(if n == -2 {
-                    bun_core::Error::intern("NameTooLong")
+                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
                 } else {
-                    bun_core::Error::intern("FileNotFound")
+                    crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 });
             }
             let raw = &buf[..n as usize];

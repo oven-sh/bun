@@ -591,8 +591,6 @@ interface TerminalOptions {
 }
 
 interface Terminal extends AsyncDisposable {
-  readonly stdin: number;
-  readonly stdout: number;
   readonly closed: boolean;
   write(data: string | BufferSource): number;
   resize(cols: number, rows: number): void;

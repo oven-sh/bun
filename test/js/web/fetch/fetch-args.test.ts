@@ -73,6 +73,72 @@ test("fetch({toString throwing}, {headers} isn't accessed)", async () => {
   expect(str.toString).toHaveBeenCalledTimes(1);
 });
 
+// https://github.com/oven-sh/bun/issues/33644
+describe("fetch() rejects instead of throwing synchronously when option conversion throws", () => {
+  function expectRejects(factory: () => Promise<Response>, message: string) {
+    let promise: Promise<Response>;
+    try {
+      promise = factory();
+    } catch (e) {
+      throw new Error(`fetch() threw synchronously (expected a rejected promise): ${(e as Error).message}`);
+    }
+    expect(promise).toBeInstanceOf(Promise);
+    return expect(promise).rejects.toThrow(message);
+  }
+
+  test("url toString() throws", async () => {
+    await expectRejects(
+      () =>
+        fetch({
+          toString() {
+            throw new Error("UBOOM");
+          },
+        } as any),
+      "UBOOM",
+    );
+  });
+
+  test("init.headers iterable throws", async () => {
+    await expectRejects(
+      () =>
+        fetch("http://127.0.0.1:1/", {
+          headers: {
+            *[Symbol.iterator]() {
+              throw new Error("HBOOM");
+            },
+          } as any,
+        }),
+      "HBOOM",
+    );
+  });
+
+  const propertyNames = [
+    "body",
+    "decompress",
+    "headers",
+    "keepalive",
+    "method",
+    "proxy",
+    "redirect",
+    "signal",
+    "timeout",
+    "tls",
+    "unix",
+    "verbose",
+  ];
+  test.each(propertyNames)("init.%s getter throws", async name => {
+    await expectRejects(
+      () =>
+        fetch("http://127.0.0.1:1/", {
+          get [name]() {
+            throw new Error(`${name}-BOOM`);
+          },
+        } as any),
+      `${name}-BOOM`,
+    );
+  });
+});
+
 test("fetch(RequestSubclass, undefined)", async () => {
   class MyRequest extends Request {
     constructor(input: RequestInfo, init?: RequestInit) {

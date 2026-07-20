@@ -226,16 +226,10 @@ impl DirInfo {
 
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
-            // Route through `entries_at` directly (returns `Option<&mut EntriesOption>`)
-            // instead of round-tripping the safe `&mut DirEntry` through `get_entries`'s
-            // `*mut` return just to deref it back here. With `generation = 0` the
-            // generation-check re-read in `entries_at` is a no-op, so this is the
-            // same lookup `get_entries(0)` performs.
-            if let Some(fs::EntriesOption::Entries(entries)) =
-                fs::FileSystem::instance().fs.entries_at(self.entries, 0)
-            {
-                return entries.fd;
-            }
+            // `entries_at(_, 0)` never re-reads (`u16 < 0` is always false), so the
+            // lock it would take covers no mutation; go through the same plain
+            // `at_index` lookup `get_entries_const` uses.
+            return self.get_entries_const().map_or(Fd::INVALID, |e| e.fd);
         }
         Fd::INVALID
     }
@@ -264,6 +258,19 @@ impl DirInfo {
         let entries_ptr = fs::FileSystem::instance()
             .fs
             .entries_at(self.entries, generation)?;
+        match entries_ptr {
+            fs::EntriesOption::Entries(entries) => Some(&**entries),
+            fs::EntriesOption::Err(_) => None,
+        }
+    }
+
+    /// [`get_entries_ref`](Self::get_entries_ref) for call sites that already
+    /// hold `entries_mutex` (the mutex is non-recursive); see
+    /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked).
+    pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
+        let entries_ptr = fs::FileSystem::instance()
+            .fs
+            .entries_at_locked(self.entries, generation)?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(&**entries),
             fs::EntriesOption::Err(_) => None,
@@ -439,39 +446,33 @@ pub(crate) unsafe fn put_slot(
     map: *mut HashMap,
     result: &mut allocators::Result,
     value: DirInfo,
-) -> core::result::Result<*mut DirInfo, bun_core::Error> {
+) -> core::result::Result<*mut DirInfo, crate::Error> {
     debug_assert!(core::ptr::eq(
         map.cast_const(),
         hash_map_instance().cast_const()
     ));
     // SAFETY: `map` is the live singleton; resolver mutex held. The auto-ref
     // `&mut *map` ends when `put` returns, before `slot_ptr_at` runs.
-    unsafe { (*map).put(result, value) }.map_err(bun_core::Error::from)?;
+    unsafe { (*map).put(result, value) }.map_err(crate::Error::from)?;
     // SAFETY: `put` just assigned a non-sentinel, initialized index.
     Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
 }
 
 /// Resolver-side extension trait adapting `BSSMapInner`'s inherent surface to
-/// the resolver's error type (`bun_core::Error`) and pointer-return shape, plus
+/// the resolver's error type (`crate::Error`) and pointer-return shape, plus
 /// `values_mut` which has no inherent equivalent. The name-colliding
 /// methods are shadowed by inherent methods under dot-syntax (Rust resolves
 /// inherent before trait), so the bodies below delegate without recursing.
 /// (`put` is NOT here: it must not take `&mut self` — see [`put_slot`].)
 pub trait HashMapExt {
-    fn get_or_put(
-        &mut self,
-        key: &[u8],
-    ) -> core::result::Result<allocators::Result, bun_core::Error>;
+    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<allocators::Result, crate::Error>;
     fn mark_not_found(&mut self, result: allocators::Result);
     fn remove(&mut self, key: &[u8]) -> bool;
     fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
 }
 impl HashMapExt for HashMap {
     #[inline]
-    fn get_or_put(
-        &mut self,
-        key: &[u8],
-    ) -> core::result::Result<allocators::Result, bun_core::Error> {
+    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<allocators::Result, crate::Error> {
         // Dot-syntax picks inherent `BSSMapInner::get_or_put` (inherent > trait); not recursive.
         self.get_or_put(key).map_err(Into::into)
     }

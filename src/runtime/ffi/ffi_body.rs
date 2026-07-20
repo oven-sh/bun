@@ -277,13 +277,13 @@ impl Source {
         &self,
         state: &mut TCC::State,
         current_file_for_errors: &mut ZBox,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         match self {
             Source::File(file) => {
                 *current_file_for_errors = ZBox::from_bytes(file.as_bytes());
                 state
                     .add_file(file)
-                    .map_err(|_| bun_core::err!("CompilationError"))?;
+                    .map_err(|_| crate::Error::CompilationError)?;
                 *current_file_for_errors = ZBox::from_bytes(b"");
             }
             Source::Files(files) => {
@@ -291,7 +291,7 @@ impl Source {
                     *current_file_for_errors = ZBox::from_bytes(file.as_bytes());
                     state
                         .add_file(file)
-                        .map_err(|_| bun_core::err!("CompilationError"))?;
+                        .map_err(|_| crate::Error::CompilationError)?;
                     *current_file_for_errors = ZBox::from_bytes(b"");
                 }
             }
@@ -602,7 +602,7 @@ impl CompileC {
     pub(crate) fn compile(
         &mut self,
         global_this: &JSGlobalObject,
-    ) -> Result<NonNull<TCC::State>, bun_core::Error> {
+    ) -> crate::Result<NonNull<TCC::State>> {
         let tcc_options_owned: ZBox;
         let compile_options: &ZStr = if !self.flags.is_empty() {
             &self.flags
@@ -625,12 +625,12 @@ impl CompileC {
             },
         }) {
             Ok(s) => s,
-            Err(e) if e == bun_core::err!("OutOfMemory") => {
-                return Err(bun_core::err!("OutOfMemory"));
+            Err(TCC::Error::Alloc(bun_alloc::AllocError)) => {
+                return Err(crate::Error::Alloc(bun_alloc::AllocError));
             }
             Err(_) => {
                 debug_assert!(self.has_deferred_errors());
-                return Err(bun_core::err!("DeferredErrors"));
+                return Err(crate::Error::DeferredErrors);
             }
         };
         // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
@@ -663,7 +663,7 @@ impl CompileC {
                         );
                         if state.add_sys_include_path(include_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add sysinclude path"));
-                            return Err(bun_core::err!("JSError"));
+                            return Err(crate::Error::JSError);
                         }
 
                         let lib_dir = path::resolve_path::join_abs_string_buf_z::<
@@ -673,7 +673,7 @@ impl CompileC {
                         );
                         if state.add_library_path(lib_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add library path"));
-                            return Err(bun_core::err!("JSError"));
+                            return Err(crate::Error::JSError);
                         }
 
                         break 'add_system_include_dir;
@@ -766,22 +766,22 @@ impl CompileC {
         }
 
         self.error_check()
-            .map_err(|_| bun_core::err!("DeferredErrors"))?;
+            .map_err(|_| crate::Error::DeferredErrors)?;
 
         for include_dir in self.include_dirs.items.iter() {
             if state.add_sys_include_path(include_dir).is_err() {
                 debug_assert!(self.has_deferred_errors());
-                return Err(bun_core::err!("DeferredErrors"));
+                return Err(crate::Error::DeferredErrors);
             }
         }
 
         self.error_check()
-            .map_err(|_| bun_core::err!("DeferredErrors"))?;
+            .map_err(|_| crate::Error::DeferredErrors)?;
 
         CompilerRT::define(state);
 
         self.error_check()
-            .map_err(|_| bun_core::err!("DeferredErrors"))?;
+            .map_err(|_| crate::Error::DeferredErrors)?;
 
         for symbol in self.symbols.map.values() {
             if symbol.needs_napi_env() {
@@ -791,7 +791,7 @@ impl CompileC {
                         zstr!("Bun__thisFFIModuleNapiEnv"),
                         global_this.make_napi_env_for_ffi().cast_const(),
                     )
-                    .map_err(|_| bun_core::err!("DeferredErrors"))?;
+                    .map_err(|_| crate::Error::DeferredErrors)?;
                 break;
             }
         }
@@ -799,7 +799,7 @@ impl CompileC {
         for define in self.define.iter() {
             state.define_symbol(&define[0], &define[1]);
             self.error_check()
-                .map_err(|_| bun_core::err!("DeferredErrors"))?;
+                .map_err(|_| crate::Error::DeferredErrors)?;
         }
 
         if self
@@ -808,12 +808,12 @@ impl CompileC {
             .is_err()
         {
             if !self.deferred_errors.is_empty() {
-                return Err(bun_core::err!("DeferredErrors"));
+                return Err(crate::Error::DeferredErrors);
             } else {
                 if !global_this.has_exception() {
                     global_this.throw(format_args!("TinyCC failed to compile"));
                 }
-                return Err(bun_core::err!("JSError"));
+                return Err(crate::Error::JSError);
             }
         }
 
@@ -821,7 +821,7 @@ impl CompileC {
         stdarg::inject(state);
 
         self.error_check()
-            .map_err(|_| bun_core::err!("DeferredErrors"))?;
+            .map_err(|_| crate::Error::DeferredErrors)?;
 
         for library_dir in self.library_dirs.items.iter() {
             // register all, even if some fail. Only fail after all have been registered.
@@ -830,14 +830,14 @@ impl CompileC {
             }
         }
         self.error_check()
-            .map_err(|_| bun_core::err!("DeferredErrors"))?;
+            .map_err(|_| crate::Error::DeferredErrors)?;
 
         for library in self.libraries.items.iter() {
             // register all, even if some fail.
             let _ = state.add_library(library);
         }
         self.error_check()
-            .map_err(|_| bun_core::err!("DeferredErrors"))?;
+            .map_err(|_| crate::Error::DeferredErrors)?;
 
         // TinyCC now manages relocation memory internally
         if dangerously_run_without_jit_protections(|| state.relocate()).is_err() {
@@ -846,7 +846,7 @@ impl CompileC {
                     &b"tcc_relocate returned a negative value"[..],
                 ));
             }
-            return Err(bun_core::err!("DeferredErrors"));
+            return Err(crate::Error::DeferredErrors);
         }
 
         // if errors got added, we would have returned in the relocation catch.
@@ -865,13 +865,13 @@ impl CompileC {
                     bun_fmt::quote(symbol),
                     BStr::new(source_first.as_bytes())
                 ));
-                return Err(bun_core::err!("JSError"));
+                return Err(crate::Error::JSError);
             };
             entry.value_ptr.symbol_from_dynamic_library = Some(sym.as_ptr().cast::<c_void>());
         }
 
         self.error_check()
-            .map_err(|_| bun_core::err!("DeferredErrors"))?;
+            .map_err(|_| crate::Error::DeferredErrors)?;
 
         Ok(state_ptr)
     }
@@ -1152,8 +1152,8 @@ impl FFI {
         // Now we compile the code with tinycc.
         let mut tcc_state: Option<NonNull<TCC::State>> = match compile_c.compile(global_this) {
             Ok(s) => Some(s),
-            Err(err) => {
-                if err == bun_core::err!("DeferredErrors") {
+            Err(err) => match err {
+                crate::Error::DeferredErrors => {
                     let mut combined: Vec<u8> = Vec::new();
                     let file_for_err = if !compile_c.current_file_for_errors.is_empty() {
                         compile_c.current_file_for_errors.as_bytes()
@@ -1173,16 +1173,14 @@ impl FFI {
                     }
 
                     return Err(global_this.throw(format_args!("{}", BStr::new(&combined))));
-                } else if err == bun_core::err!("JSError") {
-                    return Err(JsError::Thrown);
-                } else if err == bun_core::err!("OutOfMemory") {
-                    return Err(JsError::OutOfMemory);
-                } else if err == bun_core::err!("JSTerminated") {
-                    return Err(JsError::Terminated);
-                } else {
-                    unreachable!()
                 }
-            }
+                crate::Error::JSError => return Err(JsError::Thrown),
+                crate::Error::Alloc(_) => return Err(JsError::OutOfMemory),
+                crate::Error::JSTerminated => return Err(JsError::Terminated),
+                other => {
+                    return Err(global_this.throw(format_args!("compile failed: {}", other.name())));
+                }
+            },
         };
         let _tcc_guard = scopeguard::guard(&mut tcc_state, |s| {
             if let Some(state) = s {
@@ -1988,10 +1986,7 @@ impl Function {
         };
     }
 
-    pub(crate) fn compile(
-        &mut self,
-        napi_env: Option<&napi::NapiEnv>,
-    ) -> Result<(), bun_core::Error> {
+    pub(crate) fn compile(&mut self, napi_env: Option<&napi::NapiEnv>) -> crate::Result<()> {
         let mut source_code: Vec<u8> = Vec::new();
         self.print_source_code(&mut source_code)?;
 
@@ -2010,7 +2005,7 @@ impl Function {
             },
         }) {
             Ok(s) => s,
-            Err(_) => return Err(bun_core::err!("TCCMissing")),
+            Err(_) => return Err(crate::Error::TCCMissing),
         };
 
         self.state = Some(state);
@@ -2089,7 +2084,7 @@ impl Function {
         js_context: &JSGlobalObject,
         js_function: JSValue,
         is_threadsafe: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         jsc::mark_binding();
         let mut source_code: Vec<u8> = Vec::new();
         // SAFETY: js_context/js_function are live for the call
@@ -2131,8 +2126,8 @@ impl Function {
             },
         }) {
             Ok(s) => s,
-            Err(e) if e == bun_core::err!("OutOfMemory") => {
-                return Err(bun_core::err!("TCCMissing"));
+            Err(TCC::Error::Alloc(bun_alloc::AllocError)) => {
+                return Err(crate::Error::TCCMissing);
             }
             // 1. .Memory is always a valid option, so InvalidOptions is
             //    impossible
@@ -2226,10 +2221,7 @@ impl Function {
         Ok(())
     }
 
-    pub(crate) fn print_source_code(
-        &self,
-        writer: &mut impl std::io::Write,
-    ) -> Result<(), bun_core::Error> {
+    pub(crate) fn print_source_code(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         if !self.arg_types.is_empty() {
             writer.write_all(b"#define HAS_ARGUMENTS\n")?;
         }
@@ -2386,7 +2378,7 @@ impl Function {
         global_object: Option<&JSGlobalObject>,
         context_ptr: Option<*mut c_void>,
         writer: &mut impl std::io::Write,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         {
             let ptr = global_object
                 .map(|g| std::ptr::from_ref(g) as usize)

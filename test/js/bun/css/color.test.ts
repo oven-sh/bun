@@ -1,6 +1,6 @@
 import { color } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, withoutAggressiveGC } from "harness";
 
 const namedColors = ["red", "green", "blue", "yellow", "purple", "orange", "pink", "brown", "gray"];
 
@@ -183,6 +183,49 @@ test.each(bad)("color(%s, 'css') === null", input => {
   expect(color(input)).toBeNull();
 });
 
+test("invalid format string lists the accepted values", () => {
+  let message!: string;
+  try {
+    // @ts-expect-error
+    color("red", "nope");
+    expect.unreachable();
+  } catch (e) {
+    message = (e as Error).message;
+  }
+  // Must not leak the internal Rust enum name.
+  expect(message).not.toContain("OutputColorFormat");
+  expect(message).toStartWith("format must be one of ");
+  // Every accepted spelling should appear in the message, so a user can copy one.
+  for (const ok of [
+    "ansi",
+    "ansi_16",
+    "ansi-16",
+    "ansi_16m",
+    "ansi-16m",
+    "ansi-24bit",
+    "ansi-truecolor",
+    "ansi_256",
+    "ansi-256",
+    "ansi256",
+    "css",
+    "hex",
+    "HEX",
+    "hsl",
+    "lab",
+    "number",
+    "rgb",
+    "rgba",
+    "[rgb]",
+    "[rgba]",
+    "[r,g,b,a]",
+    "{rgb}",
+    "{r,g,b}",
+    "{rgba}",
+  ]) {
+    expect(message).toContain(`'${ok}'`);
+  }
+});
+
 const weird = [
   ["rgb(-255, 0, 0)", "#000"],
   ["rgb(256, 0, 0)", "red"],
@@ -304,17 +347,35 @@ describe("lab()/oklab() sRGB fallback for boundary colors (#33331)", () => {
   });
 });
 
-// 2^24 color() calls take minutes on debug builds, past the per-test timeout.
+// 2^24 color() calls take minutes on debug builds (past the per-test timeout) and dominate
+// the ASAN lane, so those sweep the ansi256 equivalence classes (~13k deterministic inputs):
+// each single channel, the grey diagonal, the sub-8 cube, and a coarse 17-step cube.
 test.skipIf(isDebug)("fuzz ansi256", () => {
   withoutAggressiveGC(() => {
-    for (let i = 0; i < 256; i++) {
-      const iShifted = i << 16;
-      for (let j = 0; j < 256; j++) {
-        const jShifted = j << 8;
-        for (let k = 0; k < 256; k++) {
-          const int = iShifted | jShifted | k;
-          if (color(int, "ansi256") === null) {
-            throw new Error(`color(${i}, ${j}, ${k}, "ansi256") is null`);
+    const check = (r: number, g: number, b: number) => {
+      if (color((r << 16) | (g << 8) | b, "ansi256") === null) {
+        throw new Error(`color(${r}, ${g}, ${b}, "ansi256") is null`);
+      }
+    };
+    if (isASAN) {
+      for (let v = 0; v < 256; v++) {
+        check(v, 0, 0);
+        check(0, v, 0);
+        check(0, 0, v);
+        check(v, v, v);
+      }
+      for (let r = 0; r < 256; r += r < 8 ? 1 : 17) {
+        for (let g = 0; g < 256; g += g < 8 ? 1 : 17) {
+          for (let b = 0; b < 256; b += b < 8 ? 1 : 17) {
+            check(r, g, b);
+          }
+        }
+      }
+    } else {
+      for (let i = 0; i < 256; i++) {
+        for (let j = 0; j < 256; j++) {
+          for (let k = 0; k < 256; k++) {
+            check(i, j, k);
           }
         }
       }
@@ -516,5 +577,75 @@ describe("input forms", () => {
     expect(color("#f00", "[rgba]")).toEqual([255, 0, 0, 255]);
     expect(color("#f00", "{rgb}")).toEqual({ r: 255, g: 0, b: 0 });
     expect(color("#f00", "[rgb]")).toEqual([255, 0, 0]);
+  });
+
+  // The r/g/b keys of an object input and the CSS rgba() parser both clamp
+  // out-of-range values; the object's `a` key must too (it used to wrap mod 256,
+  // so a: 1.004 became fully transparent).
+  test("out-of-range object alpha clamps to [0, 1]", () => {
+    expect(color({ r: 10, g: 20, b: 30, a: 1.004 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: 2 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: 100 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: -1 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 0 });
+    expect(color({ r: 10, g: 20, b: 30, a: -0.5 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 0 });
+    expect(color({ r: 10, g: 20, b: 30, a: Infinity }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: -Infinity }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 0 });
+  });
+
+  test("object alpha agrees with the CSS parser's clamping", () => {
+    for (const a of [1.5, 2, -0.5, -1, 1.004]) {
+      expect(color({ r: 10, g: 20, b: 30, a }, "{rgba}")).toEqual(color(`rgba(10, 20, 30, ${a})`, "{rgba}"));
+    }
+  });
+
+  test("in-range object alpha is unchanged", () => {
+    expect(color({ r: 10, g: 20, b: 30, a: 1 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: 0.5 }, "[rgba]")).toEqual([10, 20, 30, 127]);
+  });
+});
+
+// https://drafts.csswg.org/css-color-5/#color-mix — the grammar is
+// <percentage [0,100]>, so a value outside that range is a parse error.
+describe("color-mix() percentage range", () => {
+  // fuzz repro: -9% drove HSL saturation negative and tripped a debug assertion
+  // in hsl_to_rgb; release builds produced out-of-gamut garbage.
+  test("does not crash on a negative mix percentage", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write(String(Bun.color("color-mix(in hsl,red -9%,color(display-p3 0 0 0)", "lab")))`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({ stdout: "null", exitCode: 0 });
+  });
+
+  test.each([
+    "color-mix(in hsl, red -9%, blue)",
+    "color-mix(in hsl, red 150%, blue)",
+    "color-mix(in hsl, -10% red, blue)",
+    "color-mix(in hsl, red, blue -9%)",
+    "color-mix(in hsl, red, blue 150%)",
+    "color-mix(in hsl, red, 150% blue)",
+    "color-mix(in srgb, red -1%, blue)",
+    "color-mix(in srgb, red 100.001%, blue)",
+    "color-mix(in lab, red -9%, blue)",
+    "color-mix(in hwb, red -9%, blue)",
+    "color-mix(in oklch, red 150%, blue)",
+  ])("rejects %s", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+
+  test.each([
+    ["color-mix(in hsl, red 0%, blue)", "#00f"],
+    ["color-mix(in hsl, red 100%, blue)", "red"],
+    ["color-mix(in hsl, red 50%, blue 50%)", "#f0f"],
+    ["color-mix(in hsl, red, blue 0%)", "red"],
+    ["color-mix(in hsl, red, blue 100%)", "#00f"],
+  ])("accepts %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
   });
 });

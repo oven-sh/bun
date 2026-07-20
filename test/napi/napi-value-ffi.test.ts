@@ -1,6 +1,7 @@
 import { spawnSync } from "bun";
 import { cc, dlopen } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
+import { existsSync, statSync } from "fs";
 import { bunEnv, bunExe, canBuildNodeAddons, isArm64, isASAN, isWindows } from "harness";
 import { join } from "path";
 
@@ -27,20 +28,39 @@ const symbols = {
 
 let addon1, addon2, cc1, cc2;
 
+const nodeApiHeadersInclude = join(__dirname, "napi-app/node_modules/node-api-headers/include");
+
+// The addons here don't link against bun, so existing binaries stay valid across
+// bun builds. `bun install` triggers a full `node-gyp rebuild` (clean + build of
+// every target in napi-app), so skip it when the two .node files this test needs
+// already exist and are newer than their sources (napi.test.ts or a previous run
+// usually has built them already).
+function needsInstall(): boolean {
+  if (!existsSync(nodeApiHeadersInclude)) return true;
+  for (const name of ["ffi_addon_1", "ffi_addon_2"]) {
+    const built = join(__dirname, `napi-app/build/Debug/${name}.node`);
+    if (!existsSync(built)) return true;
+    if (statSync(built).mtimeMs < statSync(join(__dirname, `napi-app/${name}.c`)).mtimeMs) return true;
+  }
+  return false;
+}
+
 beforeAll(() => {
   if (isFFIUnavailable) return;
 
-  // build gyp
-  const install = spawnSync({
-    cmd: [bunExe(), "install", "--verbose"],
-    cwd: join(__dirname, "napi-app"),
-    stderr: "inherit",
-    env: bunEnv,
-    stdout: "inherit",
-    stdin: "inherit",
-  });
-  if (!install.success) {
-    throw new Error("build failed");
+  if (needsInstall()) {
+    // build gyp
+    const install = spawnSync({
+      cmd: [bunExe(), "install", "--verbose"],
+      cwd: join(__dirname, "napi-app"),
+      stderr: "inherit",
+      env: bunEnv,
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+    if (!install.success) {
+      throw new Error("build failed");
+    }
   }
   addon1 = dlopen(join(__dirname, `napi-app/build/Debug/ffi_addon_1.node`), symbols).symbols;
   addon2 = dlopen(join(__dirname, `napi-app/build/Debug/ffi_addon_2.node`), symbols).symbols;
@@ -51,12 +71,12 @@ beforeAll(() => {
       cc1 = cc({
         source,
         symbols,
-        flags: `-I${join(__dirname, "napi-app/node_modules/node-api-headers/include")}`,
+        flags: `-I${nodeApiHeadersInclude}`,
       }).symbols;
       cc2 = cc({
         source,
         symbols,
-        flags: `-I${join(__dirname, "napi-app/node_modules/node-api-headers/include")}`,
+        flags: `-I${nodeApiHeadersInclude}`,
       }).symbols;
     } catch (e) {
       // ignore compilation failure on Windows

@@ -3,7 +3,9 @@ use core::ffi::c_void;
 use core::mem::size_of;
 
 use bun_core::String as BunString;
+use bun_core::strings;
 use bun_http::{Headers, Method};
+use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
 use bun_io::Closer;
 use bun_io::FileType;
@@ -41,6 +43,7 @@ pub struct FileRoute {
     has_last_modified_header: bool,
     has_content_length_header: bool,
     has_content_range_header: bool,
+    has_date_header: bool,
 }
 
 pub struct InitOptions<'a> {
@@ -120,6 +123,7 @@ impl FileRoute {
             has_last_modified_header: headers.get(b"last-modified").is_some(),
             has_content_length_header: headers.get(b"content-length").is_some(),
             has_content_range_header: headers.get(b"content-range").is_some(),
+            has_date_header: headers.get(b"date").is_some(),
             blob,
             headers,
             status_code: opts.status_code,
@@ -179,6 +183,7 @@ impl FileRoute {
                     has_last_modified_header: headers.get(b"last-modified").is_some(),
                     has_content_length_header: headers.get(b"content-length").is_some(),
                     has_content_range_header: headers.get(b"content-range").is_some(),
+                    has_date_header: headers.get(b"date").is_some(),
                     blob,
                     headers,
                     status_code,
@@ -203,6 +208,7 @@ impl FileRoute {
                     has_content_length_header: false,
                     has_last_modified_header: false,
                     has_content_range_header: false,
+                    has_date_header: false,
                     status_code: 200,
                     stat_hash: Cell::new(StatHash::default()),
                 }))));
@@ -301,13 +307,13 @@ impl FileRoute {
         unsafe { Self::on(this, req, resp, method) };
     }
 
-    // Takes `*mut FileRoute` (not `&self`) because the
-    // intrusive-refcounted heap object is captured raw into a `scopeguard`
-    // whose closure may free `*this` via `deref()` before the local `&Self`
-    // borrow lexically ends. Derive a single `&FileRoute` for all field reads;
-    // the only per-request mutation (`stat_hash.hash`) goes through `Cell`, so
-    // no `&mut Self` is ever materialized and the shared borrow stays valid
-    // under Stacked Borrows across that write.
+    // Takes `*mut FileRoute` (not `&self`) because `this_ptr` is stashed as
+    // `FileResponseStream`'s `ctx` userdata; the async `on_stream_complete`
+    // may hold the last ref after a reload drops the route table's. Within
+    // the body the route-table ref + the `ref_()` below keep `*this_ptr`
+    // alive, and every per-request mutation (`ref_count`, `stat_hash`) goes
+    // through `Cell`, so a single `&FileRoute` is sound under Stacked
+    // Borrows for the whole call.
     /// # Safety
     /// `this_ptr` must point to a live heap `FileRoute` for the duration of
     /// this call. The `ref_()` taken below keeps it alive until
@@ -327,18 +333,12 @@ impl FileRoute {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
-        // Clone the path so the borrow into `this.blob.store`
-        // doesn't span the scopeguard creation (the guard's closure may free
-        // `*this_ptr` on early-return drop).
-        let path_buf: Vec<u8> = match this.blob.store.get().as_ref().unwrap().get_path() {
-            Some(p) => p.to_vec(),
-            None => {
-                req.set_yield(true);
-                Self::on_response_complete(this_ptr, resp);
-                return;
-            }
+        let store = this.blob.store().unwrap().clone();
+        let Some(path) = store.get_path() else {
+            req.set_yield(true);
+            Self::on_response_complete(this_ptr, resp);
+            return;
         };
-        let path: &[u8] = path_buf.as_slice();
 
         let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 
@@ -450,13 +450,26 @@ impl FileRoute {
 
         let status_code: u16 = 'brk: {
             // RFC 9110 §13.2.2: conditional preconditions are evaluated before
-            // Range. If-Modified-Since on an unmodified resource yields 304 even
-            // when a Range header is present (without If-Range).
-            // Unlike If-Unmodified-Since, If-Modified-Since can only be used with a
-            // GET or HEAD. When used in combination with If-None-Match, it is
-            // ignored, unless the server doesn't support If-None-Match.
-            if let Some(requested_if_modified_since) = input_if_modified_since_date {
-                if method == Method::HEAD || method == Method::GET {
+            // Range. If-None-Match is evaluated first; when present it suppresses
+            // If-Modified-Since regardless of outcome (step 3 vs step 4). Both
+            // only apply to GET/HEAD for 304 purposes.
+            if method == Method::HEAD || method == Method::GET {
+                if let Some(inm) = req.header(b"if-none-match").filter(|v| !v.is_empty()) {
+                    if this.status_code == 200 {
+                        let matched = match this.headers.get(b"etag").filter(|v| !v.is_empty()) {
+                            Some(etag) => ETag::if_none_match(etag, inm),
+                            // No stored ETag: only `*` can match (RFC 9110
+                            // §13.1.2 — any current representation).
+                            None => strings::trim(inm, b" \t") == b"*",
+                        };
+                        if matched {
+                            break 'brk 304;
+                        }
+                    }
+                    // If-None-Match present but did not match: condition is
+                    // true, fall through to Range/200 without consulting
+                    // If-Modified-Since.
+                } else if let Some(requested_if_modified_since) = input_if_modified_since_date {
                     let Ok(lmd) = this.last_modified_date() else {
                         return;
                     }; // TODO: properly propagate exception upwards
@@ -485,6 +498,9 @@ impl FileRoute {
         req.set_yield(false);
 
         this.write_status_code(status_code, resp);
+        if this.has_date_header {
+            resp.mark_wrote_date_header();
+        }
         resp.write_mark();
         this.write_headers(resp);
 

@@ -26,6 +26,7 @@ public:
     DECLARE_INFO;
     // visitChildrenImpl MUST visit ALL FOUR barriers: m_stream, m_reader, m_sink, m_result.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -44,9 +45,9 @@ public:
     JSC::WriteBarrier<JSC::JSObject> m_sink;
     // the JSPromise readStreamIntoSink returned (what Rust's Signal protocol awaits).
     JSC::WriteBarrier<JSC::JSPromise> m_result;
-    bool m_didThrow { false };
-    bool m_didClose { false };
-    bool m_started { false };
+    bool m_didThrow : 1 { false };
+    bool m_didClose : 1 { false };
+    bool m_started : 1 { false };
 
 private:
     JSReadStreamIntoSinkOperation(JSC::VM&, JSC::Structure*);

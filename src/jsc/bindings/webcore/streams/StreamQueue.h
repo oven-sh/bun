@@ -30,6 +30,7 @@
 
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSCell.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -197,9 +198,28 @@ public:
             visitEntry(visitor, entry);
     }
 
+    // HeapAnalyzer: called from the owner's analyzeHeap, under the same cellLock() scope
+    // as visit(). Reports each queued value as an index edge for heap-snapshot retainers.
+    void analyzeHeap(const WTF::AbstractLocker&, JSC::JSCell* from, JSC::HeapAnalyzer& analyzer)
+    {
+        uint32_t i = 0;
+        for (auto& entry : m_queue) {
+            analyzeEntry(from, analyzer, entry, i);
+            ++i;
+        }
+    }
+
 private:
+    static void analyzeEntry(JSC::JSCell* from, JSC::HeapAnalyzer& analyzer, ValueWithSize& entry, uint32_t i)
+    {
+        JSC::JSValue v = entry.value.get();
+        if (v && v.isCell())
+            analyzer.analyzeIndexEdge(from, v.asCell(), i);
+    }
+    static void analyzeEntry(JSC::JSCell*, JSC::HeapAnalyzer&, ByteQueueEntry&, uint32_t) {}
+
     template<typename Visitor>
-    static void visitEntry(Visitor& visitor, ValueWithSize& entry) { visitor.append(entry.value); }
+    static void visitEntry(Visitor& visitor, ValueWithSize& entry) { visitor.appendHidden(entry.value); }
     template<typename Visitor>
     static void visitEntry(Visitor&, ByteQueueEntry&) {} // RefPtr impl: nothing for the GC
 

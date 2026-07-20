@@ -111,7 +111,7 @@ impl CompileTarget {
         self.eql(&CompileTarget::default())
     }
 
-    pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
                 // The env var slice is `&'static [u8]`,
@@ -127,10 +127,10 @@ impl CompileTarget {
         &self,
         buf: &'a mut [u8],
         registry_url: &[u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    ) -> crate::Result<&'a [u8]> {
         // Validate the target is supported before building URL
         if !self.is_supported() {
-            return Err(bun_core::err!("UnsupportedTarget"));
+            return Err(crate::Error::UnsupportedTarget);
         }
 
         // Runtime concat is fine for a one-shot URL build.
@@ -174,9 +174,9 @@ impl CompileTarget {
             Err(e) => {
                 // Catch buffer overflow or other formatting errors
                 if e.kind() == std::io::ErrorKind::WriteZero {
-                    return Err(bun_core::err!("BufferTooSmall"));
+                    return Err(crate::Error::BufferTooSmall);
                 }
-                Err(bun_core::err!("NoSpaceLeft"))
+                Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))
             }
         }
     }

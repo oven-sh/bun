@@ -50,8 +50,7 @@ pub use readable::Readable;
 pub mod writable;
 pub use writable::Writable;
 
-#[path = "subprocess/StaticPipeWriter.rs"]
-pub mod static_pipe_writer;
+pub use bun_spawn::static_pipe_writer;
 pub use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
 
 pub use bun_io::MaxBuf;
@@ -680,6 +679,44 @@ impl Subprocess<'_> {
         let _ = self.try_kill(self.kill_signal);
     }
 
+    /// `MaxBuf::Owner::on_overflow` target. Routes straight from the `MaxBuf`
+    /// allocation to this `Subprocess`, independent of whichever pipe reader
+    /// currently holds the budget (the `.stdout`/`.stderr` getter transfers it
+    /// to a `FileReader`).
+    ///
+    /// # Safety
+    /// `sp` is the `Subprocess` passed to `MaxBuf::create_for_subprocess`; it
+    /// is live while the matching `*_maxbuf` slot is `Some` (cleared in
+    /// `finalize` and below).
+    pub(crate) unsafe fn on_max_buffer_overflow(sp: NonNull<()>, maxbuf: NonNull<MaxBuf::MaxBuf>) {
+        // SAFETY: caller contract; all accessed fields are `Cell<_>`.
+        let sp = unsafe { sp.cast::<Subprocess<'static>>().as_ref() };
+        let kind = if sp.stdout_maxbuf.get() == Some(maxbuf) {
+            let mut mb = sp.stdout_maxbuf.get();
+            MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
+            sp.stdout_maxbuf.set(mb);
+            MaxBuf::Kind::Stdout
+        } else {
+            let mut mb = sp.stderr_maxbuf.get();
+            MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
+            sp.stderr_maxbuf.set(mb);
+            MaxBuf::Kind::Stderr
+        };
+        sp.on_max_buffer(kind);
+    }
+
+    /// Close any still-open stdout/stderr pipe readers so the sync wait loop
+    /// stops waiting for EOF after timeout/maxBuffer. Matches Node.js
+    /// `SyncProcessRunner::Kill()`. Called outside any reader callback.
+    pub fn close_readable_pipes(&self) {
+        if matches!(self.stdout.get(), Readable::Pipe(_)) {
+            self.stdout.with_mut(|s| s.close());
+        }
+        if matches!(self.stderr.get(), Readable::Pipe(_)) {
+            self.stderr.with_mut(|s| s.close());
+        }
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn kill(
         this: &Self,
@@ -860,6 +897,17 @@ impl Subprocess<'_> {
                 }
             }
         }
+        // The raw fd numbers are now visible to JS and the caller owns them.
+        // Downgrade so finalize_streams never closes a number JS may have
+        // already closed (whose value the kernel may have since recycled).
+        #[cfg(not(windows))]
+        this.stdio_pipes.with_mut(|pipes| {
+            for slot in pipes.iter_mut() {
+                if let ExtraPipe::OwnedFd(fd) = *slot {
+                    *slot = ExtraPipe::UnownedFd(fd);
+                }
+            }
+        });
         Ok(array)
     }
 
@@ -907,17 +955,23 @@ impl Subprocess<'_> {
         // provenance (no `&Process → *mut` round-trip).
         unsafe { (*jsc_vm).on_subprocess_exit(NonNull::new_unchecked(process)) };
 
-        #[cfg(windows)]
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
-            // POSIX gets EOF on the master when the child (last slave_fd holder)
-            // exits. ConPTY's conhost stays alive after the child exits, so close
-            // the pseudoconsole now to deliver EOF and fire the terminal's exit
-            // callback. Leaves the Terminal itself open to match POSIX.
+            // Deliver EOF to the terminal reader without closing the Terminal.
+            // POSIX drains then releases slave_fd (BSD kernels flush on last
+            // slave close). Windows: the ConDrv \Reference handle was released
+            // at spawn time, so conhost exits and breaks the output pipe once
+            // its last client (this child, or a grandchild it left behind) has
+            // disconnected; unref the writer here and leave the reader ref'd
+            // until that EOF arrives.
             if let Some(terminal) = self.terminal.get() {
                 // `BackRef` invariant holds: the terminal is owned by (or
                 // borrowed from a JS wrapper kept live by) this subprocess and
                 // outlives this scope; single JS thread.
-                bun_ptr::BackRef::from(terminal).close_pseudoconsole();
+                let term = bun_ptr::BackRef::from(terminal);
+                #[cfg(unix)]
+                term.drain_and_close_slave_fd();
+                #[cfg(windows)]
+                term.unref_after_inline_child_exit();
             }
         }
 
@@ -964,28 +1018,18 @@ impl Subprocess<'_> {
             crate::webcore::file_sink::JSSink::set_destroy_callback(existing_stdin_value, 0);
         }
 
-        if self.flags.get().contains(Flags::IS_SYNC) {
-            // This doesn't match Node.js' behavior, but for synchronous
-            // subprocesses the streams should not keep the timers going.
-            if matches!(self.stdout.get(), Readable::Pipe(_)) {
-                self.stdout.with_mut(|s| s.close());
+        // Node.js keeps reading stdout/stderr until EOF after the direct child
+        // is reaped (a grandchild may still be writing). Sync and async both
+        // resume reads here; timeout/maxBuffer bound the sync wait.
+        if let Readable::Pipe(pipe) = self.stdout.get() {
+            if !pipe.reader.is_done() {
+                Readable::pipe_reader_mut(pipe).reader.read();
             }
+        }
 
-            if matches!(self.stderr.get(), Readable::Pipe(_)) {
-                self.stderr.with_mut(|s| s.close());
-            }
-        } else {
-            // This matches Node.js behavior. Node calls resume() on the streams.
-            if let Readable::Pipe(pipe) = self.stdout.get() {
-                if !pipe.reader.is_done() {
-                    Readable::pipe_reader_mut(pipe).reader.read();
-                }
-            }
-
-            if let Readable::Pipe(pipe) = self.stderr.get() {
-                if !pipe.reader.is_done() {
-                    Readable::pipe_reader_mut(pipe).reader.read();
-                }
+        if let Readable::Pipe(pipe) = self.stderr.get() {
+            if !pipe.reader.is_done() {
+                Readable::pipe_reader_mut(pipe).reader.read();
             }
         }
 

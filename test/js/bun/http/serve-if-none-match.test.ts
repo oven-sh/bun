@@ -284,6 +284,109 @@ describe("If-None-Match Support", () => {
     });
   });
 
+  // RFC 9110 §13.2.2 step 4 / §13.1.3: when If-None-Match is absent, an origin
+  // MUST evaluate If-Modified-Since against the selected representation's
+  // Last-Modified and MUST answer 304 when Last-Modified <= the field date.
+  describe("If-Modified-Since Evaluation", () => {
+    const LM = "Wed, 01 Jan 2020 00:00:00 GMT";
+    const EARLIER = "Tue, 01 Jan 2019 00:00:00 GMT";
+    const LATER = "Fri, 01 Jan 2027 00:00:00 GMT";
+    let imsServer: Server;
+
+    beforeAll(() => {
+      imsServer = Bun.serve({
+        port: 0,
+        development: false,
+        static: {
+          "/lm": new Response("hello static route", {
+            headers: { "Content-Type": "text/plain", "Last-Modified": LM },
+          }),
+          "/no-lm": new Response("no last-modified", {
+            headers: { "Content-Type": "text/plain" },
+          }),
+        },
+        fetch: () => new Response("Not Found", { status: 404 }),
+      });
+      imsServer.unref();
+    });
+
+    afterAll(() => {
+      imsServer.stop(true);
+    });
+
+    it("should return 304 when If-Modified-Since equals Last-Modified (GET)", async () => {
+      const res = await fetch(`${imsServer.url}lm`, {
+        headers: { "If-Modified-Since": LM },
+      });
+      expect(res.status).toBe(304);
+      expect(res.headers.get("Last-Modified")).toBe(LM);
+      expect(await res.text()).toBe("");
+    });
+
+    it("should return 304 when If-Modified-Since is later than Last-Modified (GET)", async () => {
+      const res = await fetch(`${imsServer.url}lm`, {
+        headers: { "If-Modified-Since": LATER },
+      });
+      expect(res.status).toBe(304);
+      expect(await res.text()).toBe("");
+    });
+
+    it("should return 200 when If-Modified-Since is earlier than Last-Modified", async () => {
+      const res = await fetch(`${imsServer.url}lm`, {
+        headers: { "If-Modified-Since": EARLIER },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hello static route");
+    });
+
+    it("should return 304 when If-Modified-Since equals Last-Modified (HEAD)", async () => {
+      const res = await fetch(`${imsServer.url}lm`, {
+        method: "HEAD",
+        headers: { "If-Modified-Since": LM },
+      });
+      expect(res.status).toBe(304);
+      expect(await res.text()).toBe("");
+    });
+
+    it("should ignore If-Modified-Since when If-None-Match is present (RFC 9110 §13.1.3)", async () => {
+      // If-None-Match takes precedence; a non-matching ETag with a satisfying
+      // If-Modified-Since must still return 200.
+      const res = await fetch(`${imsServer.url}lm`, {
+        headers: {
+          "If-None-Match": '"does-not-match"',
+          "If-Modified-Since": LM,
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hello static route");
+    });
+
+    it("should return 200 for an unparsable If-Modified-Since date", async () => {
+      const res = await fetch(`${imsServer.url}lm`, {
+        headers: { "If-Modified-Since": "not a date" },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hello static route");
+    });
+
+    it("should return 200 when the route has no Last-Modified header", async () => {
+      const res = await fetch(`${imsServer.url}no-lm`, {
+        headers: { "If-Modified-Since": LATER },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("no last-modified");
+    });
+
+    it("should not apply If-Modified-Since to POST requests", async () => {
+      const res = await fetch(`${imsServer.url}lm`, {
+        method: "POST",
+        headers: { "If-Modified-Since": LM },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hello static route");
+    });
+  });
+
   describe("Other HTTP Methods", () => {
     it("should not apply If-None-Match to POST requests", async () => {
       const res = await fetch(`${server.url}basic`, {

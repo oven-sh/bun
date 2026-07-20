@@ -220,11 +220,6 @@ void updateWithBufferView(JSGlobalObject* globalObject, JSSign* sign, JSC::JSArr
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    if (bufferView->isDetached()) {
-        throwTypeError(globalObject, scope, "Buffer is detached"_s);
-        return;
-    }
-
     size_t byteLength = bufferView->byteLength();
     if (byteLength > INT_MAX) {
         throwRangeError(globalObject, scope, "data is too long"_s);

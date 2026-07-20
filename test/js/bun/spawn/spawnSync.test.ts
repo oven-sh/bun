@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isPosix } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isPosix, isWindows } from "harness";
 import { join } from "path";
 describe("spawnSync", () => {
   it("should throw a RangeError if timeout is less than 0", () => {
@@ -33,12 +33,69 @@ describe("spawnSync", () => {
     });
   }
 
+  // https://github.com/oven-sh/bun/issues/33932
+  // Windows-only: the timeout timer lives on a cached libuv loop whose clock
+  // freezes between calls; the POSIX path compares against the real clock.
+  it.skipIf(!isWindows)("timeout is measured from the current call, not from the previous spawnSync", async () => {
+    const echo = (s: string) => ["cmd", "/c", `echo ${s}`];
+    // Populate the cached isolated event loop, then let its clock go stale
+    // for longer than the next call's timeout.
+    const first = Bun.spawnSync({ cmd: echo("first"), stdout: "pipe", stderr: "pipe" });
+    expect(first.exitCode).toBe(0);
+
+    await Bun.sleep(2000);
+
+    const result = Bun.spawnSync({ cmd: echo("ok"), stdout: "pipe", stderr: "pipe", timeout: 1500 });
+    expect({
+      stdout: result.stdout.toString().trim(),
+      exitedDueToTimeout: result.exitedDueToTimeout,
+      exitCode: result.exitCode,
+    }).toEqual({ stdout: "ok", exitedDueToTimeout: false, exitCode: 0 });
+  });
+
   it.skipIf(process.platform !== "linux")("should use memfd when possible", () => {
     expect([join(import.meta.dir, "spawnSync-memfd-fixture.ts")]).toRun();
   });
 
   it.skipIf(!isPosix)("should use spawnSync optimizations when possible", () => {
     expect([join(import.meta.dir, "spawnSync-counters-fixture.ts")]).toRun();
+  });
+
+  describe.skipIf(!isPosix)("drains piped stdio to EOF after the direct child exits", () => {
+    // Grandchild inherits the pipe and writes after the direct child has exited.
+    const sh = (fd: number) => [
+      "/bin/sh",
+      "-c",
+      `printf A >&${fd}; ( sleep 0.3; printf B >&${fd}; sleep 0.1; printf C >&${fd} ) & exit 0`,
+    ];
+    for (const maxBuffer of [undefined, 1024 * 1024]) {
+      it(`stdout (maxBuffer=${maxBuffer})`, () => {
+        const { stdout, exitCode } = Bun.spawnSync({
+          cmd: sh(1),
+          stdio: ["ignore", "pipe", "ignore"],
+          maxBuffer,
+        });
+        expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "ABC", exitCode: 0 });
+      });
+      it(`stderr (maxBuffer=${maxBuffer})`, () => {
+        const { stderr, exitCode } = Bun.spawnSync({
+          cmd: sh(2),
+          stdio: ["ignore", "ignore", "pipe"],
+          maxBuffer,
+        });
+        expect({ stderr: stderr.toString(), exitCode }).toEqual({ stderr: "ABC", exitCode: 0 });
+      });
+    }
+
+    it("timeout still bounds the wait when a grandchild never closes the pipe", () => {
+      const { stdout, exitedDueToTimeout } = Bun.spawnSync({
+        cmd: ["/bin/sh", "-c", "printf A; sleep 5 & exit 0"],
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 500,
+      });
+      // The grandchild holds the pipe open and writes nothing; timeout must fire.
+      expect({ stdout: stdout.toString(), exitedDueToTimeout }).toEqual({ stdout: "A", exitedDueToTimeout: true });
+    });
   });
 });
 

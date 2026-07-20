@@ -21,7 +21,7 @@ You can configure how deeply `console.log()` prints nested objects:
 ```js
 const nested = { a: { b: { c: { d: "deep" } } } };
 console.log(nested);
-// Default (depth 2): { a: { b: [Object] } }
+// Default (depth 2): { a: { b: { c: [Object ...] } } }
 // With depth 4: { a: { b: { c: { d: 'deep' } } } }
 ```
 

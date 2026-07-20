@@ -23,7 +23,7 @@ pub(crate) fn view(
     spec_: &[u8],
     property_path: Option<&[u8]>,
     json_output: bool,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let bump = Bump::new();
     let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.

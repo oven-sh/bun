@@ -97,6 +97,7 @@ JSObject* JSBunRequest::cookies() const
 }
 
 extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject* globalObject);
+extern "C" void Request__syncClonedBodyStreamCaches(void* self, JSGlobalObject* globalObject, EncodedJSValue thisValue, void* cloned, EncodedJSValue jsWrapper);
 
 JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 {
@@ -107,6 +108,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
     EXCEPTION_ASSERT(!!raw == !throwScope.exception());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
     auto* clone = this->create(vm, structure, raw, nullptr);
+    Request__syncClonedBodyStreamCaches(this->wrapped(), globalObject, JSValue::encode(this), clone->wrapped(), JSValue::encode(clone));
 
     // Cookies and params are deep copied as they can be changed between the clone and original
     if (auto* params = this->params()) {

@@ -110,6 +110,11 @@ pub struct PostgresSQLConnection {
     pub pipelined_requests: Cell<u32>,
     /// number of non-pipelined requests (Simple/Copy)
     pub nonpipelinable_requests: Cell<u32>,
+    /// number of queued requests whose bytes have not been written yet
+    /// (QueryStatus::Pending); gates the enqueue-time pipeline fast path so a
+    /// later prepared-statement execute cannot be emitted ahead of an earlier
+    /// queued request whose Parse/Bind/Execute is still unwritten.
+    pub pending_requests: Cell<u32>,
 
     pub poll_ref: JsCell<KeepAlive>,
     // Read-only back-reference to the JS global; the VM/global strictly outlives
@@ -1192,6 +1197,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             requests: JsCell::new(PostgresRequest::Queue::init()),
             pipelined_requests: Cell::new(0),
             nonpipelinable_requests: Cell::new(0),
+            pending_requests: Cell::new(0),
             poll_ref: JsCell::new(KeepAlive::default()),
             global_object: BackRef::new(global_object),
             // `vm` is the `&mut VirtualMachine` from `bun_vm().as_mut()` above —
@@ -1275,9 +1281,10 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             Ok(s) => s,
             Err(err) => {
                 PostgresSQLConnection::deinit(ptr);
-                return Err(
-                    global_object.throw_error(err.into(), "failed to connect to postgresql")
-                );
+                return Err(global_object.throw_error(
+                    bun_jsc::CrateError::from(err),
+                    "failed to connect to postgresql",
+                ));
             }
         }));
     }
@@ -1485,6 +1492,7 @@ impl PostgresSQLConnection {
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
+                    self.note_request_written();
                     let Some(stmt) = request.statement_mut() else {
                         // The deref/discard at the bottom of the loop is intentionally skipped here.
                         continue;
@@ -1596,6 +1604,18 @@ impl PostgresSQLConnection {
             .get()
             .contains(ConnectionFlags::IS_READY_FOR_QUERY)
             || self.current().is_some()
+    }
+
+    #[inline]
+    pub fn note_request_pending(&self) {
+        self.pending_requests.set(self.pending_requests.get() + 1);
+    }
+
+    #[inline]
+    pub fn note_request_written(&self) {
+        let n = self.pending_requests.get();
+        debug_assert!(n > 0, "pending_requests underflow");
+        self.pending_requests.set(n.wrapping_sub(1));
     }
 
     pub fn can_pipeline(&self) -> bool {
@@ -1795,7 +1815,12 @@ impl PostgresSQLConnection {
                         .set(self.pipelined_requests.get() - 1);
                 }
             }
-            QueryStatus::Success | QueryStatus::Fail | QueryStatus::Pending => {}
+            QueryStatus::Pending => {
+                // ErrorResponse on a Parse-in-flight request: it never reached
+                // Binding, so account for it leaving the pending set here.
+                self.note_request_written();
+            }
+            QueryStatus::Success | QueryStatus::Fail => {}
         }
     }
 
@@ -1865,6 +1890,11 @@ impl PostgresSQLConnection {
             let req = ParentRef::from(NonNull::new(req_ptr).expect("queue item non-null"));
             match req.status.get() {
                 QueryStatus::Pending => {
+                    // Optimistically account for this request leaving Pending; the
+                    // few paths below that keep it Pending (can't execute yet /
+                    // Parse written but not Bind / statement still Parsing) undo
+                    // this via note_request_pending() before returning/continuing.
+                    self.note_request_written();
                     if req.flags.get().simple {
                         if self.pipelined_requests.get() > 0
                             || !self
@@ -1880,6 +1910,7 @@ impl PostgresSQLConnection {
                                     .contains(ConnectionFlags::IS_READY_FOR_QUERY)
                             );
                             // need to wait for the previous request to finish before starting simple queries
+                            self.note_request_pending();
                             defer_cleanup!(self);
                             return;
                         }
@@ -2063,6 +2094,7 @@ impl PostgresSQLConnection {
                                             "need to wait to finish the pipeline before starting a new query preparation"
                                         );
                                         // need to wait to finish the pipeline before starting a new query preparation
+                                        self.note_request_pending();
                                         defer_cleanup!(self);
                                         return;
                                     }
@@ -2264,17 +2296,22 @@ impl PostgresSQLConnection {
                                         f.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                     });
                                     statement.status = StatementStatus::Parsing;
+                                    // Parse+Describe+Sync written; Bind+Execute deferred to the
+                                    // next advance(), so the request is still pending on the wire.
+                                    self.note_request_pending();
                                     self.flush_data_and_reset_timeout();
                                     defer_cleanup!(self);
                                     return;
                                 }
                                 StatementStatus::Parsing => {
                                     // we are still parsing, lets wait for it to be prepared or failed
+                                    self.note_request_pending();
                                     offset += 1;
                                     continue;
                                 }
                             }
                         } else {
+                            self.note_request_pending();
                             offset += 1;
                             continue;
                         }
@@ -2341,17 +2378,20 @@ impl PostgresSQLConnection {
         message_type: MessageType,
         mut reader: protocol::NewReader<Context>,
     ) -> Result<(), AnyPostgresError> {
-        // protocol `decode_internal` returns `bun_core::Error`;
-        // round-trip through the name-based `From` impl.
         #[inline(always)]
-        fn pg_err(e: bun_core::Error) -> AnyPostgresError {
-            AnyPostgresError::from(e)
+        fn pg_err(e: crate::Error) -> AnyPostgresError {
+            e.name().parse().unwrap_or(AnyPostgresError::JSError)
         }
         debug!("on({})", <&'static str>::from(message_type));
 
         match message_type {
             MessageType::DataRow => {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                if request.status.get() == QueryStatus::Fail {
+                    // ErrorResponse already rejected this request and dropped
+                    // its GC protection; consume and discard until ReadyForQuery.
+                    return reader.skip_message();
+                }
 
                 let statement = request
                     .statement_mut()
@@ -2509,9 +2549,12 @@ impl PostgresSQLConnection {
             }
             MessageType::CommandComplete => {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                if request.status.get() == QueryStatus::Fail {
+                    return reader.skip_message();
+                }
 
                 let mut cmd: protocol::CommandComplete = Default::default();
-                cmd.decode_internal(reader.reborrow()).map_err(pg_err)?;
+                cmd.decode_internal(reader.reborrow())?;
                 debug!("-> {}", bstr::BStr::new(cmd.command_tag.slice()));
 
                 request.on_result(
@@ -2651,7 +2694,7 @@ impl PostgresSQLConnection {
                             return Err(AnyPostgresError::InvalidMessage);
                         }
 
-                        let iteration_count = cont.iteration_count().map_err(pg_err)?;
+                        let iteration_count = cont.iteration_count()?;
                         // RFC 7677 §4: SCRAM-SHA-256 requires a minimum of 4096
                         // iterations. Cap the upper bound to avoid a CPU-burn DoS
                         // from a malicious/MITM'd server sending i ≈ u32::MAX.
@@ -2694,7 +2737,8 @@ impl PostgresSQLConnection {
                             &server_salt_decoded_base64,
                             iteration_count,
                             password,
-                        )?;
+                        )
+                        .map_err(pg_err)?;
                         drop(server_salt_decoded_base64);
 
                         let mut auth_string: Vec<u8> = Vec::new();
@@ -2710,7 +2754,8 @@ impl PostgresSQLConnection {
                                 bstr::BStr::new(cont.r.slice()),
                             );
                         }
-                        sasl.compute_server_signature(&auth_string)?;
+                        sasl.compute_server_signature(&auth_string)
+                            .map_err(pg_err)?;
 
                         let client_key = sasl.client_key();
                         let client_key_signature =
@@ -2963,6 +3008,9 @@ impl PostgresSQLConnection {
             MessageType::CloseComplete => {
                 reader.eat_message(&protocol::CLOSE_COMPLETE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                if request.status.get() == QueryStatus::Fail {
+                    return Ok(());
+                }
                 request.on_result(
                     b"CLOSECOMPLETE",
                     self.global(),
@@ -2987,6 +3035,9 @@ impl PostgresSQLConnection {
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                if request.status.get() == QueryStatus::Fail {
+                    return Ok(());
+                }
                 request.on_result(b"", self.global(), self.js_value.get().get(), false);
                 self.update_ref();
             }

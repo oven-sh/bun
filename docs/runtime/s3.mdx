@@ -185,13 +185,13 @@ When your production service needs to let users upload files to your server, it'
 
 To do this, presign URLs for S3 files. Presigning generates a URL with a signature that lets a user upload that specific file to S3, without exposing your credentials or granting them unnecessary access to your bucket.
 
-By default, Bun generates a `GET` URL that expires in 24 hours. Bun infers the content type from the file extension; if it can't, it defaults to `application/octet-stream`.
+By default, Bun generates a `GET` URL that expires in 24 hours.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 import { s3 } from "bun";
 
 // Generate a presigned URL that expires in 24 hours (default)
-const download = s3.presign("my-file.txt"); // GET, text/plain, expires in 24 hours
+const download = s3.presign("my-file.txt"); // GET, expires in 24 hours
 
 const upload = s3.presign("my-file", {
   expiresIn: 3600, // 1 hour

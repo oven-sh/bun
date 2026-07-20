@@ -861,6 +861,28 @@ impl<T: AnyRefCounted> RefPtr<T> {
         unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
     }
 
+    /// A [`ThisPtr`](crate::ThisPtr) to the pointee, for the FFI-shaped call
+    /// sites that take one.
+    ///
+    /// Safe: holding a `RefPtr` means we own a ref, so the pointee is live —
+    /// which is exactly `ThisPtr::new`'s precondition. The returned handle is
+    /// only valid while this `RefPtr` (or another ref) is alive.
+    #[inline]
+    pub fn this_ptr(&self) -> crate::ThisPtr<T> {
+        // SAFETY: we own an outstanding ref, so `self.data` is live and non-null.
+        unsafe { crate::ThisPtr::new(self.data.as_ptr()) }
+    }
+
+    /// Consume this `RefPtr` into a [`ThisPtr`](crate::ThisPtr), transferring
+    /// the ref to the callee — the counterpart of `into_raw` for the
+    /// `ThisPtr`-shaped dispatch entry points. Safe for the same reason
+    /// `into_raw` is: no ref is released, and the pointee stays live.
+    #[inline]
+    pub fn into_this_ptr(self) -> crate::ThisPtr<T> {
+        // SAFETY: `into_raw` transfers our live ref; the pointee is non-null.
+        unsafe { crate::ThisPtr::new(self.into_raw()) }
+    }
+
     /// Wrap a raw pointer whose ref is being transferred to this RefPtr
     /// WITHOUT incrementing the refcount. The caller gives up their ref;
     /// this RefPtr now owns it. Unlike `adopt_ref`, this does not assert
@@ -1025,6 +1047,13 @@ where
     pub unsafe fn adopt(ptr: *mut T) -> Self {
         // SAFETY: caller contract — `ptr` is non-null and live.
         Self(unsafe { NonNull::new_unchecked(ptr) })
+    }
+
+    /// Defuse the guard without derefing, handing the ref to whatever adopts
+    /// it next. Inverse of [`adopt`](Self::adopt).
+    #[inline]
+    pub fn forget(self) {
+        let _ = core::mem::ManuallyDrop::new(self);
     }
 }
 

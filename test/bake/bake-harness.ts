@@ -40,15 +40,6 @@ const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
   : () => {};
 
 /**
- * Can be set in fast development environments to improve iteration time.
- * In CI/Windows it appears that sometimes these tests dont wait enough
- * for things to happen, so the extra delay reduces flakiness.
- *
- * Needs much more investigation.
- */
-const fastBatches = !!process.env.BUN_DEV_SERVER_FAST_BATCHES;
-
-/**
  * Set to `ALL` to run all stress tests for 10 minutes each.
  * Set to a filter to run a specific filter for 10 minutes.
  */
@@ -142,6 +133,10 @@ export interface DevServerTest {
    * Only run this test.
    */
   only?: boolean;
+  /**
+   * Extra environment variables for the spawned dev-server process.
+   */
+  env?: Record<string, string>;
 }
 
 let interactive = false;
@@ -329,10 +324,9 @@ export class Dev extends EventEmitter {
         } else if (wantsHmrEvent) {
           await Promise.race([seenFiles.promise]);
         }
-        if (!fastBatches) {
-          // Wait an extra delay to avoid double-triggering events.
-          await Bun.sleep(300);
-        }
+        // One Bun.write can surface as several watcher events (notably on
+        // Windows); let them coalesce so releasing the batch bundles once.
+        await Bun.sleep(50);
 
         dev.off("watch_synchronization", onSeenFiles);
 
@@ -464,8 +458,7 @@ export class Dev extends EventEmitter {
       function cleanupAndResolve() {
         verboseSynchronization("Cleaning up and resolving");
         cleanup();
-        if (fastBatches) resolve();
-        else setTimeout(resolve, 250);
+        resolve();
       }
       function onPanic() {
         cleanup();
@@ -476,22 +469,33 @@ export class Dev extends EventEmitter {
       }
       dev.output.on("panic", onPanic);
       const disposes = new Set<() => void>();
+      function maybeResolve() {
+        // `>=` (not `===`): if the caller did unsynchronized writes before
+        // this batch, straggler received-hmr-event IPCs from those bundles
+        // can arrive after this listener is registered and push clientWaits
+        // past connectedClients.size. Strict equality would then never match.
+        if (seenMainEvent && clientWaits >= dev.connectedClients.size) {
+          cleanupAndResolve();
+        }
+      }
       for (const client of dev.connectedClients) {
         const socketEventHandler = () => {
           verboseSynchronization("Client received event");
           clientWaits++;
-          // `>=` (not `===`): if the caller did unsynchronized writes before
-          // this batch, straggler received-hmr-event IPCs from those bundles
-          // can arrive after this listener is registered and push clientWaits
-          // past connectedClients.size. Strict equality would then never match.
-          if (seenMainEvent && clientWaits >= dev.connectedClients.size) {
-            client.off("received-hmr-event", socketEventHandler);
-            cleanupAndResolve();
-          }
+          maybeResolve();
+        };
+        // A client that crashes applying the update never acks; reject so the
+        // failure surfaces at the dev.write() call instead of timing out.
+        const exitHandler = (code: number | string) => {
+          cleanup();
+          const mapped = exitCodeMapStrings[code];
+          reject(new Error(`Client exited while applying hot update${mapped ? `: ${mapped}` : ` (${code})`}`));
         };
         client.on("received-hmr-event", socketEventHandler);
+        client.on("exit", exitHandler);
         disposes.add(() => {
           client.off("received-hmr-event", socketEventHandler);
+          client.off("exit", exitHandler);
         });
       }
       async function onEvent(kind: WatchSynchronization) {
@@ -1971,6 +1975,7 @@ function testImpl<T extends DevServerTest>(
           // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
           // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
           BUN_ASSUME_PERFECT_INCREMENTAL: "0",
+          ...options.env,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],

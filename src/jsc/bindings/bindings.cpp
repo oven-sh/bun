@@ -1149,12 +1149,17 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (byteLength == 0)
-            return true;
-
-        if (right->isDetached() || left->isDetached()) [[unlikely]] {
+        if (left->isDetached() || right->isDetached()) [[unlikely]] {
+            if constexpr (!enableAsymmetricMatchers) {
+                // Node wraps each side in `new Uint8Array(buf)` to compare bytes, which
+                // throws on a detached ArrayBuffer; match that contract for node:assert/util.
+                throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
+            }
             return false;
         }
+
+        if (byteLength == 0)
+            return true;
 
         const void* vector = left->data();
         const void* rightVector = right->data();
@@ -2849,48 +2854,6 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     }
 
     RETURN_IF_EXCEPTION(scope, {});
-    return JSC::JSValue::encode(result);
-}
-
-JSC::EncodedJSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, JSObjectRef object,
-    JSObjectRef thisObject,
-    size_t argumentCount,
-    const JSValueRef* arguments)
-{
-    JSC::JSGlobalObject* globalObject = toJS(ctx);
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSLockHolder lock(vm);
-
-#if ASSERT_ENABLED
-    // This is a redundant check, but we add it to make the error message clearer.
-    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
-#endif
-
-    if (!object)
-        return {};
-
-    JSC::JSObject* jsObject = toJS(object);
-    JSC::JSObject* jsThisObject = toJS(thisObject);
-
-    if (!jsThisObject)
-        jsThisObject = globalObject->globalThis();
-
-    JSC::MarkedArgumentBuffer argList;
-    for (size_t i = 0; i < argumentCount; i++)
-        argList.append(toJS(globalObject, arguments[i]));
-
-    auto callData = getCallData(jsObject);
-    if (callData.type == JSC::CallData::Type::None)
-        return {};
-
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
-
-    if (returnedException.get()) {
-        return JSC::JSValue::encode(returnedException.get());
-    }
-
     return JSC::JSValue::encode(result);
 }
 
@@ -5788,10 +5751,11 @@ extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC
     return JSValue::encode(date);
 }
 
-// this is largely copied from dateProtoFuncToISOString
-extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, EncodedJSValue dateValue, char* buf)
+// Formats a Date's internal time value with JSC's date cache, as
+// `Date.prototype.toISOString` does (`Bun::toISOString` is copied from it).
+// Returns -1 when `dateValue` is not a Date or its time value is NaN.
+extern "C" int JSC__JSValue__toISOString(EncodedJSValue dateValue, JSC::JSGlobalObject* globalObject, char buf[64])
 {
-    char buffer[64];
     JSC::DateInstance* thisDateObj = dynamicDowncast<JSC::DateInstance>(JSC::JSValue::decode(dateValue));
     if (!thisDateObj)
         return -1;
@@ -5801,7 +5765,7 @@ extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, Enco
 
     auto& vm = JSC::getVM(globalObject);
 
-    return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buffer));
+    return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buf));
 }
 
 extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject, char* buf)
@@ -6079,6 +6043,41 @@ CPP_DECL JSC::EncodedJSValue Bun__ProxyObject__getInternalField(JSC::EncodedJSVa
     return JSValue::encode(uncheckedDowncast<ProxyObject>(JSValue::decode(value))->internalField((ProxyObject::Field)id).get());
 }
 
+CPP_DECL JSC::EncodedJSValue Bun__JSValue__getProxyTarget(JSC::EncodedJSValue encoded)
+{
+    JSC::JSValue value = JSValue::decode(encoded);
+    if (!value || !value.isCell())
+        return JSValue::encode(JSValue());
+    if (auto* proxy = dynamicDowncast<JSGlobalProxy>(value.asCell()))
+        return JSValue::encode(proxy->target());
+    if (auto* proxy = dynamicDowncast<ProxyObject>(value.asCell()))
+        return JSValue::encode(proxy->target());
+    return JSValue::encode(JSValue());
+}
+
+CPP_DECL JSC::EncodedJSValue Bun__JSValue__getArrayBufferViewBuffer(JSC::EncodedJSValue encoded, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSValue value = JSValue::decode(encoded);
+    if (!value || !value.isCell())
+        return JSValue::encode(JSValue());
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell())) {
+        if (ArrayBuffer* buffer = view->possiblySharedBuffer())
+            return JSValue::encode(vm.m_typedArrayController->toJS(globalObject, view->realm(), *buffer));
+    }
+    return JSValue::encode(JSValue());
+}
+
+CPP_DECL size_t Bun__JSValue__getArrayBufferViewByteOffset(JSC::EncodedJSValue encoded)
+{
+    JSC::JSValue value = JSValue::decode(encoded);
+    if (!value || !value.isCell())
+        return 0;
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell()))
+        return view->byteOffset();
+    return 0;
+}
+
 CPP_DECL [[ZIG_EXPORT(nothrow)]] void JSC__SourceProvider__deref(JSC::SourceProvider* provider)
 {
     provider->deref();
@@ -6223,6 +6222,13 @@ CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JSValue__bind(JS
     JSC::JSValue bound = JSC::JSValue::decode(bindThisArgEncoded);
     auto boundFunction = JSBoundFunction::create(globalObject->vm(), globalObject, valueObject, bound, ArgList(args, args_len), length, jsString(globalObject->vm(), name->toWTFString()), bindSourceCode);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(boundFunction));
+}
+
+CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JSBoundFunction__boundThis(JSC::EncodedJSValue value)
+{
+    auto* boundFunction = dynamicDowncast<JSC::JSBoundFunction>(JSC::JSValue::decode(value));
+    if (!boundFunction) return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(boundFunction->boundThis());
 }
 
 CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::EncodedJSValue valueEncoded, JSC::EncodedJSValue prototypeEncoded, JSC::JSGlobalObject* globalObject)

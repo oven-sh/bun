@@ -1155,39 +1155,40 @@ test("response + corrupt TLS record in one packet via pooled HTTPS proxy tunnel 
 // on_writable returns), so this test verifies the fetch rejects cleanly
 // with a connection error rather than asserting or hanging.
 for (const scheme of ["http", "https"] as const) {
-  test.concurrent(
-    `outer ${scheme.toUpperCase()} proxy socket reset right after inner TLS handshake rejects cleanly`,
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), require.resolve("./proxy-handshake-closed-socket-fixture.ts"), scheme, "10"],
-        env: {
-          ...bunEnv,
-          // The explicit per-request proxy must not be bypassed or rerouted
-          // by ambient proxy configuration on CI hosts; clear them in the
-          // spawn env so the child starts clean (see PROXY_ENV_KEYS above).
-          NO_PROXY: undefined,
-          no_proxy: undefined,
-          HTTP_PROXY: undefined,
-          http_proxy: undefined,
-          HTTPS_PROXY: undefined,
-          https_proxy: undefined,
-        },
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if (exitCode !== 0) console.error("stderr:", stderr);
-      const lines = stdout.trim().split("\n");
-      // Every iteration must reject with a connection-flavored error, not
-      // TimeoutError (which would mean the request stalled on a dead socket
-      // and only the AbortSignal freed it) and not "resolved".
-      expect(lines).toHaveLength(10);
-      for (const line of lines) {
-        expect(line).toMatch(/^rejected: (ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused)$/);
-      }
-      expect(stderr).not.toContain("hung");
-      expect(exitCode).toBe(0);
-    },
-  );
+  // 5 iterations (was 10): two concurrent ASAN-debug subprocesses took
+  // 4.7-4.9s of the default 5s budget after sustained runs. Fixture startup
+  // dominates; 5 iterations still covers "rejects cleanly, doesn't hang".
+  const iterations = 5;
+  test(`outer ${scheme.toUpperCase()} proxy socket reset right after inner TLS handshake rejects cleanly`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), require.resolve("./proxy-handshake-closed-socket-fixture.ts"), scheme, String(iterations)],
+      env: {
+        ...bunEnv,
+        // The explicit per-request proxy must not be bypassed or rerouted
+        // by ambient proxy configuration on CI hosts; clear them in the
+        // spawn env so the child starts clean (see PROXY_ENV_KEYS above).
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    const lines = stdout.trim().split("\n");
+    // Every iteration must reject with a connection-flavored error, not
+    // TimeoutError (which would mean the request stalled on a dead socket
+    // and only the AbortSignal freed it) and not "resolved".
+    expect(lines).toHaveLength(iterations);
+    for (const line of lines) {
+      expect(line).toMatch(/^rejected: (ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused)$/);
+    }
+    expect(stderr).not.toContain("hung");
+    expect(exitCode).toBe(0);
+  }, 15000);
 }
 
 describe.concurrent("proxy object format with headers", () => {
@@ -1201,6 +1202,29 @@ describe.concurrent("proxy object format with headers", () => {
     });
     expect(response.ok).toBe(true);
     expect(response.status).toBe(200);
+  });
+
+  // https://github.com/oven-sh/bun/issues/29103
+  test("proxy object with url as a URL object works same as a string url", async () => {
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: {
+        url: new URL(httpProxyServer.url),
+      },
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+  });
+
+  test("proxy object with a non-URL object url throws error", async () => {
+    await expect(
+      fetch(httpServer.url, {
+        method: "GET",
+        proxy: { url: {} },
+        keepalive: false,
+      }),
+    ).rejects.toThrow("fetch() proxy URL is invalid");
   });
 
   test("proxy object with url and headers sends headers to proxy (HTTP proxy)", async () => {
@@ -1390,7 +1414,7 @@ describe.concurrent("proxy object format with headers", () => {
         } as any,
         keepalive: false,
       }),
-    ).rejects.toThrow("fetch() proxy.url must be a non-empty string");
+    ).rejects.toThrow("fetch() proxy URL is invalid");
   });
 
   test("proxy object with empty headers object works", async () => {
@@ -1555,23 +1579,95 @@ describe.concurrent("proxy object format with headers", () => {
     }
   });
 
-  test("proxy as URL object should be ignored (no url property)", async () => {
-    // This tests the regression from #25413
-    // When a URL object is passed as proxy, it should be ignored (no error)
-    // because URL objects don't have a "url" property - they have "href"
-    const proxyUrl = new URL(httpProxyServer.url);
-
-    // Passing a URL object as proxy should NOT throw an error
-    // It should just be ignored since there's no "url" string property
-    const response = await fetch(httpServer.url, {
-      method: "GET",
-      proxy: proxyUrl as any,
-      keepalive: false,
+  // https://github.com/oven-sh/bun/issues/33645
+  test("proxy as URL instance routes through the proxy", async () => {
+    // A URL instance has no own `.url` property, so it previously fell through
+    // the `{url, headers}` object branch and was silently ignored (the request
+    // went DIRECT). Verify a URL instance is honored like the equivalent string.
+    let proxyHit = false;
+    const proxySrv = net.createServer(sock => {
+      proxyHit = true;
+      sock.on("error", () => {});
+      sock.on("data", () => {
+        sock.end("HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nFROM_PROXY");
+      });
     });
-    // The request should succeed (without proxy, since URL object is ignored)
-    expect(response.ok).toBe(true);
-    expect(response.status).toBe(200);
+    proxySrv.listen(0, "127.0.0.1");
+    await once(proxySrv, "listening");
+    try {
+      const proxyUrl = new URL(`http://127.0.0.1:${(proxySrv.address() as net.AddressInfo).port}`);
+      expect(proxyUrl).toBeInstanceOf(URL);
+      const response = await fetch(httpServer.url, {
+        method: "GET",
+        proxy: proxyUrl,
+        keepalive: false,
+      });
+      expect(await response.text()).toBe("FROM_PROXY");
+      expect(response.status).toBe(200);
+      expect(proxyHit).toBe(true);
+    } finally {
+      proxySrv.close();
+      await once(proxySrv, "close");
+    }
   });
+});
+
+// https://github.com/oven-sh/bun/issues/33645
+test("WebSocket proxy as URL instance routes through the proxy", async () => {
+  // Same bug on the WebSocket side (JSWebSocket.cpp constructJSWebSocket3): a
+  // URL instance fell through the {url, headers} object branch and was silently
+  // ignored (connected DIRECT). Run in a subprocess with NO_PROXY cleared so an
+  // ambient NO_PROXY=127.0.0.1 cannot suppress the explicit proxy.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const net = require("node:net");
+        let proxyHit = false;
+        const proxySrv = net.createServer(sock => {
+          proxyHit = true;
+          sock.on("error", () => {});
+          sock.destroy();
+        });
+        await new Promise(r => proxySrv.listen(0, "127.0.0.1", r));
+        const proxyPort = proxySrv.address().port;
+        using wsServer = Bun.serve({
+          port: 0,
+          fetch(req, server) { if (server.upgrade(req)) return; return new Response("no", { status: 400 }); },
+          websocket: { open(ws) { ws.send("FROM_ORIGIN"); }, message() {} },
+        });
+        const proxyUrl = new URL("http://127.0.0.1:" + proxyPort);
+        if (!(proxyUrl instanceof URL)) throw new Error("expected URL instance");
+        let via = "";
+        await new Promise(resolve => {
+          const ws = new WebSocket("ws://127.0.0.1:" + wsServer.port, { proxy: proxyUrl });
+          ws.onmessage = ev => { via ||= "origin:" + ev.data; ws.close(); };
+          ws.onerror = () => { via ||= "error"; };
+          ws.onclose = () => { via ||= "close"; resolve(); };
+        });
+        proxySrv.close();
+        console.log(JSON.stringify({ proxyHit, via }));
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+      HTTP_PROXY: undefined,
+      http_proxy: undefined,
+      HTTPS_PROXY: undefined,
+      https_proxy: undefined,
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) console.error("stderr:", stderr);
+  const out = JSON.parse(stdout.trim());
+  // The proxy destroys the socket immediately, so the WebSocket errors; what
+  // matters is that it hit the proxy instead of reaching the origin.
+  expect(out).toEqual({ proxyHit: true, via: "error" });
+  expect(exitCode).toBe(0);
 });
 
 describe.concurrent("NO_PROXY with explicit proxy option", () => {
@@ -1795,6 +1891,197 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode !== 0) console.error("stderr:", stderr);
     expect(stdout.trim()).toBe("5");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
+  // curl and Node's undici EnvHttpProxyAgent both re-run the proxy/no_proxy
+  // decision against the post-redirect URL. Previously Bun resolved it once
+  // from the original URL, so a redirect into a NO_PROXY host still went via
+  // the proxy (and a redirect out of one bypassed it).
+  let originA: Server;
+  let originB: Server;
+  let proxyLog: string[];
+  let proxyAuth: (string | null)[];
+  let proxy: ReturnType<typeof Bun.listen>;
+
+  beforeAll(() => {
+    originB = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("FINAL-ORIGIN-B"),
+    });
+    originA = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: req => {
+        const to = new URL(req.url).searchParams.get("to") ?? `http://127.0.0.1:${originB.port}/final`;
+        return new Response(null, { status: 302, headers: { Location: to, Connection: "close" } });
+      },
+    });
+    proxyLog = [];
+    proxyAuth = [];
+    // Recording forward proxy: serves absolute-form requests itself so the
+    // assertions can tell which hops went through it.
+    proxy = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          (s as any).buf = "";
+        },
+        data(s, raw) {
+          let buf = ((s as any).buf += new TextDecoder("latin1").decode(raw));
+          const i = buf.indexOf("\r\n\r\n");
+          if (i < 0) return;
+          const head = buf.slice(0, i).split("\r\n");
+          const line = head[0]!;
+          proxyLog.push(line);
+          proxyAuth.push(
+            head
+              .find(h => h.toLowerCase().startsWith("proxy-authorization:"))
+              ?.slice("proxy-authorization:".length)
+              .trim() ?? null,
+          );
+          (s as any).buf = "";
+          const m = /^GET http:\/\/[^/]+\/r302(?:\?to=([^ ]+))? /.exec(line);
+          const loc = m ? (m[1] ? decodeURIComponent(m[1]) : `http://127.0.0.1:${originB.port}/final`) : null;
+          s.write(
+            loc
+              ? `HTTP/1.1 302 Found\r\nLocation: ${loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`
+              : `HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\nFINAL-PROXY`,
+          );
+          s.flush();
+        },
+        error() {},
+        close() {},
+        drain() {},
+      },
+    });
+  });
+
+  afterAll(() => {
+    originA.stop(true);
+    originB.stop(true);
+    proxy.stop(true);
+  });
+
+  async function runFetch(env: Record<string, string | undefined>, url: string, useProxyOption = false) {
+    proxyLog.length = 0;
+    proxyAuth.length = 0;
+    const script = useProxyOption
+      ? `console.log(await (await fetch(process.env.U, { proxy: process.env.P })).text())`
+      : `console.log(await (await fetch(process.env.U)).text())`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+        ...env,
+        U: url,
+        P: `http://127.0.0.1:${proxy.port}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode, proxyLog: [...proxyLog], proxyAuth: [...proxyAuth] };
+  }
+
+  test("redirect into NO_PROXY-exempt host goes direct (env http_proxy)", async () => {
+    const { stdout, stderr, exitCode, proxyLog } = await runFetch(
+      { http_proxy: `http://127.0.0.1:${proxy.port}`, no_proxy: `127.0.0.1:${originB.port}` },
+      `http://127.0.0.1:${originA.port}/r302`,
+    );
+    expect({ stdout, proxyLog }).toEqual({
+      stdout: "FINAL-ORIGIN-B",
+      proxyLog: [`GET http://127.0.0.1:${originA.port}/r302 HTTP/1.1`],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("redirect out of NO_PROXY-exempt host goes via proxy (env http_proxy)", async () => {
+    const { stdout, stderr, exitCode, proxyLog } = await runFetch(
+      { http_proxy: `http://127.0.0.1:${proxy.port}`, no_proxy: `127.0.0.1:${originA.port}` },
+      `http://127.0.0.1:${originA.port}/r302`,
+    );
+    // Hop 1 went direct to originA (exempt); hop 2 must be absolute-form via the proxy.
+    expect({ stdout, proxyLog }).toEqual({
+      stdout: "FINAL-PROXY",
+      proxyLog: [`GET http://127.0.0.1:${originB.port}/final HTTP/1.1`],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("redirect into NO_PROXY-exempt host goes direct (explicit proxy option)", async () => {
+    const { stdout, stderr, exitCode, proxyLog } = await runFetch(
+      { no_proxy: `127.0.0.1:${originB.port}` },
+      `http://127.0.0.1:${originA.port}/r302`,
+      true,
+    );
+    expect({ stdout, proxyLog }).toEqual({
+      stdout: "FINAL-ORIGIN-B",
+      proxyLog: [`GET http://127.0.0.1:${originA.port}/r302 HTTP/1.1`],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("redirect into NO_PROXY-exempt host with credentialed http_proxy", async () => {
+    // Covers the proxy_authorization lifecycle: the Basic auth Vec must be
+    // clone-owned so dropping it on redirect is not a double-free under ASAN.
+    const { stdout, stderr, exitCode, proxyLog, proxyAuth } = await runFetch(
+      { http_proxy: `http://user:pass@127.0.0.1:${proxy.port}`, no_proxy: `127.0.0.1:${originB.port}` },
+      `http://127.0.0.1:${originA.port}/r302`,
+    );
+    expect({ stdout, proxyLog, proxyAuth }).toEqual({
+      stdout: "FINAL-ORIGIN-B",
+      proxyLog: [`GET http://127.0.0.1:${originA.port}/r302 HTTP/1.1`],
+      proxyAuth: ["Basic dXNlcjpwYXNz"],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("http->https redirect drops http_proxy when https_proxy is unset", async () => {
+    // ProxySettings::resolve() picks by scheme: hop 2 (https) must not inherit
+    // the http_proxy hop 1 used.
+    await using originTls = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: tlsCert,
+      fetch: () => new Response("FINAL-ORIGIN-TLS"),
+    });
+    const to = encodeURIComponent(`https://127.0.0.1:${originTls.port}/final`);
+    const { stdout, stderr, exitCode, proxyLog } = await runFetch(
+      { http_proxy: `http://127.0.0.1:${proxy.port}`, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      `http://127.0.0.1:${originA.port}/r302?to=${to}`,
+    );
+    // Hop 1 via proxy (absolute-form GET with ?to=); hop 2 is https so http_proxy
+    // does not apply and https_proxy is unset: no CONNECT should reach the proxy.
+    expect({ stdout, proxyLog }).toEqual({
+      stdout: "FINAL-ORIGIN-TLS",
+      proxyLog: [`GET http://127.0.0.1:${originA.port}/r302?to=${to} HTTP/1.1`],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("no redirect: proxy decision still honors NO_PROXY", async () => {
+    const { stdout, stderr, exitCode, proxyLog } = await runFetch(
+      { http_proxy: `http://127.0.0.1:${proxy.port}`, no_proxy: `127.0.0.1:${originB.port}` },
+      `http://127.0.0.1:${originB.port}/final`,
+    );
+    expect({ stdout, proxyLog }).toEqual({ stdout: "FINAL-ORIGIN-B", proxyLog: [] });
+    if (exitCode !== 0) console.error("stderr:", stderr);
     expect(exitCode).toBe(0);
   });
 });

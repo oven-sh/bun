@@ -499,13 +499,21 @@ pub(crate) fn braces(
         if strings::is_all_ascii(brace_slice.slice()) {
             break 'lexer_output match Braces::Lexer::tokenize(brace_slice.slice()) {
                 Ok(v) => v,
-                Err(err) => return Err(global.throw_error(err.into(), "failed to tokenize braces")),
+                Err(err) => {
+                    return Err(
+                        global.throw_error(crate::Error::from(err), "failed to tokenize braces")
+                    );
+                }
             };
         }
 
         match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice.slice()) {
             Ok(v) => break 'lexer_output v,
-            Err(err) => return Err(global.throw_error(err.into(), "failed to tokenize braces")),
+            Err(err) => {
+                return Err(
+                    global.throw_error(crate::Error::from(err), "failed to tokenize braces")
+                );
+            }
         }
     };
 
@@ -523,7 +531,9 @@ pub(crate) fn braces(
         let mut parser = Braces::Parser::init(&lexer_output.tokens[..], &arena);
         let ast_node = match parser.parse() {
             Ok(v) => v,
-            Err(err) => return Err(global.throw_error(err.into(), "failed to parse braces")),
+            Err(err) => {
+                return Err(global.throw_error(crate::Error::from(err), "failed to parse braces"));
+            }
         };
         // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
         let str = Braces::ast_to_json(&ast_node);
@@ -539,7 +549,7 @@ pub(crate) fn braces(
     // `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
     const MAX_BRACE_EXPANSIONS: u32 = 65536;
     if expansion_count > MAX_BRACE_EXPANSIONS {
-        return Err(global.throw_pretty(format_args!(
+        return Err(global.throw(format_args!(
             "Too many brace expansions ({} > {})",
             expansion_count, MAX_BRACE_EXPANSIONS
         )));
@@ -561,12 +571,10 @@ pub(crate) fn braces(
         Ok(()) => {}
         Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
-            return Err(
-                global.throw_pretty(format_args!("Unexpected token while expanding braces"))
-            );
+            return Err(global.throw(format_args!("Unexpected token while expanding braces")));
         }
         Err(Braces::ParserError::TooManyBraces) => {
-            return Err(global.throw_pretty(format_args!("Too many braces in brace expansion")));
+            return Err(global.throw(format_args!("Too many braces in brace expansion")));
         }
     }
 
@@ -873,13 +881,11 @@ pub(crate) fn register_macro(
         .get_or_put(id)
         .expect("unreachable");
     if get_or_put_result.found_existing {
-        // `value_ptr` is `&mut JSObjectRef` (`*mut OpaqueJSValue`); recover the
-        // protected JSValue and unprotect it before overwriting.
-        JSValue::c(*get_or_put_result.value_ptr).unprotect();
+        get_or_put_result.value_ptr.unprotect();
     }
 
     arguments[1].protect();
-    *get_or_put_result.value_ptr = arguments[1].as_object_ref();
+    *get_or_put_result.value_ptr = arguments[1];
 
     Ok(JSValue::UNDEFINED)
 }
@@ -1588,6 +1594,19 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
         break 'brk config;
     };
 
+    // `init()` below `mem::take`s `config` into a heap-boxed `NewServer`, so
+    // past that point the raw-`JSValue` handler shadows have no GC root until
+    // `wrap_handler_slot` writes them into the wrapper's WriteBarrier slots.
+    // For a data-property options object the user's `{ fetch: fn }` on this
+    // stack still retains them, but a Proxy- or accessor-backed options
+    // object returns a fresh fn that nothing else holds. `compute_id`,
+    // `listen()`'s `set_routes`, and the `ptr_to_js` wrapper allocation can
+    // all trigger a GC in that window, so gcProtect each handler for its
+    // duration. `Protected`'s `Drop` unprotects on every exit path (including
+    // a thrown `listen()` and the hot-reload early return).
+    let _handler_pins: [bun_jsc::js_value::Protected; 10] =
+        crate::server::protect_handler_shadows(&config);
+
     // SAFETY: same VM pointer; re-borrow after `args` is dropped.
     let vm = global_object.bun_vm().as_mut();
 
@@ -1650,7 +1669,40 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                 // `server_body` until per-type codegen externs land.
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
+            // Mirror the handler callbacks into the wrapper's WriteBarrier
+            // slots — the wrapper is the sole GC root for these; `ServerConfig`
+            // / `Handler` only hold raw `JSValue` shadows for hot-path dispatch.
+            // The async-context wrap is applied here (not in `from_js`) so the
+            // freshly-allocated wrapper fn is rooted by the slot immediately.
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_request,
+                obj,
+                global_object,
+                <$ServerType>::js_gc_on_request_set,
+            );
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_error,
+                obj,
+                global_object,
+                <$ServerType>::js_gc_on_error_set,
+            );
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_node_http_request,
+                obj,
+                global_object,
+                <$ServerType>::js_gc_on_node_http_request_set,
+            );
+            // Skip the 7-slot write when there's no websocket config: the
+            // slots default ZERO so `write_ws_handler_slots`'s clear path
+            // would be 7 wasted FFI calls.
+            if server_ref.config.websocket.is_some() {
+                server_ref.write_ws_handler_slots(obj, global_object);
+            }
             server_ref.js_value.set_strong(obj, global_object);
+            // Slots are rooted; release the scoped gcProtects and run the
+            // "server just started" GC nudge split out of `listen()`.
+            drop(_handler_pins);
+            server_ref.gc_hint_after_listen();
 
             if global_object.bun_vm().test_isolation_enabled {
                 if let Some(handles) = crate::jsc_hooks::isolation_handles() {
@@ -1812,9 +1864,6 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
                         )));
                     }
                     offset = usize::try_from(offset_value).expect("int cast");
-                    // Align the offset down to a page boundary.
-                    let page = bun_sys::page_size();
-                    offset -= offset % page;
                 }
             } else if !opts.is_undefined_or_null() {
                 return Err(global_this
@@ -1822,8 +1871,8 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
             }
         }
 
-        let map = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
-            Ok(map) => map,
+        let (map, delta) = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
+            Ok(result) => result,
             Err(err) => {
                 use bun_jsc::SysErrorJsc as _;
                 return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1831,22 +1880,31 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
         };
 
         extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
-            // SAFETY: ptr is the original mmap base, size is its length stuffed into a pointer.
-            let _ = sys::munmap(ptr.cast::<u8>(), size as usize);
+            // `ptr` is `map_base + delta` where `map_base` is page-aligned and
+            // `delta < page_size`, so rounding down recovers the mmap base.
+            let page = bun_sys::page_size();
+            let addr = ptr as usize;
+            let _ = sys::munmap((addr - addr % page) as *mut u8, size as usize);
         }
+
+        let map_len = map.len();
+        // SAFETY: `mmap_file` guarantees `map_len == view_size + delta` with
+        // `view_size > 0`, so `delta < map_len` and the add stays in-bounds.
+        let view_ptr = unsafe { map.as_ptr().add(delta) };
+        let view_len = map_len - delta;
 
         // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
         // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
-        // unmaps it exactly once via `munmap_dealloc` with the length stuffed
-        // into the ctx pointer.
+        // unmaps it exactly once via `munmap_dealloc` with the full mapping
+        // length stuffed into the ctx pointer.
         unsafe {
             jsc::array_buffer::make_typed_array_with_bytes_no_copy(
                 global_this,
                 jsc::TypedArrayType::TypeUint8,
-                map.as_ptr().cast_mut().cast::<c_void>(),
-                map.len(),
+                view_ptr.cast_mut().cast::<c_void>(),
+                view_len,
                 Some(munmap_dealloc),
-                map.len() as *mut c_void,
+                map_len as *mut c_void,
             )
         }
     }
@@ -1960,7 +2018,8 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
         Ok(p) => p,
         Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
         Err(err) => {
-            let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
+            let _ =
+                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
             return JSValue::ZERO;
         }
     };
@@ -1975,7 +2034,8 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
         Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
         Err(err) => {
-            let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
+            let _ =
+                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
             return JSValue::ZERO;
         }
     }
@@ -2542,7 +2602,7 @@ pub mod JSZlib {
                                 global_this.throw(format_args!("Zlib error: Invalid argument"))
                             );
                         }
-                        return Err(global_this.throw_error(err.into(), "Zlib error"));
+                        return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
                     }
                 };
 
@@ -2568,17 +2628,21 @@ pub mod JSZlib {
                 } else {
                     bun_libdeflate::Encoding::Deflate
                 };
-                let result = decompressor.decompress_to_vec_grow(
-                    compressed,
-                    &mut list,
-                    encoding,
-                    1024 * 1024 * 1024,
-                );
+                let max_output = ArrayBuffer::MAX_SIZE as usize;
+                let result = decompressor
+                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output);
                 match result.status {
-                    bun_libdeflate::Status::Success => {}
-                    bun_libdeflate::Status::InsufficientSpace => {
+                    bun_libdeflate::Status::Success if list.len() <= max_output => {}
+                    bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
                         drop(list);
-                        return Err(global_this.throw_out_of_memory());
+                        return Err(global_this
+                            .err(
+                                jsc::ErrCode::BUFFER_TOO_LARGE,
+                                format_args!(
+                                    "Cannot create a Buffer larger than {max_output} bytes",
+                                ),
+                            )
+                            .throw());
                     }
                     _ => {
                         drop(list);
@@ -2683,7 +2747,7 @@ pub mod JSZlib {
                                 global_this.throw(format_args!("Zlib error: Invalid argument"))
                             );
                         }
-                        return Err(global_this.throw_error(err.into(), "Zlib error"));
+                        return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
                     }
                 };
 
@@ -2698,8 +2762,17 @@ pub mod JSZlib {
                 leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
-                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))
-                else {
+                let level = level.unwrap_or(6);
+                if !(bun_libdeflate::MIN_COMPRESSION_LEVEL..=bun_libdeflate::MAX_COMPRESSION_LEVEL)
+                    .contains(&level)
+                {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Compression level must be between {} and {} for libdeflate",
+                        bun_libdeflate::MIN_COMPRESSION_LEVEL,
+                        bun_libdeflate::MAX_COMPRESSION_LEVEL,
+                    )));
+                }
+                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level) else {
                     return Err(global_this.throw_out_of_memory());
                 };
                 let encoding = if is_gzip {

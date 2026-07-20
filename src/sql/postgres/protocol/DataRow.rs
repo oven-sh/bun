@@ -9,13 +9,23 @@ pub fn decode<C: Copy, R: ReaderContext>(
     reader: &mut NewReader<R>,
     mut for_each: impl FnMut(C, u32, Option<&mut Data>) -> Result<bool, AnyPostgresError>,
 ) -> Result<(), AnyPostgresError> {
-    let mut _remaining_bytes = reader.length()?;
-    _remaining_bytes = _remaining_bytes.saturating_sub(4);
+    // The Int32 message length bounds every read below; a field count or cell
+    // length that overruns it is a malformed DataRow (libpq: "insufficient
+    // data left in message"), not a ShortRead to wait on.
+    let mut remaining_bytes = reader.length()?.saturating_sub(4);
 
+    if remaining_bytes < 2 {
+        return Err(AnyPostgresError::InvalidMessage);
+    }
     let remaining_fields: usize = usize::from(reader.short()?);
+    remaining_bytes -= 2;
 
     for index in 0..remaining_fields {
+        if remaining_bytes < 4 {
+            return Err(AnyPostgresError::InvalidMessage);
+        }
         let byte_length = reader.int4()?;
+        remaining_bytes -= 4;
         match byte_length {
             0 => {
                 let mut empty = Data::EMPTY;
@@ -33,6 +43,10 @@ pub fn decode<C: Copy, R: ReaderContext>(
                 }
             }
             _ => {
+                if byte_length > remaining_bytes {
+                    return Err(AnyPostgresError::InvalidMessage);
+                }
+                remaining_bytes -= byte_length;
                 let mut bytes = reader.bytes(usize::try_from(byte_length).expect("int cast"))?;
                 if !for_each(
                     context,

@@ -37,8 +37,6 @@ pub enum RedisError {
 
 bun_core::impl_tag_error!(RedisError);
 
-bun_core::named_error_set!(RedisError);
-
 impl From<bun_core::Error> for RedisError {
     /// Reverse of the `RedisError → bun_core::Error` interning above so the
     /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through
@@ -264,7 +262,6 @@ impl<'a> ValkeyReader<'a> {
         if buffer.len() > Self::MAX_LINE_LEN + 1 {
             return Err(RedisError::LineTooLong);
         }
-
         Err(RedisError::InvalidResponse)
     }
 
@@ -311,7 +308,7 @@ impl<'a> ValkeyReader<'a> {
         }
         let len = usize::try_from(len).expect("int cast");
         if self.pos + len > self.buffer.len() {
-            return Err(RedisError::InvalidVerbatimString);
+            return Err(RedisError::InvalidResponse);
         }
 
         let content_with_format = &self.buffer[self.pos..self.pos + len];
@@ -346,7 +343,10 @@ impl<'a> ValkeyReader<'a> {
     /// attacker-chosen size.
     const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
 
-    const MAX_LINE_LEN: usize = 512 * 1024;
+    /// Maximum accepted length for a CRLF-terminated RESP line (`+ - : _ , # (`).
+    /// Mirrors `MAX_BULK_LEN` so line-terminated replies get the same
+    /// buffer-growth bound as length-prefixed blobs; the spec places no limit.
+    const MAX_LINE_LEN: usize = Self::MAX_BULK_LEN as usize;
 
     /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved
     /// across the whole parse — every nesting level combined — never exceed
@@ -445,7 +445,7 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = usize::try_from(len).expect("int cast");
                 if self.pos + len > self.buffer.len() {
-                    return Err(RedisError::InvalidBlobError);
+                    return Err(RedisError::InvalidResponse);
                 }
                 let str = &self.buffer[self.pos..self.pos + len];
                 self.pos += len;

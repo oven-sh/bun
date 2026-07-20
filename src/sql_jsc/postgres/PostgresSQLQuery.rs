@@ -1,6 +1,7 @@
 use core::cell::Cell;
 use core::mem;
 
+use crate::error::ThrowSqlError;
 use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
 };
@@ -553,6 +554,9 @@ impl PostgresSQLQuery {
                 release_query_ref();
                 return Err(global_object.throw_out_of_memory());
             }
+            if this.status.get() == Status::Pending {
+                connection.note_request_pending();
+            }
 
             // Request is enqueued: keep the event loop alive until the server
             // responds. KeepAlive is a flag (not a count), so taking this any
@@ -593,7 +597,7 @@ impl PostgresSQLQuery {
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                 unsafe { Self::deref(this_ptr) };
                 if !global_object.has_exception() {
-                    return Err(global_object.throw_error(err, "failed to generate signature"));
+                    return Err(global_object.throw_sql_error(err, "failed to generate signature"));
                 }
                 return Err(JsError::Thrown);
             }
@@ -641,7 +645,13 @@ impl PostgresSQLQuery {
                             return Err(global_object.throw_value(error_response));
                         }
                         StatementStatus::Prepared => {
-                            if !connection.has_query_running() || connection.can_pipeline() {
+                            // Only write ahead of the FIFO drain when every queued
+                            // request has already emitted its bytes; otherwise this
+                            // Bind+Execute would overtake an earlier unwritten
+                            // request on the wire while reply attribution stays FIFO.
+                            if (!connection.has_query_running() || connection.can_pipeline())
+                                && connection.pending_requests.get() == 0
+                            {
                                 this.update_flags(|f| f.binary = !stmt.fields.is_empty());
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
@@ -691,9 +701,8 @@ impl PostgresSQLQuery {
                     Err(err) => {
                         drop(signature);
                         release_query_ref();
-                        return Err(
-                            global_object.throw_error(err.into(), "failed to allocate statement")
-                        );
+                        return Err(global_object
+                            .throw_error(crate::Error::from(err), "failed to allocate statement"));
                     }
                 };
                 connection_entry_value = Some(entry_value_ptr);
@@ -824,6 +833,9 @@ impl PostgresSQLQuery {
         {
             release_query_ref();
             return Err(global_object.throw_out_of_memory());
+        }
+        if this.status.get() == Status::Pending {
+            connection.note_request_pending();
         }
         // Request is enqueued: keep the event loop alive until the server
         // responds. See the matching call in the simple-query branch above

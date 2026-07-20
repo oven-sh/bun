@@ -21,3 +21,5 @@ bitflags.workspace = true
 bun_core.workspace = true
 bun_semver.workspace = true
 bun_sys.workspace = true
+thiserror.workspace = true
+bun_errno.workspace = true

@@ -25,6 +25,7 @@ public:
     DECLARE_INFO;
     // visitChildrenImpl MUST visit all four barriers: m_stream, m_sink, m_reader, m_error.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -43,9 +44,9 @@ public:
     // the sticky error, if any (gated by m_closed / emptiness).
     JSC::WriteBarrier<JSC::Unknown> m_error;
     // a drain loop is running (re-entrancy guard).
-    bool m_reading { false };
+    bool m_reading : 1 { false };
     // terminal.
-    bool m_closed { false };
+    bool m_closed : 1 { false };
 
 private:
     JSResumableSinkPumpOperation(JSC::VM&, JSC::Structure*);

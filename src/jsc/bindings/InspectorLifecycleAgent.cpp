@@ -43,9 +43,6 @@ void Bun__LifecycleAgentReportError(Inspector::InspectorLifecycleAgent* agent, Z
 
     agent->reportError(*exception);
 }
-
-void Bun__LifecycleAgentPreventExit(Inspector::InspectorLifecycleAgent* agent);
-void Bun__LifecycleAgentStopPreventingExit(Inspector::InspectorLifecycleAgent* agent);
 }
 
 InspectorLifecycleAgent::InspectorLifecycleAgent(JSC::JSGlobalObject& globalObject)

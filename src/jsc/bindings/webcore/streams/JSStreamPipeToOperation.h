@@ -40,6 +40,7 @@ public:
     // visitChildrenImpl MUST visit: m_source, m_destination, m_reader, m_writer, m_signal,
     // m_promise, m_currentWrite, m_shutdownActionPromise, m_shutdownError.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -127,22 +128,22 @@ public:
     // The `originalError` / `error` handed to finalize; gated by m_hasShutdownError
     // (an error value of `undefined` is legal).
     JSC::WriteBarrier<JSC::Unknown> m_shutdownError;
-    bool m_hasShutdownError { false };
     // "shutdown with an action" wait-for-all latch: the number of action promises still
     // pending (AbortBoth registers two). The last settlement proceeds.
     uint8_t m_pendingShutdownActions { 0 };
     // The pending-abort action: which spec action shutdownWithAction is to perform once the
     // pending writes drain (onWritesFinishedForShutdown). No closures.
     ShutdownAction m_pendingShutdownAction { ShutdownAction::None };
+    bool m_hasShutdownError : 1 { false };
     // `shuttingDown`
-    bool m_shuttingDown { false };
+    bool m_shuttingDown : 1 { false };
     // set once "finalize" ran (back-edges cleared, abort algorithm removed).
-    bool m_finalized { false };
+    bool m_finalized : 1 { false };
     // a read has been issued and its read request has not settled yet.
-    bool m_readInFlight { false };
-    bool m_preventClose { false };
-    bool m_preventAbort { false };
-    bool m_preventCancel { false };
+    bool m_readInFlight : 1 { false };
+    bool m_preventClose : 1 { false };
+    bool m_preventAbort : 1 { false };
+    bool m_preventCancel : 1 { false };
 
 private:
     JSStreamPipeToOperation(JSC::VM&, JSC::Structure*);

@@ -1,6 +1,8 @@
 use core::ffi::{c_char, c_int, c_void};
 
-use crate::{ConnectingSocket, Loop, SocketGroup, Timer, udp, us_socket_t};
+#[cfg(windows)]
+use crate::Timer;
+use crate::{ConnectingSocket, Loop, SocketGroup, udp, us_socket_t};
 
 /// Layout placeholder for the `mutex` field of `us_internal_loop_data_t`.
 /// Must match `zig_mutex_t` in `packages/bun-usockets/src/internal/loop_data.h`
@@ -22,12 +24,16 @@ bun_opaque::opaque_ffi! {
 
 #[repr(C)]
 pub struct InternalLoopData {
+    #[cfg(windows)]
     pub sweep_timer: *mut Timer,
+    #[cfg(not(windows))]
+    pub sweep_next_tick_ns: i64,
     pub sweep_timer_count: i32,
     pub wakeup_async: *mut us_internal_async,
     pub head: *mut SocketGroup,
     pub quic_head: *mut c_void,
     pub quic_next_tick_us: i64,
+    #[cfg(windows)]
     pub quic_timer: *mut Timer,
     pub iterator: *mut SocketGroup,
     pub recv_buf: *mut u8,

@@ -73,7 +73,10 @@ impl SystemError {
         bun_sys::e_from_negated(self.errno)
     }
 
-    pub fn deref(&self) {
+    /// Releases one ref of every string field. Prefer letting
+    /// [`to_error_instance`](Self::to_error_instance) consume the value: this
+    /// is only for the paths that build no JS error at all.
+    pub fn deref(self) {
         self.path.deref();
         self.code.deref();
         self.message.deref();
@@ -104,8 +107,13 @@ impl SystemError {
         v
     }
 
-    pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        let result = SystemError__toErrorInstance(self, global);
+    /// Converts to a JS `Error`, consuming `self`: each string field's ref is
+    /// released here, so converting the same `SystemError` twice would free
+    /// strings the first `Error` still holds. Take `self` by value so the
+    /// compiler rejects that; call [`dupe`](Self::dupe) when two `Error`s are
+    /// genuinely wanted.
+    pub fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
+        let result = SystemError__toErrorInstance(&self, global);
         self.deref();
         result
     }
@@ -115,7 +123,7 @@ impl SystemError {
     /// from native code at the top of the event loop (threadpool callback) to
     /// reject a promise — otherwise the error will have an empty stack.
     pub fn to_error_instance_with_async_stack(
-        &self,
+        self,
         global: &JSGlobalObject,
         promise: &JSPromise,
     ) -> JSValue {
@@ -143,8 +151,8 @@ impl SystemError {
     /// Before using this function, consider if the Node.js API it is
     /// implementing follows this convention. It is exclusively used
     /// to match the error code that `node:os` throws.
-    pub fn to_error_instance_with_info_object(&self, global: &JSGlobalObject) -> JSValue {
-        let result = SystemError__toErrorInstanceWithInfoObject(self, global);
+    pub fn to_error_instance_with_info_object(self, global: &JSGlobalObject) -> JSValue {
+        let result = SystemError__toErrorInstanceWithInfoObject(&self, global);
         self.deref();
         result
     }

@@ -16,10 +16,16 @@ await promise;
 const address = server.address();
 console.log("server address", address);
 
+// ASAN is ~8x slower per connection and its RSS margin (256 MB, below) is far
+// wider per connection than the native 15 MB one, so a smaller count still has
+// plenty of sensitivity there while keeping full 150k coverage on other lanes.
+const warmup_total = isASAN ? 10_000 : 50_000;
+const measured_total = isASAN ? 20_000 : 100_000;
+
 let started;
 
 started = 0;
-while (started < 50_000) {
+while (started < warmup_total) {
   const promises: Promise<void>[] = [];
   for (let i = 0; i < 100; i++) {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
@@ -38,14 +44,16 @@ while (started < 50_000) {
   }
   await Promise.all(promises);
   await setTimeout(1);
-  console.log(`Completed ${started} connections. RSS: ${(process.memoryUsage.rss() / 1024 / 1024) | 0} MB`);
+  if (started % 10_000 === 0) {
+    console.log(`Completed ${started} connections. RSS: ${(process.memoryUsage.rss() / 1024 / 1024) | 0} MB`);
+  }
 }
 
 Bun.gc(true);
 const warmup_rss = process.memoryUsage.rss();
 
 started = 0;
-while (started < 100_000) {
+while (started < measured_total) {
   const promises: Promise<void>[] = [];
   for (let i = 0; i < 100; i++) {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
@@ -64,9 +72,14 @@ while (started < 100_000) {
   }
   await Promise.all(promises);
   await setTimeout(1);
-  console.log(`Completed ${started} connections. RSS: ${(process.memoryUsage.rss() / 1024 / 1024) | 0} MB`);
+  if (started % 10_000 === 0) {
+    console.log(`Completed ${started} connections. RSS: ${(process.memoryUsage.rss() / 1024 / 1024) | 0} MB`);
+  }
 }
 
+// Mirror the warmup sample: collect before measuring so the assertion compares
+// like-for-like and isn't sensitive to garbage still in flight from the last batch.
+Bun.gc(true);
 const post_rss = process.memoryUsage.rss();
 
 server.close();

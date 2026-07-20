@@ -18,9 +18,9 @@ pub enum TimeoutError {
     Timeout,
 }
 
-impl From<TimeoutError> for bun_core::Error {
+impl From<TimeoutError> for crate::Error {
     fn from(_: TimeoutError) -> Self {
-        bun_core::err!("Timeout")
+        crate::Error::Timeout
     }
 }
 

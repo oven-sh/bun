@@ -12,6 +12,9 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 // ── submodules ──────────────────────────────────────────────────────────────
 
+pub mod error;
+pub use error::Error;
+
 // ── merged from bun_io ──────────────────────────────────────────────────────
 //
 // `bun_io`'s `FilePoll`/`EventLoopCtx`/`ParentDeathWatchdog`/`Loop`/`Waker`
@@ -24,8 +27,6 @@
 // the discriminant — a SIGABRT-at-best bug class. With both halves in one
 // crate, `EventLoopHandle` is `EventLoopCtx` (the by-value `{kind, owner}`
 // pair) and the seam is type-checked.
-
-pub mod stub_event_loop;
 
 #[cfg(windows)]
 pub mod windows_event_loop;
@@ -343,9 +344,6 @@ bun_dispatch::link_interface! {
         fn on_reader_error(err: bun_sys::Error);
         fn loop_ptr() -> *mut Loop;
         fn event_loop() -> EventLoopCtx;
-        // Only the `SubprocessPipeReader` arm acts on this; everything else
-        // no-ops (no other parent type wires a `MaxBuf`).
-        fn on_max_buffer_overflow(maxbuf: core::ptr::NonNull<max_buf::MaxBuf>);
     }
 }
 
@@ -366,8 +364,6 @@ bun_dispatch::link_interface! {
 ///     on_reader_error  = |this, err| (*this).on_reader_error(err);
 ///     loop_            = |this| (*this).loop_();
 ///     event_loop       = |this| (*this).event_loop_handle.as_event_loop_ctx();
-///     // ↓ optional — only `SubprocessPipeReader` overrides this
-///     on_max_buffer_overflow = |this, maxbuf| { ... };
 /// }
 /// ```
 ///
@@ -410,7 +406,6 @@ macro_rules! __impl_buffered_reader_parent_body {
         on_reader_error = |$re_this:ident, $re_err:ident| $re:expr;
         loop_ = |$l_this:ident| $lp:expr;
         event_loop = |$e_this:ident| $ev:expr;
-        $( on_max_buffer_overflow = |$mb_this:ident, $mb_buf:ident| $mb:block; )?
     ) => {
         // SAFETY (all generated methods): see `BufferedReaderParent` aliasing
         // contract — `this` is the `*mut Self` registered via `set_parent`; a
@@ -445,15 +440,6 @@ macro_rules! __impl_buffered_reader_parent_body {
             unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
                 unsafe { $ev }
             }
-            $(
-                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-                unsafe fn on_max_buffer_overflow(
-                    $mb_this: *mut Self,
-                    $mb_buf: ::core::ptr::NonNull<$crate::max_buf::MaxBuf>,
-                ) {
-                    unsafe { $mb }
-                }
-            )?
         }
     };
 }
@@ -481,8 +467,6 @@ macro_rules! buffered_reader_parent_link {
                     <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
                 event_loop() =>
                     <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
-                on_max_buffer_overflow(maxbuf) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_max_buffer_overflow(this, maxbuf),
             }
         }
     };
@@ -2008,10 +1992,12 @@ pub mod waker {
             Self { fd: Fd::INVALID }
         }
 
-        pub fn init() -> Result<Self, bun_core::Error> {
+        pub fn init() -> crate::error::Result<Self> {
             match bun_sys::eventfd(0, 0) {
                 Ok(fd) => Ok(Self::init_with_file_descriptor(fd)),
-                Err(err) => Err(bun_core::Error::from_errno(i32::from(err.errno))),
+                Err(err) => Err(bun_errno::SystemErrno::init(i64::from(err.errno))
+                    .map(crate::Error::Sys)
+                    .unwrap_or(crate::Error::Unexpected)),
             }
         }
 
@@ -2115,15 +2101,19 @@ pub mod waker {
             }
         }
 
-        pub fn init() -> Result<Self, bun_core::Error> {
+        pub fn init() -> crate::error::Result<Self> {
             let kq = crate::safe_c::kqueue();
             if kq < 0 {
-                return Err(bun_core::Error::from_errno(bun_errno::posix::errno()));
+                return Err(
+                    bun_errno::SystemErrno::init(bun_errno::posix::errno() as i64)
+                        .map(crate::Error::Sys)
+                        .unwrap_or(crate::Error::Unexpected),
+                );
             }
             Self::init_with_file_descriptor(kq)
         }
 
-        pub fn init_with_file_descriptor(kq: i32) -> Result<Self, bun_core::Error> {
+        pub fn init_with_file_descriptor(kq: i32) -> crate::error::Result<Self> {
             debug_assert!(kq > -1);
             // Box<[u8]> owns the buffer for the machport's lifetime.
             let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
@@ -2132,7 +2122,7 @@ pub mod waker {
                 io_darwin_create_machport(kq, machport_buf.as_mut_ptr().cast::<c_void>(), 1024)
             };
             if machport == 0 {
-                return Err(bun_core::err!("MachportCreationFailed"));
+                return Err(crate::Error::MachportCreationFailed);
             }
             Ok(Self {
                 kq,
@@ -2170,7 +2160,7 @@ pub mod waker {
             Self { loop_: None }
         }
 
-        pub fn init() -> Result<Self, bun_core::Error> {
+        pub fn init() -> crate::Result<Self> {
             Ok(Self {
                 loop_: Some(bun_ptr::BackRef::from(
                     core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())

@@ -6,7 +6,7 @@
 //! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
-use bun_jsc::{JSGlobalObject, JSValue, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
@@ -30,34 +30,14 @@ fn dupe_path_like(path: &[u8]) -> PathLike {
     )
 }
 
-/// Set the store's `mime_type` and point `blob.content_type` at it. The
-/// pointer borrows from `blob.store` (held for the blob's lifetime), so it
-/// stays valid without a separate allocation.
 #[inline]
 fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
+    blob.content_type
+        .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
     if let Some(store) = blob.store.get().as_ref() {
-        let store_ptr = store.as_ptr();
         // SAFETY: `store` is the freshly-allocated backing store uniquely owned
         // by `blob`; no other borrow exists yet.
-        unsafe {
-            (*store_ptr).mime_type = mime;
-            blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                (*store_ptr).mime_type.value.as_ref(),
-            ));
-        }
-    } else {
-        // No store (empty bytes). Loader-derived `mime.value` is `'static` — point at it
-        // directly; boxing it leaked because `BuildArtifact`'s drop never runs `Blob::deinit`.
-        match mime.value {
-            std::borrow::Cow::Borrowed(s) => {
-                blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
-            }
-            std::borrow::Cow::Owned(s) => {
-                blob.content_type
-                    .set(bun_core::heap::into_raw(s.into_boxed_slice()));
-                blob.content_type_allocated.set(true);
-            }
-        }
+        unsafe { (*store.as_ptr()).mime_type = mime };
     }
 }
 
@@ -94,7 +74,7 @@ impl SavedFile {
 /// `bun_bundler` crate (the base `bun_bundler` crate has no JSC dep).
 pub(crate) trait OutputFileJsc {
     fn to_js(&mut self, owned_pathname: Option<&[u8]>, global_object: &JSGlobalObject) -> JSValue;
-    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, bun_core::Error>;
+    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, crate::Error>;
 }
 
 impl OutputFileJsc for OutputFile {
@@ -144,7 +124,6 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(copy.pathname.as_ref()),
-                    sourcemap: StrongOptional::empty(),
                 });
 
                 // Ownership transfers to the JS `BuildArtifact` wrapper
@@ -182,7 +161,6 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(path_to_use),
-                    sourcemap: StrongOptional::empty(),
                 });
 
                 // See `Copy` arm.
@@ -205,7 +183,6 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path,
-                    sourcemap: StrongOptional::empty(),
                 });
 
                 // See `Copy` arm.
@@ -218,7 +195,7 @@ impl OutputFileJsc for OutputFile {
         }
     }
 
-    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, bun_core::Error> {
+    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, crate::Error> {
         match &self.value {
             OutputFileValue::Move(_) | OutputFileValue::Pending(_) => {
                 panic!("Unexpected pending output file")

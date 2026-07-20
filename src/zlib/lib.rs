@@ -1,5 +1,8 @@
 // @link "deps/zlib/libz.a"
 
+pub mod error;
+pub use error::{Error, Result};
+
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::size_of;
 
@@ -243,7 +246,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
         None
     }
 
-    pub fn read_all(&mut self, is_done: bool) -> Result<(), bun_core::Error>
+    pub fn read_all(&mut self, is_done: bool) -> crate::Result<()>
     where
         W: bun_io::Write,
     {
@@ -297,7 +300,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                 }
                 ReturnCode::MemError => {
                     self.state = ZlibReaderState::Error;
-                    return Err(bun_core::err!("OutOfMemory"));
+                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
                 }
                 ReturnCode::BufError => {
                     // BufError with avail_in == 0 means we need more input data
@@ -305,13 +308,13 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                         if is_done {
                             // Stream is truncated - we're at EOF but decoder needs more data
                             self.state = ZlibReaderState::Error;
-                            return Err(bun_core::err!("ZlibError"));
+                            return Err(crate::Error::ZlibError);
                         }
                         // Not at EOF - we can retry with more data
-                        return Err(bun_core::err!("ShortRead"));
+                        return Err(crate::Error::ShortRead);
                     }
                     self.state = ZlibReaderState::Error;
-                    return Err(bun_core::err!("ZlibError"));
+                    return Err(crate::Error::ZlibError);
                 }
                 ReturnCode::StreamError
                 | ReturnCode::DataError
@@ -319,7 +322,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                 | ReturnCode::VersionError
                 | ReturnCode::ErrNo => {
                     self.state = ZlibReaderState::Error;
-                    return Err(bun_core::err!("ZlibError"));
+                    return Err(crate::Error::ZlibError);
                 }
                 ReturnCode::Ok => {}
             }
@@ -343,8 +346,6 @@ pub enum ZlibError {
 }
 
 bun_core::impl_tag_error!(ZlibError);
-
-bun_core::named_error_set!(ZlibError);
 
 // zlib `alloc_func`/`free_func` thunks → mimalloc. Shared by `ZlibReader` and
 // `ZlibCompressorArrayList`. Intentionally
@@ -1183,6 +1184,11 @@ pub struct InflateDecoder {
     pub state: State,
     /// Decompression-bomb guard for [`decompress`](Self::decompress).
     pub max_output_size: usize,
+    /// RFC 1952 §2.2: a gzip file is a sequence of members. When true (set
+    /// for gzip-only `window_bits`), [`decompress`](Self::decompress) resets
+    /// on `Z_STREAM_END` and continues if input remains, so concatenated
+    /// members are all decoded instead of silently dropped after the first.
+    multi_member: bool,
 }
 
 impl InflateDecoder {
@@ -1191,6 +1197,8 @@ impl InflateDecoder {
             strm: Box::new(new_zstream()),
             state: State::Uninitialized,
             max_output_size: usize::MAX,
+            // `MAX_WBITS | 16` selects gzip-only decode (zlib manual).
+            multi_member: (16..32).contains(&window_bits),
         };
         // SAFETY: strm is fully initialized; version/size match the linked zlib.
         let rc = unsafe {
@@ -1251,8 +1259,22 @@ impl InflateDecoder {
         out: &mut Vec<u8>,
         is_done: bool,
     ) -> Result<(), ZlibError> {
-        if matches!(self.state, State::End | State::Error) {
+        if matches!(self.state, State::Error) {
             return Ok(());
+        }
+        if matches!(self.state, State::End) {
+            // A prior call completed a gzip member at the chunk boundary.
+            // Only resume when the next byte is the gzip magic ID1 (RFC 1952
+            // §2.3.1); any other trailing bytes are tolerated as garbage so
+            // stray CRLF/footer junk does not turn into a decode error.
+            if self.multi_member && input.first() == Some(&0x1f) {
+                if self.reset() != ReturnCode::Ok {
+                    self.state = State::Error;
+                    return Err(ZlibError::ZlibError);
+                }
+            } else {
+                return Ok(());
+            }
         }
         loop {
             let remaining = self.max_output_size.saturating_sub(out.len());
@@ -1271,6 +1293,17 @@ impl InflateDecoder {
             match rc {
                 ReturnCode::StreamEnd => {
                     self.state = State::End;
+                    // Continue only when the next byte is the gzip magic ID1
+                    // (0x1f). Anything else is trailing garbage/padding and
+                    // ends the stream, keeping prior tolerance for origins
+                    // that append stray bytes after a valid member.
+                    if self.multi_member && input.first() == Some(&0x1f) {
+                        if self.reset() != ReturnCode::Ok {
+                            self.state = State::Error;
+                            return Err(ZlibError::ZlibError);
+                        }
+                        continue;
+                    }
                     return Ok(());
                 }
                 ReturnCode::MemError => {

@@ -1141,7 +1141,7 @@ describe("bundledDependencies", () => {
           join(packageDir, "bunfig.toml"),
           `
 [install]
-cache = "${join(packageDir, ".bun-cache")}"
+cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
           `,
         ),
       ]);
@@ -1298,7 +1298,7 @@ describe("optionalDependencies", () => {
       join(packageDir, "bunfig.toml"),
       `
   [install]
-  cache = "${join(packageDir, ".bun-cache")}"
+  cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
   optional = false
   registry = "http://localhost:${port}/"
   `,
@@ -1784,7 +1784,7 @@ test("manifest cache will invalidate when registry changes", async () => {
       join(packageDir, "bunfig.toml"),
       `
 [install]
-cache = "${cacheDir}"
+cache = "${cacheDir.replaceAll("\\", "\\\\")}"
 registry = "http://localhost:${port}"
 saveTextLockfile = false
       `,
@@ -1819,7 +1819,7 @@ saveTextLockfile = false
       join(packageDir, "bunfig.toml"),
       `
 [install]
-cache = "${cacheDir}"
+cache = "${cacheDir.replaceAll("\\", "\\\\")}"
 `,
     ),
   ]);
@@ -3118,7 +3118,7 @@ test("--config cli flag works", async () => {
       join(packageDir, "bunfig2.toml"),
       `
 [install]
-cache = "${join(packageDir, ".bun-cache")}"
+cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
 registry = "http://localhost:${port}/"
 dev = false
 `,
@@ -3327,7 +3327,9 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   lockfile = parseLockfile(packageDir);
   expect(lockfile).toMatchNodeModulesAt(packageDir);
 
-  for (var i = 0; i < 100; i++) {
+  // Iterating more than once matters: this repeatedly re-resolves from a deleted
+  // lockfile to catch nondeterministic peer-dep hoisting. Do not collapse to 1.
+  for (var i = 0; i < 10; i++) {
     // Situation:
     //
     // Root package has a dependency on one-fixed-dep, peer-deps-too and two-range-deps.

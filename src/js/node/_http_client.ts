@@ -11,7 +11,7 @@ const {
   freeParser,
   parsers,
   HTTPParser,
-  isLenient,
+  calculateLenientFlags,
   prepareError,
   kSkipPendingData,
 } = require("node:_http_common");
@@ -19,7 +19,7 @@ const { kUniqueHeaders, parseUniqueHeadersOption, OutgoingMessage } = require("n
 const Agent = require("node:_http_agent");
 const { urlToHttpOptions } = require("internal/url");
 const { kOutHeaders, kNeedDrain, kProxyConfig, checkShouldUseProxy } = require("internal/http");
-const { validateInteger, validateBoolean, validateString } = require("internal/validators");
+const { validateInteger, validateBoolean, validateString, validateOneOf } = require("internal/validators");
 const { getTimerDuration } = require("internal/timers");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const finished = require("internal/streams/end-of-stream");
@@ -60,13 +60,16 @@ function onCreateConnection(this: any, err, socket) {
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const kError = Symbol("kError");
 const kPath = Symbol("kPath");
-
-const kLenientAll = HTTPParser.kLenientAll | 0;
-const kLenientNone = HTTPParser.kLenientNone | 0;
+// Chunks queued while parser.execute() is already running on this socket
+// (undefined when no execute() is in progress).
+const kPendingParserData = Symbol("kPendingParserData");
 
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {
-    throw $ERR_INVALID_ARG_TYPE(`options.${name}`, ["string", "undefined", "null"], host);
+    // node passes ['string', 'undefined', 'null'] and its formatter renders the non-type
+    // entries as "one of undefined or null"; pass the pre-formatted text to match.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js#L83-L89
+    throw $ERR_INVALID_ARG_TYPE(`options.${name}`, "string or one of undefined or null", host);
   }
   return host;
 }
@@ -78,6 +81,19 @@ class HTTPClientAsyncResource {
     this.type = type;
     this.req = req;
   }
+}
+
+// Node's parser AsyncWrap + _http_agent asyncResetHandle() make every socket
+// callback re-enter the current request's async scope; Bun bridges this in
+// JS by snapshotting the frame at tickOnSocket and running each socket
+// listener (data/end/error/close/drain/timeout) inside it.
+const kClientAsyncContext = Symbol("kClientAsyncContext");
+const runInFrame = require("internal/async_context_frame").run;
+
+function closeRequest(req) {
+  if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
+  req._closed = true;
+  req.emit("close");
 }
 
 function isURLInstance(input) {
@@ -181,7 +197,14 @@ function ClientRequest(input, options, cb) {
     // Explicitly pass through this statement as agent will not be used
     // when createConnection is provided.
   } else if (typeof agent.addRequest !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("options.agent", ["Agent-like Object", "undefined", "false"], agent);
+    // node renders ['Agent-like Object', 'undefined', 'false'] as "must be one of ..."
+    // (none of the entries are type names); Bun's native formatter always says
+    // "must be of type ...", so patch the fixed prefix while keeping its
+    // "Received ..." rendering of the offending value.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js#L168-L170
+    const err = $ERR_INVALID_ARG_TYPE("options.agent", ["Agent-like Object", "undefined", "false"], agent);
+    err.message = err.message.replace(" must be of type ", " must be one of ");
+    throw err;
   }
   this.agent = agent;
 
@@ -251,6 +274,20 @@ function ClientRequest(input, options, cb) {
 
   this.insecureHTTPParser = insecureHTTPParser;
 
+  const httpValidation = options.httpValidation;
+  if (httpValidation !== undefined) {
+    validateOneOf(httpValidation, "options.httpValidation", ["strict", "relaxed", "insecure"]);
+    if (insecureHTTPParser !== undefined) {
+      throw $ERR_INVALID_ARG_VALUE(
+        "options.httpValidation",
+        httpValidation,
+        "cannot be used together with options.insecureHTTPParser",
+      );
+    }
+  }
+
+  this.httpValidation = httpValidation;
+
   const joinDuplicateHeaders = options.joinDuplicateHeaders;
   if (joinDuplicateHeaders !== undefined) {
     validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
@@ -286,6 +323,14 @@ function ClientRequest(input, options, cb) {
   this.reusedSocket = false;
   this.host = host;
   this.protocol = protocol;
+
+  // node's domain integration attaches every EventEmitter created inside
+  // domain.run() to that domain via async context propagation. Capture the
+  // active domain here so the response can be bound to it when it arrives.
+  const activeDomain = process.domain;
+  if (activeDomain != null) {
+    this.domain = activeDomain;
+  }
 
   const thisAgent = this.agent;
   if (thisAgent) {
@@ -483,6 +528,10 @@ function emitAbortNT(req) {
 }
 
 function ondrain() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], ondrainInner, this);
+}
+
+function ondrainInner() {
   const msg = this._httpMessage;
   if (msg && !msg.finished && msg[kNeedDrain]) {
     msg[kNeedDrain] = false;
@@ -491,6 +540,10 @@ function ondrain() {
 }
 
 function socketCloseListener() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketCloseListenerInner, this);
+}
+
+function socketCloseListenerInner() {
   const socket = this;
   const req = socket._httpMessage;
   $debug("HTTP socket close");
@@ -509,8 +562,7 @@ function socketCloseListener() {
     if (!res.complete) {
       res.destroy(new ConnResetException("aborted"));
     }
-    req._closed = true;
-    req.emit("close");
+    closeRequest(req);
     if (!res.aborted && res.readable) {
       res.push(null);
     }
@@ -522,8 +574,7 @@ function socketCloseListener() {
       req.socket._hadError = true;
       emitErrorEvent(req, new ConnResetException("socket hang up"));
     }
-    req._closed = true;
-    req.emit("close");
+    closeRequest(req);
   }
 
   // Too bad.  That output wasn't getting written.
@@ -539,6 +590,10 @@ function socketCloseListener() {
 }
 
 function socketErrorListener(err) {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketErrorListenerInner, this, err);
+}
+
+function socketErrorListenerInner(err) {
   const socket = this;
   const req = socket._httpMessage;
   $debug("SOCKET ERROR:", err);
@@ -563,6 +618,10 @@ function socketErrorListener(err) {
 }
 
 function socketOnEnd() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketOnEndInner, this);
+}
+
+function socketOnEndInner() {
   const socket = this;
   const req = this._httpMessage;
   const parser = this.parser;
@@ -581,9 +640,41 @@ function socketOnEnd() {
 }
 
 function socketOnData(d) {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketOnDataInner, this, d);
+}
+
+function socketOnDataInner(d) {
   const socket = this;
-  const req = this._httpMessage;
-  const parser = this.parser;
+
+  // HTTPParser.execute() is not reentrant. User code can synchronously push
+  // more response data from inside an event emitted by execute() (e.g. an
+  // 'information' handler writing to a custom createConnection duplex), which
+  // re-enters this 'data' listener while the previous execute() is still on
+  // the stack. Queue those chunks and process them once the outer call
+  // finishes.
+  const pending = socket[kPendingParserData];
+  if (pending !== undefined) {
+    pending.push(d);
+    return;
+  }
+
+  const queue = (socket[kPendingParserData] = [d]);
+  try {
+    while (queue.length !== 0) {
+      const parser = socket.parser;
+      // The previous chunk may have freed the parser (response complete,
+      // upgrade, parse error); any data queued after that point would have
+      // been emitted with no 'data' listener attached in node, so drop it.
+      if (!parser) break;
+      processClientData(socket, queue.shift(), parser);
+    }
+  } finally {
+    socket[kPendingParserData] = undefined;
+  }
+}
+
+function processClientData(socket, d, parser) {
+  const req = socket._httpMessage;
 
   $assert(parser && parser.socket === socket);
 
@@ -629,10 +720,12 @@ function socketOnData(d) {
         socket._httpMessage = null;
         socket.readableFlowing = null;
 
+        // Clear before the emit: a throwing upgrade/connect handler would skip
+        // closeRequest() and leave the retained request pinning the store.
+        req[kClientAsyncContext] = undefined;
         req.emit(eventName, res, socket, bodyHead);
         req.destroyed = true;
-        req._closed = true;
-        req.emit("close");
+        closeRequest(req);
       } else {
         // Requested Upgrade or used CONNECT method, but have no handler.
         socket.destroy();
@@ -749,6 +842,15 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
   req.res = res;
   res.req = req;
 
+  // Bind the response to the domain that was active when the request was
+  // created, so unhandled 'error' events on the response are routed to
+  // domain.on('error') like in node.
+  const reqDomain = req.domain;
+  if (reqDomain != null && typeof reqDomain.add === "function" && res.domain == null) {
+    res.domain = reqDomain;
+    reqDomain.add(res);
+  }
+
   // Add our listener first, so that we guarantee socket cleanup
   res.on("end", responseOnEnd);
   req.on("finish", requestOnFinish);
@@ -832,6 +934,10 @@ function responseOnEnd() {
 }
 
 function responseOnTimeout() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], responseOnTimeoutInner, this);
+}
+
+function responseOnTimeoutInner() {
   const req = this._httpMessage;
   if (!req) return;
   const res = req.res;
@@ -852,8 +958,7 @@ function requestOnFinish() {
 }
 
 function emitFreeNT(req) {
-  req._closed = true;
-  req.emit("close");
+  closeRequest(req);
   const socket = req.socket;
   if (socket) {
     socket.emit("free");
@@ -863,12 +968,13 @@ function emitFreeNT(req) {
 function tickOnSocket(req, socket) {
   const parser = parsers.alloc();
   req.socket = socket;
-  const lenient = req.insecureHTTPParser === undefined ? isLenient() : req.insecureHTTPParser;
+  req[kClientAsyncContext] = $getInternalField($asyncContext, 0);
+  const lenientFlags = calculateLenientFlags(req.httpValidation, req.insecureHTTPParser);
   parser.initialize(
     HTTPParser.RESPONSE,
     new HTTPClientAsyncResource("HTTPINCOMINGMESSAGE", req),
     req.maxHeaderSize || 0,
-    lenient ? kLenientAll : kLenientNone,
+    lenientFlags,
   );
   parser.socket = socket;
   parser.outgoing = req;
@@ -898,6 +1004,10 @@ function tickOnSocket(req, socket) {
 }
 
 function emitRequestTimeout() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], emitRequestTimeoutInner, this);
+}
+
+function emitRequestTimeoutInner() {
   const req = this._httpMessage;
   if (req) {
     req.emit("timeout");
@@ -931,6 +1041,10 @@ ClientRequest.prototype.onSocket = function onSocket(socket, err) {
   // to be set so we set it here too.
   if (socket && !err) {
     socket._httpMessage = this;
+    // Capture the frame here, not just in tickOnSocket: onSocket runs in the
+    // request's context, and an error in the window before onSocketNT would
+    // otherwise run socketErrorListener with no frame and clear the context.
+    this[kClientAsyncContext] = $getInternalField($asyncContext, 0);
     socket.on("error", socketErrorListener);
   }
   process.nextTick(onSocketNT, this, socket, err);
@@ -948,8 +1062,7 @@ function destroyRequestOnSocketNT(req, socket, err) {
   // The request is dead with no parser: close the trace span on the paths
   // that skip emitErrorEvent above (proxy tunnel; error already emitted).
   traceClientResponseEnd(req);
-  req._closed = true;
-  req.emit("close");
+  closeRequest(req);
 }
 
 function onSocketNT(req, socket, err) {

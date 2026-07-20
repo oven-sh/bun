@@ -2,6 +2,9 @@
 #![allow(unexpected_cfgs)]
 #![feature(allocator_api)]
 
+pub mod error;
+pub use error::{Error, Result};
+
 pub mod json_index;
 mod json_stage2;
 

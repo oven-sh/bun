@@ -251,7 +251,7 @@ impl<'a> GlobalJS<'a> {
     }
 
     #[inline]
-    pub fn handle_error(self, err: bun_core::Error, suffix: &str) -> ShellErr {
+    pub fn handle_error(self, err: &crate::Error, suffix: &str) -> ShellErr {
         let mut v = Vec::new();
         write!(&mut v, "{} {}", err.name(), suffix).expect("infallible: in-memory write");
         ShellErr::Custom(v.into_boxed_slice())
@@ -366,7 +366,7 @@ impl<'a> GlobalMini<'a> {
     }
 
     #[inline]
-    pub fn handle_error(self, err: bun_core::Error, suffix: &str) -> ShellErr {
+    pub fn handle_error(self, err: &crate::Error, suffix: &str) -> ShellErr {
         let mut v = Vec::new();
         write!(&mut v, "{} {}", err.name(), suffix).expect("infallible: in-memory write");
         ShellErr::Custom(v.into_boxed_slice())
@@ -988,14 +988,10 @@ impl<'a> ShellSrcBuilder<'a> {
         if invalid {
             return Ok(false);
         }
-        // Empty interpolated values must still produce an argument (e.g. `${''}` should
-        // pass "" as an arg). Route through appendJSStrRef so the \x08 marker is recognized
-        // by the lexer regardless of quote context (e.g. inside single quotes).
-        if ALLOW_ESCAPE && bunstr.length() == 0 {
-            self.append_js_str_ref(bunstr)?;
-            return Ok(true);
-        }
         if ALLOW_ESCAPE {
+            // `needs_escape_bunstr` is true for empty strings: `${''}` must still
+            // produce an argument. Routing through appendJSStrRef makes the \x08
+            // marker recognized regardless of quote context (e.g. inside single quotes).
             if needs_escape_bunstr(bunstr) || is_if_clause_keyword_bunstr(bunstr) {
                 self.append_js_str_ref(bunstr)?;
                 return Ok(true);
@@ -1013,10 +1009,7 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(true)
     }
 
-    pub fn append_utf8<const ALLOW_ESCAPE: bool>(
-        &mut self,
-        utf8: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    pub fn append_utf8<const ALLOW_ESCAPE: bool>(&mut self, utf8: &[u8]) -> crate::Result<bool> {
         let invalid = simdutf::validate::utf8(utf8);
         // Note: the name `invalid` is misleading — it holds the validity bool.
         if !invalid {
@@ -1049,13 +1042,8 @@ impl<'a> ShellSrcBuilder<'a> {
     }
 
     pub fn append_latin1_impl(&mut self, latin1: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        let non_ascii_idx = strings::first_non_ascii(latin1).unwrap_or(0);
-
-        if non_ascii_idx > 0 {
-            self.append_utf8_impl(&latin1[..non_ascii_idx as usize])?;
-        }
-
-        // Move the Vec out, transform it, and store it back.
+        // `allocate_latin1_into_utf8_with_list` appends ALL of `latin1` after `len`,
+        // including its leading ASCII run; pre-appending any of it would duplicate it.
         let len = self.outbuf.len();
         let buf = core::mem::take(self.outbuf);
         *self.outbuf = strings::allocate_latin1_into_utf8_with_list(buf, len, latin1);
@@ -1171,20 +1159,20 @@ pub mod testing_apis {
                 let mut lexer =
                     LexerAscii::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
                 if let Err(err) = lexer.lex() {
-                    return Err(global.throw_error(bun_core::err!(from err), "failed to lex shell"));
+                    return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
                 }
                 break 'brk lexer.get_result();
             }
             let mut lexer = LexerUnicode::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
             if let Err(err) = lexer.lex() {
-                return Err(global.throw_error(bun_core::err!(from err), "failed to lex shell"));
+                return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
             }
             lexer.get_result()
         };
 
         if !lex_result.errors.is_empty() {
             let str = lex_result.combine_errors(&arena);
-            return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+            return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
         }
 
         let mut test_tokens: Vec<test::TestToken> = Vec::with_capacity(lex_result.tokens.len());
@@ -1260,12 +1248,12 @@ pub mod testing_apis {
                 // `out_lex_result` is populated by `parse()` only on lex errors.
                 if let Some(lex) = out_lex_result.as_ref() {
                     let str = lex.combine_errors(&arena);
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
                 }
 
                 if let Some(p) = out_parser.as_mut() {
                     let errstr = p.combine_errors();
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
                 return Err(global.throw_error(err, "failed to lex/parse shell"));

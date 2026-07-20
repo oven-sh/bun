@@ -430,3 +430,9 @@ describe("util", () => {
     }
   });
 });
+
+describe("util.parseEnv", () => {
+  it("accepts a String object without crashing", () => {
+    expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
+  });
+});

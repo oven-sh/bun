@@ -201,7 +201,7 @@ const STALL_NO_CONSUMER =
 `;
 
 for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind[]) {
-  describe(`fetch() ${kind} receive backpressure`, () => {
+  describe.concurrent(`fetch() ${kind} receive backpressure`, () => {
     const skip = kind === "h3" && isWindows;
 
     const scripts =

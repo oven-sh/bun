@@ -298,24 +298,27 @@ function getImageName(platform, options) {
 }
 
 /**
- * @param {number} [limit]
- * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
+ * @link https://buildkite.com/docs/pipelines/configure/retry#retry-attributes-automatic-retry-attributes
  */
 function getRetry() {
   return {
     manual: {
       permit_on_passed: true,
     },
-    // Self-heal infra deaths once instead of leaving the build failed until a
-    // human notices and clicks retry:
-    //   -1  = agent lost / process killed (box died, agent restarted)
-    //   255 = step timeout kill (timeout_in_minutes SIGTERM cascade)
-    // User-canceled jobs are state=canceled, which never triggers automatic
-    // retry, so this cannot resurrect deliberately canceled builds. limit: 1
-    // caps the cost when a suite genuinely crashes with these statuses.
+    // Self-heal agent/infra loss, and only that. Conditions within one rule
+    // are ANDed, so `signal_reason` scopes each rule to the failure mode it
+    // names: `none` is an agent that dropped its connection mid-job,
+    // `agent_stop` is a graceful agent restart mid-job, `process_run_error`
+    // is the bootstrap failing before the command ever ran. A blanket
+    // `exit_status: -1` / `255` also matches `cancel`, which is what a
+    // `timeout_in_minutes` kill records, so a timed-out shard would be
+    // re-queued just to time out again on the next agent. User-canceled
+    // builds are state=canceled and never auto-retry regardless of these
+    // rules.
     automatic: [
-      { exit_status: -1, limit: 1 },
-      { exit_status: 255, limit: 1 },
+      { exit_status: -1, signal_reason: "none", limit: 1 },
+      { signal_reason: "agent_stop", limit: 2 },
+      { signal_reason: "process_run_error", limit: 1 },
     ],
   };
 }
@@ -704,6 +707,22 @@ function needsBaselineVerification(platform) {
   return false;
 }
 
+// Ubuntu 20.04's qemu 4.2 mis-emulates concurrent atomics in same-arch user mode; after #34009
+// (mimalloc per-thread heaps) the SIMD baseline test segfaults/deadlocks in `_mi_theap_init`
+// ~10-20% of x64 runs and ~5% of aarch64 runs. qemu 9.1 is 40/40 green. Static-pie binaries.
+const PINNED_QEMU = {
+  x64: {
+    url: "https://github.com/ziglang/qemu-static/releases/download/9.1.0/qemu-linux-x86_64-9.1.0.tar.xz",
+    sha256: "1ac92f632417d981810fda891e4a1b20f2d71f50f9ec705532afa8162b449c70",
+    binary: "qemu-linux-x86_64-9.1.0/bin/qemu-x86_64",
+  },
+  aarch64: {
+    url: "https://github.com/ziglang/qemu-static/releases/download/9.1.0/qemu-linux-aarch64-9.1.0.tar.xz",
+    sha256: "5a82a96ac74932a802fb5753673beff27359faea8736286477b0bf2c268fd06d",
+    binary: "qemu-linux-aarch64-9.1.0/bin/qemu-aarch64",
+  },
+};
+
 /**
  * Returns the emulator binary name for the given platform.
  * Linux uses QEMU user-mode; Windows uses Intel SDE.
@@ -716,8 +735,8 @@ function getEmulatorBinary(platform) {
   // (Install-IntelSde): downloadmirror.intel.com sits behind a bot challenge
   // that blocks non-browser clients, so it cannot be downloaded at job time.
   if (os === "windows") return "C:\\intel-sde\\sde.exe";
-  if (arch === "aarch64") return "qemu-aarch64-static";
-  return "qemu-x86_64-static";
+  // Fetched into the checkout root by the setup command below (see PINNED_QEMU).
+  return `./${PINNED_QEMU[arch].binary}`;
 }
 
 /**
@@ -736,11 +755,14 @@ function hasWebKitChanges(options) {
  * @returns {Step}
  */
 function getVerifyBaselineStep(platform, options) {
-  const { os } = platform;
+  const { os, abi } = platform;
   const targetKey = getTargetKey(platform);
   const triplet = getTargetTriplet(platform);
   const emulator = getEmulatorBinary(platform);
   const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
+  // Android binaries need /system/bin/linker64 + a bionic sysroot, neither of which exist on the
+  // build host, so qemu-user cannot load them; only the static instruction scan is meaningful.
+  const skipEmulationFlag = abi === "android" ? " --skip-emulation" : "";
 
   // Scan bun-profile, not bun. The stripped binary has no .symtab (ELF) and
   // no companion .pdb (PE) — the static scanner would emit <no-symbol@addr>
@@ -764,6 +786,15 @@ function getVerifyBaselineStep(platform, options) {
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
           `unzip -o '${profileDir}.zip'`,
           `chmod +x ${profileDir}/${profileExe}`,
+          // Linux lanes pin a known-good qemu (see PINNED_QEMU). sha256 check makes a
+          // truncated/hijacked download a hard failure before anything runs under it.
+          ...(abi === "android"
+            ? [] // --skip-emulation: no emulator needed
+            : [
+                `curl -fsSL --retry 5 --connect-timeout 15 --max-time 120 -o ./qemu.tar.xz '${PINNED_QEMU[platform.arch].url}'`,
+                `echo '${PINNED_QEMU[platform.arch].sha256}  ./qemu.tar.xz' | sha256sum -c -`,
+                `tar -xJf ./qemu.tar.xz '${PINNED_QEMU[platform.arch].binary}'`,
+              ]),
         ];
 
   // Windows: the emulator phase runs bun-profile.exe under Intel SDE, so the
@@ -787,7 +818,7 @@ function getVerifyBaselineStep(platform, options) {
     command: [
       ...setupCommands,
       `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,
-      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${jitStressFlag}`,
+      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${skipEmulationFlag}${jitStressFlag}`,
     ],
   };
 }
@@ -819,6 +850,9 @@ function getTestBunStep(platform, options, testOptions = {}) {
   } else {
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
     args.push("--exclude=integration/bun-types");
+    // source-tree lints and build-script unit tests that never touch the built
+    // binary; run in .github/workflows/source-lints.yml instead
+    args.push("--exclude=internal/source-lints");
   }
 
   const depends = [];

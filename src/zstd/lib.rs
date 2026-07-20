@@ -142,6 +142,19 @@ pub mod c {
             cctx: *mut ZSTD_CCtx,
             pledged_src_size: c_ulonglong,
         ) -> usize;
+        /// Copies the dictionary into the context, so `dict` need not outlive
+        /// the call (unlike the `_byReference` variant).
+        pub fn ZSTD_CCtx_loadDictionary(
+            cctx: *mut ZSTD_CCtx,
+            dict: *const c_void,
+            dict_size: usize,
+        ) -> usize;
+        /// Copies the dictionary into the context; see `ZSTD_CCtx_loadDictionary`.
+        pub fn ZSTD_DCtx_loadDictionary(
+            dctx: *mut ZSTD_DCtx,
+            dict: *const c_void,
+            dict_size: usize,
+        ) -> usize;
         pub fn ZSTD_CCtx_setParameter(
             cctx: *mut ZSTD_CCtx,
             param: ZSTD_cParameter,
@@ -173,7 +186,7 @@ pub enum Result {
     Err(&'static ZStr),
 }
 
-#[derive(strum::IntoStaticStr, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZstdError {
     InvalidZstdData,
     DecompressionFailed,
@@ -183,8 +196,6 @@ pub enum ZstdError {
 }
 
 bun_core::impl_tag_error!(ZstdError);
-
-bun_core::named_error_set!(ZstdError);
 
 /// ZSTD_compress() :
 ///  Compresses `src` content as a single zstd compressed frame into already allocated `dst`.

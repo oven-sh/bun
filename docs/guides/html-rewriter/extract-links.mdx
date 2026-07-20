@@ -6,7 +6,7 @@ mode: center
 
 ## Extract links from a webpage
 
-Bun's [HTMLRewriter](/runtime/html-rewriter) API extracts links from HTML. Chain CSS selectors to match the elements, text, and attributes you want to process, then pass `.transform` a `Response`, `Blob`, or `string`.
+Bun's [HTMLRewriter](/runtime/html-rewriter) API extracts links from HTML. Chain CSS selectors to match the elements, text, and attributes you want to process, then pass `.transform` a `Response`, `ArrayBuffer`, or `string`.
 
 ```ts extract-links.ts icon="/icons/typescript.svg"
 async function extractLinks(url: string) {

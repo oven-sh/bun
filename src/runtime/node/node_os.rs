@@ -56,7 +56,7 @@ mod _impl {
     // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
 
     /// Unified error for `cpus_impl_*` so `?` works on both `JsResult` and
-    /// `bun_core::Error`/`bun_sys::Error`. The variant payload is discarded by
+    /// `crate::Error`/`bun_sys::Error`. The variant payload is discarded by
     /// `cpus()`, which throws a `SystemError`.
     pub(crate) enum OsError {
         Js,
@@ -67,8 +67,8 @@ mod _impl {
             Self::Js
         }
     }
-    impl From<bun_core::Error> for OsError {
-        fn from(_: bun_core::Error) -> Self {
+    impl From<crate::Error> for OsError {
+        fn from(_: crate::Error) -> Self {
             Self::Any
         }
     }
@@ -365,13 +365,13 @@ mod _impl {
                 let scale: u64 = 10;
 
                 let times = CPUTimes {
-                    user: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
-                    nice: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
-                    sys: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
-                    idle: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
+                    user: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
+                    nice: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
+                    sys: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
+                    idle: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
                     irq: {
-                        let _ = toks.next().ok_or_else(|| bun_core::err!("eol"))?; // skip iowait
-                        scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?
+                        let _ = toks.next().ok_or(crate::Error::eol)?; // skip iowait
+                        scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?
                     },
                 };
 
@@ -473,7 +473,7 @@ mod _impl {
                     "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq\0",
                     cpu_index
                 )
-                .map_err(|_| bun_core::err!("fmt"))?;
+                .map_err(|_| crate::Error::fmt)?;
                 let remaining = cursor.len();
                 let written = path_buf.len() - remaining;
                 // SAFETY: we wrote a NUL terminator at path_buf[written-1]
@@ -1723,13 +1723,13 @@ impl NetmaskInt for u128 {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
-fn parse_u64(s: &[u8]) -> Result<u64, bun_core::Error> {
-    bun_core::fmt::parse_int(s, 10).map_err(|_| bun_core::err!("InvalidCharacter"))
+fn parse_u64(s: &[u8]) -> crate::Result<u64> {
+    bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
 }
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
-fn parse_u32(s: &[u8]) -> Result<u32, bun_core::Error> {
-    bun_core::fmt::parse_int(s, 10).map_err(|_| bun_core::err!("InvalidCharacter"))
+fn parse_u32(s: &[u8]) -> crate::Result<u32> {
+    bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
 }
 
 #[cfg(windows)]

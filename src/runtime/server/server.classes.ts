@@ -90,7 +90,21 @@ function generate(name) {
     finalize: true,
     construct: true,
     noConstructor: true,
-    values: ["routeList"],
+    values: [
+      "routeList",
+      "onRequest",
+      "onError",
+      "onNodeHTTPRequest",
+      "onClientError",
+      "onConnection",
+      "wsOnOpen",
+      "wsOnMessage",
+      "wsOnClose",
+      "wsOnDrain",
+      "wsOnError",
+      "wsOnPing",
+      "wsOnPong",
+    ],
   });
 }
 export default [
@@ -111,6 +125,10 @@ export default [
       },
       writeContinue: {
         fn: "writeContinue",
+      },
+      writeInformational: {
+        fn: "writeInformational",
+        length: 1,
       },
       write: {
         fn: "write",
@@ -150,6 +168,18 @@ export default [
       drainRequestBody: {
         fn: "drainRequestBody",
         length: 0,
+      },
+      takeRequestTrailers: {
+        fn: "takeRequestTrailers",
+        length: 0,
+      },
+      takeRawHeaders: {
+        fn: "takeRawHeaders",
+        length: 0,
+      },
+      writeHeadAndEnd: {
+        fn: "writeHeadAndEnd",
+        length: 8,
       },
       dumpRequestBody: {
         fn: "dumpRequestBody",
@@ -208,7 +238,7 @@ export default [
     klass: {},
     finalize: true,
     noConstructor: true,
-    values: ["onAborted", "onWritable", "onData"],
+    values: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   }),
 
   define({
@@ -335,7 +365,7 @@ export default [
     finalize: true,
     construct: true,
     klass: {},
-    values: ["socket"],
+    values: ["server"],
   }),
 
   define({

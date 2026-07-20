@@ -325,8 +325,6 @@ pub(crate) fn get_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     T::get_cwd(buf)
 }
 
-// Alias for naming consistency.
-pub use get_cwd_u8 as get_cwd;
 
 /// Based on Node v21.6.1 path.posix.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309

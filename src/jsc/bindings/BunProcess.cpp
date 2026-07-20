@@ -1002,7 +1002,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     RETURN_IF_EXCEPTION(scope, {});
 
     auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    processObject->setCachedCwd(vm, result.toStringOrNull(globalObject));
+    // Node clears its cwd cache on chdir (does_own_process_state.js) and lets
+    // the next process.cwd() re-query the OS - do not re-populate it here.
+    processObject->clearCachedCwd();
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 

@@ -61,7 +61,27 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
         return JSArgument::from_js_maybe_file(global, str.to_js(), true);
     }
 
-    JSArgument::from_js_maybe_file(global, value, false)
+    // `allow_file = true` REJECTS file-backed blobs (see types.rs) — a file blob's
+    // `.slice()` is empty, so letting one through would send an empty arg.
+    JSArgument::from_js_maybe_file(global, value, true)
+}
+
+/// Convert a trailing varargs slice to `JSArgument`s with a single policy:
+/// `undefined`/`null`/unsupported values THROW (never silently skip or truncate).
+fn collect_varargs(
+    global: &JSGlobalObject,
+    args: &[JSValue],
+    method: &str,
+    label: &str,
+) -> JsResult<Vec<JSArgument>> {
+    let mut out = Vec::with_capacity(args.len());
+    for arg in args {
+        let Some(v) = from_js(global, *arg)? else {
+            return Err(global.throw_invalid_argument_type(method, label, "string or buffer"));
+        };
+        out.push(v);
+    }
+    Ok(out)
 }
 
 /// Return a rejected `Promise` wrapping the Redis error as a
@@ -217,27 +237,17 @@ macro_rules! cmd_key_varargs {
                 this, $name,
             )?;
 
-            if frame.argument(0).is_undefined_or_null() {
-                return Err(global.throw_missing_arguments_value(&[$arg0_name]));
-            }
-
+            let Some(key) = from_js(global, frame.argument(0))? else {
+                return Err(global.throw_invalid_argument_type(
+                    $name,
+                    $arg0_name,
+                    "string or buffer",
+                ));
+            };
             let arguments = frame.arguments();
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
-
-            for arg in arguments {
-                if arg.is_undefined_or_null() {
-                    continue;
-                }
-
-                let Some(another) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        $name,
-                        "additional arguments",
-                        "string or buffer",
-                    ));
-                };
-                args.push(another);
-            }
+            args.push(key);
+            args.extend(collect_varargs(global, &arguments[1..], $name, "additional arguments")?);
             send_cmd(
                 this,
                 global,
@@ -351,18 +361,7 @@ macro_rules! cmd_strings_varargs {
                 this, $name,
             )?;
 
-            let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
-
-            for arg in frame.arguments() {
-                let Some(another) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        $name,
-                        "additional arguments",
-                        "string or buffer",
-                    ));
-                };
-                args.push(another);
-            }
+            let args = collect_varargs(global, frame.arguments(), $name, "additional arguments")?;
             send_cmd(
                 this,
                 global,
@@ -387,22 +386,7 @@ macro_rules! cmd_key_value_varargs {
                 this, $name,
             )?;
 
-            let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
-
-            for arg in frame.arguments() {
-                if arg.is_undefined_or_null() {
-                    continue;
-                }
-
-                let Some(another) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        $name,
-                        "additional arguments",
-                        "string or buffer",
-                    ));
-                };
-                args.push(another);
-            }
+            let args = collect_varargs(global, frame.arguments(), $name, "additional arguments")?;
             send_cmd(
                 this,
                 global,
@@ -491,19 +475,7 @@ impl JSValkeyClient {
         args.push(value);
 
         if args_view.len() > 2 {
-            for arg in &args_view[2..] {
-                if arg.is_undefined_or_null() {
-                    break;
-                }
-                let Some(v) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        "set",
-                        "arguments",
-                        "string or buffer",
-                    ));
-                };
-                args.push(v);
-            }
+            args.extend(collect_varargs(global, &args_view[2..], "set", "arguments")?);
         }
 
         send_cmd(
@@ -545,20 +517,7 @@ impl JSValkeyClient {
             return Err(global.throw_invalid_argument_type("srem", "key", "string or buffer"));
         };
         args.push(key);
-
-        for arg in &args_view[1..] {
-            if arg.is_undefined_or_null() {
-                break;
-            }
-            let Some(value) = from_js(global, *arg)? else {
-                return Err(global.throw_invalid_argument_type(
-                    "srem",
-                    "member",
-                    "string or buffer",
-                ));
-            };
-            args.push(value);
-        }
+        args.extend(collect_varargs(global, &args_view[1..], "srem", "member")?);
         send_cmd(
             this,
             global,
@@ -663,20 +622,7 @@ impl JSValkeyClient {
             return Err(global.throw_invalid_argument_type("sadd", "key", "string or buffer"));
         };
         args.push(key);
-
-        for arg in &args_view[1..] {
-            if arg.is_undefined_or_null() {
-                break;
-            }
-            let Some(value) = from_js(global, *arg)? else {
-                return Err(global.throw_invalid_argument_type(
-                    "sadd",
-                    "member",
-                    "string or buffer",
-                ));
-            };
-            args.push(value);
-        }
+        args.extend(collect_varargs(global, &args_view[1..], "sadd", "member")?);
         send_cmd(
             this,
             global,
@@ -733,19 +679,7 @@ impl JSValkeyClient {
                 args.push(field);
             }
         } else {
-            for arg in &args_view[1..] {
-                if arg.is_undefined_or_null() {
-                    break;
-                }
-                let Some(field) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        "hmget",
-                        "field",
-                        "string or buffer",
-                    ));
-                };
-                args.push(field);
-            }
+            args.extend(collect_varargs(global, &args_view[1..], "hmget", "field")?);
         }
 
         send_cmd(

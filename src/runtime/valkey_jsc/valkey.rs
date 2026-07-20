@@ -625,6 +625,30 @@ impl ValkeyClient {
 
     /// Handle connection closed event
     pub fn on_close(&mut self) -> JsResult<()> {
+        self.on_socket_closed(b"Connection closed")
+    }
+
+    /// Connect-error path: like [`on_close`](Self::on_close) but surfaces the OS
+    /// errno (e.g. `ECONNREFUSED`) to the rejected promises instead of a
+    /// generic "Connection closed".
+    pub fn on_connect_error(&mut self, errno: i32) -> JsResult<()> {
+        use std::io::Write;
+        let mut buf = [0u8; 128];
+        let mut cursor = &mut buf[..];
+        let start = cursor.len();
+        if errno > 0 {
+            let name: &'static str = bun_errno::from_errno(errno).into();
+            let _ = write!(&mut cursor, "connect {}", name);
+        } else {
+            let _ = write!(&mut cursor, "connect failed (errno {})", errno);
+        }
+        let written = start - cursor.len();
+        self.on_socket_closed(&buf[..written])
+    }
+
+    /// Shared body of [`on_close`](Self::on_close) / [`on_connect_error`](Self::on_connect_error):
+    /// runs the reconnect decision and rejects pending commands with `msg`.
+    fn on_socket_closed(&mut self, msg: &[u8]) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
 
@@ -646,11 +670,11 @@ impl ValkeyClient {
             );
             self.flags.is_reconnecting = true;
             self.handshake = Handshake::AwaitingHello;
-            self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)
+            self.reject_in_flight_commands(msg, RedisError::ConnectionClosed)
         } else {
             let msg: &[u8] = if !auto_reconnect {
                 debug!("skip reconnecting (manually closed or auto-reconnect disabled)");
-                b"Connection closed"
+                msg
             } else {
                 debug!("Max retries reached, giving up reconnection");
                 b"Max reconnection attempts reached"

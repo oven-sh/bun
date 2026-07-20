@@ -1892,7 +1892,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     pub fn on_connect_error(
         this: &JSValkeyClient,
         _socket: SocketType<SSL>,
-        _code: i32,
+        code: i32,
     ) -> JsResult<()> {
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
@@ -1902,7 +1902,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_poll_ref();
         });
 
-        this.client_mut().on_close()
+        this.client_mut().on_connect_error(code)
     }
 
     pub fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsResult<()> {

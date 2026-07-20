@@ -52,10 +52,9 @@ test.skipIf(!isWindows)(
       }
       // A reserved name as the last component of a relative path.
       fs.mkdirSync("sub");
-      console.log("sub\\\\nul", entriesAfter("sub\\\\nul", () => {
-        fs.writeFileSync("sub\\\\nul", "x");
-        if (fs.readdirSync("sub").length) throw new Error("created in sub");
-      }));
+      fs.writeFileSync("sub\\\\nul", "x");
+      console.log("sub\\\\nul", JSON.stringify(fs.readdirSync("sub")));
+      fs.rmdirSync("sub");
       // Near-misses are ordinary files.
       for (const n of ["nul.txt", "null", "com0", "com10"]) {
         console.log(n, entriesAfter(n, () => fs.writeFileSync(n, "x")));
@@ -79,7 +78,7 @@ test.skipIf(!isWindows)(
           "Com9 []",
           "lpt1 []",
           "LpT9 []",
-          'sub\\nul ["sub"]',
+          "sub\\nul []",
           'nul.txt ["nul.txt"]',
           'null ["null"]',
           'com0 ["com0"]',

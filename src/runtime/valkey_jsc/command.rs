@@ -208,8 +208,13 @@ impl Promise {
     pub fn resolve(
         &mut self,
         global_object: &JSGlobalObject,
-        value: protocol::RESPValue,
+        mut value: protocol::RESPValue,
     ) -> Result<(), jsc::JsTerminated> {
+        if self.meta.contains(Meta::RETURN_AS_BOOL) {
+            if let protocol::RESPValue::Integer(int_value) = value {
+                value = protocol::RESPValue::Boolean(int_value > 0);
+            }
+        }
         let options = ToJSOptions {
             return_as_buffer: self.meta.contains(Meta::RETURN_AS_BUFFER),
         };

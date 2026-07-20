@@ -1284,10 +1284,7 @@ pub mod get_addr_info_request {
             });
 
             // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
-            *self =
-                LibcBackend::Success(bun_core::handle_oom(GetAddrInfoResult::to_list(unsafe {
-                    &*addrinfo
-                })));
+            *self = LibcBackend::Success(GetAddrInfoResult::to_list(unsafe { &*addrinfo }));
         }
     }
 
@@ -1600,7 +1597,7 @@ impl GetAddrInfoRequest {
             let result_any = if addrinfo.is_null() {
                 GetAddrInfoResultAny::Addrinfo(ptr::null_mut())
             } else {
-                let list = GetAddrInfoResult::to_list(&*addrinfo).unwrap_or_default();
+                let list = GetAddrInfoResult::to_list(&*addrinfo);
                 libuv::uv_freeaddrinfo(addrinfo.cast());
                 GetAddrInfoResultAny::List(list)
             };
@@ -2135,6 +2132,27 @@ impl Drop for GlobalData {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
         }
+    }
+}
+
+impl Resolver {
+    /// Worker-terminate / main-VM-destruct hook: tear down the c-ares channel
+    /// while the JSC VM, `RareData.file_polls`, event loop, and `runtime_state`
+    /// are all still live. `ares_destroy()` synchronously fires every pending
+    /// query callback with `ARES_EDESTRUCTION` and then the socket-state
+    /// callback for each fd it closes; those callback chains dereference
+    /// `DNSLookup::global_this` (to enqueue the rejection task) and the hive
+    /// `FilePoll` (to unregister it from the loop). Running this after either
+    /// is freed is a UAF (Node `test-worker-dns-terminate.js`).
+    pub fn close_channel_for_terminate(&self) {
+        if let Some(channel) = self.channel.take() {
+            // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
+            unsafe { c_ares::Channel::destroy(channel) };
+        }
+        // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
+        // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
+        // this resolver plus the uws active-handle bump) can still be linked.
+        self.remove_timer();
     }
 }
 
@@ -2940,6 +2958,14 @@ pub mod internal {
                     }
                 }
             }
+        }
+        // Every path that reaches here has finished with the mach-port poll;
+        // return its hive slot (mirrors `get_addr_info_async_callback`).
+        // SAFETY: `req` is live; we are on the loop thread that owns the poll.
+        if let Some(poll) = unsafe { (*req).libinfo.file_poll.take() } {
+            // SAFETY: `poll` is the hive slot `lookup_libinfo` allocated; nothing
+            // else aliases it. `deinit` handles being called during dispatch.
+            unsafe { (*poll.as_ptr()).deinit() };
         }
         after_result(req, addr_info, status_int);
     }
@@ -4191,9 +4217,11 @@ impl Resolver {
         let this = self.as_ctx_ptr();
         scopeguard::defer! {
             // SAFETY: `this` is the heap allocation from `init`. This releases the
-            // ref taken by `add_timer`; all callers of `request_completed` (the only
-            // path here) hold an `IntrusiveRc<Resolver>`, so the timer ref is never
-            // the last and this `deref` cannot reach 0 while `&self` is live.
+            // ref taken by `add_timer`. Callers via `request_completed` hold an
+            // `IntrusiveRc<Resolver>`; the `close_channel_for_terminate` caller is
+            // the global resolver, which carries a permanent +1 pin from
+            // `global_resolver()`. Either way the timer ref is never the last and
+            // this `deref` cannot reach 0 while `&self` is live.
             unsafe {
                 let uws_loop = (*this).vm().uws_loop();
                 let state = crate::jsc_hooks::runtime_state();

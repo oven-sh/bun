@@ -851,7 +851,6 @@ pub mod fs {
                     bun_sys::WindowsOpenDirOptions {
                         iterable: true,
                         can_rename_or_delete: false,
-                        read_only: true,
                         ..Default::default()
                     },
                 )?;
@@ -859,7 +858,10 @@ pub mod fs {
                 // local. Close it once we've captured the absolute path so we
                 // don't leak a directory HANDLE per tmpfile.
                 scopeguard::defer! { let _ = bun_sys::close(tmp_dir); }
-                let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
+                let flags = bun_sys::O::CREAT
+                    | bun_sys::O::WRONLY
+                    | bun_sys::O::TRUNC
+                    | bun_sys::O::CLOEXEC;
                 self.fd = bun_sys::openat(tmp_dir, name, flags, 0)?;
                 let mut buf = bun_paths::PathBuffer::uninit();
                 let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
@@ -1113,7 +1115,6 @@ pub mod fs {
                     bun_sys::WindowsOpenDirOptions {
                         iterable: true,
                         no_follow: false,
-                        read_only: true,
                         ..Default::default()
                     },
                 )
@@ -1635,12 +1636,8 @@ pub mod fs {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
-                    // `open_dir_for_iteration`, NOT
-                    // `RealFS.openDir`. On Windows the two diverge: `open_dir` passes
-                    // `read_only: true` (no DELETE access on the handle), whereas
-                    // `openDirForIteration` uses the default `WindowsOpenDirOptions`
-                    // (`can_rename_or_delete: true`). On POSIX it's `O_DIRECTORY` only
-                    // vs `O_RDONLY|O_DIRECTORY`.
+                    // `open_dir_for_iteration`, NOT `RealFS.openDir`. On POSIX
+                    // the two diverge: `O_DIRECTORY` only vs `O_RDONLY|O_DIRECTORY`.
                     let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir) {
                         Ok(h) => h,
                         Err(err) => {

@@ -10,10 +10,10 @@
 
 import type { Dependency } from "../source.ts";
 
-// Tip of oven-sh/libuv's `bun` branch — upstream f3ce527e + the win-pipe
-// CancelIoEx race fix + ConPTY support in uv_spawn. To bump upstream, rebase
-// the `bun` branch and update this SHA.
-const LIBUV_COMMIT = "4dcfac4780d394e0dc2d3fb30335ca01b553eb46";
+// Tip of oven-sh/libuv's `bun` branch: upstream f3ce527e + win-pipe CancelIoEx
+// fix, ConPTY uv_spawn, AppContainer pipe namespace (oven-sh/libuv#7), fs/tty
+// fixes (oven-sh/libuv#8). To bump, update `bun`.
+const LIBUV_COMMIT = "f6e75a7efdc8651ace3b0d07efbfd0b3e5037278";
 
 // prettier-ignore
 const SHARED = [
@@ -48,7 +48,7 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch"],
+  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
 
   build: () => ({
     kind: "direct",

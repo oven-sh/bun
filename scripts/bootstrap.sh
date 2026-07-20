@@ -1998,6 +1998,28 @@ prefetch_build_deps() {
 			print "warning: prepare-ci.ts failed; test docker images not pre-pulled"
 	fi
 
+	# Warm a shared `bun install` download cache so every test shard's
+	# `bun install` (root + test/) hits disk instead of npm. Keyed by
+	# name@version, so a test/package.json bump after the bake just misses for
+	# that one package. Left writable and owned by the buildkite user: bun
+	# install extracts new tarballs into the cache dir itself, so a read-only
+	# cache would fail on the first unseen package rather than fall through.
+	install_cache_dir="/var/cache/bun-install"
+	create_directory "$install_cache_dir"
+	if ( cd "$clone_dir/bun" && \
+		BUN_INSTALL_CACHE_DIR="$install_cache_dir" "$bun_path" install --ignore-scripts && \
+		cd test && \
+		BUN_INSTALL_CACHE_DIR="$install_cache_dir" "$bun_path" install --ignore-scripts ); then
+		# Re-chown after populating: the install ran as the bootstrap user, and
+		# buildkite-agent needs to write new entries alongside the baked ones.
+		grant_to_user "$install_cache_dir"
+		append_file /etc/environment "BUN_INSTALL_CACHE_DIR=$install_cache_dir"
+		append_to_profile "export BUN_INSTALL_CACHE_DIR=\"$install_cache_dir\""
+	else
+		print "warning: bun install prefetch failed; baking without warm install cache"
+		execute_sudo rm -rf "$install_cache_dir"
+	fi
+
 	execute_sudo rm -rf "$clone_dir"
 
 	# Read-only: download.ts only ever copies FROM here, and a writable baked

@@ -698,9 +698,7 @@ impl<'a> LinkerGraph<'a> {
                 .zip(source_indices.iter_mut())
             {
                 let source = &sources[i.get() as usize];
-                if cfg!(debug_assertions) {
-                    debug_assert!(source.index.0 == i.get());
-                }
+                debug_assert!(source.index.0 == i.get());
                 entry_point_kinds[source.index.0 as usize] = entry_point::Kind::UserSpecified;
 
                 // Check if this entry point has an original name (from virtual entry resolution)
@@ -917,75 +915,86 @@ impl<'a> LinkerGraph<'a> {
     }
 
     pub fn propagate_async_dependencies(&mut self) -> Result<(), crate::Error> {
-        struct State<'a> {
-            visited: AutoBitSet,
-            import_records: &'a [import_record::List<'a>],
-            flags: &'a mut [js_meta::Flags],
+        // Explicit-stack postorder DFS (was per-edge recursive). A parent's
+        // flag is read from each child after that child's subtree is fully
+        // processed; `AfterChild` is the resumption point for that read.
+        #[derive(Copy, Clone)]
+        enum Frame {
+            Enter(usize),
+            AfterChild { parent: usize, child: usize },
         }
 
-        impl<'a> State<'a> {
-            pub(crate) fn visit_all(&mut self) {
-                for i in 0..self.import_records.len() {
-                    self.visit(i);
-                }
+        let import_records = self.ast.items_import_records();
+        let flags = self.meta.items_flags_mut();
+        let len = import_records.len();
+        let mut visited = AutoBitSet::init_empty(self.ast.len())?;
+        let mut stack: Vec<Frame> = Vec::new();
+
+        for root in 0..len {
+            if visited.is_set(root) {
+                continue;
             }
+            stack.push(Frame::Enter(root));
 
-            fn visit(&mut self, index: usize) {
-                if self.visited.is_set(index) {
-                    return;
-                }
-                self.visited.set(index);
-                if self.flags[index].is_async_or_has_async_dependency {
-                    return;
-                }
-
-                for import_record in self.import_records[index].as_slice().iter() {
-                    match import_record.kind {
-                        ImportKind::Stmt => {}
-
-                        // Any use of `import()` that makes the parent async will necessarily use
-                        // top-level await, so this will have already been detected by `validateTLA`,
-                        // and `is_async_or_has_async_dependency` will already be true.
-                        //
-                        // We don't want to process these imports here because `import()` can appear in
-                        // non-top-level contexts (like inside an async function) or in contexts that
-                        // don't use `await`, which don't necessarily make the parent module async.
-                        ImportKind::Dynamic => continue,
-
-                        // `require()` cannot import async modules.
-                        ImportKind::Require | ImportKind::RequireResolve => continue,
-
-                        // Entry points; not imports from JS
-                        ImportKind::EntryPointRun | ImportKind::EntryPointBuild => continue,
-                        // CSS imports
-                        ImportKind::At
-                        | ImportKind::AtConditional
-                        | ImportKind::Url
-                        | ImportKind::Composes => continue,
-                        // Other non-JS imports
-                        ImportKind::HtmlManifest | ImportKind::Internal => continue,
+            while let Some(frame) = stack.pop() {
+                match frame {
+                    Frame::AfterChild { parent, child } => {
+                        if flags[child].is_async_or_has_async_dependency {
+                            flags[parent].is_async_or_has_async_dependency = true;
+                        }
                     }
+                    Frame::Enter(index) => {
+                        if visited.is_set(index) {
+                            continue;
+                        }
+                        visited.set(index);
+                        if flags[index].is_async_or_has_async_dependency {
+                            continue;
+                        }
 
-                    let import_index: usize = import_record.source_index.get() as usize;
-                    if import_index >= self.import_records.len() {
-                        continue;
-                    }
-                    self.visit(import_index);
+                        let mark = stack.len();
+                        for import_record in import_records[index].as_slice().iter() {
+                            match import_record.kind {
+                                ImportKind::Stmt => {}
 
-                    if self.flags[import_index].is_async_or_has_async_dependency {
-                        self.flags[index].is_async_or_has_async_dependency = true;
-                        break;
+                                // Any use of `import()` that makes the parent async will necessarily use
+                                // top-level await, so this will have already been detected by `validateTLA`,
+                                // and `is_async_or_has_async_dependency` will already be true.
+                                //
+                                // We don't want to process these imports here because `import()` can appear in
+                                // non-top-level contexts (like inside an async function) or in contexts that
+                                // don't use `await`, which don't necessarily make the parent module async.
+                                ImportKind::Dynamic => continue,
+
+                                // `require()` cannot import async modules.
+                                ImportKind::Require | ImportKind::RequireResolve => continue,
+
+                                // Entry points; not imports from JS
+                                ImportKind::EntryPointRun | ImportKind::EntryPointBuild => continue,
+                                // CSS imports
+                                ImportKind::At
+                                | ImportKind::AtConditional
+                                | ImportKind::Url
+                                | ImportKind::Composes => continue,
+                                // Other non-JS imports
+                                ImportKind::HtmlManifest | ImportKind::Internal => continue,
+                            }
+
+                            let import_index: usize = import_record.source_index.get() as usize;
+                            if import_index >= len {
+                                continue;
+                            }
+                            stack.push(Frame::Enter(import_index));
+                            stack.push(Frame::AfterChild {
+                                parent: index,
+                                child: import_index,
+                            });
+                        }
+                        stack[mark..].reverse();
                     }
                 }
             }
         }
-
-        let mut state = State {
-            visited: AutoBitSet::init_empty(self.ast.len())?,
-            import_records: self.ast.items_import_records(),
-            flags: self.meta.items_flags_mut(),
-        };
-        state.visit_all();
         Ok(())
     }
 }

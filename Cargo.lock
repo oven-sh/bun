@@ -140,7 +140,6 @@ dependencies = [
  "allocator-api2",
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_mimalloc_sys",
  "bun_opaque",
  "bun_wyhash",
@@ -197,7 +196,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_collections",
  "bun_core",
@@ -242,7 +240,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_collections",
  "bun_core",
@@ -348,7 +345,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_analytics",
  "bun_ast",
@@ -608,7 +604,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_base64",
@@ -676,7 +671,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_cares_sys",
  "bun_core",
  "bun_sys",
@@ -1079,7 +1073,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_base64",
@@ -1144,7 +1137,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_collections",
@@ -1376,12 +1368,12 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_collections",
  "bun_core",
  "bun_highway",
+ "bun_simdutf_sys",
  "bun_wyhash",
  "bytemuck",
  "const_format",
@@ -1561,7 +1553,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_analytics",
  "bun_ast",
@@ -1827,7 +1818,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_collections",
  "bun_core",
@@ -1871,7 +1861,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_base64",

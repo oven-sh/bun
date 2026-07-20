@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, isLinux, nodeExe, tls as tlsCert } from "harness";
 import http from "http";
 
 import { once } from "node:events";
@@ -554,6 +554,72 @@ describe("HTTP server CONNECT", () => {
       expect(response).not.toContain("200 Connection established");
     }
   });
+
+  // https CONNECT: server socket.end() after peer FIN must also FIN the TCP
+  // write side. Linux-only: the close is observed via EPOLLHUP once both halves
+  // have FIN'd; kqueue/libuv need the readable_ended re-arm to re-derive it.
+  test.skipIf(!isLinux)(
+    "https CONNECT socket.end() after peer FIN half-closes TCP so the socket can close",
+    async () => {
+      // tls.connect wraps a raw net.Socket so end() sends a raw FIN (not
+      // close_notify first): that ordering has the server's eof already
+      // consumed by allow_half_open before the deferred socket.end() runs.
+      const fixture = /* js */ `
+      const https = require("node:https");
+      const net = require("node:net");
+      const tls = require("node:tls");
+
+      const server = https.createServer({ cert: process.env.CERT, key: process.env.KEY }, () => {});
+      server.on("connect", (req, socket) => {
+        // autoDestroy off: only the transport (EPOLLHUP once our FIN answers
+        // the peer's) can close this socket.
+        socket._readableState.autoDestroy = false;
+        socket._writableState.autoDestroy = false;
+        socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+        socket.on("end", () => {
+          console.log("server:end");
+          socket.end();
+        });
+        socket.on("finish", () => console.log("server:finish"));
+        socket.on("close", () => {
+          console.log("server:close");
+          server.close();
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const raw = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
+        const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+        client.on("secureConnect", () => {
+          client.write("CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n");
+        });
+        client.on("data", () => client.end());
+        client.on("close", () => console.log("client:close"));
+      });
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, CERT: tlsCert.cert, KEY: tlsCert.key },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Before the fix the server socket never closes: stdout stops at
+      // server:finish and the process hangs until the test timeout. client:close
+      // and server:close may interleave, so assert presence + server ordering.
+      const lines = stdout.split("\n").filter(Boolean);
+      expect({
+        server: lines.filter(l => l.startsWith("server:")),
+        hasClientClose: lines.includes("client:close"),
+        stderr,
+        exitCode,
+      }).toEqual({
+        server: ["server:end", "server:finish", "server:close"],
+        hasClientClose: true,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 /**
@@ -669,6 +735,30 @@ describe("HTTP server socket access via normal requests", () => {
 });
 
 describe("Should be compatible with node.js", () => {
+  // https://github.com/oven-sh/bun/issues/34158
+  test("server.close(cb) completes after a CONNECT handoff once both sockets are destroyed", async () => {
+    const server = http.createServer();
+    let serverSocket: net.Socket;
+    server.on("connect", (req, socket) => {
+      serverSocket = socket;
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = (server.address() as AddressInfo)!;
+
+    const request = http.request({ host: "127.0.0.1", port, method: "CONNECT", path: "example.com:80" });
+    request.on("error", () => {});
+    request.end();
+    const [, clientSocket] = (await once(request, "connect")) as [unknown, net.Socket];
+
+    clientSocket.destroy();
+    serverSocket!.destroy();
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+    server.close(() => onClosed());
+    await closed;
+  });
+
   test("tests should run on node.js", async () => {
     const process = Bun.spawn({
       cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-connect.node.mts")],

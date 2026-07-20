@@ -77,19 +77,14 @@ pub use bun_uws::ssl_wrapper::SSLWrapper;
 // `NewHTTPContext`; alias all spellings to the canonical types so submodules
 // resolve without churn.
 pub use h2_client as h2;
-pub use h2_client as H2;
 pub use h3_client as h3;
 pub use h3_client as H3;
-pub use http_context as new_http_context;
 pub type NewHTTPContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 pub type NewHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 pub type HttpsContext = http_context::HTTPContext<true>;
-pub type HttpContext = http_context::HTTPContext<false>;
 pub type HttpClient<'a> = HTTPClient<'a>;
-pub type HttpThread = HTTPThread;
 pub type AsyncHttp<'a> = AsyncHTTP<'a>;
 pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
-pub use HTTPClientResult as http_client_result;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
 pub use bun_http_types::Method::Method;
 pub use bun_picohttp as picohttp;
@@ -966,9 +961,9 @@ use crate::internal_state::{RequestStage, ResponseStage, Stage};
 
 bun_core::declare_scope!(fetch, visible);
 
-/// Generic `HttpContext<const SSL>` alias — `crate::HttpContext` /
-/// `crate::HttpsContext` (above) are concrete-SSL aliases; the state machine
-/// needs a const-generic spelling for `get_ssl_ctx<IS_SSL>()`.
+/// Generic `HttpContext<const SSL>` alias — `crate::HttpsContext` (above) is
+/// the concrete-SSL alias; the state machine needs a const-generic spelling
+/// for `get_ssl_ctx<IS_SSL>()`.
 pub type GenHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 
 // ── header constants ────────────────────────────────────────────────────
@@ -1606,6 +1601,19 @@ impl<'a> HTTPClient<'a> {
         // `result.body` and `state.reset()` are disjoint.
         let result = unsafe { self.to_result().detach_lifetime() };
         self.state.reset();
+        // `state.reset()` returns every stage field to Pending, which makes
+        // this finished client indistinguishable from a fresh one. Every
+        // caller reaches here with `stage == Fail` (a terminal state), and the
+        // final result dispatched below frees the HTTP-thread AsyncHTTP clone
+        // that embeds this client. Restore the terminal stage so a late event
+        // on a still-reachable reference (socket tag, timer, tracker entry)
+        // hits the `stage != Done && stage != Fail` guards and becomes a
+        // no-op instead of delivering a second final result into freed
+        // memory. The success path (`send_progress_update_without_stage_check`)
+        // already restores `Stage::Done` the same way after its reset.
+        self.state.request_stage = RequestStage::Fail;
+        self.state.response_stage = ResponseStage::Fail;
+        self.state.stage = Stage::Fail;
         if clear_proxy_tunneling {
             self.flags.proxy_tunneling = false;
         }
@@ -2101,7 +2109,12 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        if self.allow_retry
+        // `in_progress` also keeps a client whose final result was already
+        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
+        // that embeds it is freed once that result is dispatched, so a late
+        // close event must not re-enter `start()`.
+        if in_progress
+            && self.allow_retry
             && self.method.is_idempotent()
             // Only a Bytes body can be rebuilt from `original_request_body`.
             // Stream/Sendfile bodies are consumed as they are written, so a
@@ -2136,8 +2149,14 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));
-        self.fail(crate::Error::Timeout);
+        // Terminate (mark dead + close) BEFORE failing, matching
+        // `close_and_fail`: `fail()` dispatches the final result, which frees
+        // the HTTP-thread AsyncHTTP clone that embeds `self`, so nothing may
+        // run after it, and the socket must already be de-tagged so the
+        // synchronous close callbacks (TLS close fires on_handshake for a
+        // mid-handshake socket) cannot re-enter this client.
         GenHttpContext::<IS_SSL>::terminate_socket(socket);
+        self.fail(crate::Error::Timeout);
     }
 
     /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
@@ -4617,29 +4636,26 @@ impl<'a> HTTPClient<'a> {
             self.state.cloned_metadata = None;
         }
 
-        let mut certificate_info: Option<CertificateInfo> = None;
-        if let Some(info) = self.state.certificate_info.take() {
-            // transfer owner ship of the certificate info here
-            certificate_info = Some(info);
-        } else if let Some(metadata) = self.state.cloned_metadata.take() {
-            // transfer owner ship of the metadata here
-            return HTTPClientResult {
-                metadata: Some(metadata),
-                body: body_out::opt_mut(self.state.body_out_str),
-                redirected: self.flags.redirected,
-                fail: self.state.fail,
-                dns_error: self.state.dns_error,
-                dns_hostname: self.state.dns_hostname.take(),
-                // check if we are reporting cert errors, do not have a fail state and we are not done
-                has_more: certificate_info.is_some()
-                    || (self.state.fail.is_none() && !self.state.is_done()),
-                body_size,
-                certificate_info: None,
-                can_stream: (self.state.request_stage == RequestStage::Body
-                    || self.state.request_stage == RequestStage::ProxyBody)
-                    && self.flags.is_streaming_request_body,
-                is_http2: self.flags.protocol != Protocol::Http1_1,
-            };
+        let certificate_info = self.state.certificate_info.take();
+        if certificate_info.is_none() {
+            if let Some(metadata) = self.state.cloned_metadata.take() {
+                // transfer ownership of the metadata here
+                return HTTPClientResult {
+                    metadata: Some(metadata),
+                    body: body_out::opt_mut(self.state.body_out_str),
+                    redirected: self.flags.redirected,
+                    fail: self.state.fail,
+                    dns_error: self.state.dns_error,
+                    dns_hostname: self.state.dns_hostname.take(),
+                    has_more: self.state.fail.is_none() && !self.state.is_done(),
+                    body_size,
+                    certificate_info: None,
+                    can_stream: (self.state.request_stage == RequestStage::Body
+                        || self.state.request_stage == RequestStage::ProxyBody)
+                        && self.flags.is_streaming_request_body,
+                    is_http2: self.flags.protocol != Protocol::Http1_1,
+                };
+            }
         }
         HTTPClientResult {
             body: body_out::opt_mut(self.state.body_out_str),
@@ -4711,14 +4727,12 @@ impl<'a> HTTPClient<'a> {
             }
 
             if self.state.response_message_buffer.owns(incoming_data) {
-                if cfg!(debug_assertions) {
-                    // i'm not sure why this would happen and i haven't seen it happen
-                    // but we should check
-                    debug_assert!(
-                        self.state.get_body_buffer().list.as_ptr()
-                            != self.state.response_message_buffer.list.as_ptr()
-                    );
-                }
+                // i'm not sure why this would happen and i haven't seen it happen
+                // but we should check
+                debug_assert!(
+                    self.state.get_body_buffer().list.as_ptr()
+                        != self.state.response_message_buffer.list.as_ptr()
+                );
                 self.state.response_message_buffer = MutableString::default();
             }
         }
@@ -4767,11 +4781,9 @@ impl<'a> HTTPClient<'a> {
         // done or streaming
         let is_done =
             content_length.is_some() && self.state.total_body_received >= content_length.unwrap();
-        if is_done
-            || self.signals.get(signals::Field::ResponseBodyStreaming)
-            || content_length.is_none()
-            || self.signals.body_receive_mode.is_some()
-        {
+        let is_streaming = self.signals.get(signals::Field::ResponseBodyStreaming)
+            || self.signals.body_receive_mode.is_some();
+        if is_done || is_streaming || content_length.is_none() {
             let is_final_chunk = is_done;
             // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
             // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
@@ -4787,7 +4799,10 @@ impl<'a> HTTPClient<'a> {
 
             let total_received = self.state.total_body_received;
             self.report_progress(total_received);
-            return Ok(is_done || processed);
+            // Close-delimited bodies still need per-packet decompression, but
+            // a non-streaming consumer must not see per-packet progress: the
+            // terminal callback (on close) is the first to carry metadata.
+            return Ok(is_done || (processed && is_streaming));
         }
         Ok(false)
     }
@@ -5269,9 +5284,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
+                                debug_assert!(string_builder.cap == string_builder.len);
 
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());
@@ -5330,9 +5343,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
+                                debug_assert!(string_builder.cap == string_builder.len);
 
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());

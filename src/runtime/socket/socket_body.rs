@@ -907,15 +907,45 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.
         let _keepalive = this.ref_guard();
-        // NOTE: the drain dispatch deliberately does not depend on whether the
-        // flush hit a fatal send error. Skipping it on fatal (tried in
-        // f0325bddf2) made Windows servers reset FIN-terminated responses:
-        // write_check_error's fatal detection interacts with Windows
-        // would-block semantics, and a skipped drain stalls the response
-        // teardown into an RST. Until that detection is verified on Windows,
-        // keep the legacy contract (the close path still fails the pending
-        // write callback when the socket is torn down).
-        let _ = this.internal_flush();
+        // NOTE (Windows): the drain dispatch deliberately does not depend on
+        // whether the flush hit a fatal send error. Skipping it on fatal
+        // (tried in f0325bddf2) made Windows servers reset FIN-terminated
+        // responses: write_check_error's fatal detection interacts with
+        // Windows would-block semantics, and a skipped drain stalls the
+        // response teardown into an RST. Until that detection is verified on
+        // Windows, keep the legacy contract there (the close path still fails
+        // the pending write callback when the socket is torn down).
+        let fatal_send_errno = this.internal_flush();
+        // On POSIX the fatal signal is trustworthy: us_socket_write_check_error
+        // only reports an errno that is either known peer-gone or persisted
+        // across its bounded unclassified-errno retry window. internal_flush
+        // already dropped the undeliverable buffer and the writable poll is no
+        // longer re-armed, so this dispatch is the last place the errno is
+        // visible - swallowing it here acknowledged the bytes to JS, sent a
+        // clean FIN, and the peer saw a silently truncated stream. Deliver it
+        // like a failed write (syscall "write", same shape as net.ts
+        // failWrite) and close the socket so 'error' is followed by 'close'.
+        #[cfg(not(windows))]
+        if fatal_send_errno != 0 {
+            let global = handlers.global_object;
+            let scope = handlers.enter();
+            let this_value = this.get_this_value(&global);
+            let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
+                &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
+                &global,
+            );
+            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            // The error handler can destroy the socket itself; only close a
+            // still-attached socket. Close without detaching so on_close runs
+            // and JS observes 'close' (mirrors h2's dead-transport close).
+            if !this.socket.get().is_detached() {
+                this.socket.get().close(uws::CloseCode::Normal);
+            }
+            this.exit_scope(scope);
+            return;
+        }
+        #[cfg(windows)]
+        let _ = fatal_send_errno;
         log!(
             "onWritable buffered_data_for_node_net {}",
             this.buffered_data_for_node_net.get().len()
@@ -2415,22 +2445,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             return res;
         }
 
-        let (res, fatal) = socket.write_check_error(buffer);
-        if fatal {
-            // The kernel rejected the write outright (EPIPE/ECONNRESET after
-            // the peer vanished): fail the write. Do NOT close the socket from
-            // inside the write call - a synchronous close dispatches the whole
-            // JS teardown ('close' -> http2 session destroy -> ...) underneath
-            // the caller that issued this write, which is how the x64-asan
-            // lane caught a stale read. Returning -1 makes the JS write fail,
-            // and node:net destroys the handle on a clean stack; the read side
-            // surfaces the reset for anyone who is only waiting.
-            //
-            // The undeliverable buffered data (if the input aliases it) is
-            // dropped by the caller: clearing it here would create a `&mut` of
-            // `buffered_data_for_node_net` while `buffer` may still borrow its
-            // heap allocation.
-            return -1;
+        let (res, fatal_errno) = socket.write_check_error(buffer);
+        if fatal_errno != 0 {
+            // Kernel rejected the send (peer gone): return the negative errno so
+            // JS fails the write; never close from under the caller's stack, and
+            // leave the undeliverable buffer to the caller (aliasing).
+            return -fatal_errno;
         }
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
         self.bytes_written
@@ -2457,7 +2477,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             match this.write_or_end_buffered::<false>(global, args.ptr[0], args.ptr[1]) {
                 WriteResult::Fail => JSValue::ZERO,
                 WriteResult::Success { wrote, total } => {
-                    if usize::try_from(wrote.max(0)).expect("int cast") == total {
+                    if wrote < -1 {
+                        // Fatal send (peer gone): hand JS the negative errno so
+                        // node:net fails the write like Node's onWriteComplete;
+                        // -1 stays the legacy closed/shutdown sentinel.
+                        JSValue::js_number(f64::from(wrote))
+                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
                         JSValue::TRUE
                     } else {
                         JSValue::FALSE
@@ -2891,15 +2916,19 @@ impl<const SSL: bool> NewSocket<SSL> {
             && self.buffered_data_for_node_net.get().len() == 0
     }
 
-    /// Returns `false` when a fatal send error dropped the buffered data.
-    /// NOTE: callers currently ignore this (the drain callback is dispatched
-    /// regardless) - skipping the drain on fatal made Windows servers reset
-    /// FIN-terminated responses (see a5e7ba5905). The return value stays so
-    /// the contract can be re-landed once the Windows fatal-write detection
-    /// is verified.
-    fn internal_flush(&self) -> bool {
+    /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
+    /// a fatal send error (buffer dropped, writable not re-armed).
+    /// On POSIX, `on_writable` consumes the errno: it dispatches the error
+    /// handler and closes the socket. On Windows the errno is still ignored
+    /// (the drain callback is dispatched regardless) - skipping the drain on
+    /// fatal made Windows servers reset FIN-terminated responses (see
+    /// a5e7ba5905) - until the Windows fatal-write detection is verified.
+    fn internal_flush(&self) -> i32 {
+        // A TLS socket whose handshake was rejected has no usable transport:
+        // never push the buffered tail at it, and report no error (the
+        // rejection is surfaced by the handshake path, not by the flush).
         if SSL && self.flags.get().contains(Flags::REJECTED) {
-            return true;
+            return 0;
         }
         // R-2: every mutated field is `Cell`/`JsCell`, so `&self` carries no
         // `noalias` for them and the previous `black_box` launder (which
@@ -2919,22 +2948,18 @@ impl<const SSL: bool> NewSocket<SSL> {
             let res: i32 = if self.flags.get().contains(Flags::BYPASS_TLS) {
                 self.do_socket_write(self.buffered_data_for_node_net.get().slice())
             } else {
-                let (res, fatal) = self
+                let (res, fatal_errno) = self
                     .socket
                     .get()
                     .write_check_error(self.buffered_data_for_node_net.get().slice());
-                if fatal {
+                if fatal_errno != 0 {
                     // Same rule as write_maybe_corked: drop the undeliverable
-                    // buffer and stop re-arming the writable retry, but do not
-                    // close from inside the drain dispatch - the peer reset is
-                    // delivered on the read side and tears the socket down on
-                    // a clean stack. Report the failure so callers do not
-                    // dispatch the JS drain callback (the write did NOT
-                    // complete; Node fails the callback instead of succeeding
-                    // it).
+                    // buffer, stop re-arming the writable retry, and report the
+                    // errno so the event-loop caller surfaces it (the data was
+                    // already acknowledged to JS, so only an 'error' can).
                     self.buffered_data_for_node_net
                         .with_mut(|b| b.clear_and_free());
-                    return false;
+                    return fatal_errno;
                 }
                 res
             };
@@ -2961,7 +2986,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if self.can_end_after_flush() {
             self.mark_inactive();
         }
-        true
+        0
     }
 
     #[bun_jsc::host_fn(method)]
@@ -3914,29 +3939,25 @@ pub enum NativeCallbacks {
 }
 
 impl NativeCallbacks {
+    /// `&self` borrows the socket's `JsCell<NativeCallbacks>`; the dispatch
+    /// re-enters JS, which can `detach_native_callback` and overwrite that cell.
+    /// Copy the parser pointer out first; the callee's `keepalive()` holds it.
     pub fn on_data(&self, data: &[u8]) -> bool {
-        match self {
-            NativeCallbacks::H2(h2) => {
-                // TODO: properly propagate exception upwards
-                // `RefPtr: Deref<Target = H2FrameParser>`; `on_native_read`
-                // takes `&self`.
-                if h2.on_native_read(data).is_err() {
-                    return false;
-                }
-                true
-            }
-            NativeCallbacks::None => false,
-        }
+        let h2 = match self {
+            NativeCallbacks::H2(h2) => h2.as_ptr(),
+            NativeCallbacks::None => return false,
+        };
+        // SAFETY: `on_native_read` takes a keepalive; `h2` stays live across re-entry.
+        unsafe { (*h2).on_native_read(data).is_ok() }
     }
     pub fn on_writable(&self) -> bool {
-        match self {
-            NativeCallbacks::H2(h2) => {
-                // `on_native_writable(&self)` — Deref through `RefPtr`.
-                h2.on_native_writable();
-                true
-            }
-            NativeCallbacks::None => false,
-        }
+        let h2 = match self {
+            NativeCallbacks::H2(h2) => h2.as_ptr(),
+            NativeCallbacks::None => return false,
+        };
+        // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
+        unsafe { (*h2).on_native_writable() };
+        true
     }
 }
 
@@ -4172,6 +4193,12 @@ impl DuplexUpgradeContext {
                 // the owner's +1 we hold. Do NOT let `IntrusiveRc::Drop`
                 // fire on top of that (over-deref → UAF on the JS wrapper's
                 // pointee).
+                //
+                // Neuter the JS listener thunks now, while the wrapper is still
+                // strongly held, so the later `StartTLS` → `deinit` → `Drop`
+                // teardown (after `handle_connect_error` downgrades it) is a
+                // no-op on already-cleared shadows.
+                self.upgrade.teardown();
                 let p = tls.into_this_ptr();
                 let _ =
                     TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int, 0);
@@ -4263,6 +4290,12 @@ impl DuplexUpgradeContext {
                         // `start_tls()` was queued), so `needs_deref =
                         // !is_detached()` is true — and detaches. Null
                         // `this.tls` so `deinit` doesn't deref again.
+                        //
+                        // Neuter the JS listener thunks now, while the wrapper
+                        // is still strongly held, so the `deinit` → `Drop`
+                        // teardown below is a no-op on already-cleared shadows.
+                        // SAFETY: `this` is live; `&mut` ends before `deinit`.
+                        unsafe { (*this).upgrade.teardown() };
                         let p = tls.into_this_ptr();
                         let _ = TLSSocket::handle_connect_error(p, errno, 0);
                     }
@@ -4554,6 +4587,7 @@ pub fn js_upgrade_duplex_to_tls(
         });
         ptr::addr_of_mut!((*duplex_context).upgrade).write(UpgradedDuplex::from(
             global,
+            tls_js_value,
             duplex,
             UpgradedDuplexHandlers {
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
@@ -4908,7 +4942,7 @@ pub mod testing_apis {
                     let name = bun_core::OwnedString::new(v.to_bun_string(global)?);
                     parse_errno_name(&name).ok_or_else(|| {
                         global.throw(format_args!(
-                            "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH)"
+                            "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH, EPROTOTYPE)"
                         ))
                     })?
                 }
@@ -4977,6 +5011,7 @@ pub mod testing_apis {
             b"EINVAL" => libc::EINVAL,
             b"ENETUNREACH" => libc::ENETUNREACH,
             b"EHOSTUNREACH" => libc::EHOSTUNREACH,
+            b"EPROTOTYPE" => libc::EPROTOTYPE,
         }
         #[cfg(windows)]
         map! {
@@ -4993,6 +5028,7 @@ pub mod testing_apis {
             b"EINVAL" => 10022,
             b"ENETUNREACH" => 10051,
             b"EHOSTUNREACH" => 10065,
+            b"EPROTOTYPE" => 10041,
         }
         None
     }

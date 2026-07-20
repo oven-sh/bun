@@ -9,6 +9,7 @@ const {
   headersTuple,
   webRequestOrResponseHasBodyValue,
   setServerCustomOptions,
+  setServerAppFlags,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
   setServerIdleTimeout,
@@ -24,8 +25,17 @@ const {
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
+    insecureHTTPParser: boolean,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
+    onConnection?: (socketHandle: any) => undefined,
+  ) => void;
+  setServerAppFlags: (
+    server: any,
+    requireHostHeader: boolean,
+    useStrictMethodValidation: boolean,
+    insecureHTTPParser: boolean,
+    httpAllowHalfOpen: boolean,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
@@ -88,7 +98,6 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
-const kDeferredTimeouts = Symbol("deferredTimeouts");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -120,6 +129,8 @@ export const enum NodeHTTPBodyReadState {
 export const enum NodeHTTPResponseFlags {
   socket_closed = 1 << 0,
   request_has_completed = 1 << 1,
+  ended = 1 << 2,
+  upgraded = 1 << 3,
 
   closed_or_completed = socket_closed | request_has_completed,
 }
@@ -185,12 +196,80 @@ function emitCloseNTAndComplete(self) {
 }
 
 function emitEOFIncomingMessageOuter(self) {
-  self.push(null);
   self.complete = true;
+  // node:http server: trailer fields received after a chunked request body
+  // populate req.trailers/rawTrailers before 'end' is emitted, like Node's
+  // parserOnMessageComplete. Native moved the section onto THIS request's
+  // handle at its body fin, so pipelined requests can neither inherit nor
+  // overwrite another request's trailers.
+  // Trailers can only follow a chunked request body: a no-body request has
+  // none, so skip the native call (and the socket/server option walk) for the
+  // common GET/HEAD case.
+  if (self[kHandle] !== undefined && !self[noBodySymbol]) {
+    // The lenient (insecureHTTPParser) value bytes must match what the parser
+    // accepted on the wire, or a CTL byte in a trailer value would vanish here.
+    let rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
+    if (rawTrailers !== undefined) {
+      // Apply server.maxHeadersCount to trailers like Node's parserOnHeaders
+      // does (the same maxHeaderPairs limit covers both). The parser hard-caps
+      // at 199 fields; Node's C++ imposes no count limit, only this JS clamp.
+      const maxHeadersCount = self.socket?.server?.maxHeadersCount;
+      if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && rawTrailers.length > maxHeadersCount * 2) {
+        rawTrailers.length = maxHeadersCount * 2;
+      }
+      self._addHeaderLines(rawTrailers, rawTrailers.length);
+    }
+  }
+  // The parser shim must not retain the request once it has ended. Node clears
+  // parser.incoming on the tick after 'end' so 'end' listeners still see
+  // `parser.incoming === req` (test-http-server-keepalive-end). push(null)
+  // schedules 'end' via nextTick (endReadableNT); a second nextTick scheduled
+  // here runs after that.
+  self.push(null);
+  const socket = self.socket;
+  if (socket != null) {
+    const parser = socket.parser;
+    if (parser != null && parser.incoming === self) {
+      process.nextTick(clearServerParserIncoming, parser, self);
+    }
+  }
+}
+function clearServerParserIncoming(parser, req) {
+  if (parser.incoming === req) parser.incoming = null;
 }
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
   process.nextTick(emitEOFIncomingMessageOuter, self);
+}
+
+function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
+  if (aborted === NodeHTTPResponseAbortEvent.abort) {
+    this.destroy();
+    return;
+  }
+
+  // Incoming request-body bytes are socket activity: push the connection's
+  // inactivity timeout (socket.setTimeout / server.timeout) further out, like
+  // Node.js does for reads on the socket.
+  const socket = this.socket;
+  socket?._unrefTimer?.();
+
+  if (chunk && !this._dumped) {
+    if (!this.push(chunk)) {
+      // Like Node's parserOnBody: pause the connection once the buffer fills.
+      // Upgrade-with-body routes through its own handle so the socket's flow
+      // state stays with the upgrade listener; _read() balances it.
+      if (this.upgrade) this[kHandle]?.pause();
+      else if (socket && !socket.writableEnded) socket.pause();
+    }
+  }
+
+  if (isLast) {
+    emitEOFIncomingMessage(this);
+    // Like Node's parserOnMessageComplete: any readStop above left the shared
+    // socket's flowing=false, which would swallow the next request's 'pause'.
+    if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
+  }
 }
 
 function validateMsecs(numberlike: any, field: string) {
@@ -543,7 +622,6 @@ export {
   kBodyChunks,
   kClearTimeout,
   kCloseCallback,
-  kDeferredTimeouts,
   kDeprecatedReplySymbol,
   kEmitState,
   kEmptyObject,
@@ -575,6 +653,7 @@ export {
   kUseDefaultPort,
   kWaitForProxyTunnel,
   noBodySymbol,
+  onDataIncomingMessage,
   optionsSymbol,
   parseProxyConfigFromEnv,
   parseProxyUrl,
@@ -585,6 +664,7 @@ export {
   setIsNextIncomingMessageHTTPS,
   setMaxHTTPHeaderSize,
   setRequestTimeout,
+  setServerAppFlags,
   setServerCustomOptions,
   setServerIdleTimeout,
   statusCodeSymbol,

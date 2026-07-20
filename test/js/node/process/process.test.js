@@ -333,10 +333,10 @@ it("process.versions", () => {
   const expectedVersions = {
     boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "24211c6e7610ae7c4ec06040758ec90bd21a1c83",
+    mimalloc: "acd9924a0af3ba7c341910b48815106f2944ffa0",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
-    tinycc: "12882eee073cfe5c7621bcfadf679e1372d4537b",
+    tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
     lolhtml: "77127cd2b8545998756e8d64e36ee2313c4bb312",
     ares: "3ac47ee46edd8ea40370222f91613fc16c434853",
     libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
@@ -352,6 +352,10 @@ it("process.versions", () => {
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");
   expect(process.versions.usockets).toBe(process.versions.uwebsockets);
+
+  // Node.js exposes the bundled SQLite version here; Bun should too.
+  expect(process.versions).toHaveProperty("sqlite");
+  expect(process.versions.sqlite).toMatch(/^3\.\d+\.\d+$/);
 });
 
 it("process.config", () => {
@@ -625,6 +629,67 @@ describe.concurrent(() => {
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("worker uncaughtException boom\nworker exit 0\n");
       expect(exitCode).toBe(0);
+    });
+
+    it("is skipped after a fatal uncaught exception", async () => {
+      // Node's fatal-exception path is effectively process.exit(1); 'beforeExit'
+      // is only emitted on a natural drain, never for conditions causing
+      // explicit termination.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => console.log("beforeExit"));
+           process.on("exit", c => console.log("exit", c));
+           setTimeout(() => { throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("exit 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("still fires when an uncaughtException listener handled the throw", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtException", e => console.log("caught", e.message));
+           process.on("beforeExit", c => console.log("beforeExit", c));
+           process.on("exit", c => console.log("exit", c));
+           setTimeout(() => { throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("caught boom\nbeforeExit 0\nexit 0\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a throw from an exit listener after a fatal throw still stops subsequent exit listeners", async () => {
+      // Skipping the beforeExit dispatch also skips the call that arms
+      // exit_on_uncaught_exception; on_before_exit() arms it itself so a throw
+      // from 'exit' still short-circuits the remaining listeners like Node.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("exit", c => { console.log("first", c); throw new Error("b"); });
+           process.on("exit", c => console.log("second", c));
+           setTimeout(() => { throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("first 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
     });
 
     it("exits 1, not 7, when an exit listener also throws and nothing handles it", async () => {
@@ -978,6 +1043,34 @@ describe.concurrent(() => {
     expect(() => process.dlopen({ module: Symbol() }, notFound)).toThrow();
     expect(() => process.dlopen({ module: { exports: Symbol("123") } }, notFound)).toThrow();
     expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
+  });
+
+  it("dlopen rejects over-length paths with ERR_DLOPEN_FAILED", async () => {
+    // Spawn so an unfixed build crashing doesn't take the whole suite down.
+    // On Windows the path is widened into a 32767-unit WPathBuffer; an
+    // over-length path must come back as an error, not a Rust panic across
+    // the extern "C" boundary. POSIX already surfaces dlerror() here.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+          process.dlopen({ exports: {} }, Buffer.alloc(40000, "x").toString());
+          console.log("FAIL: did not throw");
+        } catch (e) {
+          console.log("CODE:" + e.code);
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "CODE:ERR_DLOPEN_FAILED",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("dlopen accepts file: URLs", () => {

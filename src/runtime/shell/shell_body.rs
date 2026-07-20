@@ -43,8 +43,8 @@ pub use bun_shell_parser::parse::{
     JSValueRaw, LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, LexError, LexResult, Lexer, LexerAscii,
     LexerError, LexerUnicode, ParseError, Parser, ParserError, SPECIAL_CHARS, SPECIAL_CHARS_TABLE,
     ShellCharIter, SmolList, Src, SrcAscii, SrcUnicode, StringEncoding, SubShellKind, SubshellKind,
-    TextRange, Token, TokenTag, assert_special_char, ast, escape_8bit, escape_bun_str,
-    escape_utf16, has_eq_sign, is_if_clause_keyword_bunstr, is_valid_var_name, needs_escape_bunstr,
+    TextRange, Token, TokenTag, ast, escape_8bit, escape_bun_str, escape_utf16, has_eq_sign,
+    is_if_clause_keyword_bunstr, is_valid_var_name, needs_escape_bunstr,
     needs_escape_utf8_ascii_latin1, needs_escape_utf16,
 };
 
@@ -1172,7 +1172,7 @@ pub mod testing_apis {
 
         if !lex_result.errors.is_empty() {
             let str = lex_result.combine_errors(&arena);
-            return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+            return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
         }
 
         let mut test_tokens: Vec<test::TestToken> = Vec::with_capacity(lex_result.tokens.len());
@@ -1248,12 +1248,12 @@ pub mod testing_apis {
                 // `out_lex_result` is populated by `parse()` only on lex errors.
                 if let Some(lex) = out_lex_result.as_ref() {
                     let str = lex.combine_errors(&arena);
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
                 }
 
                 if let Some(p) = out_parser.as_mut() {
                     let errstr = p.combine_errors();
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
                 return Err(global.throw_error(err, "failed to lex/parse shell"));

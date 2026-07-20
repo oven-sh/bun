@@ -853,7 +853,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
 
-  // Static SQLite: off on Apple (uses system), on elsewhere
+  // Whether bun:sqlite and node:sqlite link the bundled sqlite3 directly
+  // (LAZY_LOAD_SQLITE=0) or dlopen the system library at runtime. macOS
+  // defaults to dlopen so both APIs share Apple's libsqlite3 (one library,
+  // one POSIX-lock inode map — howtocorrupt.html §2.2.1); Linux/Windows
+  // link the bundled amalgamation.
   const staticSqlite = partial.staticSqlite ?? !darwin;
 
   // Static libatomic: on by default. Arch/Manjaro don't ship libatomic.a —
@@ -861,10 +865,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // failure is loud ("cannot find -l:libatomic.a") and the fix is obvious.
   const staticLibatomic = partial.staticLibatomic ?? true;
 
-  // TinyCC: off on Windows ARM64 (not supported), Android (no upstream
-  // bionic support; FFI cc() falls back to dlopen-only), and FreeBSD
-  // (oven-sh/tinycc has no FreeBSD target).
-  const tinycc = partial.tinycc ?? !((windows && arm64) || abi === "android" || freebsd);
+  // TinyCC: off on Android (no upstream bionic support; FFI cc() falls back
+  // to dlopen-only) and FreeBSD (oven-sh/tinycc has no FreeBSD target).
+  const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;

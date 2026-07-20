@@ -163,6 +163,13 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    it('reports Expected ":" for a conditional expression missing its colon', () => {
+      const err = ts.expectParseError;
+      err("let x = a ? b;", 'Expected ":" but found ";"');
+      err("(a ? b)", 'Expected ":" but found ")"');
+      err("x = a ? b c", 'Expected ":" but found "c"');
+    });
+
     it("contextual keywords used as plain identifiers keep their statements", () => {
       const exp = ts.expectPrinted_;
 
@@ -3992,8 +3999,19 @@ console.log(foo, array);
       expectPrinted('"" == 0', "!0");
       expectPrinted("1n == 1n", "!0");
       expectPrinted("1234n == 1234n", "!0");
+      expectPrinted("1n == 2n", "!1");
+      expectPrinted("!0n", "!0");
+      expectPrinted("!1n", "!1");
+      // Radix BigInt literals keep their source text, so folds that need a
+      // decimal string bail out instead of producing a wrong constant.
       expectPrinted("0x00n == 0n", "0x00n == 0n");
-      expectPrinted("1n == 2n", "1n == 2n");
+      expectPrinted("0x10n == 16n", "0x10n == 16n");
+      expectPrinted("0x10n == 0x10n", "!0");
+      expectPrinted("!0x0n", "!0x0n");
+      expectPrinted("!0x1n", "!0x1n");
+      expectPrinted("`${0x10n}`", "`${0x10n}`");
+      expectPrinted("`${0b1_0n}`", "`${0b10n}`");
+      expectPrinted("`${10n}`", '"10"');
 
       expectPrinted("'a' === '\\x61'", "!0");
       expectPrinted("'a' === '\\x62'", "!1");

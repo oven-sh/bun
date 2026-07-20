@@ -289,7 +289,8 @@ impl<'a> Loader<'a> {
         self.aws_credentials.as_ref().unwrap()
     }
 
-    /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
+    /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` (matching
+    /// Node's `=== '0'` check exactly).
     ///
     /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
     pub fn get_tls_reject_unauthorized(&mut self) -> bool {
@@ -298,10 +299,6 @@ impl<'a> Loader<'a> {
         }
         if let Some(reject) = self.get(b"NODE_TLS_REJECT_UNAUTHORIZED") {
             if reject == b"0" {
-                self.reject_unauthorized = Some(false);
-                return false;
-            }
-            if reject == b"false" {
                 self.reject_unauthorized = Some(false);
                 return false;
             }
@@ -994,7 +991,9 @@ struct Parser<'a> {
     value_buffer: &'a mut Vec<u8>,
 }
 
-const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \xA0\n\r";
+// Input is UTF-8, so this set must be ASCII-only: 0xA0 is a continuation byte
+// there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
+const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
 
 impl<'a> Parser<'a> {
     fn skip_line(&mut self) {
@@ -1065,9 +1064,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_quoted<const QUOTE: u8>(&mut self) -> Result<Option<&[u8]>, AllocError> {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.src[self.pos] == QUOTE);
-        }
+        debug_assert!(self.src[self.pos] == QUOTE);
         let start = self.pos;
         self.value_buffer.clear(); // Reset the buffer
         let mut end = start + 1;
@@ -1076,57 +1073,49 @@ impl<'a> Parser<'a> {
                 b'\\' => end += 1,
                 q if q == QUOTE => {
                     end += 1;
+                    // The first unescaped closing quote always terminates the value.
+                    // Any trailing content on the same line is discarded (node/dotenv).
                     self.pos = end;
-                    self.skip_whitespaces();
-                    if self.pos >= self.src.len()
-                        || self.src[self.pos] == b'#'
-                        || strings::index_of_char(&self.src[end..self.pos], b'\n').is_some()
-                        || strings::index_of_char(&self.src[end..self.pos], b'\r').is_some()
-                    {
-                        let mut i = start;
-                        while i < end {
-                            match self.src[i] {
-                                b'\\' => {
-                                    if QUOTE == b'"' {
-                                        if cfg!(debug_assertions) {
-                                            debug_assert!(i + 1 < end);
+                    self.skip_line();
+                    let mut i = start;
+                    while i < end {
+                        match self.src[i] {
+                            b'\\' => {
+                                if QUOTE == b'"' {
+                                    debug_assert!(i + 1 < end);
+                                    match self.src[i + 1] {
+                                        b'n' => {
+                                            self.value_buffer.push(b'\n');
+                                            i += 2;
                                         }
-                                        match self.src[i + 1] {
-                                            b'n' => {
-                                                self.value_buffer.push(b'\n');
-                                                i += 2;
-                                            }
-                                            b'r' => {
-                                                self.value_buffer.push(b'\r');
-                                                i += 2;
-                                            }
-                                            _ => {
-                                                self.value_buffer
-                                                    .extend_from_slice(&self.src[i..i + 2]);
-                                                i += 2;
-                                            }
+                                        b'r' => {
+                                            self.value_buffer.push(b'\r');
+                                            i += 2;
                                         }
-                                    } else {
-                                        self.value_buffer.push(b'\\');
-                                        i += 1;
+                                        _ => {
+                                            self.value_buffer
+                                                .extend_from_slice(&self.src[i..i + 2]);
+                                            i += 2;
+                                        }
                                     }
-                                }
-                                b'\r' => {
-                                    i += 1;
-                                    if i >= end || self.src[i] != b'\n' {
-                                        self.value_buffer.push(b'\n');
-                                    }
-                                }
-                                c => {
-                                    self.value_buffer.push(c);
+                                } else {
+                                    self.value_buffer.push(b'\\');
                                     i += 1;
                                 }
                             }
+                            b'\r' => {
+                                i += 1;
+                                if i >= end || self.src[i] != b'\n' {
+                                    self.value_buffer.push(b'\n');
+                                }
+                            }
+                            c => {
+                                self.value_buffer.push(c);
+                                i += 1;
+                            }
                         }
-                        return Ok(Some(self.value_buffer.as_slice()));
                     }
-                    self.pos = start;
-                    // fallthrough to outer loop's `end += 1`
+                    return Ok(Some(self.value_buffer.as_slice()));
                 }
                 _ => {}
             }
@@ -1309,7 +1298,9 @@ impl<'a> Parser<'a> {
         value_buffer.clear();
         let mut parser = Parser {
             pos: 0,
-            src,
+            // Notepad and PowerShell redirects emit a UTF-8 BOM; without this the
+            // first key fails `parse_key` and `skip_line` silently drops line 1.
+            src: strings::without_utf8_bom(src),
             value_buffer,
         };
         parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)

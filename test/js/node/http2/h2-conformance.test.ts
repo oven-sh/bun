@@ -12,6 +12,7 @@ import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
+import { Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -39,6 +40,7 @@ const ErrorCode = {
   REFUSED_STREAM: 0x7,
   CANCEL: 0x8,
   COMPRESSION_ERROR: 0x9,
+  ENHANCE_YOUR_CALM: 0xb,
 } as const;
 
 type Frame = { length: number; type: number; flags: number; streamId: number; payload: Buffer };
@@ -550,6 +552,96 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   });
 });
 
+describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
+  // Regression coverage for the test-http2-pipe failure mode: the server responds and ends its
+  // side before the request body arrives, the request body is piped into a backpressured
+  // writable, and the upload is larger than the 64 KiB initial windows. The server must keep
+  // sending WINDOW_UPDATE as the consumer drains so the upload completes.
+  test("WINDOW_UPDATE keeps flowing for a request body received after the response ended, with a backpressured reader", async () => {
+    const total = 256 * 1024;
+    let received = 0;
+    const finished = Promise.withResolvers<void>();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      // Slow consumer: tiny highWaterMark + async completion forces repeated pause/resume of the
+      // request readable while the body is still arriving.
+      const slow = new Writable({
+        highWaterMark: 1024,
+        write(chunk: Buffer, _enc, cb) {
+          received += chunk.length;
+          setImmediate(cb);
+        },
+      });
+      slow.on("finish", () => finished.resolve());
+      stream.on("error", (err: Error) => finished.reject(err));
+      stream.pipe(slow);
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      c.sendSettingsAck();
+      // POST / without END_STREAM: static-table indexed [:method POST, :scheme http, :path /]
+      // plus a literal :authority.
+      const block = Buffer.concat([Buffer.from([0x83, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, block);
+      // Wait until the response has fully ended (HEADERS then END_STREAM) before sending any of
+      // the request body — that ordering is what previously stalled the inbound windows.
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      await c.waitFor(f => f.streamId === 1 && (f.flags & 0x1) !== 0);
+
+      // Send the body respecting flow control: track WINDOW_UPDATE frames the server sends and
+      // never exceed the connection/stream windows (initially 65535 each).
+      let connWindow = 65535;
+      let streamWindow = 65535;
+      let harvested = 0;
+      const harvestWindowUpdates = () => {
+        for (; harvested < c.frames.length; harvested++) {
+          const f = c.frames[harvested];
+          if (f.type !== FrameType.WINDOW_UPDATE) continue;
+          const inc = f.payload.readUInt32BE(0) & 0x7fffffff;
+          if (f.streamId === 0) connWindow += inc;
+          else if (f.streamId === 1) streamWindow += inc;
+        }
+      };
+      const windowUpdateCount = () => c.frames.filter(f => f.type === FrameType.WINDOW_UPDATE).length;
+      let sent = 0;
+      while (sent < total) {
+        harvestWindowUpdates();
+        const budget = Math.min(connWindow, streamWindow, 16384, total - sent);
+        if (budget <= 0) {
+          // Stalled on flow control: wait for the server to grant more window. If it never does,
+          // this rejects and the test fails with the stall position.
+          const before = windowUpdateCount();
+          await c
+            .waitFor(() => windowUpdateCount() > before, 3000)
+            .catch(() => {
+              throw new Error(
+                `flow control stalled: sent=${sent} connWindow=${connWindow} streamWindow=${streamWindow}`,
+              );
+            });
+          continue;
+        }
+        const last = sent + budget >= total;
+        c.sendFrame(FrameType.DATA, last ? 0x1 /* END_STREAM */ : 0, 1, Buffer.alloc(budget, 0x61));
+        sent += budget;
+        connWindow -= budget;
+        streamWindow -= budget;
+      }
+      await finished.promise;
+      expect(received).toBe(total);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+});
+
 describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
   test("an ACK applies to the oldest outstanding SETTINGS, not the latest submission", async () => {
     const raw = await RawH2Server.listen();
@@ -707,6 +799,248 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
   });
 });
 
+describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
+  // HPACK "literal never indexed, new name" (0x10) so the wire shape is exactly what is written
+  // and no client library normalizes it away.
+  function hpackBlock(pairs: [string, string][]): Buffer {
+    return Buffer.concat(pairs.flatMap(([n, v]) => [Buffer.from([0x10]), hpackLiteral(n), hpackLiteral(v)]));
+  }
+
+  async function probe(
+    headers: [string, string][],
+    opts?: http2.ServerOptions,
+  ): Promise<{ dispatched: boolean; frames: Frame[] }> {
+    const srv = http2.createServer(opts ?? {});
+    srv.on("sessionError", () => {});
+    let dispatched = false;
+    srv.on("stream", stream => {
+      dispatched = true;
+      stream.on("error", () => {});
+      try {
+        stream.respond({ ":status": 200 });
+        stream.end();
+      } catch {}
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const srvPort = (srv.address() as net.AddressInfo).port;
+    const c = await RawH2.connect(srvPort);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, hpackBlock(headers));
+      // PING as a barrier: by the time the ACK (or a GOAWAY/close) arrives, the server has
+      // fully processed the HEADERS above.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await Promise.race([
+        c.waitFor(f => (f.type === FrameType.PING && (f.flags & 1) !== 0) || f.type === FrameType.GOAWAY),
+        c.waitClosed(),
+      ]);
+      return { dispatched, frames: c.frames.slice() };
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  function expectStreamProtocolError({ dispatched, frames }: { dispatched: boolean; frames: Frame[] }) {
+    expect(dispatched).toBe(false);
+    const rst = frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+    expect(rst?.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+    expect(frames.find(f => f.type === FrameType.HEADERS && f.streamId === 1)).toBeUndefined();
+  }
+
+  test.each([
+    [
+      "empty :path",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", ""],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "empty :method",
+      [
+        [":method", ""],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "empty :scheme",
+      [
+        [":method", "GET"],
+        [":scheme", ""],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "empty :authority",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", ""],
+      ],
+    ],
+    [
+      "missing :path",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "missing :method",
+      [
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "missing :scheme",
+      [
+        [":method", "GET"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "no :authority or host",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", "/"],
+      ],
+    ],
+    [
+      "CONNECT with :path",
+      [
+        [":method", "CONNECT"],
+        [":authority", "localhost"],
+        [":path", "/"],
+      ],
+    ],
+    [
+      "CONNECT with :scheme",
+      [
+        [":method", "CONNECT"],
+        [":authority", "localhost"],
+        [":scheme", "http"],
+      ],
+    ],
+    ["CONNECT without :authority", [[":method", "CONNECT"]]],
+  ] as const)("a request with %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
+    expectStreamProtocolError(await probe(headers as [string, string][]));
+  });
+
+  test.each([
+    [
+      ":protocol on non-CONNECT",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+        [":protocol", "websocket"],
+      ],
+    ],
+    [
+      "extended CONNECT without :scheme",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "extended CONNECT without :path",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "extended CONNECT without :authority",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":path", "/"],
+      ],
+    ],
+    [
+      "extended CONNECT with empty :path",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":path", ""],
+        [":authority", "localhost"],
+      ],
+    ],
+  ] as const)("with enableConnectProtocol: %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
+    expectStreamProtocolError(
+      await probe(headers as [string, string][], { settings: { enableConnectProtocol: true } }),
+    );
+  });
+
+  test("a valid request block is dispatched", async () => {
+    const { dispatched, frames } = await probe([
+      [":method", "GET"],
+      [":scheme", "http"],
+      [":path", "/"],
+      [":authority", "localhost"],
+    ]);
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+
+  test("a request with a host header in place of :authority is dispatched", async () => {
+    const { dispatched, frames } = await probe([
+      [":method", "GET"],
+      [":scheme", "http"],
+      [":path", "/"],
+      ["host", "localhost"],
+    ]);
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+
+  test("a plain CONNECT with only :authority is dispatched", async () => {
+    const { dispatched, frames } = await probe([
+      [":method", "CONNECT"],
+      [":authority", "localhost"],
+    ]);
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+
+  test("an extended CONNECT (:protocol) with :scheme/:path/:authority is dispatched", async () => {
+    const { dispatched, frames } = await probe(
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+      { settings: { enableConnectProtocol: true } },
+    );
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+});
+
 describe("inbound stream lifecycle", () => {
   test("releases server stream objects once the peer resets their streams", async () => {
     const total = 32;
@@ -740,7 +1074,13 @@ describe("inbound stream lifecycle", () => {
         c.sendFrame(FrameType.RST_STREAM, 0, 1 + 2 * i, cancel);
       }
       await allClosed.promise;
-      for (let i = 0; i < 20 && refs.some(ref => ref.deref() !== undefined); i++) {
+      // The streams' native release rides the deferred teardown chain
+      // (setImmediate: rstNextTick / delayed destroy), so drain an immediate
+      // turn before each GC pass - gcTick's Bun.sleep(0) alone leaves the
+      // release pending on slow FinalizationRegistry lanes (alpine/musl
+      // needed a retry at 20 passes; collection is late there, not stuck).
+      for (let i = 0; i < 50 && refs.some(ref => ref.deref() !== undefined); i++) {
+        await new Promise(resolve => setImmediate(resolve));
         await gcTick(true);
       }
       expect(refs.filter(ref => ref.deref() !== undefined).length).toBe(0);
@@ -944,7 +1284,9 @@ describe("inbound stream lifecycle", () => {
       await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
       c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
       const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
-      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+      // node refuses an over-budget stream with ENHANCE_YOUR_CALM (Http2Session::OnBeginHeadersCallback);
+      // node's own sequential/test-http2-max-session-memory.js asserts this exact code.
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
       expect(c.frames.find(f => f.type === FrameType.HEADERS && f.streamId === 3)).toBeUndefined();
     } finally {
       c.destroy();
@@ -1019,7 +1361,9 @@ describe("inbound stream lifecycle", () => {
         ]),
       );
       const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
-      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+      // node refuses an over-budget stream with ENHANCE_YOUR_CALM (Http2Session::OnBeginHeadersCallback);
+      // node's own sequential/test-http2-max-session-memory.js asserts this exact code.
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
 
       await drainFirstStream(c);
       c.sendFrame(FrameType.HEADERS, 0x5, 5, requestHeaderBlock("GET"));
@@ -1050,7 +1394,9 @@ describe("inbound stream lifecycle", () => {
         ]),
       );
       const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
-      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+      // node refuses an over-budget stream with ENHANCE_YOUR_CALM (Http2Session::OnBeginHeadersCallback);
+      // node's own sequential/test-http2-max-session-memory.js asserts this exact code.
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
 
       await drainFirstStream(c);
       // 0xbe: indexed field 62 = the entry the refused block inserted. If that block had

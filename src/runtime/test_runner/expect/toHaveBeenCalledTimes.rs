@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 pub(crate) fn to_have_been_called_times(
     this: &Expect,
@@ -23,9 +24,9 @@ pub(crate) fn to_have_been_called_times(
         )));
     }
 
-    let times = arguments[0].coerce::<i32>(global)?;
+    let times = arguments[0].to_int64();
 
-    let mut pass = i32::try_from(calls.get_length(global)?).unwrap() == times;
+    let mut pass = calls.get_length(global)? as i64 == times;
 
     let not = this.flags.get().not();
     if not {
@@ -38,33 +39,31 @@ pub(crate) fn to_have_been_called_times(
     // handle failure
     if not {
         let signature = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected number of calls: not <green>{}<r>\n",
-                    "Received number of calls: <red>{}<r>\n"
-                ),
-                times,
-                calls.get_length(global)?,
-            ),
-        );
-    }
-
-    let signature = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
-    this.throw(
-        global,
-        signature,
-        format_args!(
             concat!(
                 "\n\n",
-                "Expected number of calls: <green>{}<r>\n",
+                "Expected number of calls: not <green>{}<r>\n",
                 "Received number of calls: <red>{}<r>\n"
             ),
             times,
             calls.get_length(global)?,
+        );
+    }
+
+    let signature = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
+    throw!(
+        this,
+        global,
+        signature,
+        concat!(
+            "\n\n",
+            "Expected number of calls: <green>{}<r>\n",
+            "Received number of calls: <red>{}<r>\n"
         ),
+        times,
+        calls.get_length(global)?,
     )
 }

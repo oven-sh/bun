@@ -50,10 +50,17 @@ test/js/node/test/parallel/test-net-connect-keepalive.js [ FAIL ] # asserts _han
 test/js/node/test/parallel/test-net-server-keepalive.js [ FAIL ] # asserts _handle.setKeepAlive gets seconds; Bun's _handle is Bun.Socket (ms)
 
 # Vendored node v26.3.0 stream tests blocked on missing native subsystems (see PR #31826)
-test/js/node/test/parallel/test-stream-pipeline.js [ SKIP ] # block at L271 hangs: pipeline(rs, req) writes 11x'hello' raw after a never-ended GET's \r\n\r\n; node's llhttp rejects lowercase 'h' as a method char (HPE_INVALID_METHOD -> clientError -> 400+close -> req 'close' -> pipeline callback fires), but bun's uWS HttpParser buffers any incomplete run of valid tchars waiting for the request-line, so the connection stays open and the callback never fires. Pre-existing server-parser leniency; needs uWS HttpParser to reject non-uppercase method bytes like llhttp.
 test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/binding + js_stream (net.Socket({handle}) libuv compat layer)
 test/js/node/test/parallel/test-stream-wrap-drain.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
 test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
+
+# Spawns test-http-max-http-headers.js, which is not vendored, and asserts its
+# exit code. Only "passed" before #32631 because the old node:test shim never
+# awaited done-style callbacks, so the cp.on('close') assertions never ran.
+# With the real (t, done) support, the second/fourth tests fail (child exits 1
+# with "Module not found" where exit 0 is expected). Remove this entry once
+# test-http-max-http-headers.js is vendored.
+test/js/node/test/parallel/test-set-http-max-http-headers.js [ FAIL ] # spawns test-http-max-http-headers.js which is not vendored
 
 # Pre-existing fs.watch leak unmasked by this PR's eval-entry exception fix:
 # the child's thrown leak error ("fs.watch(dir) leaked N MB") used to be
@@ -79,10 +86,27 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # Tests failed due to ASAN: SEGV on unknown address
 [ ASAN ] test/integration/next-pages/test/dev-server.test.ts [ CRASH ]
 
+# worker.terminate() lands while a process.* lazy PropertyCallback builder
+# (stdout/stderr/stdin/nextTick/mainModule, via setupWorkerStdio) is in JS;
+# tryClearException() refuses to clear the TerminationException, so the
+# builder returns with it pending and reifyStaticProperty reports the slot
+# found, tripping JSC's "ASSERTION FAILED: !scope.exception() || !result"
+# in getOwnPropertyDescriptor / JSValue::get. Tracked in #34095; fix PRs
+# #33966 and #33418. x64-asan only (e.g. builds 75570, 75601); release
+# lanes are unaffected. Remove once either fix PR lands.
+[ ASAN ] test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js [ CRASH ] # #34095: JSC assertion when terminate() interrupts a lazy PropertyCallback builder
+# The stress test is the bun-owned 8×10-worker amplification of the above,
+# but on CI it only ever hits JSC::ExceptionScope::assertNoException at
+# ExceptionScope.h:61 (6/6: builds 75493/75495/75514/75597/75604/75606),
+# which #33966 reports still reproducing at ~1/4000 workers AFTER its
+# lazy-builder fix ("termination landing later in the bootstrap, after the
+# stdio builders have completed"). Tracked separately in #34690; this entry
+# is NOT removable with the one above.
+[ ASAN ] test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts [ CRASH ] # #34690: ExceptionScope::assertNoException during worker terminate bootstrap
+
 # Tests failed due to ASAN: use-after-poison
 [ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]
 [ ASAN ] test/napi/napi.test.ts [ CRASH ] # can throw an exception from an async_complete_callback
-[ ASAN ] test/js/node/http/node-http-uaf.test.ts [ CRASH ] # should not crash on abort (node-http-uaf-fixture.ts)
 [ ASAN ] test/js/node/test/parallel/test-fs-watch.js [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-fs-promises-watch.js [ CRASH ]
@@ -101,9 +125,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/url/pathToFileURL.test.ts [ LEAK ] # pathToFileURL doesn't leak memory
 [ ASAN ] test/js/node/fs/abort-signal-leak-read-write-file.test.ts [ LEAK ] # should not leak memory with already aborted signals
 [ ASAN ] test/js/web/streams/streams-leak.test.ts [ LEAK ] # Absolute memory usage remains relatively constant when reading and writing to a pipe
-[ ASAN ] test/js/web/fetch/fetch-leak.test.ts [ LEAK ]
 [ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
-[ ASAN ] test/js/bun/http/req-url-leak.test.ts [ LEAK ] # req.url doesn't leak memory
 [ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
 
 # Windows-only gaps in named-pipe / socket teardown for ported Node net tests
@@ -111,9 +133,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # RST delivery surfacing as ECONNRESET, and EADDRINUSE on a second listen on
 # the same pipe path.
 [ WINDOWS ] test/js/node/test/parallel/test-net-pingpong.js [ FAIL ] # named-pipe half-close (FIN) handling
-[ WINDOWS ] test/js/node/test/parallel/test-net-socket-reset-send.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
-[ WINDOWS ] test/js/node/test/parallel/test-net-connect-reset-after-destroy.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
-[ WINDOWS ] test/js/node/test/parallel/test-net-connect-reset-until-connected.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
 [ WINDOWS ] test/js/node/test/parallel/test-net-pipe-connect-errors.js [ FAIL ] # named-pipe connect errors are not mapped to ENOENT/EACCES on Windows yet
 [ WINDOWS ] test/js/node/test/parallel/test-net-server-listen-path.js [ FAIL ] # EADDRINUSE not reported for a second listen on the same pipe path
 
@@ -123,7 +142,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # readable side on Windows, so the accepted connection never ends and
 # server.close() (via `await using`) waits forever. The assertion itself passes;
 # only the teardown hangs. Passes on Linux and macOS.
-[ WINDOWS ] test/js/bun/test/parallel/test-http-should-not-emit-or-throw-error-when-writing-after-socket.end.ts [ FAIL ] # half-close + client RST not surfaced on Windows; server.close() waits forever
 
 # The 10 MB socket write in this test is an order of magnitude slower under
 # AddressSanitizer and exceeds the per-test timeout; it passes on regular builds.
@@ -141,13 +159,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # only hold on the distributing model. Passes on macOS, Windows and FreeBSD.
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
 
-# The fetch/h2 client teardown on Windows surfaces read ECONNRESET (WSAECONNRESET)
-# between tests when the pooled connection is dropped without a FIN; every test in
-# the file passes, the stray teardown error makes the run exit 1. Tracked as a
-# known follow-up in the PR description; quarantined here until the Windows
-# teardown path is reworked.
-[ WINDOWS ] test/js/web/fetch/fetch-http2-client.test.ts [ FAIL ] # pooled-h2 teardown surfaces WSAECONNRESET between tests
-
 # Pre-existing on main (flagged [pre-existing] by ci:errors, e.g. build 61989 on
 # darwin-14-aarch64 and build 62204 on darwin-26-aarch64, both at the
 # `expect(e.name).toBe("TimeoutError")` assertions). The two connect-race cases
@@ -164,130 +175,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # contacting external hosts) using a deterministic local hanging connect.
 [ DARWIN ] test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts [ FLAKY ] # connect-during-abort race depends on host routing of 192.0.2.1; darwin CI agents return an immediate routing error
 
-# node:http2 tests ported together with the HTTP/2 engine overhaul that do not pass yet
-# (remaining compatibility work: ALPN/h1-fallback, tunnelling, perf_hooks entries, stream
-# write semantics, async_hooks integration, node-internal-module dependencies). Burn these
-# down as the corresponding features land.
-test/js/node/test/parallel/test-diagnostics-channel-http2-server-stream-close.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-allow-http1-upgrade-ws.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-alpn.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-async-local-storage.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-backpressure.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-binding.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-buffersize.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-client-destroy.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-client-http1-server.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-client-onconnect-errors.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-client-set-priority.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-client-socket-destroy.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-compat-serverresponse-drain.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-compat-socket.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-connect-method-extended-cant-turn-off.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-connect-method-extended.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-create-client-secure-session.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-debug.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-https-fallback.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-info-headers-errors.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-invalid-last-stream-id.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-misbehaving-multiplex.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-misc-util.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-multi-content-length.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-options-max-headers-exceeds-nghttp2.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-padding-aligned.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-perf_hooks.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-perform-server-handshake.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-ping-settings-heapdump.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-ping.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-res-writable-properties.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-reset-flood.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-respond-file-fd-leak.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-respond-nghttperrors.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-respond-with-fd-errors.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-sensitive-headers.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-server-http1-client.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-server-push-stream-errors.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-server-push-stream-head.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-server-sessionerror.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-server-socket-destroy.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-server-stream-session-destroy.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-settings-unsolicited-ack.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-single-headers-validation-disabled.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-socket-proxy.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-stream-client.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-too-many-settings.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-util-assert-valid-pseudoheader.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-util-asserts.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-util-headers-list.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-util-nghttp2error.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-util-update-options-buffer.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-autoselect-protocol.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/parallel/test-http2-client-connection-tunnelling.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/parallel/test-http2-client-jsstream-destroy.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/parallel/test-http2-https-fallback-http-server-options.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/parallel/test-http2-max-invalid-frames.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/parallel/test-http2-pack-end-stream-flag.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/parallel/test-http2-ping-unsolicited-ack.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/parallel/test-http2-session-cleanup-on-nghttp2-goaway.js [ SKIP ] # hangs; skip until the underlying feature lands
-
-# AddressSanitizer findings under investigation on the HTTP/2 inbound path
-[ ASAN ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-close-error.js [ SKIP ] # ASan report under investigation
-[ ASAN ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-error.js [ SKIP ] # ASan report under investigation
-[ ASAN ] test/js/node/test/parallel/test-http2-client-unescaped-path.js [ SKIP ] # ASan report under investigation
-[ ASAN ] test/js/node/test/parallel/test-http2-buffersize.js [ SKIP ] # ASan report under investigation
-
-# The bun-specific http2 integration suites are being reconciled with the rewritten
-# (node-faithful) HTTP/2 engine: several of their expectations pin legacy-parser behaviors
-# that contradict node's (e.g. 'ping' events for PING ACKs, connection-error codes for
-# wrong-size frames that RFC 9113 defines as stream errors). Tracked for reconciliation;
-# the ported node parallel suite covers the node-faithful contract.
-test/js/node/http2/node-http2.test.js [ FAIL ] # legacy-parser expectations under reconciliation
-test/js/node/http2/h2-conformance.test.ts [ FAIL ] # under reconciliation with the rewritten engine (CONTINUATION flood + RST rate-limit cases)
-test/js/node/http2/node-http2-invalid-padding.test.ts [ FAIL ] # legacy-parser expectations under reconciliation
-[ ASAN ] test/js/third_party/grpc-js/test-server.test.ts [ SKIP ] # connect-race socket lifetime report under investigation
-[ WINDOWS ] test/js/third_party/grpc-js/test-server.test.ts [ FAIL ] # http2 teardown gap on Windows
-
-# Platform-specific http2 failures pending the socket-layer fixes (connect-race lifetime on
-# Linux/ASan, teardown gaps on Windows). Enumerated from CI so coverage stays on for everything else.
-[ LINUX ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-close-error.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-error.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-allow-http1.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ WINDOWS ] test/js/node/test/parallel/test-http2-allow-http1.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-byteswritten-server.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ WINDOWS ] test/js/node/test/parallel/test-http2-byteswritten-server.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-client-port-80.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-client-unescaped-path.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-invalidheaderfield.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-invalidheaderfields-client.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-options-max-headers-block-length.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-server-shutdown-options-errors.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ WINDOWS ] test/js/node/test/parallel/test-http2-server-shutdown-options-errors.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-server-unknown-protocol.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ WINDOWS ] test/js/node/test/parallel/test-http2-server-unknown-protocol.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-single-headers-validation.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-
-# The connect-race socket-lifetime report can surface in any http2 test on the ASan pipeline;
-# skip the family there until the socket-layer fix lands (prefix entries — the runner matches by substring).
-[ ASAN ] test/js/node/test/parallel/test-http2 [ SKIP ] # socket-layer connect-race lifetime under investigation
-[ ASAN ] test/js/node/test/parallel/test-diagnostics-channel-http2 [ SKIP ] # socket-layer connect-race lifetime under investigation
-[ ASAN ] test/js/node/http2/ [ SKIP ] # socket-layer connect-race lifetime under investigation
-
-# v26.3.0-verbatim deviations (test content is byte-identical to node v26.3.0):
-# validator wording: Bun's shared range template says "and" where node's validators say "&&"
-test/js/node/test/parallel/test-http2-client-rststream-before-connect.js [ FAIL ]
-test/js/node/test/parallel/test-http2-client-setLocalWindowSize.js [ FAIL ]
-test/js/node/test/parallel/test-http2-invalidargtypes-errors.js [ FAIL ]
-# customSettings/remoteCustomSettings not implemented
-test/js/node/test/parallel/test-http2-session-settings.js [ FAIL ]
-# requires internal/test/binding (nghttp2 prototype monkey-patching)
-test/js/node/test/parallel/test-http2-respond-errors.js [ FAIL ]
-# flow-control violations surface as stream errors, node/nghttp2 surfaces ERR_HTTP2_ERROR "Protocol error"
-test/js/node/test/parallel/test-http2-misbehaving-flow-control.js [ FAIL ]
-test/js/node/test/parallel/test-http2-misbehaving-flow-control-paused.js [ FAIL ]
-# multi-localhost (127.0.0.2) binding not supported on Windows
-[ WINDOWS ] test/js/node/test/parallel/test-http2-connect-options.js [ FAIL ]
-# localhost dual-stack resolution makes this flap across platforms (passes on retry)
-test/js/node/test/parallel/test-http2-pipe.js [ FLAKY ]
 
 # node:http servers cannot listen on Windows named pipes yet (ENOENT from
 # uv_pipe bind), so common.PIPE-based http tests cannot run there.
-[ WINDOWS ] test/js/node/test/parallel/test-http-unix-socket-keep-alive.js [ FAIL ] # named-pipe listen unsupported

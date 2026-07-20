@@ -27,6 +27,10 @@ size_t visibleLatin1Width(std::span<const uint8_t> input);
 // Visible width of Latin-1 text, treating ANSI escape sequences as zero-width.
 size_t visibleLatin1WidthExcludeANSI(std::span<const uint8_t> input);
 
+// Same as the pair above, with East Asian Ambiguous codepoints counted as wide.
+size_t visibleLatin1WidthAmbiguousAsWide(std::span<const uint8_t> input);
+size_t visibleLatin1WidthExcludeANSIAmbiguousAsWide(std::span<const uint8_t> input);
+
 // Visible width of UTF-16 text (grapheme-cluster aware). `excludeAnsiColors`
 // treats ANSI escape sequences as zero-width.
 size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors, bool ambiguousAsWide);

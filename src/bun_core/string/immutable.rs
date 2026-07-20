@@ -233,7 +233,7 @@ pub mod unicode {
 /// (invalid lead byte → 1). Stops early at EOF or a truncated trailing sequence,
 /// returning the slice up to the last complete codepoint boundary.
 ///
-/// Shared body of `js_parser::Lexer::peek` / `toml::Lexer::peek`.
+/// Shared body of `js_parser::Lexer::peek`.
 #[inline]
 pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     let mut end = at;
@@ -250,9 +250,9 @@ pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     &bytes[at..end]
 }
 
-/// WTF-8 codepoint stepper shared by the JS / JSON / TOML lexers.
+/// WTF-8 codepoint stepper shared by the JS and JSON lexers.
 ///
-/// The JS, JSON, and TOML lexers all call the same
+/// The JS and JSON lexers call the same
 /// `wtf8_byte_sequence_length_with_invalid` / `decode_wtf8_rune_t_multibyte`
 /// pair defined alongside this module, so the stepper belongs here.
 ///
@@ -1847,10 +1847,8 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
 }
 
 pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
-    if cfg!(debug_assertions) {
-        debug_assert!(!destination.is_empty());
-        debug_assert!(!source.is_empty());
-    }
+    debug_assert!(!destination.is_empty());
+    debug_assert!(!source.is_empty());
     let to_write = if destination.len() < source.len() * 2 {
         destination.len() - destination.len() % 2
     } else {
@@ -2309,22 +2307,18 @@ pub fn move_all_slices<'a, T: MoveSlices<'a> + ?Sized>(
 }
 
 pub fn move_slice<'a>(slice: &[u8], from: &[u8], to: &'a [u8]) -> &'a [u8] {
-    if cfg!(debug_assertions) {
-        debug_assert!(from.len() <= to.len() && from.len() >= slice.len());
-        // assert we are in bounds
-        debug_assert!(
-            (from.as_ptr() as usize + from.len()) >= slice.as_ptr() as usize + slice.len()
-                && (from.as_ptr() as usize <= slice.as_ptr() as usize)
-        );
-        debug_assert!(eql_long(from, &to[0..from.len()], false)); // data should be identical
-    }
+    debug_assert!(from.len() <= to.len() && from.len() >= slice.len());
+    // assert we are in bounds
+    debug_assert!(
+        (from.as_ptr() as usize + from.len()) >= slice.as_ptr() as usize + slice.len()
+            && (from.as_ptr() as usize <= slice.as_ptr() as usize)
+    );
+    debug_assert!(eql_long(from, &to[0..from.len()], false)); // data should be identical
 
     let ptr_offset = slice.as_ptr() as usize - from.as_ptr() as usize;
     let result = &to[ptr_offset..][0..slice.len()];
 
-    if cfg!(debug_assertions) {
-        debug_assert!(eql_long(slice, result, false)); // data should be identical
-    }
+    debug_assert!(eql_long(slice, result, false)); // data should be identical
 
     result
 }

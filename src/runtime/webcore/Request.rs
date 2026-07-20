@@ -979,7 +979,6 @@ impl Request {
                     let protocol = self.get_protocol();
                     let url_bytelength = protocol.len() + host.len() + req_url.len();
 
-                    #[cfg(debug_assertions)]
                     debug_assert!(self.size_of_url() == url_bytelength);
 
                     if url_bytelength < 128 {
@@ -995,7 +994,6 @@ impl Request {
                             &buffer[..at]
                         };
 
-                        #[cfg(debug_assertions)]
                         debug_assert!(self.size_of_url() == url.len());
 
                         let href = bun_url::href_from_string(&BunString::from_bytes(url));
@@ -1044,7 +1042,6 @@ impl Request {
                 }
             }
 
-            #[cfg(debug_assertions)]
             debug_assert!(self.size_of_url() == req_url.len());
             self.url.set(BunString::clone_utf8(&req_url));
         }

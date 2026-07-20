@@ -173,6 +173,7 @@ static int us_ssl_listener_ex_idx = -1;
 static int us_ssl_is_socket_ex_idx = -1;
 /* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
 extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TLS;
+extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
 /* Serialized resumable session parked by the new-session callback until the
  * SSL stack unwinds; freed with the SSL if never delivered. */
 static int us_ssl_pending_session_idx = -1;
@@ -246,7 +247,7 @@ static void us_ssl_pending_session_free(void *parent, void *ptr, CRYPTO_EX_DATA 
   struct us_ssl_pending_session_t *pending = ptr;
   while (pending) {
     struct us_ssl_pending_session_t *next = pending->next;
-    free(pending);
+    us_free(pending);
     pending = next;
   }
 }
@@ -264,7 +265,7 @@ static void us_ssl_keylog_cb(const SSL *cssl, const char *line) {
     return;
   }
   struct us_ssl_pending_session_t *pending =
-      malloc(sizeof(struct us_ssl_pending_session_t) + line_len + 1);
+      us_malloc(sizeof(struct us_ssl_pending_session_t) + line_len + 1);
   if (!pending) {
     return;
   }
@@ -296,7 +297,7 @@ static void ssl_flush_pending_keylog(struct us_socket_t *s) {
     if (!us_socket_is_closed(s) && s->ssl) {
       us_dispatch_keylog(s, pending->data, (int)pending->length);
     }
-    free(pending);
+    us_free(pending);
     pending = next;
   }
 }
@@ -316,7 +317,7 @@ static int us_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session) {
     return 0;
   }
   struct us_ssl_pending_session_t *pending =
-      malloc(sizeof(struct us_ssl_pending_session_t) + (size_t)length);
+      us_malloc(sizeof(struct us_ssl_pending_session_t) + (size_t)length);
   if (!pending) {
     return 0;
   }
@@ -354,7 +355,7 @@ static void ssl_flush_pending_session(struct us_socket_t *s) {
     if (!us_socket_is_closed(s) && s->ssl) {
       us_dispatch_session(s, pending->data, (int)pending->length);
     }
-    free(pending);
+    us_free(pending);
     pending = next;
   }
 }
@@ -423,7 +424,7 @@ static int us_ssl_pop_pending(SSL *ssl, int idx, unsigned char *out, int out_cap
   } else {
     memcpy(out, pending->data, (size_t)len);
   }
-  free(pending);
+  us_free(pending);
   return len;
 }
 
@@ -915,11 +916,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   }
 
   if (options.passphrase) {
-#ifdef _WIN32
-    SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)_strdup(options.passphrase));
-#else
-    SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)strdup(options.passphrase));
-#endif
+    SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)us_strdup(options.passphrase));
     SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
   }
 
@@ -1133,10 +1130,11 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
 
 /* node:tls `pfx` support: parse a PKCS#12 blob and hand back PEM-encoded
  * key / certificate / extra-chain strings the regular key/cert/ca options can
- * consume. Returns 1 on success; the three out-strings are malloc'd and the
- * caller frees them with free(). On failure returns 0 and sets *err_reason to
- * a static tag: "parse" (not PKCS#12), "mac" (bad passphrase / corrupt),
- * "key" (no private key), "cert" (no certificate). */
+ * consume. Returns 1 on success; the three out-strings are libc malloc'd (not
+ * us_malloc) because the Rust caller releases them with libc free(). On
+ * failure returns 0 and sets *err_reason to a static tag: "parse" (not
+ * PKCS#12), "mac" (bad passphrase / corrupt), "key" (no private key),
+ * "cert" (no certificate). */
 static int pem_from_bio(BIO *bio, char **out, size_t *out_len) {
   char *mem = NULL;
   long n = BIO_get_mem_data(bio, &mem);
@@ -1338,6 +1336,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_raw_tap = 0;
   s->ssl_shutdown_after_spill = 0;
   s->ssl_close_after_spill = 0;
+  s->ssl_end_delivered = 0;
   s->ssl_in_use = 0;
   s->ssl_pending_detach = 0;
   s->ssl_pending_close_code = 0;
@@ -1758,12 +1757,57 @@ struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, vo
   return ret;
 }
 
+/* The EOF dispatch below is scoped to uWS HTTP server sockets: their
+ * context's onEnd owns the EOF (premature-EOF clientError
+ * HPE_INVALID_EOF_STATE, CONNECT/Upgrade half-open, pipeline drain after
+ * FIN), and closing without dispatching silently skipped all of it for
+ * node:https. Every other TLS socket kind predates the dispatch and
+ * synthesizes its JS 'end' from the close event, so they keep the
+ * historical force-close (dispatching for them strands sockets whose end
+ * handler expects the transport to close underneath it). */
+static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+  return us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS;
+}
+
+/* Deliver the plaintext EOF to the user layer once, like the plain-TCP path
+ * (loop.c dispatches us_dispatch_end for non-SSL sockets). Both TLS EOF
+ * paths (peer close_notify -> ZERO_RETURN, and the raw TCP FIN that usually
+ * follows it) route through here, so the bit keeps the end handler
+ * single-shot. */
+static struct us_socket_t *ssl_deliver_eof(struct us_socket_t *s) {
+  if (s->ssl_end_delivered) {
+    return s;
+  }
+  s->ssl_end_delivered = 1;
+  return us_dispatch_end(s);
+}
+
 struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
   ssl_set_loop_data(s);
-  /* TCP FIN under TLS: the peer's write side is gone, so no close_notify reply
-   * is coming. Send ours best-effort and raw-close now — deferring (the
-   * code==0 path in ssl_close) would wait forever, and with native
-   * allowHalfOpen=true the loop.c caller no longer raw-closes for us. */
+  if (ssl_wants_eof_dispatch(s)) {
+    /* Raw TCP FIN under TLS: the peer's write side is gone, so no
+     * close_notify reply is ever coming. Record the TLS-level shutdown as
+     * received so a later graceful close (an allow_half_open socket ending
+     * its side after this EOF) completes immediately in ssl_handle_shutdown
+     * instead of deferring for an alert that cannot arrive. */
+    if (!ssl_gone(s)) {
+      SSL_set_shutdown(s_ssl(s), SSL_get_shutdown(s_ssl(s)) | SSL_RECEIVED_SHUTDOWN);
+    }
+    s = ssl_deliver_eof(s);
+    if (!s || us_socket_is_closed(s)) {
+      return s;
+    }
+    if (s->flags.allow_half_open) {
+      /* Keep the write side alive like the plain-TCP half-open branch in
+       * loop.c: TCP permits writing after a received FIN, so queued
+       * responses still flush and the app's own end() completes the
+       * shutdown. */
+      return s;
+    }
+  }
+  /* TCP FIN with no half-open: send our close_notify best-effort and
+   * raw-close now — deferring (the code==0 path in ssl_close) would wait
+   * forever. */
   s = ssl_close(s, 0, NULL);
   if (s && !us_socket_is_closed(s)) {
     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
@@ -1890,13 +1934,28 @@ restart:
            * close_notify was parked by the new-session callback; deliver it
            * first (wire order - the ticket preceded these bytes, and Node's
            * NewSessionCallback runs before the data reaches JS), then the
-           * decrypted data, then close. */
+           * decrypted data, then the EOF. */
           ssl_flush_pending_session(s);
           ssl_flush_pending_keylog(s);
           if (ssl_gone(s)) return NULL;
           if (read) {
             s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
             if (!s || ssl_gone(s)) return NULL;
+          }
+          /* TLS-level EOF: for uWS HTTP sockets, dispatch the user layer's
+           * end handler like a TCP FIN would (see ssl_wants_eof_dispatch),
+           * then honor half-open exactly like the plain-TCP eof branch in
+           * loop.c. */
+          if (ssl_wants_eof_dispatch(s)) {
+            s = ssl_deliver_eof(s);
+            if (!s || ssl_gone(s)) return NULL;
+            if (s->flags.allow_half_open) {
+              /* close_notify only ended the peer's write side; ours may
+               * still flush queued bytes, and the app's own end() completes
+               * the shutdown (ssl_handle_shutdown sees RECEIVED_SHUTDOWN and
+               * finishes immediately). */
+              return s;
+            }
           }
           ssl_close(s, 0, NULL);
           return NULL;
@@ -2175,8 +2234,11 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
       ERR_clear_error();
       s->ssl_fatal_error = 1;
     }
-    us_internal_socket_raw_shutdown(s);
   }
+  /* RECEIVED_SHUTDOWN brought us here, so the TLS shutdown is complete; FIN the
+   * TCP write side so the poll type becomes SHUT_DOWN and the loop's
+   * is_shut_down eof branch can close once both halves are done. */
+  us_internal_socket_raw_shutdown(s);
 }
 
 /* Resume a handshake suspended by an async SNICallback. `ctx` (may be NULL =
@@ -2532,6 +2594,11 @@ void *us_socket_server_name_userdata(struct us_socket_t *s) {
 
 void *us_internal_ssl_sni_userdata(struct us_socket_t *s) {
   return us_socket_server_name_userdata(s);
+}
+
+const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {
+  if (!s->ssl || !s_ssl(s)) return NULL;
+  return SSL_get_servername(s_ssl(s), TLSEXT_NAMETYPE_host_name);
 }
 
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {

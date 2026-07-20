@@ -457,12 +457,10 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 if (otherString.find(substring) != WTF::notFound) {
                     return AsymmetricMatcherResult::PASS;
                 }
-            } else if (expectedTestValue.isCell() and expectedTestValue.asCell()->type() == RegExpObjectType) {
-                if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
-                    JSString* otherString = otherProp.toString(globalObject);
-                    if (regex->match(globalObject, otherString)) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
+            } else if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
+                JSString* otherString = otherProp.toString(globalObject);
+                if (regex->match(globalObject, otherString)) {
+                    return AsymmetricMatcherResult::PASS;
                 }
             }
         }
@@ -1149,12 +1147,17 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (byteLength == 0)
-            return true;
-
-        if (right->isDetached() || left->isDetached()) [[unlikely]] {
+        if (left->isDetached() || right->isDetached()) [[unlikely]] {
+            if constexpr (!enableAsymmetricMatchers) {
+                // Node wraps each side in `new Uint8Array(buf)` to compare bytes, which
+                // throws on a detached ArrayBuffer; match that contract for node:assert/util.
+                throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
+            }
             return false;
         }
+
+        if (byteLength == 0)
+            return true;
 
         const void* vector = left->data();
         const void* rightVector = right->data();
@@ -5746,10 +5749,11 @@ extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC
     return JSValue::encode(date);
 }
 
-// this is largely copied from dateProtoFuncToISOString
-extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, EncodedJSValue dateValue, char* buf)
+// Formats a Date's internal time value with JSC's date cache, as
+// `Date.prototype.toISOString` does (`Bun::toISOString` is copied from it).
+// Returns -1 when `dateValue` is not a Date or its time value is NaN.
+extern "C" int JSC__JSValue__toISOString(EncodedJSValue dateValue, JSC::JSGlobalObject* globalObject, char buf[64])
 {
-    char buffer[64];
     JSC::DateInstance* thisDateObj = dynamicDowncast<JSC::DateInstance>(JSC::JSValue::decode(dateValue));
     if (!thisDateObj)
         return -1;
@@ -5759,7 +5763,7 @@ extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, Enco
 
     auto& vm = JSC::getVM(globalObject);
 
-    return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buffer));
+    return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buf));
 }
 
 extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject, char* buf)
@@ -6218,6 +6222,13 @@ CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JSValue__bind(JS
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(boundFunction));
 }
 
+CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JSBoundFunction__boundThis(JSC::EncodedJSValue value)
+{
+    auto* boundFunction = dynamicDowncast<JSC::JSBoundFunction>(JSC::JSValue::decode(value));
+    if (!boundFunction) return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(boundFunction->boundThis());
+}
+
 CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::EncodedJSValue valueEncoded, JSC::EncodedJSValue prototypeEncoded, JSC::JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -6593,8 +6604,8 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
         uint64_t result = notFound;
         if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
             for (const auto& entry : *map) {
-                if (entry.key >= start && entry.key < result)
-                    result = entry.key;
+                if (entry.index() >= start && entry.index() < result)
+                    result = entry.index();
             }
         }
         return result;

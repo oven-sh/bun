@@ -160,7 +160,9 @@ describe("fork() IPC", () => {
         'message:{"cmd":"NODE_"}',
       ]);
     } finally {
-      child.disconnect();
+      // disconnect() emits an unhandled "error" when the channel is already
+      // down, which would replace whatever assertion actually failed.
+      if (child.connected) child.disconnect();
       child.kill();
     }
   });

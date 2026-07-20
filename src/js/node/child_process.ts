@@ -1696,6 +1696,12 @@ function streamFdOf(item): number | undefined {
   const handleFd = handle ? handle.fd : undefined;
   if (typeof handleFd === "number") return handleFd;
 
+  // A destroyed stream's sink keeps reporting the descriptor it was created
+  // with, even though the owning subprocess has closed it and the kernel may
+  // have handed the number to something else. Refuse it rather than inherit
+  // whatever now sits there.
+  if (item.destroyed) return undefined;
+
   const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
   if (sink && sink !== true) {
     const fd = sink._getFd();

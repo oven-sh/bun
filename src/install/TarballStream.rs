@@ -91,11 +91,9 @@ pub struct TarballStream {
     /// it runs out of input and decides to yield.
     draining: AtomicBool,
 
-    /// Number of times `schedule_drain` actually pushed `drain_task` onto
-    /// the thread pool (each push is a `ThreadPool::notify` → futex wake on
-    /// the HTTP thread). Printed in `--verbose` output so tests can assert
-    /// the `drain_threshold` batching keeps this well below the HTTP-chunk
-    /// count.
+    /// Times `schedule_drain` pushed `drain_task` onto the thread pool (each
+    /// push is a `ThreadPool::notify` → futex wake on the HTTP thread).
+    /// Printed under `--verbose` so tests can bound it.
     drain_schedules: AtomicU32,
 
     // ---------------------------------------------------------------------
@@ -186,12 +184,9 @@ impl TarballStream {
         usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).expect("int cast")
     }
 
-    /// Compressed bytes to let accumulate in `pending` before the HTTP
-    /// thread schedules a drain. Without this the drain task tends to empty
-    /// `pending` and yield between every HTTP body chunk, so each chunk
-    /// re-schedules it — one `ThreadPool::notify` → futex wake on the HTTP
-    /// thread per chunk. Batching to `threshold` collapses that into roughly
-    /// one wake per `threshold` bytes.
+    /// Compressed bytes to buffer in `pending` before the HTTP thread
+    /// schedules a drain; without this each body chunk re-wakes a worker
+    /// once the drain has yielded. See `BUN_INSTALL_STREAMING_DRAIN_THRESHOLD`.
     fn drain_threshold() -> usize {
         usize::try_from(
             env_var::BUN_INSTALL_STREAMING_DRAIN_THRESHOLD
@@ -314,11 +309,9 @@ impl TarballStream {
             let pending_len = (*this).pending.len();
             (*this).mutex.unlock();
 
-            // Batch sub-threshold chunks so each one doesn't re-wake a
-            // worker once the drain has yielded (one futex wake per HTTP
-            // chunk otherwise). `is_last`/`err` always schedule so
-            // `finish()` never waits on the threshold; a running drain
-            // picks up sub-threshold `pending` via its own race check.
+            // Batch sub-threshold chunks so each one doesn't re-wake a worker
+            // once the drain has yielded; `is_last`/`err` always schedule so
+            // `finish()` never waits on the threshold.
             if is_last || err.is_some() || pending_len >= Self::drain_threshold() {
                 Self::schedule_drain(this);
             }

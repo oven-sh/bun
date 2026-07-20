@@ -91,11 +91,9 @@ new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
 // whole body first. Smaller tarballs stay on the buffered path where
 // the fixed overhead of the resumable state machine isn't worth it.
 new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", { default: 2 * 1024 * 1024 });
-// Bytes of compressed tarball to let accumulate in `TarballStream.pending`
-// before the HTTP thread schedules a drain on the thread pool. Each
-// schedule is a `ThreadPool::notify` (a `__ulock_wake` / `futex_wake`
-// syscall when a worker is idle); batching here collapses the per-HTTP-
-// chunk wake into roughly one per `threshold` bytes received.
+// Compressed bytes to buffer in `TarballStream.pending` before the HTTP
+// thread schedules a drain; collapses the per-chunk thread-pool futex wake
+// into roughly one per `threshold` bytes.
 new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
 new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});

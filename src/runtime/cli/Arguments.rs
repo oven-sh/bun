@@ -280,9 +280,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
     ),
-    parse_param!(
-        "--pending-deprecation             Emit pending deprecation warnings."
-    ),
+    parse_param!("--pending-deprecation             Emit pending deprecation warnings."),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
         "--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."
@@ -1345,8 +1343,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         if args.flag(b"--pending-deprecation")
             || env_var::NODE_PENDING_DEPRECATION.get() == Some(b"1" as &[u8])
         {
-            Bun__Node__ProcessPendingDeprecation
-                .store(true, core::sync::atomic::Ordering::Relaxed);
+            Bun__Node__ProcessPendingDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if let Some(title) = args.option(b"--title") {
             // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`

@@ -1845,6 +1845,9 @@ folded: >
             ["inside a literal block scalar", "x: |\n  foo\x00bar"],
             ["inside a folded block scalar", "x: >\n  foo\x00bar"],
             ["in a block scalar header", "x: |\x00"],
+            ["inside a comment", "# foo\x00bar\nkey: 1"],
+            ["inside a block-scalar header comment", "x: | # foo\x00bar\n  body"],
+            ["inside a directive trailing comment", "%YAML 1.2 # c\x00mt\n---\nkey: 1"],
             ["inside a plain scalar (utf16 input)", "😀: foo\x00bar"],
             ["from a Buffer", Buffer.from("a: 1\x00b: 2")],
           ] as const)("%s", (_name, input) => {

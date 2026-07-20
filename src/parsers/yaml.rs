@@ -4829,6 +4829,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if Enc::wide(self.next()) == 0x23 /* '#' */ {
                         self.inc(1);
                         while !self.is_b_char_or_eof() {
+                            if Enc::wide(self.next()) == 0 {
+                                return Err(ParseError::UnexpectedCharacter);
+                            }
                             self.inc(1);
                         }
                     }
@@ -5862,6 +5865,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     self.inc(1);
                     while !self.is_b_char_or_eof() {
+                        if Enc::wide(self.next()) == 0 {
+                            return Err(ParseError::UnexpectedCharacter);
+                        }
                         self.inc(1);
                     }
                     continue;
@@ -6152,6 +6158,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
             self.inc(1);
             while !self.is_b_char_or_eof() {
+                if Enc::wide(self.next()) == 0 {
+                    return Err(ParseError::UnexpectedCharacter);
+                }
                 self.inc(1);
             }
         }

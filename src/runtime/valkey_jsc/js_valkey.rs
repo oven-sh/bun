@@ -527,22 +527,22 @@ impl JSValkeyClient {
         let pathname_utf8 = pathname_str.to_utf8();
 
         // Determine hostname based on protocol type
-        let hostname_slice: &[u8] = match uri {
-            valkey::Protocol::StandaloneTls | valkey::Protocol::Standalone => hostname_utf8.slice(),
-            valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
-                // For unix sockets, the path is in the pathname
-                if pathname_utf8.slice().is_empty() {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
-                        "Expected unix socket path after valkey+unix:// or valkey+tls+unix://",
-                    )));
-                }
-                pathname_utf8.slice()
+        let hostname_slice: &[u8] = if uri.is_unix() {
+            // For unix sockets, the path is in the pathname
+            if pathname_utf8.slice().is_empty() {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "Expected unix socket path after valkey+unix:// or valkey+tls+unix://",
+                )));
             }
+            pathname_utf8.slice()
+        } else {
+            hostname_utf8.slice()
         };
 
-        let port: u16 = match uri {
-            valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => 0,
-            _ => 'brk: {
+        let port: u16 = if uri.is_unix() {
+            0
+        } else {
+            'brk: {
                 let port_value = parsed_url.port();
                 // URL.port() returns u32::MAX if port is not set
                 if port_value == u32::MAX {
@@ -581,24 +581,23 @@ impl JSValkeyClient {
         let hostname = Box::<[u8]>::from(hostname_slice);
 
         // Parse database number from pathname (e.g., "/1" -> database 1)
-        let database: u32 = match uri {
+        let database: u32 = if uri.is_unix() {
             // For unix sockets the pathname is the socket path, not a db index.
-            valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => 0,
-            _ => {
-                let path = pathname_utf8.slice();
-                if path.len() > 1 {
-                    match bun_core::fmt::parse_int::<u32>(&path[1..], 10) {
-                        Ok(n) => n,
-                        Err(_) => {
-                            return Err(global_object.throw_invalid_arguments(format_args!(
-                                "Invalid database number in Redis URL: {}",
-                                bun_core::fmt::quote(&path[1..]),
-                            )));
-                        }
+            0
+        } else {
+            let path = pathname_utf8.slice();
+            if path.len() > 1 {
+                match bun_core::fmt::parse_int::<u32>(&path[1..], 10) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        return Err(global_object.throw_invalid_arguments(format_args!(
+                            "Invalid database number in Redis URL: {}",
+                            bun_core::fmt::quote(&path[1..]),
+                        )));
                     }
-                } else {
-                    0
                 }
+            } else {
+                0
             }
         };
 
@@ -610,16 +609,14 @@ impl JSValkeyClient {
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
                 vm,
-                address: match uri {
-                    valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
-                        valkey::Address::Unix(hostname)
-                    }
-                    _ => valkey::Address::Host {
+                address: if uri.is_unix() {
+                    valkey::Address::Unix(hostname)
+                } else {
+                    valkey::Address::Host {
                         host: hostname,
                         port,
-                    },
+                    }
                 },
-                protocol: uri,
                 username,
                 password,
                 in_flight: command::PromiseQueue::init(),
@@ -710,7 +707,6 @@ impl JSValkeyClient {
             client: JsCell::new(valkey::ValkeyClient {
                 vm,
                 address: client.address.clone(),
-                protocol: client.protocol,
                 username,
                 password,
                 in_flight: command::PromiseQueue::init(),

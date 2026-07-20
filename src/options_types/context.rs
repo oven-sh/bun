@@ -547,7 +547,9 @@ pub enum FetchStoreConfig {
 
 impl FetchStoreConfig {
     /// Parse the `--fetch-cache=` value / bunfig string form:
-    /// `"memory"` or a directory path.
+    /// `"memory"` or a directory path. Relative paths are resolved against
+    /// the current cwd here (startup time) so a later `process.chdir()` does
+    /// not retarget the store.
     pub fn parse(value: &[u8]) -> Self {
         if value.is_empty() {
             return FetchStoreConfig::None;
@@ -555,9 +557,25 @@ impl FetchStoreConfig {
         if value == b"memory" {
             return FetchStoreConfig::Memory { ttl_ms: 0, max: 0 };
         }
-        FetchStoreConfig::Dir {
-            path: value.to_vec().into_boxed_slice(),
-        }
+        let path = if bun_paths::is_absolute(value) {
+            value.to_vec().into_boxed_slice()
+        } else {
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
+            match bun_sys::getcwd(&mut cwd_buf) {
+                Ok(len) => {
+                    let mut out = bun_paths::path_buffer_pool::get();
+                    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                        &cwd_buf[..len],
+                        &mut out,
+                        &[value],
+                    )
+                    .to_vec()
+                    .into_boxed_slice()
+                }
+                Err(_) => value.to_vec().into_boxed_slice(),
+            }
+        };
+        FetchStoreConfig::Dir { path }
     }
 }
 

@@ -381,6 +381,22 @@ fn body_is_text(bytes: &[u8]) -> bool {
     !bytes.is_empty() && strings::index_of_char(bytes, 0).is_none() && strings::is_valid_utf8(bytes)
 }
 
+/// JSON-escape a network-sourced byte string. Header values and reason
+/// phrases are RFC 7230 field-values (opaque octets, historically Latin-1),
+/// so route non-UTF-8 through the Latin-1 encoder instead of handing invalid
+/// bytes to the UTF-8 path's `from_utf8_unchecked`.
+fn write_json_string(out: &mut Vec<u8>, bytes: &[u8]) {
+    if strings::is_valid_utf8(bytes) {
+        let _ = write!(
+            out,
+            "{}",
+            format_json_string_utf8(bytes, JSONFormatterUTF8Options::default())
+        );
+    } else {
+        let _ = write!(out, "{}", bun_core::fmt::format_json_string_latin1(bytes));
+    }
+}
+
 fn write_json_body(out: &mut Vec<u8>, bytes: Option<&[u8]>) {
     match bytes {
         None | Some([]) => out.extend_from_slice(b"null"),
@@ -409,17 +425,9 @@ fn write_json_headers(out: &mut Vec<u8>, headers: &[(Box<[u8]>, Box<[u8]>)]) {
             out.push(b',');
         }
         out.push(b'[');
-        let _ = write!(
-            out,
-            "{}",
-            format_json_string_utf8(name, JSONFormatterUTF8Options::default())
-        );
+        write_json_string(out, name);
         out.push(b',');
-        let _ = write!(
-            out,
-            "{}",
-            format_json_string_utf8(value, JSONFormatterUTF8Options::default())
-        );
+        write_json_string(out, value);
         out.push(b']');
     }
     out.push(b']');
@@ -433,11 +441,7 @@ fn write_dir_entry(dir: &[u8], req: &StoredRequest, resp: &StoredResponse) -> bu
     out.extend_from_slice(br#"{"request":{"method":""#);
     out.extend_from_slice(req.method.as_str().as_bytes());
     out.extend_from_slice(br#"","url":"#);
-    let _ = write!(
-        &mut out,
-        "{}",
-        format_json_string_utf8(&req.url, JSONFormatterUTF8Options::default())
-    );
+    write_json_string(&mut out, &req.url);
     out.extend_from_slice(br#","headers":"#);
     write_json_headers(&mut out, &req.headers);
     out.extend_from_slice(br#","body":"#);
@@ -445,17 +449,9 @@ fn write_dir_entry(dir: &[u8], req: &StoredRequest, resp: &StoredResponse) -> bu
     out.extend_from_slice(br#"},"response":{"status":"#);
     let _ = write!(&mut out, "{}", resp.status);
     out.extend_from_slice(br#","statusText":"#);
-    let _ = write!(
-        &mut out,
-        "{}",
-        format_json_string_utf8(&resp.status_text, JSONFormatterUTF8Options::default())
-    );
+    write_json_string(&mut out, &resp.status_text);
     out.extend_from_slice(br#","url":"#);
-    let _ = write!(
-        &mut out,
-        "{}",
-        format_json_string_utf8(&resp.url, JSONFormatterUTF8Options::default())
-    );
+    write_json_string(&mut out, &resp.url);
     out.extend_from_slice(br#","redirected":"#);
     out.extend_from_slice(if resp.redirected { b"true" } else { b"false" });
     out.extend_from_slice(br#","headers":"#);

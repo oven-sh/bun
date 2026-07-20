@@ -58,14 +58,8 @@ pub use crate::generated_classes::js_RedisClient as Js;
 bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
 
 impl SubscriptionCtx {
-    pub fn init(valkey_parent: &JSValkeyClient) -> Self {
+    pub fn init(valkey_parent: &JSValkeyClient, parent_this: JSValue) -> Self {
         let callback_map = JSMap::create(&valkey_parent.global_object);
-        let parent_this = valkey_parent
-            .this_value
-            .get()
-            .try_get()
-            .expect("unreachable");
-
         Js::subscription_callback_map_set_cached(
             parent_this,
             &valkey_parent.global_object,
@@ -655,24 +649,26 @@ impl JSValkeyClient {
         }))
     }
 
+    /// Wire a freshly-allocated client to its JS wrapper: sets `this_value` and
+    /// initialises the subscription context (which stores a JSMap on `js_this`).
+    /// Must be called exactly once, after `create_no_js_no_pubsub` / `clone_without_connecting`.
+    pub fn bind_js(this: *mut Self, js_this: JSValue) {
+        // SAFETY: `this` is a fresh heap allocation owned by the caller.
+        let this_ref = unsafe { &*this };
+        this_ref.this_value.set(JsRef::init_weak(js_this));
+        this_ref
+            ._subscription_ctx
+            .set(SubscriptionCtx::init(this_ref, js_this));
+    }
+
     pub fn create(
         global_object: &JSGlobalObject,
         arguments: &[JSValue],
         js_this: JSValue,
     ) -> JsResult<*mut JSValkeyClient> {
-        let new_client_ptr = JSValkeyClient::create_no_js_no_pubsub(global_object, arguments)?;
-        // SAFETY: just allocated above
-        let new_client = unsafe { &*new_client_ptr };
-
-        // Initially, we only need to hold a weak reference to the JS object.
-        new_client.this_value.set(JsRef::init_weak(js_this));
-
-        // Need to associate the subscription context, after the JS ref has been populated.
-        new_client
-            ._subscription_ctx
-            .set(SubscriptionCtx::init(new_client));
-
-        Ok(new_client_ptr)
+        let ptr = JSValkeyClient::create_no_js_no_pubsub(global_object, arguments)?;
+        JSValkeyClient::bind_js(ptr, js_this);
+        Ok(ptr)
     }
 
     /// Clone this client while remaining in the initial disconnected state.
@@ -691,31 +687,13 @@ impl JSValkeyClient {
 
         let username: Box<[u8]> = Box::<[u8]>::from(&client.username[..]);
         let password: Box<[u8]> = Box::<[u8]>::from(&client.password[..]);
-        let hostname: Box<[u8]> = Box::<[u8]>::from(client.address.hostname());
-        // TODO: we could ref count it instead of cloning it
-        let tls: valkey::TLS = match &client.tls {
-            valkey::TLS::None => valkey::TLS::None,
-            valkey::TLS::Enabled => valkey::TLS::Enabled,
-            valkey::TLS::Custom(cfg) => valkey::TLS::Custom(cfg.clone()),
-        };
 
         Ok(JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
                 vm,
-                address: match client.protocol {
-                    valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
-                        valkey::Address::Unix(hostname)
-                    }
-                    _ => valkey::Address::Host {
-                        host: hostname,
-                        port: match &client.address {
-                            valkey::Address::Host { port, .. } => *port,
-                            valkey::Address::Unix(_) => unreachable!(),
-                        },
-                    },
-                },
+                address: client.address.clone(),
                 protocol: client.protocol,
                 username,
                 password,
@@ -725,7 +703,7 @@ impl JSValkeyClient {
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
-                tls,
+                tls: client.tls.clone(),
                 database: client.database,
                 flags: valkey::ConnectionFlags {
                     // Because this starts in the disconnected state, we need to reset some flags.

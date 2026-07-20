@@ -3,10 +3,10 @@ use bun_collections::VecExt as _;
 use bun_core::OwnedString;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
-    JsRef, JsResult,
+    JsResult,
 };
 
-use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
+use super::js_valkey::JSValkeyClient;
 use super::protocol_jsc as protocol;
 use super::valkey;
 use super::command::{Args as CommandArgs, Command, Meta as CommandMeta};
@@ -14,22 +14,11 @@ use bun_valkey::valkey_protocol::RedisError;
 
 type Slice = bun_jsc::ZigStringSlice;
 
-/// Reinterpret an ASCII byte-string literal as `&str` for the
-/// `throw_invalid_argument_type` family (which take `&'static str`).
-/// SAFETY: every command/method name passed to the `cmd_*!` macros is a
-/// static ASCII byte-string literal, so it is always valid UTF-8.
-#[inline(always)]
-const fn bname(b: &'static [u8]) -> &'static str {
-    // SAFETY: every caller passes a `b"..."` ASCII literal (command/method
-    // names from the `cmd_*!` macros), which is guaranteed valid UTF-8.
-    unsafe { core::str::from_utf8_unchecked(b) }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<()> {
+fn require_not_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResult<()> {
     if this.is_subscriber() {
         // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
         let global: &JSGlobalObject = &this.global_object;
@@ -37,8 +26,7 @@ fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResu
             .err(
                 ErrorCode::REDIS_INVALID_STATE,
                 format_args!(
-                    "RedisClient.prototype.{} cannot be called while in subscriber mode.",
-                    bstr::BStr::new(function_name)
+                    "RedisClient.prototype.{function_name} cannot be called while in subscriber mode.",
                 ),
             )
             .throw());
@@ -46,7 +34,7 @@ fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResu
     Ok(())
 }
 
-fn require_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<()> {
+fn require_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResult<()> {
     if !this.is_subscriber() {
         // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
         let global: &JSGlobalObject = &this.global_object;
@@ -54,8 +42,7 @@ fn require_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<(
             .err(
                 ErrorCode::REDIS_INVALID_STATE,
                 format_args!(
-                    "RedisClient.prototype.{} can only be called while in subscriber mode.",
-                    bstr::BStr::new(function_name)
+                    "RedisClient.prototype.{function_name} can only be called while in subscriber mode.",
                 ),
             )
             .throw());
@@ -141,7 +128,7 @@ pub(crate) mod compile {
 
     pub(crate) fn test_correct_state<const REQ: ClientStateRequirement>(
         this: &JSValkeyClient,
-        js_client_prototype_function_name: &[u8],
+        js_client_prototype_function_name: &str,
     ) -> JsResult<()> {
         match REQ {
             ClientStateRequirement::NotSubscriber => {
@@ -198,7 +185,7 @@ macro_rules! cmd_key {
 
             let Some(key) = from_js(global, frame.argument(0))? else {
                 return Err(global.throw_invalid_argument_type(
-                    bname($name),
+                    $name,
                     $arg0_name,
                     "string or buffer",
                 ));
@@ -241,7 +228,7 @@ macro_rules! cmd_key_varargs {
 
                 let Some(another) = from_js(global, *arg)? else {
                     return Err(global.throw_invalid_argument_type(
-                        bname($name),
+                        $name,
                         "additional arguments",
                         "string or buffer",
                     ));
@@ -274,14 +261,14 @@ macro_rules! cmd_key_value {
 
             let Some(key) = from_js(global, frame.argument(0))? else {
                 return Err(global.throw_invalid_argument_type(
-                    bname($name),
+                    $name,
                     $arg0_name,
                     "string or buffer",
                 ));
             };
             let Some(value) = from_js(global, frame.argument(1))? else {
                 return Err(global.throw_invalid_argument_type(
-                    bname($name),
+                    $name,
                     $arg1_name,
                     "string or buffer",
                 ));
@@ -312,21 +299,21 @@ macro_rules! cmd_key_value_value2 {
 
             let Some(key) = from_js(global, frame.argument(0))? else {
                 return Err(global.throw_invalid_argument_type(
-                    bname($name),
+                    $name,
                     $arg0_name,
                     "string or buffer",
                 ));
             };
             let Some(value) = from_js(global, frame.argument(1))? else {
                 return Err(global.throw_invalid_argument_type(
-                    bname($name),
+                    $name,
                     $arg1_name,
                     "string or buffer",
                 ));
             };
             let Some(value2) = from_js(global, frame.argument(2))? else {
                 return Err(global.throw_invalid_argument_type(
-                    bname($name),
+                    $name,
                     $arg2_name,
                     "string or buffer",
                 ));
@@ -360,7 +347,7 @@ macro_rules! cmd_strings_varargs {
             for arg in frame.arguments() {
                 let Some(another) = from_js(global, *arg)? else {
                     return Err(global.throw_invalid_argument_type(
-                        bname($name),
+                        $name,
                         "additional arguments",
                         "string or buffer",
                     ));
@@ -400,7 +387,7 @@ macro_rules! cmd_key_value_varargs {
 
                 let Some(another) = from_js(global, *arg)? else {
                     return Err(global.throw_invalid_argument_type(
-                        bname($name),
+                        $name,
                         "additional arguments",
                         "string or buffer",
                     ));
@@ -430,7 +417,7 @@ impl JSValkeyClient {
 
         let args_array = frame.argument(1);
         if !args_array.is_object() || !args_array.is_array() {
-            return Err(global.throw(format_args!("Arguments must be an array")));
+            return Err(global.throw_invalid_argument_type("send", "args", "array"));
         }
         let mut iter = args_array.array_iterator(global)?;
         let mut args: Vec<JSArgument> = Vec::with_capacity(iter.len as usize);
@@ -438,7 +425,7 @@ impl JSValkeyClient {
         while let Some(arg_js) = iter.next()? {
             let Some(v) = from_js(global, arg_js)? else {
                 return Err(global.throw_invalid_argument_type(
-                    "sendCommand",
+                    "send",
                     "argument",
                     "string or buffer",
                 ));
@@ -964,8 +951,9 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
         command: &'static [u8],
+        js_name: &'static str,
     ) -> JsResult<JSValue> {
-        require_not_subscriber(this, command)?;
+        require_not_subscriber(this, js_name)?;
 
         let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
 
@@ -978,7 +966,7 @@ impl JSValkeyClient {
         if second_arg.is_object() && !second_arg.is_array() {
             // Pattern 1: Object/Record - hset(key, {field: value, ...})
             let Some(obj) = second_arg.get_object() else {
-                return Err(global.throw_invalid_argument_type(bname(command), "fields", "object"));
+                return Err(global.throw_invalid_argument_type(js_name, "fields", "object"));
             };
 
             let mut object_iter = JSPropertyIterator::init(
@@ -1075,12 +1063,12 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn hset(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        Self::hset_impl(this, global, frame, b"HSET")
+        Self::hset_impl(this, global, frame, b"HSET", "hset")
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn hmset(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        Self::hset_impl(this, global, frame, b"HMSET")
+        Self::hset_impl(this, global, frame, b"HMSET", "hmset")
     }
 
     cmd_key_varargs!(hdel, b"hdel", "HDEL", "key", NotSubscriber);
@@ -1848,15 +1836,11 @@ impl JSValkeyClient {
         let _ = frame;
 
         let new_client_ptr = this.clone_without_connecting(global)?;
+        let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr, global);
+        JSValkeyClient::bind_js(new_client_ptr, new_client_js);
         // SAFETY: clone_without_connecting returns a freshly allocated, leaked
         // JSValkeyClient (heap::alloc); valid for the rest of this scope.
         let new_client: &JSValkeyClient = unsafe { &*new_client_ptr };
-
-        let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr, global);
-        new_client.this_value.set(JsRef::init_weak(new_client_js));
-        new_client
-            ._subscription_ctx
-            .set(SubscriptionCtx::init(new_client));
         // If the original client is already connected and not manually closed, start connecting the new client.
         if this.client.get().status == valkey::Status::Connected
             && !this.client.get().flags.is_manually_closed

@@ -113,7 +113,6 @@ use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, YAMLObject};
 use crate::crypto as Crypto;
 use crate::node;
 use crate::test_runner::jest::Jest;
-use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_jsc::ZigStringJsc as _; // to_error_instance / to_type_error_instance
 use bun_jsc::call_frame::ArgumentsSlice;
@@ -2025,15 +2024,7 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
     };
 
     let as_js = JSValkeyClient::ptr_to_js(valkey, global_this);
-
-    // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
-    // hold the only reference for field init below.
-    let valkey_ref = unsafe { &*valkey };
-    valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
-    valkey_ref
-        ._subscription_ctx
-        .set(SubscriptionCtx::init(valkey_ref));
-
+    JSValkeyClient::bind_js(valkey, as_js);
     as_js
 }
 

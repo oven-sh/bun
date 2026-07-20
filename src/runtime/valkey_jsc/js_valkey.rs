@@ -91,7 +91,13 @@ impl SubscriptionCtx {
         let Some(map) = self.subscription_callback_map() else {
             return 0;
         };
-        map.size(global_object).unwrap_or(0)
+        match map.size(global_object) {
+            Ok(n) => n,
+            Err(e) => {
+                global_object.report_active_exception_as_unhandled(e);
+                0
+            }
+        }
     }
 
     /// Test whether this context has any subscriptions. It is mandatory to
@@ -1046,36 +1052,25 @@ impl JSValkeyClient {
             return;
         }
 
-        let mut buf = [0u8; 128];
         match self.client.get().status {
             valkey::Status::Connected => {
-                use std::io::Write;
-                let mut cur = &mut buf[..];
-                let start = cur.len();
-                write!(
-                    &mut cur,
-                    "Idle timeout reached after {}ms",
-                    self.client.get().idle_timeout_interval_ms
-                )
-                .expect("unreachable");
-                let len = start - cur.len();
-                let msg = &buf[..len];
-                let _ = self.client_fail(msg, protocol::RedisError::IdleTimeout);
+                let _ = self.fail_fmt(
+                    protocol::RedisError::IdleTimeout,
+                    format_args!(
+                        "Idle timeout reached after {}ms",
+                        self.client.get().idle_timeout_interval_ms
+                    ),
+                );
                 // TODO: properly propagate exception upwards
             }
             valkey::Status::Disconnected | valkey::Status::Connecting => {
-                use std::io::Write;
-                let mut cur = &mut buf[..];
-                let start = cur.len();
-                write!(
-                    &mut cur,
-                    "Connection timeout reached after {}ms",
-                    self.client.get().connection_timeout_ms
-                )
-                .expect("unreachable");
-                let len = start - cur.len();
-                let msg = &buf[..len];
-                let _ = self.client_fail(msg, protocol::RedisError::ConnectionTimeout);
+                let _ = self.fail_fmt(
+                    protocol::RedisError::ConnectionTimeout,
+                    format_args!(
+                        "Connection timeout reached after {}ms",
+                        self.client.get().connection_timeout_ms
+                    ),
+                );
                 // TODO: properly propagate exception upwards
             }
         }
@@ -1334,6 +1329,17 @@ impl JSValkeyClient {
         self.client_mut().fail(message, err)
     }
 
+    fn fail_fmt(&self, err: protocol::RedisError, args: core::fmt::Arguments<'_>) -> JsResult<()> {
+        use std::io::Write;
+        let mut buf = [0u8; 160];
+        let mut cur = &mut buf[..];
+        let start = cur.len();
+        // Truncation is acceptable for a diagnostic string; ignore the Result.
+        let _ = cur.write_fmt(args);
+        let len = start - cur.len();
+        self.client_fail(&buf[..len], err)
+    }
+
     pub fn call_onclose_handler(&self, value: JSValue) {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
@@ -1488,19 +1494,12 @@ impl JSValkeyClient {
         };
         if tls_ctx_failed {
             self.client_mut().flags.enable_auto_reconnect = false;
-            let mut msg_buf = [0u8; 96];
-            let written = {
-                use std::io::Write;
-                let mut cur = &mut msg_buf[..];
-                let start = cur.len();
-                let _ = write!(&mut cur, "Failed to create TLS context ({:?})", tls_err);
-                start - cur.len()
-            };
             // JS-side failures here are reported, not `?`-propagated: callers
             // treat `Err` from `connect()` as a socket-connect syscall failure.
-            if let Err(e) =
-                self.client_fail(&msg_buf[..written], protocol::RedisError::ConnectionClosed)
-            {
+            if let Err(e) = self.fail_fmt(
+                protocol::RedisError::ConnectionClosed,
+                format_args!("Failed to create TLS context ({:?})", tls_err),
+            ) {
                 self.global_object.report_active_exception_as_unhandled(e);
             }
             // `on_valkey_close()` consumes the socket ref; hand it over so it

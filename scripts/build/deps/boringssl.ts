@@ -53,8 +53,9 @@ export const boringssl: Dependency = {
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,
-        // See `patches:` above. Bun always defines the three hooks.
-        BORINGSSL_REQUIRE_MEMORY_HOOKS: true,
+        // See `patches:` above. Off under ASAN so BoringSSL allocs stay on the
+        // intercepted libc heap on Mach-O/COFF instead of routing to mimalloc.
+        ...(!cfg.asan && { BORINGSSL_REQUIRE_MEMORY_HOOKS: true }),
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,
           WIN32_LEAN_AND_MEAN: true,

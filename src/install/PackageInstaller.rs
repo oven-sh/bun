@@ -235,7 +235,6 @@ impl NodeModulesFolder {
                     self.path.as_slice(),
                     bun_sys::WindowsOpenDirOptions {
                         can_rename_or_delete: false,
-                        read_only: false,
                         ..Default::default()
                     },
                 )
@@ -266,7 +265,6 @@ impl NodeModulesFolder {
                         bun_sys::WindowsOpenDirOptions {
                             can_rename_or_delete: false,
                             op: bun_sys::WindowsOpenDirOp::OpenOrCreate,
-                            read_only: false,
                             ..Default::default()
                         },
                     )
@@ -433,9 +431,7 @@ impl<'a> PackageInstaller<'a> {
         tree_id: lockfile::tree::Id,
         log_level: Options::LogLevel,
     ) {
-        if cfg!(debug_assertions) {
-            debug_assert!(tree_id != lockfile::tree::INVALID_ID);
-        }
+        debug_assert!(tree_id != lockfile::tree::INVALID_ID);
 
         let tree = &mut self.trees[tree_id as usize];
         let current_count = tree.install_count;
@@ -1090,11 +1086,9 @@ impl<'a> PackageInstaller<'a> {
         folder_path: &mut bun_paths::AutoAbsPath,
         log_level: Options::LogLevel,
     ) -> usize {
-        if cfg!(debug_assertions) {
-            debug_assert!(resolution_tag != resolution::Tag::Root);
-            debug_assert!(resolution_tag != resolution::Tag::Workspace);
-            debug_assert!(package_id != 0);
-        }
+        debug_assert!(resolution_tag != resolution::Tag::Root);
+        debug_assert!(resolution_tag != resolution::Tag::Workspace);
+        debug_assert!(package_id != 0);
         let mut count: usize = 0;
         let scripts = 'brk: {
             let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
@@ -1125,9 +1119,7 @@ impl<'a> PackageInstaller<'a> {
             break 'brk temp;
         };
 
-        if cfg!(debug_assertions) {
-            debug_assert!(scripts.filled);
-        }
+        debug_assert!(scripts.filled);
 
         match resolution_tag {
             resolution::Tag::Git | resolution::Tag::Github | resolution::Tag::Root => {
@@ -1507,9 +1499,7 @@ impl<'a> PackageInstaller<'a> {
                     resolution.tag,
                 )
             {
-                if cfg!(debug_assertions) {
-                    debug_assert!(resolution.can_enqueue_install_task());
-                }
+                debug_assert!(resolution.can_enqueue_install_task());
 
                 let context =
                     TaskCallbackContext::DependencyInstallContext(DependencyInstallContext {
@@ -1980,13 +1970,11 @@ impl<'a> PackageInstaller<'a> {
                     );
                 }
                 package_install::InstallResult::Failure(cause) => {
-                    if cfg!(debug_assertions) {
-                        debug_assert!(
-                            !cause.is_package_missing_from_cache()
-                                || (resolution.tag != resolution::Tag::Symlink
-                                    && resolution.tag != resolution::Tag::Workspace)
-                        );
-                    }
+                    debug_assert!(
+                        !cause.is_package_missing_from_cache()
+                            || (resolution.tag != resolution::Tag::Symlink
+                                && resolution.tag != resolution::Tag::Workspace)
+                    );
 
                     // even if the package failed to install, we still need to increment the install
                     // counter for this tree

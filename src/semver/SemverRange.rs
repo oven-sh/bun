@@ -71,53 +71,28 @@ impl Range {
                 ..Default::default()
             },
 
-            Wildcard::Minor => {
-                let lhs = Version {
-                    major: version.major.saturating_add(1),
-                    // .raw = version.raw
-                    ..Default::default()
-                };
-                let rhs = Version {
-                    major: version.major,
-                    // .raw = version.raw
-                    ..Default::default()
-                };
-                Range {
-                    left: Comparator {
-                        op: Op::Lt,
-                        version: lhs,
+            Wildcard::Minor => Range {
+                left: Comparator::lt_next_major(version.major),
+                right: Comparator {
+                    op: Op::Gte,
+                    version: Version {
+                        major: version.major,
+                        ..Default::default()
                     },
-                    right: Comparator {
-                        op: Op::Gte,
-                        version: rhs,
-                    },
-                }
-            }
+                },
+            },
 
-            Wildcard::Patch => {
-                let lhs = Version {
-                    major: version.major,
-                    minor: version.minor.saturating_add(1),
-                    // .raw = version.raw;
-                    ..Default::default()
-                };
-                let rhs = Version {
-                    major: version.major,
-                    minor: version.minor,
-                    // .raw = version.raw;
-                    ..Default::default()
-                };
-                Range {
-                    left: Comparator {
-                        op: Op::Lt,
-                        version: lhs,
+            Wildcard::Patch => Range {
+                left: Comparator::lt_next_minor(version.major, version.minor),
+                right: Comparator {
+                    op: Op::Gte,
+                    version: Version {
+                        major: version.major,
+                        minor: version.minor,
+                        ..Default::default()
                     },
-                    right: Comparator {
-                        op: Op::Gte,
-                        version: rhs,
-                    },
-                }
-            }
+                },
+            },
         }
     }
 
@@ -171,9 +146,7 @@ impl Range {
         version_buf: &[u8],
         pre_matched: &mut bool,
     ) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+        debug_assert!(version.tag.has_pre());
         let has_left = self.has_left();
         let has_right = self.has_right();
 
@@ -237,6 +210,76 @@ pub struct Comparator {
 }
 
 impl Comparator {
+    /// `< {major+1}.0.0`, or `<= u64::MAX.u64::MAX.u64::MAX` when `major+1`
+    /// would overflow so the desugared range stays non-empty at the ceiling.
+    pub fn lt_next_major(major: u64) -> Comparator {
+        match major.checked_add(1) {
+            Some(m) => Comparator {
+                op: Op::Lt,
+                version: Version {
+                    major: m,
+                    ..Default::default()
+                },
+            },
+            None => Comparator {
+                op: Op::Lte,
+                version: Version {
+                    major: u64::MAX,
+                    minor: u64::MAX,
+                    patch: u64::MAX,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    /// `< {major}.{minor+1}.0`, or `<= {major}.u64::MAX.u64::MAX` on overflow.
+    pub fn lt_next_minor(major: u64, minor: u64) -> Comparator {
+        match minor.checked_add(1) {
+            Some(m) => Comparator {
+                op: Op::Lt,
+                version: Version {
+                    major,
+                    minor: m,
+                    ..Default::default()
+                },
+            },
+            None => Comparator {
+                op: Op::Lte,
+                version: Version {
+                    major,
+                    minor: u64::MAX,
+                    patch: u64::MAX,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    /// `< {major}.{minor}.{patch+1}`, or `<= {major}.{minor}.u64::MAX` on overflow.
+    pub fn lt_next_patch(major: u64, minor: u64, patch: u64) -> Comparator {
+        match patch.checked_add(1) {
+            Some(p) => Comparator {
+                op: Op::Lt,
+                version: Version {
+                    major,
+                    minor,
+                    patch: p,
+                    ..Default::default()
+                },
+            },
+            None => Comparator {
+                op: Op::Lte,
+                version: Version {
+                    major,
+                    minor,
+                    patch: u64::MAX,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
     #[inline]
     pub fn eql(self, rhs: Comparator) -> bool {
         self.op == rhs.op && self.version.eql(rhs.version)

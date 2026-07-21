@@ -232,10 +232,36 @@ export const exposedInternals = {
   "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
   "internal/async_context_frame": require("internal/async_context_frame"),
   "internal/async_hooks": require("internal/async_hooks"),
+  "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  // Node's internal/fixed_queue module IS the FixedQueue class.
+  "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
+  "internal/freelist": require("internal/freelist"),
+  "internal/validators": require("internal/validators"),
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
 };
+
+// State of a web ReadableStream/WritableStream for vendored node tests that
+// read Node's `stream[kState].state` / `.storedError` (served through the
+// internal/webstreams/util shim in test/js/node/test/common/index.js).
+// The stream's closed promise is settled from every terminal transition, so its
+// status is the state. A WritableStream mid-`erroring` still reports "writable":
+// erroring is not terminal, and nothing observable distinguishes the two here.
+export function getWebStreamState(stream: ReadableStream | WritableStream): {
+  state: string;
+  storedError: unknown;
+} {
+  const closed = $webStreamClosedPromise(stream);
+  switch (Bun.peek.status(closed)) {
+    case "fulfilled":
+      return { state: "closed", storedError: undefined };
+    case "rejected":
+      return { state: "errored", storedError: Bun.peek(closed) };
+    default:
+      return { state: $inheritsWritableStream(stream) ? "writable" : "readable", storedError: undefined };
+  }
+}
 
 export const fs = require("node:fs/promises").$data;
 

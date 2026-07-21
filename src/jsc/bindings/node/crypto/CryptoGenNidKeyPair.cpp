@@ -71,16 +71,8 @@ std::optional<NidKeyPairJobCtx> NidKeyPairJobCtx::fromJS(JSGlobalObject* globalO
         id = EVP_PKEY_X25519;
     } else if (typeView == "x448"_s) {
         id = EVP_PKEY_X448;
-    } else if (typeView == "ml-dsa-44"_s) {
-        id = EVP_PKEY_ML_DSA_44;
-    } else if (typeView == "ml-dsa-65"_s) {
-        id = EVP_PKEY_ML_DSA_65;
-    } else if (typeView == "ml-dsa-87"_s) {
-        id = EVP_PKEY_ML_DSA_87;
-    } else if (typeView == "ml-kem-768"_s) {
-        id = EVP_PKEY_ML_KEM_768;
-    } else if (typeView == "ml-kem-1024"_s) {
-        id = EVP_PKEY_ML_KEM_1024;
+    } else if (int pqcNid = pqcKeyTypeToNid(typeView)) {
+        id = pqcNid;
     } else {
         UNREACHABLE();
     }

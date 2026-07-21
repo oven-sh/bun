@@ -959,9 +959,7 @@ impl TinyPtr {
 
         let right = in_.as_ptr() as usize + in_.len();
         let end = parent.as_ptr() as usize + parent.len();
-        if cfg!(debug_assertions) {
-            debug_assert!(end < right);
-        }
+        debug_assert!(end < right);
 
         let length = end.max(right) - right;
         let offset =
@@ -1570,7 +1568,7 @@ pub mod pattern {
                         let segment =
                             &path_[0..path_.iter().position(|&b| b == b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
-                            params.truncate(0); // shrinkRetainingCapacity(0)
+                            params.clear(); // shrinkRetainingCapacity(0)
                             return false;
                         }
 
@@ -1593,7 +1591,7 @@ pub mod pattern {
                             path_ = &path_[i + 1..];
 
                             if pattern.is_end(name) {
-                                params.truncate(0); // shrinkRetainingCapacity(0)
+                                params.clear(); // shrinkRetainingCapacity(0)
                                 return false;
                             }
 
@@ -2395,7 +2393,7 @@ mod tests {
             let mut parameters = route_param::List::default();
             let mut failures: usize = 0;
             for (pattern, pathname, entries) in list.iter() {
-                parameters.truncate(0);
+                parameters.clear();
 
                 'fail: {
                     if !Pattern::match_::<true>(pathname, pattern, pattern, &mut parameters) {

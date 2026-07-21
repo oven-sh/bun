@@ -1085,10 +1085,10 @@ fn _format_t<'a, T: PathCharCwd>(
     //     `${pathObject.name || ''}${formatExt(pathObject.ext)}`;
     let mut base_len = base.len();
     // Borrowck: track range into buf instead of slice.
-    let base_or_name_ext_range: (usize, usize);
-    if base_len > 0 {
+
+    let base_or_name_ext_range: (usize, usize) = if base_len > 0 {
         memmove(&mut buf[0..base_len], base);
-        base_or_name_ext_range = (0, base_len);
+        (0, base_len)
     } else {
         let formatted_ext_len = {
             // Borrowck: inline format_ext_t to avoid overlapping &mut.
@@ -1116,12 +1116,12 @@ fn _format_t<'a, T: PathCharCwd>(
         if name_len > 0 {
             memmove(&mut buf[0..name_len], _name);
         }
-        base_or_name_ext_range = if buf_size > 0 {
+        if buf_size > 0 {
             (0, buf_size)
         } else {
             (0, base_len)
-        };
-    }
+        }
+    };
 
     // Translated from the following JS code:
     //   if (!dir) {
@@ -2707,7 +2707,8 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
     // Lastly, append the rest of the destination (`to`) path that comes after
     // the common path parts
     if out_len > 0 {
-        let slice_size = to_end - to_start;
+        // JS `String.prototype.slice(toStart, toEnd)` yields "" when toStart > toEnd.
+        let slice_size = to_end.saturating_sub(to_start);
         buf_size = out_len;
         if slice_size > 0 {
             buf_offset = buf_size;
@@ -2720,10 +2721,11 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         return Ok(&buf[0..buf_size]);
     }
 
-    if buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
+    // JS `charCodeAt` returns NaN past the end, which never equals '\'.
+    if to_start < to_orig_len && buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
         to_start += 1;
     }
-    Ok(&buf[to_start..to_end])
+    Ok(&buf[to_start.min(to_end)..to_end])
 }
 
 pub(crate) fn relative_posix_js_t<T: PathCharCwd>(
@@ -3044,23 +3046,26 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                 // TODO: Enable test once spawnResult.stdout works on Windows.
                 // test/js/node/path/resolve.test.js
                 if let Some(r) = bun_sys::windows::getenv_w(key_w) {
+                    // Store in tmp_buf AFTER the device: buf2[0..resolved_tail_len]
+                    // already backs the accumulated tail, so writing there clobbers it.
                     if T::IS_U16 {
-                        buf_size = r.len();
+                        buf_size = r.len().min(tmp_buf.len() - resolved_device_len);
                         // T == u16 when IS_U16; bytemuck checks the layout at runtime.
-                        let dst: &mut [u16] =
-                            bytemuck::cast_slice_mut::<T, u16>(&mut buf2[..buf_size]);
-                        memmove(dst, &r);
+                        let dst: &mut [u16] = bytemuck::cast_slice_mut::<T, u16>(
+                            &mut tmp_buf[resolved_device_len..resolved_device_len + buf_size],
+                        );
+                        memmove(dst, &r[..buf_size]);
                     } else {
-                        // Reuse buf2 because it's used for path.
                         // T == u8 when !IS_U16; bytemuck statically checks the layout.
-                        let dst: &mut [u8] = bytemuck::cast_slice_mut::<T, u8>(&mut buf2[..]);
+                        let dst: &mut [u8] =
+                            bytemuck::cast_slice_mut::<T, u8>(&mut tmp_buf[resolved_device_len..]);
                         buf_size = strings::convert_utf16_to_utf8_in_buffer(dst, &r).len();
                     }
                     env_path_len = Some(buf_size);
                 }
             }
             if let Some(ep_len) = env_path_len {
-                path_ptr = buf2.as_ptr();
+                path_ptr = tmp_buf[resolved_device_len..].as_ptr();
                 path_len = ep_len;
             } else {
                 // cwd is limited to MAX_PATH_BYTES.
@@ -3268,7 +3273,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
             }
             buf_size = slice_len;
             if slice_len > 0 {
-                // path may alias buf2 (env path branch); use ptr::copy.
+                // path may alias buf2 (drive-mismatch fallback); use ptr::copy.
                 // SAFETY: handles overlap.
                 unsafe {
                     core::ptr::copy(path_ptr.add(root_end), buf2.as_mut_ptr(), slice_len);

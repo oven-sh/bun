@@ -229,7 +229,7 @@ pub(crate) fn bun_random_uuid_v7(
         break 'brk Encoding::Hex;
     };
 
-    let timestamp: u64 = 'brk: {
+    let (timestamp, timestamp_source): (u64, uuid::TimestampSource) = 'brk: {
         let timestamp_value: JSValue = if arguments.len > 1 {
             arguments.ptr[1]
         } else if arguments.len == 1 && encoding_value.is_undefined() {
@@ -252,31 +252,41 @@ pub(crate) fn bun_random_uuid_v7(
                 if !date.is_finite() || date < 0.0 || date > MAX_TIMESTAMP as f64 {
                     return Err(global.throw_range_error(date, range_opts));
                 }
-                break 'brk date as u64;
+                break 'brk (date as u64, uuid::TimestampSource::Explicit);
             }
             if timestamp_value.is_number() && timestamp_value.as_number().is_nan() {
                 return Err(global.throw_range_error(f64::NAN, range_opts));
             }
-            break 'brk u64::try_from(global.validate_integer_range::<i64>(
-                timestamp_value,
-                0,
-                bun_jsc::IntegerRange {
-                    min: 0,
-                    max: i128::from(MAX_TIMESTAMP),
-                    field_name: b"timestamp",
-                    ..Default::default()
-                },
-            )?)
-            .unwrap();
+            break 'brk (
+                u64::try_from(global.validate_integer_range::<i64>(
+                    timestamp_value,
+                    0,
+                    bun_jsc::IntegerRange {
+                        min: 0,
+                        max: i128::from(MAX_TIMESTAMP),
+                        field_name: b"timestamp",
+                        ..Default::default()
+                    },
+                )?)
+                .unwrap(),
+                uuid::TimestampSource::Explicit,
+            );
         }
 
-        break 'brk u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
+        break 'brk (
+            u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
+            uuid::TimestampSource::Clock,
+        );
     };
 
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
     let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(10);
 
-    let uuid = UUID7::init(timestamp, <[u8; 10]>::try_from(&entropy[0..10]).unwrap());
+    let uuid = UUID7::init(
+        timestamp,
+        <[u8; 10]>::try_from(&entropy[0..10]).unwrap(),
+        timestamp_source,
+    );
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);

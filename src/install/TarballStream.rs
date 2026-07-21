@@ -179,6 +179,18 @@ impl TarballStream {
         usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).expect("int cast")
     }
 
+    /// Compressed bytes to buffer in `pending` before the HTTP thread
+    /// schedules a drain; without this each body chunk re-wakes a worker
+    /// once the drain has yielded. See `BUN_INSTALL_STREAMING_DRAIN_THRESHOLD`.
+    fn drain_threshold() -> usize {
+        usize::try_from(
+            env_var::BUN_INSTALL_STREAMING_DRAIN_THRESHOLD
+                .get()
+                .unwrap(),
+        )
+        .expect("int cast")
+    }
+
     pub(crate) fn init(
         extract_task: *mut Task,
         network_task: *mut NetworkTask,
@@ -288,9 +300,15 @@ impl TarballStream {
             if let Some(e) = err {
                 (*this).http_err = Some(e);
             }
+            let pending_len = (*this).pending.len();
             (*this).mutex.unlock();
 
-            Self::schedule_drain(this);
+            // Batch sub-threshold chunks so each one doesn't re-wake a worker
+            // once the drain has yielded; `is_last`/`err` always schedule so
+            // `finish()` never waits on the threshold.
+            if is_last || err.is_some() || pending_len >= Self::drain_threshold() {
+                Self::schedule_drain(this);
+            }
         }
     }
 
@@ -600,12 +618,22 @@ impl TarballStream {
         if unsafe { lib::archive_read_append_filter(archive, 1) } != 0 {
             return Err(crate::Error::Fail);
         }
+        // Register tar before read_set_options so the option has a format slot
+        // to apply to. archive_read_set_format would register it too, but
+        // libarchive's archive_set_format_option() overwrites `a->format` with
+        // each slot while dispatching and then writes NULL, so calling
+        // read_set_options after archive_read_set_format throws the selected
+        // format away and archive_read_open1() falls back to bidding. Bidding
+        // reads ahead 512 decompressed bytes and fails with "Unrecognized
+        // archive format" when the first HTTP chunk is too small for that.
+        // SAFETY: archive is a valid handle.
+        let _ = unsafe { (*archive).read_support_format_tar() };
+        // SAFETY: archive is a valid handle.
+        let _ = unsafe { (*archive).read_set_options(c"read_concatenated_archives") };
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
         if unsafe { lib::archive_read_set_format(archive, 0x30000) } != 0 {
             return Err(crate::Error::Fail);
         }
-        // SAFETY: archive is a valid handle.
-        let _ = unsafe { (*archive).read_set_options(c"read_concatenated_archives") };
 
         // SAFETY: archive is a valid handle; `this` outlives the archive
         // (freed only in `Drop` after `read_free`). See fn-level # Safety

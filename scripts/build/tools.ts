@@ -139,7 +139,11 @@ export function findPackageManager(os: OS): PackageManager {
     required: true,
     hint: "No package manager found (tried bun, npm). Install Node.js, which bundles npm.",
   })!;
-  return { exe: npm.path, installArgs: ["install", "--no-save", "--no-package-lock"], lockfile: "package-lock.json" };
+  return {
+    exe: npm.path,
+    installArgs: ["install", "--no-save", "--no-package-lock", "--include=dev"],
+    lockfile: "package-lock.json",
+  };
 }
 
 /**

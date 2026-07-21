@@ -3232,6 +3232,78 @@ test("error inspect preserves stack header when name/message change after materi
   }
 });
 
+test("error stack header reads name/message via full [[Get]]", () => {
+  // V8 composes the .stack header with ErrorUtils::ToString: ordinary [[Get]] on "name"
+  // and "message" (prototype walk, accessors, ToString). Each expected value matches Node.
+  const header = e => e.stack.split("\n")[0];
+  const inspected = e => util.inspect(e).split("\n")[0];
+
+  // name on an intermediate prototype (2+ levels deep)
+  {
+    class Bar extends Error {}
+    class Foo extends Bar {}
+    Bar.prototype.name = "Bar";
+    const err = new Foo("x");
+    assert.strictEqual(header(err), "Bar: x");
+    assert.strictEqual(inspected(err), "Bar: x");
+  }
+
+  // name defined as an accessor
+  {
+    class G extends Error {
+      get name() {
+        return "G";
+      }
+    }
+    const err = new G("m");
+    assert.strictEqual(header(err), "G: m");
+    assert.strictEqual(inspected(err), "G: m");
+  }
+
+  // non-primitive name coerces via ToString
+  {
+    const err = new Error("m");
+    err.name = { toString: () => "O" };
+    assert.strictEqual(header(err), "O: m");
+  }
+
+  // message defined as an accessor / on an intermediate prototype
+  {
+    class M extends Error {
+      get message() {
+        return "acc-msg";
+      }
+    }
+    assert.strictEqual(header(new M()), "Error: acc-msg");
+  }
+  {
+    class A extends Error {}
+    class B extends A {}
+    A.prototype.message = "deep";
+    assert.strictEqual(header(new B()), "Error: deep");
+  }
+
+  // undefined name defaults to "Error"; null name stringifies
+  {
+    const e1 = new Error("m");
+    e1.name = undefined;
+    assert.strictEqual(header(e1), "Error: m");
+    const e2 = new Error("m");
+    e2.name = null;
+    assert.strictEqual(header(e2), "null: m");
+  }
+
+  // a name getter that throws propagates out of the .stack read
+  {
+    class T extends Error {
+      get name() {
+        throw new TypeError("name-boom");
+      }
+    }
+    assert.throws(() => new T("m").stack, /name-boom/);
+  }
+});
+
 // Utility functions
 function runCallChecks(exitCode) {
   if (exitCode !== 0) return;

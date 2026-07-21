@@ -409,14 +409,28 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     WTF::String message;
 
     if (errorInstance) {
-        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
-        if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
-            if (!lexicalGlobalObject) {
-                lexicalGlobalObject = errorInstance->globalObject();
-            }
-            name = instance->sanitizedNameString(lexicalGlobalObject);
+        // The GC-finalizer path (computeErrorInfoWrapperToString) always passes a null
+        // errorInstance, so this branch only runs from a mutator (lazy .stack getter,
+        // materializeErrorInfoIfNeeded, captureStackTrace) where user code may execute.
+        if (!lexicalGlobalObject) {
+            lexicalGlobalObject = errorInstance->globalObject();
+        }
+
+        // V8's ErrorUtils::ToString: [[Get]] "name"/"message" (prototype walk, getters,
+        // ToString coercion). An undefined name defaults to "Error", an undefined message
+        // to the empty string. sanitizedNameString/sanitizedMessageString skip getters and
+        // cap the prototype walk at depth 2, which drops subclass names and messages.
+        JSValue nameValue = errorInstance->get(lexicalGlobalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!nameValue.isUndefined()) {
+            name = nameValue.toWTFString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            message = instance->sanitizedMessageString(lexicalGlobalObject);
+        }
+
+        JSValue messageValue = errorInstance->get(lexicalGlobalObject, vm.propertyNames->message);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!messageValue.isUndefined()) {
+            message = messageValue.toWTFString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -785,6 +799,20 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             // a non-null m_stackTrace, causing ASSERT(!m_errorInfoMaterialized) in
             // computeErrorInfo when GC's finalizeUnconditionally finds unmarked frames.
             // Eagerly compute and set the .stack property instead.
+            // Root the frames' cells first: computing the header reads name/message via
+            // [[Get]], which may allocate or run a user getter before formatting.
+            JSC::MarkedArgumentBuffer protectedFrameCells;
+            protectedFrameCells.ensureCapacity(stackTrace.size() * 2);
+            for (auto& frame : stackTrace) {
+                if (auto* callee = frame.callee())
+                    protectedFrameCells.append(callee);
+                if (auto* codeBlock = frame.codeBlock())
+                    protectedFrameCells.append(codeBlock);
+            }
+            if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
             OrdinalNumber line;
             OrdinalNumber column;
             String sourceURL;

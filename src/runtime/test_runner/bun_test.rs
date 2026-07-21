@@ -1312,6 +1312,16 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
+        if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
+            if let Some(reporter) = self.reporter {
+                // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
+                // `&mut`; single-threaded test runner, no other borrow live here.
+                if let Some(junit) = unsafe { (*reporter.as_ptr()).reporters.junit.as_mut() } {
+                    junit.record_failure(global_this, exception);
+                }
+            }
+        }
+
         self.bun_test_root.on_before_print();
         if matches!(
             handle_status,

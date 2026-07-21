@@ -157,9 +157,16 @@ pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate:
                 writer.write_all(bun_core::strings::xml_escape_entity(c).unwrap())?;
                 last = i + 1;
             }
+            b'\t' | b'\n' | b'\r' => {
+                // Valid XML 1.0 Char; pass through as-is.
+            }
             0..=0x1f => {
-                // Escape all control characters
-                write!(writer, "&#{};", c)?;
+                // Any other C0 control character is not a valid XML 1.0 Char and
+                // cannot be represented even as a numeric reference, so drop it.
+                if i > last {
+                    writer.write_all(&str_[last..i])?;
+                }
+                last = i + 1;
             }
             _ => {}
         }
@@ -211,6 +218,13 @@ pub fn write_test_status_line(
 // `&mut io::Writer`; the previous local `err_w`/`out_w` wrappers were no-op
 // reborrows. Call sites use the `Output` accessors directly.
 
+#[derive(Default)]
+pub struct JunitFailure {
+    pub name: Vec<u8>,
+    pub message: Vec<u8>,
+    pub body: Vec<u8>,
+}
+
 // Remaining TODOs:
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report
@@ -226,6 +240,10 @@ pub struct JunitReporter {
 
     pub suite_stack: Vec<SuiteInfo>,
     pub current_depth: u32,
+
+    /// Error captured by `on_uncaught_exception` for the currently-failing
+    /// test; consumed by `write_test_case` on the next `Result::Fail`.
+    pub last_failure: Option<JunitFailure>,
 
     pub hostname_value: Option<Box<[u8]>>,
 }
@@ -300,6 +318,46 @@ impl JunitReporter {
     }
 
     // `pub const new = bun.TrivialNew(JunitReporter);` → Box::new
+
+    /// Capture the thrown value's name/message plus a plain-text (no ANSI)
+    /// rendering so the next `write_test_case` can populate `<failure>`.
+    pub fn record_failure(&mut self, global_this: &jsc::JSGlobalObject, exception: jsc::JSValue) {
+        let vm = global_this.bun_vm().as_mut();
+        let (value, exc_ref): (jsc::JSValue, Option<&jsc::Exception>) =
+            match exception.as_exception(vm.jsc_vm) {
+                // SAFETY: `as_exception` returned a live JSC-heap `Exception`;
+                // read-only for the duration of this call.
+                Some(exc) => unsafe { ((*exc).value(), Some(&*exc)) },
+                None => (exception, None),
+            };
+
+        let mut failure = JunitFailure::default();
+
+        {
+            let mut holder = jsc::zig_exception::Holder::init();
+            let zig_exc = holder.zig_exception();
+            value.to_zig_exception(global_this, zig_exc);
+            failure.name = zig_exc.name.to_utf8_bytes();
+            failure.message = zig_exc.message.to_utf8_bytes();
+            holder.deinit(vm);
+        }
+
+        {
+            let mut adapter = jsc::console_object::DynWriteAdapter::new(&mut failure.body);
+            let mut formatter = jsc::console_object::Formatter::new(global_this);
+            vm.print_errorlike_object(
+                value,
+                exc_ref,
+                None,
+                &mut formatter,
+                adapter.interface(),
+                false,
+                false,
+            );
+        }
+
+        self.last_failure = Some(failure);
+    }
 
     fn generate_properties_list(&mut self) -> crate::Result<()> {
         struct PropertiesList<'a> {
@@ -583,16 +641,34 @@ impl JunitReporter {
                     let last = self.suite_stack.len() - 1;
                     self.suite_stack[last].metrics.failures += 1;
                 }
-                // TODO: add the failure message
-                // if (failure_message) |msg| {
-                //     try this.contents.appendSlice(bun.default_allocator, " message=\"");
-                //     try escapeXml(msg, this.contents.writer(bun.default_allocator));
-                //     try this.contents.appendSlice(bun.default_allocator, "\"");
-                // }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                self.contents
-                    .extend_from_slice(b"  <failure type=\"AssertionError\" />\n");
+                let failure = self.last_failure.take();
+                let type_name: &[u8] = failure
+                    .as_ref()
+                    .map(|f| f.name.as_slice())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or(b"Error");
+                self.contents.extend_from_slice(b"  <failure type=\"");
+                escape_xml(type_name, &mut self.contents)?;
+                self.contents.extend_from_slice(b"\"");
+                if let Some(f) = failure.as_ref() {
+                    if !f.message.is_empty() {
+                        self.contents.extend_from_slice(b" message=\"");
+                        escape_xml(&f.message, &mut self.contents)?;
+                        self.contents.extend_from_slice(b"\"");
+                    }
+                }
+                match failure.as_ref().filter(|f| !f.body.is_empty()) {
+                    Some(f) => {
+                        self.contents.extend_from_slice(b">");
+                        escape_xml(&f.body, &mut self.contents)?;
+                        self.contents.extend_from_slice(b"</failure>\n");
+                    }
+                    None => {
+                        self.contents.extend_from_slice(b" />\n");
+                    }
+                }
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -686,13 +762,15 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                self.contents
-                    .extend_from_slice(b"  <failure type=\"TimeoutError\" />\n");
+                self.contents.extend_from_slice(
+                    b"  <failure type=\"TimeoutError\" message=\"test timed out\" />\n",
+                );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
             R::Pending => unreachable!(),
         }
+        self.last_failure = None;
         Ok(())
     }
 
@@ -1187,10 +1265,11 @@ impl CommandLineReporter {
                     if let Some(name) = unsafe { (*scope).base.name.as_deref() } {
                         if !name.is_empty() {
                             if initial_length != concatenated_describe_scopes.len() {
-                                concatenated_describe_scopes.extend_from_slice(b" &gt; ");
+                                concatenated_describe_scopes.extend_from_slice(b" > ");
                             }
 
-                            escape_xml(name, &mut concatenated_describe_scopes).expect("oom");
+                            // write_test_case escapes class_name once; do not pre-escape here.
+                            concatenated_describe_scopes.extend_from_slice(name);
                         }
                     }
                 }

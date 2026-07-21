@@ -1554,8 +1554,6 @@ describe.concurrent("script files with no test() registrations", () => {
   });
 
   test("does not drain when the file registered a test()", async () => {
-    // Files that use bun:test keep today's behavior: the runner does not
-    // block on leaked handles after the last test finishes.
     using dir = tempDir("registered-test-no-drain", {
       "with.test.js": `
         const { test } = require("bun:test");
@@ -1576,8 +1574,6 @@ describe.concurrent("script files with no test() registrations", () => {
   });
 
   test("does not drain when a prior file left a ref'd handle", async () => {
-    // a leaks an interval. b's drain is skipped because the loop was not
-    // idle after preloads, so the run must not hang on a's interval.
     using dir = tempDir("prior-file-leak", {
       "a.test.js": `
         const { test } = require("bun:test");
@@ -1612,8 +1608,6 @@ describe.concurrent("script files with no test() registrations", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // If the drain waited on the preload's interval this would hang; the
-    // test framework's own timeout is the guard.
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
   });

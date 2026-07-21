@@ -79,11 +79,13 @@ pub fn root_hash_and_tree(data: &[u8], cs_off: u64, cs_len: u64) -> ([u8; H], Ve
     let root_hash = sha256::hash(&root_page);
 
     // Tree bytes = all non-leaf, non-root levels, top-down.
-    // That is levels[1..levels.len()-1] (level 0 = leaves, last = root).
+    // When levels has only 1 or 2 entries, there are no intermediate levels.
     let mut tree = Vec::new();
-    for level in &levels[1..levels.len() - 1] {
-        for hash in level {
-            tree.extend_from_slice(hash);
+    if levels.len() > 2 {
+        for level in &levels[1..levels.len() - 1] {
+            for hash in level {
+                tree.extend_from_slice(hash);
+            }
         }
     }
 

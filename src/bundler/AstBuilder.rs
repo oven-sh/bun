@@ -125,20 +125,18 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub fn push_scope(&mut self, kind: ScopeKind) -> Result<*mut Scope, OOM> {
         self.scopes.reserve(1);
         self.current_scope_mut().children.ensure_unused_capacity(1);
-        let scope: *mut Scope = self.bump.alloc(Scope {
+        let scope = NonNull::from(self.bump.alloc(Scope {
             kind,
             label_ref: Ref::NONE,
             parent: NonNull::new(self.current_scope).map(bun_ast::StoreRef::from),
             ..Default::default()
-        });
-        // `scope` came from `bump.alloc`, so it is non-null and distinct from
-        // `current_scope` (fresh allocation).
+        }));
         self.current_scope_mut()
             .children
-            .append_assume_capacity(NonNull::new(scope).expect("bump alloc non-null").into());
+            .append_assume_capacity(scope.into());
         self.scopes.push(self.current_scope);
-        self.current_scope = scope;
-        Ok(scope)
+        self.current_scope = scope.as_ptr();
+        Ok(scope.as_ptr())
     }
 
     pub fn pop_scope(&mut self) {

@@ -42,7 +42,6 @@ pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, prepend_from};
 
 pub use bit_set::{
     AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
-    StaticBitSet,
 };
 
 // Re-export for back-compat (`bun_jsc::host_fn`, `multi_array_list` import
@@ -175,7 +174,7 @@ pub use string_map::StringMap;
 
 // Re-export from bun_ptr so callers can name it as `bun_collections::TaggedPtrUnion`
 // (PORTING.md groups it under Collections; the impl lives in src/ptr/).
-pub use bun_ptr::tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion};
+pub use bun_ptr::tagged_pointer::{TaggedPtr, TaggedPtrUnion};
 // Lifetime-erasure helpers (RUST_PATTERNS.md §6/§18) — re-exported here so
 // crates that already depend on `bun_collections` (logger, css, js_parser,
 // crash_handler, watcher, http_types) can route the borrowck-dodge through
@@ -529,11 +528,5 @@ pub mod hash_map {
 }
 
 pub mod array_list;
-// All of these aliases collapse to `Vec<T>` (global mimalloc); they exist for
-// back-compat at existing call sites.
-pub use array_list::ArrayList;
-pub use array_list::ArrayListAligned;
-pub use array_list::ArrayListAlignedDefault;
 pub use array_list::ArrayListAlignedIn;
 pub use array_list::ArrayListDefault;
-pub use array_list::ArrayListIn;

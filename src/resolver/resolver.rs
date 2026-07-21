@@ -2771,116 +2771,18 @@ impl<'a> Resolver<'a> {
 
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
-                                    // The condition set is determined by the kind of import
                                     let mut module_type = package_json.module_type;
-                                    // NOTE: keeping a single
-                                    // `ESModule` (which holds `&mut self.debug_logs`) alive across a
-                                    // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
-                                    // `ESModule` per `resolve` call so its borrow ends before
-                                    // `self.handle_esm_resolution` re-borrows `self`.
-                                    // Resolve against the path "/", then join it with the absolute
-                                    // directory path. This is done because ESM package resolution uses
-                                    // URLs while our path resolution uses file system paths. We don't
-                                    // want problems due to Windows paths, which are very unlike URL
-                                    // paths. We also want to avoid any "%" characters in the absolute
-                                    // directory path accidentally being interpreted as URL escapes.
-                                    {
-                                        let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
-                                            debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
-                                        }
-                                        .resolve(b"/", esm.subpath, &exports_map.root);
-                                        // ESModule temporary dropped here; `self` is unborrowed.
-
-                                        if self
-                                            .handle_esm_resolution(
-                                                esm_resolution,
-                                                abs_package_path,
-                                                kind,
-                                                package_json,
-                                                esm.subpath,
-                                                out,
-                                            )
-                                            .is_success()
-                                        {
-                                            out.is_node_module = true;
-                                            out.module_type = module_type;
-                                            self.extension_order = prev_extension_order;
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
-                                            }
-                                            return MatchStatus::Success;
-                                        }
-                                    }
-
-                                    // Some popular packages forget to include the extension in their
-                                    // exports map, so we try again without the extension.
-                                    //
-                                    // This is useful for browser-like environments
-                                    // where you want a file extension in the URL
-                                    // pathname by convention. Vite does this.
-                                    //
-                                    // React is an example of a package that doesn't include file extensions.
-                                    // {
-                                    //     "exports": {
-                                    //         ".": "./index.js",
-                                    //         "./jsx-runtime": "./jsx-runtime.js",
-                                    //     }
-                                    // }
-                                    //
-                                    // We limit this behavior just to ".js" files.
-                                    let extname = bun_paths::extension(esm.subpath);
-                                    if extname == b".js" && esm.subpath.len() > 3 {
-                                        let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
-                                            debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
-                                        }
-                                        .resolve(
-                                            b"/",
-                                            &esm.subpath[0..esm.subpath.len() - 3],
-                                            &exports_map.root,
-                                        );
-                                        if self
-                                            .handle_esm_resolution(
-                                                esm_resolution,
-                                                abs_package_path,
-                                                kind,
-                                                package_json,
-                                                esm.subpath,
-                                                out,
-                                            )
-                                            .is_success()
-                                        {
-                                            out.is_node_module = true;
-                                            out.module_type = module_type;
-                                            self.extension_order = prev_extension_order;
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
-                                            }
-                                            return MatchStatus::Success;
-                                        }
+                                    if self.resolve_esm_exports(
+                                        kind,
+                                        esm.subpath,
+                                        &exports_map.root,
+                                        abs_package_path,
+                                        package_json,
+                                        &mut module_type,
+                                        prev_extension_order,
+                                        out,
+                                    ) {
+                                        return MatchStatus::Success;
                                     }
 
                                     // if they hid "package.json" from "exports", still allow importing it.
@@ -3277,7 +3179,8 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    // NOTE: reshaped for borrowck — see identical note above.
+                                    // NOTE: reshaped for borrowck — see the note on
+                                    // `resolve_esm_exports`.
                                     // Resolve against the path "/", then join it with the absolute
                                     // directory path. This is done because ESM package resolution uses
                                     // URLs while our path resolution uses file system paths. We don't
@@ -3739,6 +3642,93 @@ impl<'a> Resolver<'a> {
 
         // NOTE: the non-root path is genuinely unimplemented; this is not a stub.
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
+    }
+
+    /// Resolves `subpath` against a package's `exports` map, picking the
+    /// condition set for `kind`. On success, fills `out`, restores
+    /// `prev_extension_order`, and unindents the debug logs.
+    ///
+    /// Resolve against the path "/", then join it with the absolute directory
+    /// path: ESM package resolution uses URLs while our path resolution uses
+    /// file system paths, and we want neither Windows-path problems nor "%"
+    /// characters being interpreted as URL escapes.
+    ///
+    /// NOTE: keeping a single `ESModule` (which holds `&mut self.debug_logs`)
+    /// alive across a `&mut self` call is aliased-&mut UB, so it must drop
+    /// before `self.handle_esm_resolution` re-borrows `self`.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_esm_exports(
+        &mut self,
+        kind: ast::ImportKind,
+        subpath: &[u8],
+        exports_root: &crate::package_json::Entry,
+        abs_package_path: &[u8],
+        package_json: &PackageJSON,
+        module_type: &mut options::ModuleType,
+        prev_extension_order: options::ExtOrder,
+        out: &mut MatchResult,
+    ) -> bool {
+        let mut resolve_subpath = subpath;
+        loop {
+            let esm_resolution = ESModule {
+                conditions: match kind {
+                    ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
+                        &self.opts.conditions.require
+                    }
+                    ast::ImportKind::At | ast::ImportKind::AtConditional => {
+                        &self.opts.conditions.style
+                    }
+                    _ => &self.opts.conditions.import,
+                },
+                debug_logs: self.debug_logs.as_mut(),
+                module_type: &mut *module_type,
+            }
+            .resolve(b"/", resolve_subpath, exports_root);
+
+            if self
+                .handle_esm_resolution(
+                    esm_resolution,
+                    abs_package_path,
+                    kind,
+                    package_json,
+                    subpath,
+                    out,
+                )
+                .is_success()
+            {
+                out.is_node_module = true;
+                out.module_type = *module_type;
+                self.extension_order = prev_extension_order;
+                if let Some(d) = self.debug_logs.as_mut() {
+                    d.decrease_indent();
+                }
+                return true;
+            }
+
+            // Some popular packages forget to include the extension in their
+            // exports map, so we try again without the extension.
+            //
+            // This is useful for browser-like environments
+            // where you want a file extension in the URL
+            // pathname by convention. Vite does this.
+            //
+            // React is an example of a package that doesn't include file extensions.
+            // {
+            //     "exports": {
+            //         ".": "./index.js",
+            //         "./jsx-runtime": "./jsx-runtime.js",
+            //     }
+            // }
+            //
+            // We limit this behavior just to ".js" files.
+            if resolve_subpath.len() < subpath.len()
+                || bun_paths::extension(subpath) != b".js"
+                || subpath.len() <= 3
+            {
+                return false;
+            }
+            resolve_subpath = &subpath[0..subpath.len() - 3];
+        }
     }
 
     fn handle_esm_resolution(

@@ -1355,6 +1355,12 @@ impl ModKey {
     }
 
     pub fn generate(_: &mut RealFS, _: &[u8], file: &bun_sys::File) -> crate::CrateResult<ModKey> {
+        Self::from_file(file)
+    }
+
+    /// `generate` minus the unread `&mut RealFS` / path args, for callers
+    /// (e.g. `linker::get_mod_key`) that don't hold a `RealFS`.
+    pub fn from_file(file: &bun_sys::File) -> crate::CrateResult<ModKey> {
         let stat = file.stat()?;
 
         const NS_PER_S: i128 = 1_000_000_000;
@@ -1789,9 +1795,9 @@ impl RealFS {
 //     `readFileError` (a no-op in release).
 //   • `RealFS::read_file_with_handle_and_allocator` — keeps the existing
 //     fs.rs:2121 signature for spec-shape fidelity; thin forward.
-//   • `read_file_contents` — runtime-bool → const-generic dispatcher for the
-//     two `cache::Fs` callers (resolver/lib.rs + bundler/cache.rs), which take
-//     `use_shared_buffer`/`stream` at runtime and want only the bytes.
+//   • `read_file_contents` — runtime-bool → const-generic dispatcher for
+//     `cache::Fs` (resolver/lib.rs; re-exported by bundler/cache.rs), which
+//     takes `use_shared_buffer`/`stream` at runtime and wants only the bytes.
 // ══════════════════════════════════════════════════════════════════════════
 
 /// Runtime-bool → const-generic dispatcher for `cache::Fs::read_file{,_shared}`.
@@ -2156,175 +2162,16 @@ impl RealFS {
         existing_fd: Fd,
         store_fd: bool,
     ) -> crate::CrateResult<EntryCache> {
-        #[cfg(windows)]
-        let _ = (existing_fd, store_fd);
-        let mut cache = EntryCache {
-            kind: EntryKind::File,
-            symlink: Interned::EMPTY,
-            fd: Fd::INVALID,
-        };
-
-        let dir = dir_;
-        let combo: [&[u8]; 2] = [dir, base];
-        let mut outpath = PathBuffer::uninit();
-        let entry_path =
-            path_handler::join_abs_string_buf::<platform::Auto>(self.cwd, &mut outpath[..], &combo);
-        let entry_path_len = entry_path.len();
-
-        outpath[entry_path_len + 1] = 0;
-        outpath[entry_path_len] = 0;
-
-        let absolute_path_c = ZStr::from_buf(&outpath[..], entry_path_len);
-
-        #[cfg(windows)]
-        {
-            let file = bun_sys::get_file_attributes(absolute_path_c)
-                .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
-            // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
-            // the link is a directory link (junctions always do; symlinks
-            // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
-            // links and file symlinks don't), so this is already the
-            // correct `Entry.Kind` without following the chain.
-            cache.kind = if file.is_directory {
-                EntryKind::Dir
-            } else {
-                EntryKind::File
-            };
-            if !file.is_reparse_point {
-                return Ok(cache);
-            }
-
-            // For the realpath, open the path and let the kernel follow
-            // every hop, then `GetFinalPathNameByHandle` (same as libuv's
-            // `uv_fs_realpath`). The previous manual readlink+join loop
-            // resolved relative targets against `dirname(absolute_path_c)`,
-            // but that path may itself contain unresolved intermediate
-            // symlinks (e.g. with the isolated linker's global virtual
-            // store, `node_modules/.bun/<pkg>` is a symlink into
-            // `<cache>/links/`, and the dep symlinks inside point at
-            // siblings via `..\..\<dep>-<hash>`). Windows resolves
-            // relative reparse targets against the *real* parent, so the
-            // join landed in the project-side `.bun/` instead of
-            // `<cache>/links/`, the re-stat returned FileNotFound, the
-            // error was swallowed at `Entry.kind`, and a directory symlink
-            // was permanently misclassified as `.file` — surfacing as
-            // EISDIR at module load time.
-            use bun_sys::windows as w;
-            let mut wbuf = bun_paths::w_path_buffer_pool::get();
-            let wpath = strings::paths::to_kernel32_path(&mut *wbuf, absolute_path_c.as_bytes());
-            // SAFETY: `wpath` is NUL-terminated WTF-16 backed by the pooled
-            // `WPathBuffer`; null SECURITY_ATTRIBUTES / template handle are
-            // documented-valid for `CreateFileW`.
-            let handle = unsafe {
-                w::kernel32::CreateFileW(
-                    wpath.as_ptr(),
-                    0,
-                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
-                    core::ptr::null_mut(),
-                    w::OPEN_EXISTING,
-                    // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
-                    // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
-                    // follow the full reparse chain to the final target.
-                    w::FILE_FLAG_BACKUP_SEMANTICS,
-                    core::ptr::null_mut(),
-                )
-            };
-            // Dangling link / loop / EACCES: `cache.kind` is already set
-            // from the link's own directory bit, which is correct for all
-            // of those. `Entry.kind`/`Entry.symlink` swallow errors and
-            // fall back to the `.file` placeholder anyway, so returning
-            // the half-populated cache is strictly better than `try`.
-            // Empty `cache.symlink` makes the resolver fall back to
-            // `parent.abs_real_path + base`.
-            if handle == w::INVALID_HANDLE_VALUE {
-                return Ok(cache);
-            }
-            scopeguard::defer! {
-                // SAFETY: `handle` ≠ INVALID_HANDLE_VALUE (checked above).
-                let _ = unsafe { w::CloseHandle(handle) };
-            }
-
-            let mut info: w::BY_HANDLE_FILE_INFORMATION =
-                // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD)
-                unsafe { bun_core::ffi::zeroed_unchecked() };
-            // SAFETY: `handle` is a valid file handle for the scope.
-            if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
-                cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
-                    EntryKind::Dir
-                } else {
-                    EntryKind::File
-                };
-            }
-
-            let mut buf2 = bun_paths::path_buffer_pool::get();
-            // `Fd` packs the kernel handle into its `u64` backing on Windows;
-            // round-trip via `usize` (HANDLE is pointer-sized).
-            match bun_sys::get_fd_path(Fd::from_native(handle as usize as u64), &mut *buf2) {
-                bun_sys::Result::Ok(real) => {
-                    cache.symlink = Interned::from_static(FilenameStore::instance().append(real)?);
-                }
-                bun_sys::Result::Err(_) => {}
-            }
-            return Ok(cache);
-        }
-
-        #[cfg(not(windows))]
-        {
-            let stat = bun_sys::lstat(absolute_path_c)?;
-            let mut file_kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
-            let is_symlink = file_kind == bun_sys::FileKind::SymLink;
-
-            let mut symlink: &[u8] = b"";
-
-            if is_symlink {
-                let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
-                    valid
-                } else if store_fd {
-                    bun_sys::open_file_absolute_z(absolute_path_c, bun_sys::OpenFlags::READ_ONLY)?
-                        .into_raw()
-                } else {
-                    // O_PATH is
-                    // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
-                    #[cfg(any(target_os = "linux", target_os = "android"))]
-                    let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                    let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                    bun_sys::open(absolute_path_c, flags, 0)?
-                };
-                FileSystem::set_max_fd(file.native());
-
-                // close-or-store must run on
-                // BOTH success and error paths — use scopeguard so it happens even if
-                // stat()/get_fd_path() return early with `?`.
-                let need_to_close_files = self.need_to_close_files();
-                let cache_ptr: *mut EntryCache = &raw mut cache;
-                let _guard = scopeguard::guard(file, move |file| {
-                    if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
-                        let _ = bun_sys::close(file);
-                    } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                        // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                        unsafe { (*cache_ptr).fd = file };
-                    }
-                });
-
-                let file_stat = bun_sys::fstat(*_guard)?;
-                symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
-                file_kind = bun_sys::kind_from_mode(file_stat.st_mode as bun_sys::Mode);
-            }
-
-            debug_assert!(file_kind != bun_sys::FileKind::SymLink);
-
-            if file_kind == bun_sys::FileKind::Directory {
-                cache.kind = EntryKind::Dir;
-            } else {
-                cache.kind = EntryKind::File;
-            }
-            if !symlink.is_empty() {
-                cache.symlink = Interned::from_static(FilenameStore::instance().append(symlink)?);
-            }
-
-            Ok(cache)
-        }
+        kind_impl(
+            self.cwd,
+            dir_,
+            base,
+            existing_fd,
+            store_fd,
+            || self.need_to_close_files(),
+            FileSystem::set_max_fd,
+            |s| Ok(FilenameStore::instance().append(s)?),
+        )
     }
 
     //         // Stores the file entries for directories we've listed before
@@ -2333,6 +2180,192 @@ impl RealFS {
 
     // // If true, do not use the "entries" cache
     // doNotCacheEntries bool
+}
+
+/// Canonical `RealFS.kind` body (lstat + symlink-follow + realpath), shared by
+/// this `RealFS` and the inline `fs::RealFS` in lib.rs until the
+/// RealFS/Implementation dedup lands. The closures carry the per-copy
+/// dependencies: the fd-budget check, the max-fd watermark, and the
+/// symlink-target interning store.
+pub(crate) fn kind_impl(
+    cwd: &[u8],
+    dir_: &[u8],
+    base: &[u8],
+    existing_fd: Fd,
+    store_fd: bool,
+    need_to_close_files: impl FnOnce() -> bool,
+    set_max_fd: impl FnOnce(bun_sys::RawFd),
+    intern_symlink: impl FnOnce(&[u8]) -> crate::CrateResult<&'static [u8]>,
+) -> crate::CrateResult<EntryCache> {
+    #[cfg(windows)]
+    let _ = (existing_fd, store_fd, need_to_close_files, set_max_fd);
+    let mut cache = EntryCache {
+        kind: EntryKind::File,
+        symlink: Interned::EMPTY,
+        fd: Fd::INVALID,
+    };
+
+    let dir = dir_;
+    let combo: [&[u8]; 2] = [dir, base];
+    let mut outpath = PathBuffer::uninit();
+    let entry_path =
+        path_handler::join_abs_string_buf::<platform::Auto>(cwd, &mut outpath[..], &combo);
+    let entry_path_len = entry_path.len();
+
+    outpath[entry_path_len + 1] = 0;
+    outpath[entry_path_len] = 0;
+
+    let absolute_path_c = ZStr::from_buf(&outpath[..], entry_path_len);
+
+    #[cfg(windows)]
+    {
+        let file = bun_sys::get_file_attributes(absolute_path_c)
+            .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+        // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
+        // the link is a directory link (junctions always do; symlinks
+        // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
+        // links and file symlinks don't), so this is already the
+        // correct `Entry.Kind` without following the chain.
+        cache.kind = if file.is_directory {
+            EntryKind::Dir
+        } else {
+            EntryKind::File
+        };
+        if !file.is_reparse_point {
+            return Ok(cache);
+        }
+
+        // For the realpath, open the path and let the kernel follow
+        // every hop, then `GetFinalPathNameByHandle` (same as libuv's
+        // `uv_fs_realpath`). The previous manual readlink+join loop
+        // resolved relative targets against `dirname(absolute_path_c)`,
+        // but that path may itself contain unresolved intermediate
+        // symlinks (e.g. with the isolated linker's global virtual
+        // store, `node_modules/.bun/<pkg>` is a symlink into
+        // `<cache>/links/`, and the dep symlinks inside point at
+        // siblings via `..\..\<dep>-<hash>`). Windows resolves
+        // relative reparse targets against the *real* parent, so the
+        // join landed in the project-side `.bun/` instead of
+        // `<cache>/links/`, the re-stat returned FileNotFound, the
+        // error was swallowed at `Entry.kind`, and a directory symlink
+        // was permanently misclassified as `.file` — surfacing as
+        // EISDIR at module load time.
+        use bun_sys::windows as w;
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let wpath = strings::paths::to_kernel32_path(&mut *wbuf, absolute_path_c.as_bytes());
+        // SAFETY: `wpath` is NUL-terminated WTF-16 backed by the pooled
+        // `WPathBuffer`; null SECURITY_ATTRIBUTES / template handle are
+        // documented-valid for `CreateFileW`.
+        let handle = unsafe {
+            w::kernel32::CreateFileW(
+                wpath.as_ptr(),
+                0,
+                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                core::ptr::null_mut(),
+                w::OPEN_EXISTING,
+                // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
+                // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
+                // follow the full reparse chain to the final target.
+                w::FILE_FLAG_BACKUP_SEMANTICS,
+                core::ptr::null_mut(),
+            )
+        };
+        // Dangling link / loop / EACCES: `cache.kind` is already set
+        // from the link's own directory bit, which is correct for all
+        // of those. `Entry.kind`/`Entry.symlink` swallow errors and
+        // fall back to the `.file` placeholder anyway, so returning
+        // the half-populated cache is strictly better than `try`.
+        // Empty `cache.symlink` makes the resolver fall back to
+        // `parent.abs_real_path + base`.
+        if handle == w::INVALID_HANDLE_VALUE {
+            return Ok(cache);
+        }
+        scopeguard::defer! {
+            // SAFETY: `handle` ≠ INVALID_HANDLE_VALUE (checked above).
+            let _ = unsafe { w::CloseHandle(handle) };
+        }
+
+        let mut info: w::BY_HANDLE_FILE_INFORMATION =
+            // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD)
+            unsafe { bun_core::ffi::zeroed_unchecked() };
+        // SAFETY: `handle` is a valid file handle for the scope.
+        if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
+            cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
+                EntryKind::Dir
+            } else {
+                EntryKind::File
+            };
+        }
+
+        let mut buf2 = bun_paths::path_buffer_pool::get();
+        // `Fd` packs the kernel handle into its `u64` backing on Windows;
+        // round-trip via `usize` (HANDLE is pointer-sized).
+        match bun_sys::get_fd_path(Fd::from_native(handle as usize as u64), &mut *buf2) {
+            bun_sys::Result::Ok(real) => {
+                cache.symlink = Interned::from_static(intern_symlink(real)?);
+            }
+            bun_sys::Result::Err(_) => {}
+        }
+        return Ok(cache);
+    }
+
+    #[cfg(not(windows))]
+    {
+        let stat = bun_sys::lstat(absolute_path_c)?;
+        let mut file_kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+        let is_symlink = file_kind == bun_sys::FileKind::SymLink;
+
+        let mut symlink: &[u8] = b"";
+
+        if is_symlink {
+            let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
+                valid
+            } else if store_fd {
+                bun_sys::open_file_absolute_z(absolute_path_c, bun_sys::OpenFlags::READ_ONLY)?
+                    .into_raw()
+            } else {
+                // O_PATH is
+                // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
+                bun_sys::open(absolute_path_c, flags, 0)?
+            };
+            set_max_fd(file.native());
+
+            // close-or-store must run on
+            // BOTH success and error paths — use scopeguard so it happens even if
+            // stat()/get_fd_path() return early with `?`.
+            let need_to_close_files = need_to_close_files();
+            let cache_ptr: *mut EntryCache = &raw mut cache;
+            let _guard = scopeguard::guard(file, move |file| {
+                if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
+                    let _ = bun_sys::close(file);
+                } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                    // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
+                    unsafe { (*cache_ptr).fd = file };
+                }
+            });
+
+            let file_stat = bun_sys::fstat(*_guard)?;
+            symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
+            file_kind = bun_sys::kind_from_mode(file_stat.st_mode as bun_sys::Mode);
+        }
+
+        debug_assert!(file_kind != bun_sys::FileKind::SymLink);
+
+        if file_kind == bun_sys::FileKind::Directory {
+            cache.kind = EntryKind::Dir;
+        } else {
+            cache.kind = EntryKind::File;
+        }
+        if !symlink.is_empty() {
+            cache.symlink = Interned::from_static(intern_symlink(symlink)?);
+        }
+
+        Ok(cache)
+    }
 }
 
 impl EntryKindResolver for RealFS {

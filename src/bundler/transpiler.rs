@@ -943,6 +943,27 @@ impl<'a> ParseResult<'a> {
         }
     }
 
+    #[inline]
+    fn with_ast(
+        ast: bun_ast::Ast<'a>,
+        source: &bun_ast::Source,
+        loader: options::Loader,
+        input_fd: Option<FD>,
+        source_contents_backing: resolver::cache::Contents,
+    ) -> Self {
+        ParseResult {
+            ast,
+            source: source.clone(),
+            loader,
+            input_fd,
+            already_bundled: AlreadyBundled::None,
+            pending_imports: Default::default(),
+            runtime_transpiler_cache: None,
+            empty: false,
+            source_contents_backing,
+        }
+    }
+
     pub fn is_pending_import(&self, id: u32) -> bool {
         // AoS scan (see field comment); SoA column iteration restored
         // when `PendingResolution: MultiArrayElement` lands.
@@ -1867,6 +1888,44 @@ impl<'a> Transpiler<'a> {
 // instead of being interleaved (post-LTO) with the hot JS/TS parse path.
 // ---------------------------------------------------------------------------
 
+fn export_default_stmt(expr: bun_ast::Expr) -> bun_ast::Stmt {
+    bun_ast::Stmt::alloc(
+        bun_ast::S::ExportDefault {
+            value: bun_ast::StmtOrExpr::Expr(expr),
+            default_name: bun_ast::LocRef {
+                loc: bun_ast::Loc::default(),
+                ref_: bun_ast::Ref::NONE,
+            },
+        },
+        bun_ast::Loc { start: 0 },
+    )
+}
+
+/// Wrap `expr` as the sole `export default` statement of a single-part AST
+/// and build the `ParseResult` around it.
+#[cold]
+fn export_default_parse_result<'a>(
+    expr: bun_ast::Expr,
+    source: &bun_ast::Source,
+    loader: options::Loader,
+    input_fd: Option<FD>,
+    source_backing: resolver::cache::Contents,
+    arena: &'a Arena,
+) -> Option<ParseResult<'a>> {
+    let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[export_default_stmt(expr)]));
+    let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
+        stmts,
+        ..Default::default()
+    }]);
+    Some(ParseResult::with_ast(
+        bun_ast::Ast::from_parts(parts, arena),
+        source,
+        loader,
+        input_fd,
+        source_backing,
+    ))
+}
+
 #[cold]
 #[inline(never)]
 fn parse_data_loader<'a>(
@@ -2059,16 +2118,7 @@ fn parse_data_loader<'a>(
                     },
                     bun_ast::Loc { start: 0 },
                 );
-                let stmt2 = bun_ast::Stmt::alloc(
-                    bun_ast::S::ExportDefault {
-                        value: bun_ast::StmtOrExpr::Expr(expr),
-                        default_name: bun_ast::LocRef {
-                            loc: bun_ast::Loc::default(),
-                            ref_: bun_ast::Ref::NONE,
-                        },
-                    },
-                    bun_ast::Loc { start: 0 },
-                );
+                let stmt2 = export_default_stmt(expr);
 
                 let stmts =
                     bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
@@ -2079,39 +2129,20 @@ fn parse_data_loader<'a>(
             }
         }
 
-        {
-            let stmt = bun_ast::Stmt::alloc(
-                bun_ast::S::ExportDefault {
-                    value: bun_ast::StmtOrExpr::Expr(expr),
-                    default_name: bun_ast::LocRef {
-                        loc: bun_ast::Loc::default(),
-                        ref_: bun_ast::Ref::NONE,
-                    },
-                },
-                bun_ast::Loc { start: 0 },
-            );
-
-            let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
-            break 'parts Box::new([bun_ast::Part {
-                stmts,
-                ..Default::default()
-            }]);
-        }
+        // `symbols` is only populated by the non-empty-object branch above,
+        // which always `break 'parts`s; this fallthrough has no symbols.
+        return export_default_parse_result(expr, source, loader, input_fd, source_backing, arena);
     };
     let mut ast = bun_ast::Ast::from_parts(parts, arena);
     ast.symbols = bun_alloc::vec_from_iter_in(symbols, arena);
 
-    return Some(ParseResult {
+    return Some(ParseResult::with_ast(
         ast,
-        source: source.clone(),
+        source,
         loader,
         input_fd,
-        already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
-        runtime_transpiler_cache: None,
-        empty: false,
-        source_contents_backing: source_backing,
-    });
+        source_backing,
+    ));
 }
 
 #[cold]
@@ -2127,33 +2158,7 @@ fn parse_text_loader<'a>(
         bun_ast::E::EString::init(&source.contents),
         bun_ast::Loc::EMPTY,
     );
-    let stmt = bun_ast::Stmt::alloc(
-        bun_ast::S::ExportDefault {
-            value: bun_ast::StmtOrExpr::Expr(expr),
-            default_name: bun_ast::LocRef {
-                loc: bun_ast::Loc::default(),
-                ref_: bun_ast::Ref::NONE,
-            },
-        },
-        bun_ast::Loc { start: 0 },
-    );
-    let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
-    let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
-        stmts,
-        ..Default::default()
-    }]);
-
-    return Some(ParseResult {
-        ast: bun_ast::Ast::from_parts(parts, arena),
-        source: source.clone(),
-        loader,
-        input_fd,
-        already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
-        runtime_transpiler_cache: None,
-        empty: false,
-        source_contents_backing: source_backing,
-    });
+    export_default_parse_result(expr, source, loader, input_fd, source_backing, arena)
 }
 
 #[cold]
@@ -2185,33 +2190,7 @@ fn parse_md_loader<'a>(
         }
     };
     let expr = bun_ast::Expr::init(bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
-    let stmt = bun_ast::Stmt::alloc(
-        bun_ast::S::ExportDefault {
-            value: bun_ast::StmtOrExpr::Expr(expr),
-            default_name: bun_ast::LocRef {
-                loc: bun_ast::Loc::default(),
-                ref_: bun_ast::Ref::NONE,
-            },
-        },
-        bun_ast::Loc { start: 0 },
-    );
-    let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
-    let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
-        stmts,
-        ..Default::default()
-    }]);
-
-    return Some(ParseResult {
-        ast: bun_ast::Ast::from_parts(parts, arena),
-        source: source.clone(),
-        loader,
-        input_fd,
-        already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
-        runtime_transpiler_cache: None,
-        empty: false,
-        source_contents_backing: source_backing,
-    });
+    export_default_parse_result(expr, source, loader, input_fd, source_backing, arena)
 }
 
 #[cold]
@@ -2239,17 +2218,13 @@ fn parse_wasm_loader<'a>(
             return None;
         }
 
-        return Some(ParseResult {
-            ast: bun_ast::Ast::empty_in(arena),
-            source: source.clone(),
+        return Some(ParseResult::with_ast(
+            bun_ast::Ast::empty_in(arena),
+            source,
             loader,
             input_fd,
-            already_bundled: AlreadyBundled::None,
-            pending_imports: Default::default(),
-            runtime_transpiler_cache: None,
-            empty: false,
-            source_contents_backing: source_backing,
-        });
+            source_backing,
+        ));
     }
     None
 }

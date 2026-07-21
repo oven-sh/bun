@@ -12,8 +12,10 @@
 
 // Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is mounted as
 // `fs_full`; the inline `pub mod fs` below remains the canonical type surface
-// (FileSystem, RealFS, Path, PathName, Entry, DirEntry, EntryLookup,
-// EntriesOption, Implementation) and re-exports from `fs_full`.
+// (FileSystem, RealFS, Path, PathName, EntriesOption, Implementation).
+// Entry/DirEntry, the read-file helpers, `ModKey`, and the shared
+// `kind_impl`/`adjust_ulimit`/temp-dir bodies already live in `fs_full` and
+// are re-exported or delegated to from the inline module.
 pub mod data_url;
 pub mod dir_info;
 pub mod error;
@@ -751,7 +753,6 @@ pub mod fs {
 
     use bun_core::Generation;
     use bun_paths::strings;
-    use bun_ptr::Interned;
     use bun_sys::Fd;
     use bun_threading::Mutex;
 
@@ -1067,40 +1068,10 @@ pub mod fs {
         }
 
         /// Port of `RealFS.adjustUlimit` — always try to max out how many
-        /// files we can keep open.
+        /// files we can keep open. Canonical body: `fs_full::RealFS`.
+        #[inline]
         pub fn adjust_ulimit() -> crate::CrateResult<usize> {
-            #[cfg(not(unix))]
-            {
-                Ok(usize::MAX)
-            }
-            #[cfg(unix)]
-            {
-                let resource = bun_sys::posix::RlimitResource::NOFILE;
-                let mut lim = bun_sys::posix::getrlimit(resource)?;
-
-                // Cap at 1<<20 to match Node.js. On macOS the hard limit defaults to
-                // RLIM_INFINITY; raising soft anywhere near INT_MAX breaks child processes
-                // that read the limit into an int.
-                let target = {
-                    // musl has extremely low defaults, so ensure at least 163840 there.
-                    #[cfg(target_env = "musl")]
-                    let max = lim.max.max(163_840);
-                    #[cfg(not(target_env = "musl"))]
-                    let max = lim.max;
-                    max.min(1 << 20)
-                };
-                if lim.cur < target {
-                    let mut raised = lim;
-                    raised.cur = target;
-                    // Don't lower the hard limit (Node only touches rlim_cur). The @max
-                    // is for the musl branch above, which may raise past the current hard.
-                    raised.max = lim.max.max(target);
-                    if bun_sys::posix::setrlimit(resource, raised).is_ok() {
-                        lim.cur = raised.cur;
-                    }
-                }
-                Ok(usize::try_from(lim.cur).expect("int cast"))
-            }
+            crate::fs_full::RealFS::adjust_ulimit()
         }
 
         /// `open(path, O_DIRECTORY)`.
@@ -1377,7 +1348,8 @@ pub mod fs {
         /// lstat + (if symlink) open + fstat +
         /// readlink to populate an `EntryCache`. Windows: `GetFileAttributesW` +
         /// (if reparse point) `CreateFileW`-follow + `GetFinalPathNameByHandle`
-        /// realpath.
+        /// realpath. Canonical body: `fs_full::kind_impl`; the closures keep
+        /// this copy's max-fd watermark and `FilenameStore` in use.
         pub fn kind(
             &mut self,
             dir_: &[u8],
@@ -1385,175 +1357,16 @@ pub mod fs {
             existing_fd: Fd,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            use bun_paths::resolve_path::{join_abs_string_buf, platform};
-            #[cfg(not(windows))]
-            use bun_sys::{FileKind, kind_from_mode};
-
-            let mut cache = EntryCache {
-                kind: EntryKind::File,
-                symlink: Interned::EMPTY,
-                fd: Fd::INVALID,
-            };
-
-            let combo: [&[u8]; 2] = [dir_, base];
-            let mut outpath = bun_paths::PathBuffer::uninit();
-            let entry_path_len =
-                join_abs_string_buf::<platform::Auto>(self.cwd, &mut outpath[..], &combo).len();
-
-            outpath[entry_path_len + 1] = 0;
-            outpath[entry_path_len] = 0;
-            let absolute_path_c = ZStr::from_buf(&outpath[..], entry_path_len);
-
-            #[cfg(windows)]
-            {
-                use bun_sys::windows as w;
-                let _ = (existing_fd, store_fd);
-                let file = bun_sys::get_file_attributes(absolute_path_c)
-                    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
-                // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
-                // the link is a directory link (junctions always do; symlinks
-                // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
-                // links and file symlinks don't), so this is already the
-                // correct `Entry.Kind` without following the chain.
-                cache.kind = if file.is_directory {
-                    EntryKind::Dir
-                } else {
-                    EntryKind::File
-                };
-                if !file.is_reparse_point {
-                    return Ok(cache);
-                }
-
-                // For the realpath, open the path and let the kernel follow
-                // every hop, then `GetFinalPathNameByHandle` (same as libuv's
-                // `uv_fs_realpath`). The previous manual readlink+join loop
-                // resolved relative targets against `dirname(absolute_path_c)`,
-                // but that path may itself contain unresolved intermediate
-                // symlinks (e.g. with the isolated linker's global virtual
-                // store, `node_modules/.bun/<pkg>` is a symlink into
-                // `<cache>/links/`, and the dep symlinks inside point at
-                // siblings via `..\..\<dep>-<hash>`). Windows resolves
-                // relative reparse targets against the *real* parent, so the
-                // join landed in the project-side `.bun/` instead of
-                // `<cache>/links/`, the re-stat returned FileNotFound, the
-                // error was swallowed at `Entry.kind`, and a directory symlink
-                // was permanently misclassified as `.file` — surfacing as
-                // EISDIR at module load time.
-                let mut wbuf = bun_paths::w_path_buffer_pool::get();
-                let wpath = bun_paths::strings::paths::to_kernel32_path(
-                    &mut wbuf.0[..],
-                    absolute_path_c.as_bytes(),
-                );
-                // SAFETY: `wpath` is NUL-terminated UTF-16; null security/template handles.
-                let handle = unsafe {
-                    w::CreateFileW(
-                        wpath.as_ptr(),
-                        0,
-                        w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
-                        core::ptr::null_mut(),
-                        w::OPEN_EXISTING,
-                        // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
-                        // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
-                        // follow the full reparse chain to the final target.
-                        w::FILE_FLAG_BACKUP_SEMANTICS,
-                        core::ptr::null_mut(),
-                    )
-                };
-                // Dangling link / loop / EACCES: `cache.kind` is already set
-                // from the link's own directory bit, which is correct for all
-                // of those. `Entry.kind`/`Entry.symlink` swallow errors and
-                // fall back to the `.file` placeholder anyway, so returning
-                // the half-populated cache is strictly better than `try`.
-                // Empty `cache.symlink` makes the resolver fall back to
-                // `parent.abs_real_path + base`.
-                if handle == w::INVALID_HANDLE_VALUE {
-                    return Ok(cache);
-                }
-                scopeguard::defer! {
-                    // SAFETY: `handle` is a valid HANDLE from CreateFileW above.
-                    unsafe { let _ = w::CloseHandle(handle); }
-                }
-
-                let mut info: w::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
-                // SAFETY: `handle` is valid; `info` is a valid out-param.
-                if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
-                    cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
-                        EntryKind::Dir
-                    } else {
-                        EntryKind::File
-                    };
-                }
-
-                let mut buf2 = bun_paths::path_buffer_pool::get();
-                if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(real)?);
-                }
-                return Ok(cache);
-            }
-
-            #[cfg(not(windows))]
-            {
-                let stat_ = bun_sys::lstat(absolute_path_c)?;
-                let is_symlink =
-                    kind_from_mode(stat_.st_mode as bun_sys::Mode) == FileKind::SymLink;
-                let mut file_kind = kind_from_mode(stat_.st_mode as bun_sys::Mode);
-
-                let mut symlink: &[u8] = b"";
-
-                if is_symlink {
-                    let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
-                        valid
-                    } else if store_fd {
-                        bun_sys::open_file_absolute_z(
-                            absolute_path_c,
-                            bun_sys::OpenFlags::READ_ONLY,
-                        )?
-                        .into_raw()
-                    } else {
-                        // O_PATH is
-                        // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
-                        #[cfg(any(target_os = "linux", target_os = "android"))]
-                        let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                        bun_sys::open(absolute_path_c, flags, 0)?
-                    };
-                    FileSystem::set_max_fd(file.native());
-
-                    // The close-or-store cleanup runs on
-                    // BOTH success and error paths — use scopeguard so close-or-store happens even if
-                    // fstat()/get_fd_path() return early with `?`.
-                    let need_to_close_files = self.need_to_close_files();
-                    let cache_ptr: *mut EntryCache = &raw mut cache;
-                    let _guard = scopeguard::guard(file, move |file| {
-                        if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
-                            let _ = bun_sys::close(file);
-                        } else if bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
-                            // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                            unsafe { (*cache_ptr).fd = file };
-                        }
-                    });
-
-                    let file_stat = bun_sys::fstat(*_guard)?;
-                    symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
-                    file_kind = kind_from_mode(file_stat.st_mode as bun_sys::Mode);
-                }
-
-                debug_assert!(file_kind != FileKind::SymLink);
-
-                cache.kind = if file_kind == FileKind::Directory {
-                    EntryKind::Dir
-                } else {
-                    EntryKind::File
-                };
-                if !symlink.is_empty() {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
-                }
-
-                Ok(cache)
-            }
+            crate::fs_full::kind_impl(
+                self.cwd,
+                dir_,
+                base,
+                existing_fd,
+                store_fd,
+                || self.need_to_close_files(),
+                FileSystem::set_max_fd,
+                |s| FilenameStore::instance().append_slice(s),
+            )
         }
     }
 
@@ -1670,91 +1483,22 @@ pub mod fs {
             Some(unsafe { &mut *result_ptr })
         }
 
-        fn platform_temp_dir_compute() -> &'static [u8] {
-            use bun_core::env_var;
-            // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
-            // https://github.com/nodejs/node/blob/e172be269890702bf2ad06252f2f152e7604d76c/src/node_credentials.cc#L132
-            if let Some(dir) = env_var::TMPDIR
-                .get_not_empty()
-                .or_else(|| env_var::TMP.get_not_empty())
-                .or_else(|| env_var::TEMP.get_not_empty())
-            {
-                if dir.len() > 1 && dir[dir.len() - 1] == bun_paths::SEP {
-                    return &dir[0..dir.len() - 1];
-                }
-                return dir;
-            }
-
-            #[cfg(target_os = "windows")]
-            {
-                // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
-                // The computed path borrows env-var storage joined with a literal,
-                // so it must own its buffer. This runs once for the process via
-                // `bun_core::Once` in `platform_temp_dir()`; the `OnceLock` here is
-                // the allowed process-lifetime singleton (PORTING.md §Forbidden
-                // exception), not a per-call leak.
-                static OWNED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-                return OWNED
-                    .get_or_init(|| {
-                        if let Some(windir) =
-                            env_var::SYSTEMROOT.get().or_else(|| env_var::WINDIR.get())
-                        {
-                            let mut out =
-                                bun_core::strings::without_trailing_slash(windir).to_vec();
-                            out.extend_from_slice(b"\\Temp");
-                            return out;
-                        }
-                        if let Some(profile) = env_var::HOME.get() {
-                            let mut buf = bun_paths::PathBuffer::uninit();
-                            let parts: [&[u8]; 1] = [b"AppData\\Local\\Temp"];
-                            let out = bun_paths::resolve_path::join_abs_string_buf::<
-                                bun_paths::resolve_path::platform::Loose,
-                            >(profile, &mut buf[..], &parts);
-                            return out.to_vec();
-                        }
-                        let mut tmp_buf = bun_paths::PathBuffer::uninit();
-                        let cwd = match bun_sys::getcwd(&mut tmp_buf[..]) {
-                            Ok(len) => &tmp_buf[..len],
-                            Err(_) => panic!("Failed to get cwd for platformTempDir"),
-                        };
-                        let root = bun_paths::resolve_path::windows_filesystem_root(cwd);
-                        let mut out = bun_core::strings::without_trailing_slash(root).to_vec();
-                        out.extend_from_slice(b"\\Windows\\Temp");
-                        out
-                    })
-                    .as_slice();
-            }
-            #[cfg(target_os = "macos")]
-            {
-                return b"/private/tmp";
-            }
-            #[cfg(target_os = "android")]
-            {
-                return b"/data/local/tmp";
-            }
-            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
-            {
-                b"/tmp"
-            }
-        }
-
         /// Platform temp directory, computed once per process.
+        /// Canonical body: `fs_full::RealFS`.
+        #[inline]
         pub fn platform_temp_dir() -> &'static [u8] {
-            static ONCE: bun_core::Once<&'static [u8]> = bun_core::Once::new();
-            ONCE.call(Self::platform_temp_dir_compute)
+            crate::fs_full::RealFS::platform_temp_dir()
         }
 
         /// Non-empty `BUN_TMPDIR`, falling back to `platform_temp_dir`.
+        #[inline]
         pub fn tmpdir_path() -> &'static [u8] {
-            bun_core::env_var::BUN_TMPDIR
-                .get_not_empty()
-                .unwrap_or_else(Self::platform_temp_dir)
+            crate::fs_full::RealFS::tmpdir_path()
         }
 
+        #[inline]
         pub fn get_default_temp_dir() -> &'static [u8] {
-            bun_core::env_var::BUN_TMPDIR
-                .get()
-                .unwrap_or_else(Self::platform_temp_dir)
+            crate::fs_full::RealFS::get_default_temp_dir()
         }
     }
 
@@ -1776,54 +1520,9 @@ pub mod fs {
     pub use super::fs_full::stat_hash::StatHash;
 
     /// Re-export `ModKey` from the full `fs.rs` port so `linker::get_mod_key`
-    /// can hash files without depending on `fs_full::RealFS` (a distinct type
-    /// from this inline `RealFS`).
+    /// can hash files via `ModKey::from_file` without depending on
+    /// `fs_full::RealFS` (a distinct type from this inline `RealFS`).
     pub use super::fs_full::ModKey;
-    impl ModKey {
-        /// RealFS-agnostic constructor. `fs_full::ModKey::generate`'s
-        /// `&mut RealFS` / `path` args are unread (fs.rs:1386); callers
-        /// reaching `ModKey` via this re-export hold the inline-`fs` `RealFS`,
-        /// which is a different type, so they need an entry point that doesn't
-        /// require `fs_full::RealFS`. Body is the spec `generate` minus the
-        /// dead args.
-        pub fn from_file(file: &bun_sys::File) -> crate::CrateResult<Self> {
-            let stat = file.stat()?;
-
-            const NS_PER_S: i128 = 1_000_000_000;
-            // `bun_sys::Stat` is `libc::stat`.
-            // Reconstruct `mtime` (i128 ns) from `st_mtime` (sec) +
-            // `st_mtime_nsec` (ns). The `libc` crate flattens BSD/Darwin
-            // `st_mtimespec` into `st_mtime`/`st_mtime_nsec`, so the access is
-            // uniform on all `unix`.
-            #[cfg(unix)]
-            let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
-            #[cfg(windows)]
-            let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
-            let seconds = mtime / NS_PER_S;
-
-            // We can't detect changes if the file system zeros out the
-            // modification time
-            if seconds == 0 && NS_PER_S == 0 {
-                return Err(crate::Error::Unusable);
-            }
-
-            // Don't generate a modification key if the file is too new
-            let now = bun_core::time::nano_timestamp();
-            let now_seconds = now / NS_PER_S;
-            // `seconds > seconds` is always false — intentionally kept
-            #[allow(clippy::eq_op)]
-            if seconds > seconds || (seconds == now_seconds && mtime > now) {
-                return Err(crate::Error::Unusable);
-            }
-
-            Ok(ModKey {
-                inode: stat.st_ino,
-                size: stat.st_size as u64,
-                mtime,
-                mode: stat.st_mode as bun_sys::Mode,
-            })
-        }
-    }
 
     pub mod file_system {
         pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};

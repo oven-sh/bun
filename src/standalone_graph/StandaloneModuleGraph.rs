@@ -1967,97 +1967,51 @@ impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
     pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {
-        #[cfg(target_os = "macos")]
-        {
-            let Some((base, len)) = macho::get_data() else {
-                return Ok(None);
-            };
-            if len < size_of::<Offsets>() + TRAILER.len() {
-                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-                return Ok(None);
+        let data = {
+            #[cfg(target_os = "macos")]
+            {
+                macho::get_data()
             }
-            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
-            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
-            // ever spans the writable bytecode region carried in `base`'s provenance.
-            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
-            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
-            let trailer_bytes = unsafe {
-                core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
-            };
-            if trailer_bytes != TRAILER {
-                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
-                return Ok(None);
+            #[cfg(windows)]
+            {
+                pe::get_data()
             }
-            // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets =
-                unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
-            return from_bytes_alloc(base, len, offsets).map(Some);
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+            {
+                elf::get_data()
+            }
+            #[cfg(not(any(
+                target_os = "macos",
+                windows,
+                target_os = "linux",
+                target_os = "android",
+                target_os = "freebsd"
+            )))]
+            {
+                unreachable!()
+            }
+        };
+        let Some((base, len)) = data else {
+            return Ok(None);
+        };
+        if len < size_of::<Offsets>() + TRAILER.len() {
+            bun_core::debug_warn!("bun standalone module graph is too small to be valid");
+            return Ok(None);
         }
-
-        #[cfg(windows)]
-        {
-            let Some((base, len)) = pe::get_data() else {
-                return Ok(None);
-            };
-            if len < size_of::<Offsets>() + TRAILER.len() {
-                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-                return Ok(None);
-            }
-            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
-            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
-            // ever spans the writable bytecode region carried in `base`'s provenance.
-            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
-            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
-            let trailer_bytes = unsafe {
-                core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
-            };
-            if trailer_bytes != TRAILER {
-                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
-                return Ok(None);
-            }
-            // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets =
-                unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
-            return from_bytes_alloc(base, len, offsets).map(Some);
+        // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
+        // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
+        // ever spans the writable bytecode region carried in `base`'s provenance.
+        let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+        // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
+        let trailer_bytes =
+            unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
+        if trailer_bytes != TRAILER {
+            bun_core::debug_warn!("bun standalone module graph has invalid trailer");
+            return Ok(None);
         }
-
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-        {
-            let Some((base, len)) = elf::get_data() else {
-                return Ok(None);
-            };
-            if len < size_of::<Offsets>() + TRAILER.len() {
-                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-                return Ok(None);
-            }
-            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
-            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
-            // ever spans the writable bytecode region carried in `base`'s provenance.
-            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
-            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
-            let trailer_bytes = unsafe {
-                core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
-            };
-            if trailer_bytes != TRAILER {
-                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
-                return Ok(None);
-            }
-            // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets =
-                unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
-            return from_bytes_alloc(base, len, offsets).map(Some);
-        }
-
-        #[cfg(not(any(
-            target_os = "macos",
-            windows,
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd"
-        )))]
-        {
-            unreachable!()
-        }
+        // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
+        let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
+        from_bytes_alloc(base, len, offsets).map(Some)
     }
 
     /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are

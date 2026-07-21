@@ -2536,6 +2536,45 @@ pub mod bv2_impl {
             }
         }
 
+        /// Shared tail of every parse-task enqueue site: set the scheduling
+        /// fields, then either hand the task to an onLoad plugin or schedule it
+        /// on the worker pool, registering copy-for-bundling loaders (`file`,
+        /// etc.) as additional files with no side effects.
+        ///
+        /// `task.jsx` is deliberately left to the caller — the enqueue sites
+        /// differ in whether they keep the resolver's tsconfig-derived pragma
+        /// (syncing only `development`) or clone the target transpiler's pragma
+        /// wholesale.
+        fn configure_and_dispatch_parse_task(
+            &mut self,
+            task: &mut ParseTask,
+            loader: Loader,
+            target: options::Target,
+            is_entry_point: bool,
+        ) {
+            task.loader = Some(loader);
+            task.task.node.next = core::ptr::null_mut();
+            task.io_task.node.next = core::ptr::null_mut();
+            task.tree_shaking = self.linker.options.tree_shaking;
+            task.is_entry_point = is_entry_point;
+            task.known_target = target;
+
+            if !self.enqueue_on_load_plugin_if_needed(task) {
+                if loader.should_copy_for_bundling() {
+                    let source_index = task.source_index.get();
+                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
+                        &mut self.graph.input_files.items_additional_files_mut()
+                            [source_index as usize];
+                    additional_files.push(crate::AdditionalFile::SourceIndex(source_index));
+                    self.graph.input_files.items_side_effects_mut()[source_index as usize] =
+                        bun_ast::SideEffects::NoSideEffectsPureData;
+                    self.graph.estimated_file_loader_count += 1;
+                }
+
+                self.graph.pool().schedule(task);
+            }
+        }
+
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
@@ -2591,10 +2630,6 @@ pub mod bv2_impl {
             let task_val = ParseTask::init(&result, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
-            task.loader = Some(loader);
-            task.task.node.next = core::ptr::null_mut();
-            task.tree_shaking = self.linker.options.tree_shaking;
-            task.known_target = target;
             {
                 let t = self.transpiler_for_target(target);
                 task.jsx.development = match t.options.force_node_env {
@@ -2603,22 +2638,7 @@ pub mod bv2_impl {
                     options::ForceNodeEnv::Unspecified => t.options.jsx.development,
                 };
             }
-
-            // Handle onLoad plugins as entry points
-            if !self.enqueue_on_load_plugin_if_needed(task) {
-                if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
-                    self.graph.estimated_file_loader_count += 1;
-                }
-
-                self.graph.pool().schedule(task);
-            }
+            self.configure_and_dispatch_parse_task(task, loader, target, false);
             Ok(())
         }
 
@@ -2700,11 +2720,6 @@ pub mod bv2_impl {
             let task_val = ParseTask::init(result, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
-            task.loader = Some(loader);
-            task.task.node.next = core::ptr::null_mut();
-            task.tree_shaking = self.linker.options.tree_shaking;
-            task.is_entry_point = is_entry_point;
-            task.known_target = target;
             {
                 let bundler = self.transpiler_for_target(target);
                 task.jsx.development = match bundler.options.force_node_env {
@@ -2713,22 +2728,7 @@ pub mod bv2_impl {
                     options::ForceNodeEnv::Unspecified => bundler.options.jsx.development,
                 };
             }
-
-            // Handle onLoad plugins as entry points
-            if !self.enqueue_on_load_plugin_if_needed(task) {
-                if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
-                    self.graph.estimated_file_loader_count += 1;
-                }
-
-                self.graph.pool().schedule(task);
-            }
+            self.configure_and_dispatch_parse_task(task, loader, target, is_entry_point);
 
             self.graph
                 .entry_points
@@ -3536,30 +3536,11 @@ pub mod bv2_impl {
             );
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
-            task.loader = Some(loader);
             task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
-            task.task.node.next = core::ptr::null_mut();
-            task.io_task.node.next = core::ptr::null_mut();
-            task.tree_shaking = self.linker.options.tree_shaking;
-            task.known_target = known_target;
 
             self.increment_scan_counter();
 
-            // Handle onLoad plugins
-            if !self.enqueue_on_load_plugin_if_needed(task) {
-                if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
-                    self.graph.estimated_file_loader_count += 1;
-                }
-
-                self.graph.pool().schedule(task);
-            }
+            self.configure_and_dispatch_parse_task(task, loader, known_target, false);
 
             Ok(source_index.get())
         }
@@ -3613,7 +3594,6 @@ pub mod bv2_impl {
             } else {
                 self.transpiler_for_target(known_target).options.jsx.clone()
             };
-            let tree_shaking = self.linker.options.tree_shaking;
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
@@ -3626,9 +3606,6 @@ pub mod bv2_impl {
                 module_type: options::ModuleType::Unknown,
                 emit_decorator_metadata: false, // TODO
                 package_version: bun_ast::StoreStr::EMPTY,
-                loader: Some(loader),
-                tree_shaking,
-                known_target,
                 ..Default::default()
             });
             // SAFETY: `task` was just arena-allocated above; no other references exist yet.
@@ -3637,27 +3614,17 @@ pub mod bv2_impl {
                 (*task).ctx = Some(bun_ptr::ParentRef::from_raw_mut(
                     std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
                 ));
-                (*task).task.node.next = core::ptr::null_mut();
-                (*task).io_task.node.next = core::ptr::null_mut();
             }
 
             self.increment_scan_counter();
 
-            // Handle onLoad plugins
             // SAFETY: `task` lives in the bundle-pass arena; sole reference until scheduled.
-            if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
-                if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
-                    self.graph.estimated_file_loader_count += 1;
-                }
-
-                self.graph.pool().schedule(task);
-            }
+            self.configure_and_dispatch_parse_task(
+                unsafe { &mut *task },
+                loader,
+                known_target,
+                false,
+            );
             Ok(source_index.get())
         }
 
@@ -4719,35 +4686,19 @@ pub mod bv2_impl {
                                     .clone(),
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
-                                loader: Some(loader),
-                                tree_shaking: this.linker.options.tree_shaking,
-                                known_target: resolve.import_record.original_target,
                                 ..Default::default()
                             };
                             // Arena-owned.
                             // SAFETY: arena outlives the bundle pass.
                             let task: &mut ParseTask = this.arena_create(task_val);
-                            task.task.node.next = core::ptr::null_mut();
-                            task.io_task.node.next = core::ptr::null_mut();
                             this.increment_scan_counter();
 
-                            if !this.enqueue_on_load_plugin_if_needed(task) {
-                                if loader.should_copy_for_bundling() {
-                                    let additional_files: &mut bun_alloc::AstVec<
-                                        crate::AdditionalFile,
-                                    > = &mut this.graph.input_files.items_additional_files_mut()
-                                        [source_index.get() as usize];
-                                    additional_files.push(crate::AdditionalFile::SourceIndex(
-                                        task.source_index.get(),
-                                    ));
-                                    this.graph.input_files.items_side_effects_mut()
-                                        [source_index.get() as usize] =
-                                        bun_ast::SideEffects::NoSideEffectsPureData;
-                                    this.graph.estimated_file_loader_count += 1;
-                                }
-
-                                this.graph.pool().schedule(task);
-                            }
+                            this.configure_and_dispatch_parse_task(
+                                task,
+                                loader,
+                                resolve.import_record.original_target,
+                                false,
+                            );
                         } else {
                             // SAFETY: map slot from `get_or_put` above; map not mutated since.
                             out_source_index = Some(Index::init(unsafe { *value_ptr }));

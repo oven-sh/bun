@@ -989,6 +989,25 @@ describe.concurrent("sourcemap boolean values", () => {
     const jsText = await jsOutput!.text();
     expect(jsText).toContain("//# sourceMappingURL=index.js.map");
   });
+
+  test("sourcemap: linked with publicPath prefixes the sourceMappingURL", async () => {
+    const dir = tempDirWithFiles("sourcemap-linked-public-path", {
+      "index.js": `console.log("hello");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      outdir: join(dir, "out"),
+      sourcemap: "linked",
+      publicPath: "https://cdn.example.com/assets/",
+    });
+
+    expect(build.success).toBe(true);
+
+    const jsOutput = build.outputs.find(o => o.kind === "entry-point");
+    const jsText = await jsOutput!.text();
+    expect(jsText).toContain("//# sourceMappingURL=https://cdn.example.com/assets/index.js.map\n");
+  });
 });
 
 describe.concurrent("sourcemap positions", () => {

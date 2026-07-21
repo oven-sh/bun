@@ -707,6 +707,60 @@ it("socket should keep process alive if unref is not called", async () => {
   expect(await process.exited).toBe(1);
 });
 
+// server.unref() only releases the listener's hold on the loop. Each accepted
+// connection is its own handle and must keep the process alive until it
+// closes, otherwise an unref'd server drops in-flight requests at exit.
+it("server.unref() does not unref accepted connections", async () => {
+  const serverSrc = `
+    const net = require("node:net");
+    const srv = net.createServer(sock => {
+      srv.unref();
+      sock.write("ack");
+      sock.on("data", d => sock.end("ok:" + d));
+    });
+    srv.listen(0, "127.0.0.1", () => console.log(srv.address().port));
+  `;
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", serverSrc],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const reader = child.stdout.getReader();
+  let out = "";
+  while (!out.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    out += Buffer.from(value).toString();
+  }
+  reader.releaseLock();
+  const port = parseInt(out, 10);
+  expect(port).toBeGreaterThan(0);
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  let received = "";
+  let wrote = false;
+  const client = connect(port, "127.0.0.1");
+  client.on("error", () => {});
+  client.on("data", d => {
+    received += d;
+    if (!wrote && received.includes("ack")) {
+      wrote = true;
+      client.write("hi");
+    }
+  });
+  client.on("close", () => resolve(received));
+
+  try {
+    expect(await promise).toBe("ackok:hi");
+  } finally {
+    client.destroy();
+  }
+  const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 // Node never resumes a socket on the user's behalf: afterConnect only calls
 // read(0) (lib/net.js), so bytes that arrive before a 'data' listener is
 // attached stay buffered instead of being emitted to nobody and lost.

@@ -611,6 +611,9 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // Each accepted connection holds the loop on its own, independent of
+        // the listener's poll_ref, so server.unref() doesn't drop live peers.
+        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
@@ -654,6 +657,9 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // Each accepted connection holds the loop on its own, independent of
+        // the listener's poll_ref, so server.unref() doesn't drop live peers.
+        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.global_object;

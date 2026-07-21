@@ -45,7 +45,7 @@ for (const r of recs) {
     bySys.set(r.sys, (a = { count: 0, statuses: new Map(), callsites: new Map(), faults: 0, details: new Map() }));
   a.count++;
   if (!r.entryOnly) a.statuses.set(r.status, (a.statuses.get(r.status) ?? 0) + 1);
-  if (r.rva !== "0") a.callsites.set(r.rva, (a.callsites.get(r.rva) ?? 0) + 1);
+  a.callsites.set(r.key, (a.callsites.get(r.key) ?? 0) + 1);
   if (r.fault) a.faults++;
   // Tally the typed detail with volatile numbers folded (xfer=/len= vary):
   // "ioctl=AFD_RECV on h=s:Afd" recurs, its byte counts don't.
@@ -75,7 +75,7 @@ for (const [sys, a] of rows) {
   );
   if (showCallsites) {
     const cs = [...a.callsites.entries()].sort((x, y) => y[1] - x[1]).slice(0, 5);
-    for (const [rva, c] of cs) console.log("    bun+0x" + rva.padEnd(10) + " x" + c);
+    for (const [key, c] of cs) console.log("    " + key.padEnd(14) + " x" + c);
   }
   // Decoded detail (WSF_ARGS=1): what was actually touched.
   if (a.details.size) {
@@ -91,7 +91,7 @@ if (injected.length) {
   for (const r of injected)
     console.log(
       `  seq ${r.seq} tid ${r.tid} ${nameOf(r.sys)} -> ${statusName(r.status)} ` +
-        `(${modeName[r.fault as "P" | "Q" | "M" | "D"]}) at bun+0x${r.rva}`,
+        `(${modeName[r.fault as "P" | "Q" | "M" | "D"]}) at ${r.key}`,
     );
 }
 

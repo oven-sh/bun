@@ -103,11 +103,18 @@ seed + program + schedule replays any bug deterministically.
 
 Schedule file, one rule per line:
 ```
-<SyscallName> <bun_rva_hex|*> <hit_index|*> <mode> <arg>
-NtCreateFile 1a2b3c 3 pre C0000034
-NtReadFile 232b096 1 mangle:short 0
+<SyscallName> <key|*> <hit_index|*> <mode> <arg>
+NtCreateFile b:1a2b3c 3 pre C0000034
+NtReadFile b:232b096 1 mangle:short 0
 NtWriteFile * * delay 300
 ```
+`<key>` is the coordinate identity: `b:<rva>` (a bun.exe caller),
+`k:<rva>` (a kernelbase wrapper), `n:<rva>` (ntdll) - the syscall's immediate
+return address, module-relative, so it is deterministic per calling
+instruction and ASLR-stable. (Scraped bun.exe stack frames name the owner
+for display but are never the identity: a nearby stack leftover can look like
+a caller yet vary run to run.)
+
 Four fault modes:
 - `pre` — skip the real call, return `<arg>` as the status (a genuine
   failure).

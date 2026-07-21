@@ -152,24 +152,34 @@ if (!baseTrace) {
 }
 
 // --- coordinates --------------------------------------------------------------
+// A coordinate = (syscall, key). The KEY is the syscall's immediate return
+// address, module-tagged ("b:rva" bun / "k:rva" kernelbase / "n:rva"
+// ntdll): deterministic per calling instruction, never a stack leftover.
+// repRvas are the scraped bun.exe candidate frames - attribution and
+// display only. A "b:" key IS a real bun frame, so it leads the candidates.
 interface Coord {
-  key: string;
+  id: string; // sys + ":" + key
   sys: number;
   sysName: string;
-  rva: string;
+  key: string; // "<tag>:<hexrva>" - the schedule identity
   hits: number;
   repRvas: string[];
 }
+const bunRvaOfKey = (k: string) => (k.startsWith("b:") ? k.slice(2) : null);
 const coords = new Map<string, Coord>();
 for (const r of baseTrace.recs) {
-  if (r.entryOnly || r.rva === "0") continue;
+  if (r.entryOnly) continue;
   const sysName = nameOf(r.sys);
   if (!(sysName in FAULTS)) continue;
   if (sysFilter && !sysFilter.includes(sysName)) continue;
-  const key = `${r.sys}:${r.rva}`;
-  const c = coords.get(key);
+  const id = `${r.sys}:${r.key}`;
+  const c = coords.get(id);
   if (c) c.hits++;
-  else coords.set(key, { key, sys: r.sys, sysName, rva: r.rva, hits: 1, repRvas: r.rvas });
+  else {
+    const kb = bunRvaOfKey(r.key);
+    const repRvas = kb ? [kb, ...r.rvas.filter(x => x !== kb)] : r.rvas;
+    coords.set(id, { id, sys: r.sys, sysName, key: r.key, hits: 1, repRvas });
+  }
 }
 
 const syms = await symbolize(bun, [...coords.values()].flatMap(c => c.repRvas));
@@ -182,7 +192,12 @@ const symText = (rva: string) => syms.get(rva)?.sym ?? "?";
 const ownerFrame = (c: Coord): string => {
   const mod = coordModule(c);
   for (const rva of c.repRvas) if (classifySym(syms.get(rva)) === mod) return `${symText(rva)} (bun+0x${rva})`;
-  return `${symText(c.rva)} (bun+0x${c.rva})`;
+  const first = c.repRvas[0];
+  if (first) return `${symText(first)} (bun+0x${first})`;
+  // No bun frame at all: name the wrapper module the key lives in.
+  if (c.key.startsWith("k:")) return `kernelbase+0x${c.key.slice(2)}`;
+  if (c.key.startsWith("n:")) return `ntdll+0x${c.key.slice(2)}`;
+  return c.key;
 };
 
 let candidates = [...coords.values()];
@@ -256,19 +271,30 @@ async function worker(w: number) {
     const dir = join(runsDir, `job${String(job.id).padStart(4, "0")}`);
     ensureDir(dir);
     const sched = join(dir, "schedule.txt");
-    await Bun.write(sched, `${job.coord.sysName} ${job.coord.rva} ${job.hit} ${job.mode} ${job.status}\n`);
-    const rr = await runOnce({ bun, args: progArgs, workDir: dir, timeoutMs, schedule: sched });
-    const tr = await readTraceDir(rr.dir);
-    const fired = tr ? tr.recs.filter(r => r.fault).length : 0;
-
+    await Bun.write(sched, `${job.coord.sysName} ${job.coord.key} ${job.hit} ${job.mode} ${job.status}\n`);
+    // A job's own failure (an unreadable trace, a spawn hiccup) degrades to
+    // a 'driver-error' outcome; it must never take the sweep down with it.
+    let rr: Awaited<ReturnType<typeof runOnce>>;
+    let fired = 0;
     let outcome: string;
-    if (rr.outcome === "hang") outcome = "HANG";
-    else if (rr.crash) outcome = job.expect === "abort-expected" ? "expected-abort" : "CRASH";
-    else if (fired === 0) outcome = "no-fire";
-    else if (rr.ms >= 8000) outcome = "slow";
-    else if (rr.exitCode !== base.exitCode) outcome = "error-exit";
-    else if (rr.stdout !== base.stdout) outcome = "diverged";
-    else outcome = "clean";
+    try {
+      rr = await runOnce({ bun, args: progArgs, workDir: dir, timeoutMs, schedule: sched });
+      // faultsOnly: injection runs need "did it fire and where", not every
+      // record of a possibly-huge trace materialized.
+      const tr = await readTraceDir(rr.dir, { faultsOnly: true });
+      fired = tr ? tr.recs.filter(r => r.fault).length : 0;
+      if (rr.outcome === "hang") outcome = "HANG";
+      else if (rr.crash) outcome = job.expect === "abort-expected" ? "expected-abort" : "CRASH";
+      else if (fired === 0) outcome = "no-fire";
+      else if (rr.ms >= 8000) outcome = "slow";
+      else if (rr.exitCode !== base.exitCode) outcome = "error-exit";
+      else if (rr.stdout !== base.stdout) outcome = "diverged";
+      else outcome = "clean";
+    } catch (err) {
+      outcome = "driver-error";
+      rr = { outcome: "exit", exitCode: null, ms: 0, stdout: "", stderr: String(err), logPath: null, dir, crash: false };
+      console.log(`  !! driver-error on job ${job.id}: ${String(err).slice(0, 120)}`);
+    }
 
     const res: Result = { job, outcome, exitCode: rr.exitCode, fired, ms: rr.ms, stdoutDiffers: rr.stdout !== base.stdout };
     results.push(res);
@@ -278,7 +304,7 @@ async function worker(w: number) {
         of: plan.length,
         outcome,
         syscall: job.coord.sysName,
-        rva: job.coord.rva,
+        key: job.coord.key,
         mode: job.mode,
         status: job.status,
         hit: job.hit,
@@ -291,7 +317,7 @@ async function worker(w: number) {
     const mark = outcome === "CRASH" || outcome === "HANG" ? "!!" : "  ";
     console.log(
       `${mark} [${String(results.length).padStart(4)}/${plan.length}] ${outcome.padEnd(10)} ` +
-        `${job.coord.sysName} ${job.mode} ${job.status} hit${job.hit} @${job.coord.rva} ` +
+        `${job.coord.sysName} ${job.mode} ${job.status} hit${job.hit} @${job.coord.key} ` +
         `(${coordModule(job.coord)}) exit=${rr.exitCode} fired=${fired} ${rr.ms}ms`,
     );
   }
@@ -310,6 +336,7 @@ const rank: Record<string, number> = {
   diverged: 5,
   "no-fire": 6,
   clean: 7,
+  "driver-error": 8,
 };
 results.sort((a, b) => rank[a.outcome] - rank[b.outcome]);
 const counts = new Map<string, number>();
@@ -342,7 +369,7 @@ const verdicts = new Map<Result, Verify>();
 if (findings.length) {
   console.log(`\n=== verifying ${findings.length} finding(s) standalone (x3, ${(2 * timeoutMs) / 1000}s timeout) ===`);
   for (const f of findings) {
-    const sched = `${f.job.coord.sysName} ${f.job.coord.rva} ${f.job.hit} ${f.job.mode} ${f.job.status}`;
+    const sched = `${f.job.coord.sysName} ${f.job.coord.key} ${f.job.hit} ${f.job.mode} ${f.job.status}`;
     const outcomes: string[] = [];
     let stage: string | null = null;
     let stacks: string[] = [];
@@ -351,7 +378,7 @@ if (findings.length) {
         bun,
         args: progArgs,
         schedule: sched,
-        dir: join(workRoot, "verify", `${f.job.coord.sys}-${f.job.coord.rva}-${n}`),
+        dir: join(workRoot, "verify", `${f.job.coord.sys}-${f.job.coord.key.replace(':', '_')}-${n}`),
         timeoutMs: 2 * timeoutMs,
         // Capture WHERE it is stuck (hang stacks / crash stack) on the
         // first replay: the single most useful fact about a finding.
@@ -379,7 +406,7 @@ if (findings.length) {
             : "not-reproduced";
     verdicts.set(f, { verdict, outcomes, stage, stacks });
     console.log(
-      `  ${verdict.padEnd(15)} ${f.outcome} ${f.job.coord.sysName} @${f.job.coord.rva} ` +
+      `  ${verdict.padEnd(15)} ${f.outcome} ${f.job.coord.sysName} @${f.job.coord.key} ` +
         `standalone: ${outcomes.join(",")}` +
         (stage ? ` | last stage: ${stage}` : ""),
     );
@@ -392,8 +419,8 @@ if (findings.length) {
     const v = verdicts.get(r);
     console.log(
       `  [${v?.verdict ?? "?"}] ${r.outcome} ${r.job.coord.sysName} ${r.job.mode} ` +
-        `${statusName(r.job.status.toLowerCase())} hit${r.job.hit} @${r.job.coord.rva} = ` +
-        `${symText(r.job.coord.rva)} [${coordModule(r.job.coord)}] ` +
+        `${statusName(r.job.status.toLowerCase())} hit${r.job.hit} @${r.job.coord.key} = ` +
+        `${ownerFrame(r.job.coord)} [${coordModule(r.job.coord)}] ` +
         `standalone=${v?.outcomes.join(",") ?? "-"}`,
     );
   }
@@ -450,7 +477,7 @@ if (findings.length) {
     // out? "one status hangs while its siblings finish at ~30s" is the clue
     // that an error path exists but doesn't cover this status.
     const siblings = results.filter(
-      r => r.job.coord.key === f.job.coord.key && r !== f && r.outcome !== "no-fire",
+      r => r.job.coord.id === f.job.coord.id && r !== f && r.outcome !== "no-fire",
     );
     if (siblings.length)
       md.push(
@@ -465,7 +492,7 @@ if (findings.length) {
     md.push("- **replay**:");
     md.push("```powershell");
     md.push(
-      `bun driver\\repro.ts --bun "${bun}" --schedule "${f.job.coord.sysName} ${f.job.coord.rva} ${f.job.hit} ${f.job.mode} ${f.job.status}" --program ${progArgs.join(" ")}`,
+      `bun driver\\repro.ts --bun "${bun}" --schedule "${f.job.coord.sysName} ${f.job.coord.key} ${f.job.hit} ${f.job.mode} ${f.job.status}" --program ${progArgs.join(" ")}`,
     );
     md.push("```");
     md.push("");
@@ -501,8 +528,8 @@ await Bun.write(
         stacks: verdicts.get(r)?.stacks ?? null,
         expect: r.job.expect,
         syscall: r.job.coord.sysName,
-        rva: r.job.coord.rva,
-        symbol: symText(r.job.coord.rva),
+        key: r.job.coord.key,
+        symbol: ownerFrame(r.job.coord),
         module: coordModule(r.job.coord),
         status: r.job.status,
         mode: r.job.mode,
@@ -511,7 +538,7 @@ await Bun.write(
         fired: r.fired,
         ms: r.ms,
         stdoutDiffers: r.stdoutDiffers,
-        schedule: `${r.job.coord.sysName} ${r.job.coord.rva} ${r.job.hit} ${r.job.mode} ${r.job.status}`,
+        schedule: `${r.job.coord.sysName} ${r.job.coord.key} ${r.job.hit} ${r.job.mode} ${r.job.status}`,
       })),
     },
     null,

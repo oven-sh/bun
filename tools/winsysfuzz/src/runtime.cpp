@@ -2,18 +2,21 @@
 //
 // Trace format (one line per record, written to WSF_LOG_DIR\wsf-<pid>.log):
 //   # header lines: pid, image bases, mode
-//   X <seq> <tid> <sysid> <status_hex> <bun_rva> <frame0>          normal exit
-//   X <seq> <tid> <sysid> <status_hex> <bun_rva> <frame0> !P       pre-fault (real call skipped)
-//   X <seq> <tid> <sysid> <status_hex> <bun_rva> <frame0> !Q       post-fault (status substituted)
-// bun_rva is the first stack frame inside bun.exe, module-relative (0 if
-// none) — the ASLR-stable attribution key the schedule matches against.
+//   X <seq> <tid> <sysid> <status_hex> <key> <cands>          normal exit
+//   X <seq> <tid> <sysid> <status_hex> <key> <cands> !P       pre-fault (real call skipped)
+//   X <seq> <tid> <sysid> <status_hex> <key> <cands> !Q/!M/!D  post/mangle/delay
+// <key> is the coordinate identity: "<tag>:<hexrva>" - the syscall's
+// immediate return address, module-tagged and module-relative (b=bun,
+// k=kernelbase, n=ntdll, o=other). Deterministic per calling instruction
+// and ASLR-stable. <cands> is a comma list of scraped bun.exe frames used
+// only for attribution/display (never identity).
 //
 // Schedule format (WSF_SCHEDULE file), one rule per line:
-//   <SyscallName> <bun_rva_hex|*> <hit_index|*> <pre|post> <status_hex>
-//   e.g.  NtCreateFile 1a2b3c 3 pre C0000034
-// A rule fires when its (syscall, callsite) match count reaches hit_index
+//   <SyscallName> <key|*> <hit_index|*> <mode> <arg>
+//   e.g.  NtCreateFile b:1a2b3c 3 pre C0000034
+// A rule fires when its (syscall, key) match count reaches hit_index
 // ('*' = every match). This is the enumerable fault coordinate the fuzzer
-// sweeps — deterministic given the same JS program.
+// sweeps - deterministic given the same JS program.
 
 #include "common.h"
 #include "generated/hooks.gen.h"
@@ -55,6 +58,33 @@ uintptr_t g_bunEnd = 0;
 // point here (data pointers into .rdata/.data are not return addresses).
 uintptr_t g_txtBase = 0;
 uintptr_t g_txtEnd = 0;
+
+// Module ranges for the COORDINATE KEY. The key is the syscall's immediate
+// return address (_ReturnAddress: the stub's real caller) - deterministic
+// per calling instruction, unlike a scraped stack frame which can be a
+// leftover from a finished call. It is stored module-tagged and
+// module-relative so it is stable across ASLR: 'b' bun.exe, 'k'
+// kernelbase, 'n' ntdll, 'o' other (absolute; rare - mswsock etc.). Scraped
+// bun frames remain as attribution/display candidates, never as identity.
+uintptr_t g_kbBase = 0, g_kbEnd = 0; // kernelbase
+uintptr_t g_ntBase = 0, g_ntEnd = 0; // ntdll
+
+struct CallKey {
+  char tag;      // 'b' 'k' 'n' 'o'
+  uintptr_t rva; // module-relative (absolute for 'o')
+};
+inline CallKey KeyOf(uintptr_t ret) {
+  if (ret >= g_bunBase && ret < g_bunEnd) return {'b', ret - g_bunBase};
+  if (ret >= g_kbBase && ret < g_kbEnd) return {'k', ret - g_kbBase};
+  if (ret >= g_ntBase && ret < g_ntEnd) return {'n', ret - g_ntBase};
+  return {'o', ret};
+}
+uintptr_t ImageSize(HMODULE m) {
+  if (!m) return 0;
+  auto* dos = (IMAGE_DOS_HEADER*)m;
+  auto* nt = (IMAGE_NT_HEADERS*)((uintptr_t)m + dos->e_lfanew);
+  return nt->OptionalHeader.SizeOfImage;
+}
 
 // A return address points just past a call. Checking the preceding bytes
 // for a call encoding filters stack garbage that merely looks like a code
@@ -203,8 +233,9 @@ static size_t EscapeUtf16(const wchar_t* s, size_t n, char* out, size_t cap) {
 
 struct Rule {
   uint32_t sys;
-  uintptr_t rva; // 0 => wildcard callsite
-  bool anyCallsite;
+  bool anyCallsite; // '*' key
+  char keyTag;      // 'b' 'k' 'n' 'o' - which module the return address is in
+  uintptr_t keyRva; // module-relative return address (the stable identity)
   LONG hitIndex; // 0 => every match
   Fault mode;
   MangleKind mangle;
@@ -310,7 +341,17 @@ void LoadSchedule(const char* path) {
     memset(&r, 0, sizeof r);
     r.sys = sys;
     r.anyCallsite = rvaTok[0] == '*';
-    r.rva = r.anyCallsite ? 0 : (uintptr_t)strtoull(rvaTok, nullptr, 16);
+    // Key format "<tag>:<hexrva>", e.g. b:1a2b3c (bun), k:4a77 (kernelbase).
+    // A bare hex value is accepted as a bun key for hand-written schedules.
+    if (!r.anyCallsite) {
+      if (rvaTok[1] == ':') {
+        r.keyTag = rvaTok[0];
+        r.keyRva = (uintptr_t)strtoull(rvaTok + 2, nullptr, 16);
+      } else {
+        r.keyTag = 'b';
+        r.keyRva = (uintptr_t)strtoull(rvaTok, nullptr, 16);
+      }
+    }
     r.hitIndex = hitTok[0] == '*' ? 0 : (LONG)strtol(hitTok, nullptr, 10);
     // mode: pre | post | mangle:short | mangle:zero | delay
     // status field is hex for statuses; for delay it is decimal milliseconds.
@@ -356,10 +397,10 @@ void LogEntryOnly(uint32_t sysId, uintptr_t retAddr) {
   intptr_t d = Depth();
   if (!g_ready || d != 0) return;
   SetDepth(1);
-  uintptr_t rva = (retAddr >= g_bunBase && retAddr < g_bunEnd) ? retAddr - g_bunBase : 0;
+  CallKey k = KeyOf(retAddr);
   LONG64 seq = InterlockedIncrement64(&g_seq);
-  LogLine("E %lld %lu %u %llx %llx\n", seq, GetCurrentThreadId(), sysId,
-          (unsigned long long)rva, (unsigned long long)retAddr);
+  LogLine("E %lld %lu %u %c:%llx 0\n", seq, GetCurrentThreadId(), sysId, k.tag,
+          (unsigned long long)k.rva);
   SetDepth(0);
 }
 
@@ -408,10 +449,11 @@ bool CallCtx::PreFault() {
   if (!live_) return false;
   int start = g_ruleStart[sys_];
   if (start < 0) return false;
-  uintptr_t rva = bunFrame_ ? bunFrame_ - g_bunBase : 0;
+  // Match on the STABLE identity: the immediate return address, module-tagged.
+  CallKey k = KeyOf(frames_[0]);
   for (int i = start; i < g_ruleEnd[sys_]; i++) {
     Rule& r = g_rules[i];
-    if (!r.anyCallsite && r.rva != rva) continue;
+    if (!r.anyCallsite && (r.keyTag != k.tag || r.keyRva != k.rva)) continue;
     LONG hit = InterlockedIncrement(&r.hits);
     if (r.hitIndex != 0 && hit != r.hitIndex) continue;
     fault_ = r.mode;
@@ -420,11 +462,12 @@ bool CallCtx::PreFault() {
     if (fault_ == Fault::Pre) {
       // Real call is skipped: log the exit record here.
       char rvas[64];
+      char kbuf[24];
       FormatRvas(rvas, sizeof rvas);
       LONG64 seq = InterlockedIncrement64(&g_seq);
-      LogLine("X %lld %lu %u %llx %s %llx !P\n", seq, GetCurrentThreadId(), sys_,
-              (unsigned long long)injected_, rvas,
-              (unsigned long long)(nframes_ ? frames_[0] : 0));
+      CallCtx::Key(kbuf, sizeof kbuf, frames_[0]);
+      LogLine("X %lld %lu %u %llx %s %s !P\n", seq, GetCurrentThreadId(), sys_,
+              (unsigned long long)injected_, kbuf, rvas);
       LogDetail(seq, injected_);
       return true;
     }
@@ -434,6 +477,12 @@ bool CallCtx::PreFault() {
 }
 
 CallCtx::~CallCtx() { SetDepth(Depth() - 1); }
+
+// Format the coordinate key "<tag>:<hexrva>" from a return address.
+void CallCtx::Key(char* out, size_t cap, uintptr_t retAddr) {
+  CallKey k = KeyOf(retAddr);
+  snprintf(out, cap, "%c:%llx", k.tag, (unsigned long long)k.rva);
+}
 
 void CallCtx::FormatRvas(char* out, size_t cap) const {
   size_t len = 0;
@@ -477,10 +526,12 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
       }
     }
     char rvas[64];
+    char kbuf[24];
     FormatRvas(rvas, sizeof rvas);
+    Key(kbuf, sizeof kbuf, frames_[0]);
     LONG64 seq = InterlockedIncrement64(&g_seq);
-    LogLine("X %lld %lu %u %llx %s %llx%s\n", seq, GetCurrentThreadId(), sys_,
-            (unsigned long long)ret, rvas, (unsigned long long)(nframes_ ? frames_[0] : 0), tag);
+    LogLine("X %lld %lu %u %llx %s %s%s\n", seq, GetCurrentThreadId(), sys_,
+            (unsigned long long)ret, kbuf, rvas, tag);
     LogDetail(seq, ret);
   }
   return ret;
@@ -606,8 +657,12 @@ bool RuntimeInit() {
           (unsigned long long)(g_txtEnd - g_txtBase));
   HMODULE ntdll = GetModuleHandleA("ntdll.dll");
   HMODULE kb = GetModuleHandleA("kernelbase.dll");
-  LogLine("# base ntdll %llx\n", (unsigned long long)(uintptr_t)ntdll);
-  LogLine("# base kernelbase %llx\n", (unsigned long long)(uintptr_t)kb);
+  g_ntBase = (uintptr_t)ntdll;
+  g_ntEnd = g_ntBase + ImageSize(ntdll);
+  g_kbBase = (uintptr_t)kb;
+  g_kbEnd = g_kbBase + ImageSize(kb);
+  LogLine("# base ntdll %llx\n", (unsigned long long)g_ntBase);
+  LogLine("# base kernelbase %llx\n", (unsigned long long)g_kbBase);
 
   if (EnvA("WSF_SCHEDULE", tmp, sizeof tmp)) LoadSchedule(tmp);
 

@@ -104,7 +104,7 @@ md.push(`# winsysfuzz hunt roll-up`);
 md.push("");
 md.push(`- ${scenarios.length} target(s); bun=\`${bun}\``);
 md.push("");
-const cards: { scenario: string; verdict: string; card: string[] }[] = [];
+const cards: { scenario: string; verdict: string; sig: string; card: string[] }[] = [];
 const summary: string[] = [];
 for (const s of scenarios) {
   const runs = readdirSync(s.workDir).sort();
@@ -117,21 +117,53 @@ for (const s of scenarios) {
     for (const r of rep.results) counts.set(r.outcome, (counts.get(r.outcome) ?? 0) + 1);
     tally = [...counts.entries()].map(([k, v]) => `${k}=${v}`).join(" ");
   } catch {}
-  summary.push(`- **${s.name}** (${s.ok ? "ok" : "sweep error"}): ${tally}`);
-  if (!findingsPath) continue;
+  let loadLine = "";
   try {
-    const text = await Bun.file(findingsPath).text();
-    // Split into cards on '## [' headers; keep verdict for sorting.
+    const text = findingsPath ? await Bun.file(findingsPath).text() : "";
+    // Carry the sweep's own load-health measurement into the roll-up so
+    // every verdict in it can be weighed against the box's condition.
+    loadLine = text.split("\n").find(l => l.startsWith("- **load health**")) ?? "";
+    // Split into cards on '## [' headers; keep verdict + a signature
+    // (syscall + owning function, offset stripped) for cross-target dedupe.
     const parts = text.split(/\n(?=## \[)/).slice(1);
     for (const part of parts) {
       const v = /^## \[([a-z-]+)\]/.exec(part)?.[1] ?? "unknown";
-      cards.push({ scenario: s.name, verdict: v, card: [`### ${s.name}`, part.trim().replace(/^## /, "**") .replace(/\n/, "**\n")] });
+      const sys = /^## \[[a-z-]+\] \S+ - (\w+)/.exec(part)?.[1] ?? "?";
+      const where = /\*\*where the fault fired\*\*: `([^`(]+?)(\+0x[0-9a-f]+)? /.exec(part)?.[1] ?? "?";
+      cards.push({
+        scenario: s.name,
+        verdict: v,
+        sig: `${sys} @ ${where.trim()}`,
+        card: [`### ${s.name}`, part.trim().replace(/^## /, "**").replace(/\n/, "**\n")],
+      });
     }
   } catch {}
+  summary.push(`- **${s.name}** (${s.ok ? "ok" : "sweep error"}): ${tally}` + (loadLine ? `\n  ${loadLine.replace(/^- /, "")}` : ""));
 }
 md.push("## per-scenario outcome tallies");
 md.push(...summary);
 md.push("");
+
+// --- recurring findings across targets ------------------------------------------
+// The same (syscall, owning function) firing in several UNRELATED programs
+// is the strongest signal a hunt produces - chase these first.
+const bySig = new Map<string, { scenarios: Set<string>; verdicts: Set<string> }>();
+for (const c of cards) {
+  const e = bySig.get(c.sig) ?? { scenarios: new Set(), verdicts: new Set() };
+  e.scenarios.add(c.scenario);
+  e.verdicts.add(c.verdict);
+  bySig.set(c.sig, e);
+}
+const recurring = [...bySig.entries()].filter(([, e]) => e.scenarios.size >= 2);
+if (recurring.length) {
+  md.push(`## recurring across targets (${recurring.length}) - chase these first`);
+  for (const [sig, e] of recurring.sort((a, b) => b[1].scenarios.size - a[1].scenarios.size))
+    md.push(
+      `- \`${sig}\` in **${e.scenarios.size}** targets (${[...e.scenarios].join(", ")}); ` +
+        `verdicts: ${[...e.verdicts].join(", ")}`,
+    );
+  md.push("");
+}
 const rank: Record<string, number> = { confirmed: 0, slow: 1, "load-dependent": 2, "not-reproduced": 3 };
 cards.sort((a, b) => (rank[a.verdict] ?? 9) - (rank[b.verdict] ?? 9));
 md.push(`## findings (${cards.length}) - confirmed first`);

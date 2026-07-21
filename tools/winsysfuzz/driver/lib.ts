@@ -54,7 +54,8 @@ export interface Rec {
   tid: number;
   sys: number;
   status: string;
-  rva: string; // primary callsite (schedule key)
+  key: string; // coordinate identity "<tag>:<hexrva>" (immediate return addr) - the schedule key
+  rva: string; // first candidate bun.exe frame (display/attribution), "0" if none
   rvas: string[]; // candidate frames, nearest first
   frame0: string;
   fault: "" | "P" | "Q" | "M" | "D"; // pre / post / mangle / delay
@@ -70,13 +71,17 @@ export function unescapePath(s: string): string {
 export interface Trace {
   notes: string[];
   recs: Rec[];
+  recCount: number; // total X/E records seen, even those not materialized
   bunBase: string;
   cleanEnd: boolean;
   attached: number;
 }
 
-export function parseTrace(text: string): Trace {
-  const t: Trace = { notes: [], recs: [], bunBase: "0", cleanEnd: false, attached: 0 };
+// faultsOnly: materialize only records carrying a fault marker (still
+// counting all). Injection runs need "did it fire, and where" - not a
+// 200k-record array for a 20MB trace of a big test file.
+export function parseTrace(text: string, faultsOnly = false): Trace {
+  const t: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: false, attached: 0 };
   const bySeq = new Map<number, Rec>();
   for (const line of text.split("\n")) {
     if (!line) continue;
@@ -91,16 +96,21 @@ export function parseTrace(text: string): Trace {
     }
     const p = line.split(" ");
     if (p[0] === "X") {
-      const rvas = p[5] === "0" ? [] : p[5].split(",");
+      t.recCount++;
+      const fault: Rec["fault"] =
+        p[7] === "!P" ? "P" : p[7] === "!Q" ? "Q" : p[7] === "!M" ? "M" : p[7] === "!D" ? "D" : "";
+      if (faultsOnly && !fault) continue;
+      const rvas = p[6] === "0" || !p[6] ? [] : p[6].split(",");
       const rec: Rec = {
         seq: +p[1],
         tid: +p[2],
         sys: +p[3],
         status: p[4],
+        key: p[5],
         rva: rvas[0] ?? "0",
         rvas,
-        frame0: p[6],
-        fault: p[7] === "!P" ? "P" : p[7] === "!Q" ? "Q" : p[7] === "!M" ? "M" : p[7] === "!D" ? "D" : "",
+        frame0: p[5],
+        fault,
         entryOnly: false,
       };
       t.recs.push(rec);
@@ -114,8 +124,9 @@ export function parseTrace(text: string): Trace {
       const rec = bySeq.get(+p[1]);
       if (rec) rec.detail = p.slice(3).join(" ");
     } else if (p[0] === "E") {
-      const rvas = p[4] === "0" ? [] : p[4].split(",");
-      t.recs.push({ seq: +p[1], tid: +p[2], sys: +p[3], status: "", rva: rvas[0] ?? "0", rvas, frame0: p[5], fault: "", entryOnly: true });
+      t.recCount++;
+      if (faultsOnly) continue;
+      t.recs.push({ seq: +p[1], tid: +p[2], sys: +p[3], status: "", key: p[4], rva: "0", rvas: [], frame0: p[4], fault: "", entryOnly: true });
     }
   }
   return t;
@@ -219,15 +230,26 @@ export const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 // (recursive injection). Merge them - a fault that fires in a child, or a
 // syscall a child makes, belongs to the run. Records keep their own pid via
 // a note; seq numbers are per-process and not comparable across logs.
-export async function readTraceDir(dir: string): Promise<Trace | null> {
+export async function readTraceDir(dir: string, opts: { faultsOnly?: boolean } = {}): Promise<Trace | null> {
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir).filter(f => f.startsWith("wsf-") && f.endsWith(".log"));
   if (!files.length) return null;
-  const merged: Trace = { notes: [], recs: [], bunBase: "0", cleanEnd: true, attached: 0 };
+  const merged: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: true, attached: 0 };
   for (const f of files) {
-    const t = parseTrace(await Bun.file(join(dir, f)).text());
-    merged.notes.push(`# --- ${f} ---`, ...t.notes);
-    merged.recs.push(...t.recs);
+    let t: Trace;
+    try {
+      t = parseTrace(await Bun.file(join(dir, f)).text(), opts.faultsOnly);
+    } catch (err) {
+      // A single unreadable/oversized log degrades to a note, never an
+      // exception - one bad trace must not take a whole sweep down.
+      merged.notes.push(`# read-error ${f}: ${String(err).slice(0, 120)}`);
+      merged.cleanEnd = false;
+      continue;
+    }
+    merged.notes.push(`# --- ${f} ---`);
+    for (const n of t.notes) merged.notes.push(n); // no spread: 100k+ args overflow the stack
+    for (const r of t.recs) merged.recs.push(r);
+    merged.recCount += t.recCount;
     if (merged.bunBase === "0") merged.bunBase = t.bunBase;
     merged.cleanEnd = merged.cleanEnd && t.cleanEnd;
     merged.attached = Math.max(merged.attached, t.attached);
@@ -357,7 +379,7 @@ export async function replayCoordinate(opts: {
   const ms = Math.round(performance.now() - t0);
   const exitCode = timedOut ? null : proc.exitCode;
   const crash = exitCode !== null && (exitCode >= 0x80000000 || exitCode < 0);
-  const trace = await readTraceDir(opts.dir);
+  const trace = await readTraceDir(opts.dir, { faultsOnly: true });
   const fired = trace ? trace.recs.filter(r => r.fault) : [];
   let outcome: ReplayResult["outcome"] = "clean";
   if (timedOut) outcome = "HANG";

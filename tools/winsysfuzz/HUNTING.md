@@ -89,7 +89,7 @@ timestamped directory; each result row carries a ready-made `schedule` line.
 
 **4. Triage a finding.**
 ```powershell
-bun driver\repro.ts --bun <bun.exe> --schedule "NtDeviceIoControlFile 189e64f 1 pre C000009A" `
+bun driver\repro.ts --bun <bun.exe> --schedule "NtDeviceIoControlFile b:189e64f 1 pre C000009A" `
     --program <script.js> --times 3
 ```
 Writes `finding.md`: determinism ratio, the true owning callsite

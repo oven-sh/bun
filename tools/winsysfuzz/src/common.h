@@ -49,10 +49,12 @@ class CallCtx {
   ULONG_PTR Exit(ULONG_PTR real);
 
  private:
-  // Formats up to 3 candidate bun.exe callsite RVAs as "a,b,c" ("0" if none).
-  // The first is the schedule's key; the rest let the analyzer walk past an
-  // inlined std:: frame to the owning module.
+  // Formats up to 4 candidate bun.exe callsite RVAs as "a,b,c" ("0" if none) -
+  // attribution/display only, never the coordinate identity.
   void FormatRvas(char* out, size_t cap) const;
+  // Formats the coordinate key "<tag>:<hexrva>" from a return address:
+  // the stable identity the schedule matches on.
+  static void Key(char* out, size_t cap, uintptr_t retAddr);
   // Handle-table maintenance (always) plus WSF_ARGS=1 detail records:
   // A (decoded NT path) and D (handle target, AFD ioctl, lengths).
   void LogDetail(LONG64 seq, ULONG_PTR ret) const;

@@ -121,7 +121,10 @@ if (stress > 0) {
 // Callsite: symbolize every DISTINCT candidate frame from a real fired
 // record — the nearest frame keys the schedule, deeper frames name the owner.
 const withFault = runs.find(r => r.faultRec);
-const candidates = [...new Set(withFault?.faultRec?.rvas ?? [schedRva])];
+// Fallback when no fault fired: a b:-tagged key is itself a bun frame; a
+// k:/n: key (kernelbase/ntdll wrapper) has no bun frame to symbolize.
+const keyBunRva = schedRva.startsWith("b:") ? schedRva.slice(2) : /^[0-9a-f]+$/i.test(schedRva) ? schedRva : null;
+const candidates = [...new Set(withFault?.faultRec?.rvas ?? (keyBunRva ? [keyBunRva] : []))];
 const syms = await symbolize(bun, candidates);
 const owner = moduleOf({ rvas: candidates } as any, syms);
 const frameLines = candidates.map((rva, i) => {

@@ -90,11 +90,9 @@ for (const f of files) {
     for (const r of trace.recs) {
       const name = nameOf(r.sys);
       row.syscalls.add(name);
-      if (r.rva !== "0") {
-        const m = moduleOf(r, syms);
-        row.modules.set(m, (row.modules.get(m) ?? 0) + 1);
-        if (INJECTABLE.has(name)) row.coords.add(`${name}:${r.rva}`);
-      }
+      const m = moduleOf(r, syms);
+      row.modules.set(m, (row.modules.get(m) ?? 0) + 1);
+      if (INJECTABLE.has(name)) row.coords.add(`${name}:${r.key}`);
     }
   }
   rows.push(row);

@@ -14,6 +14,13 @@ use crate::cli::test_command::CommandLineReporter;
 use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
+
+unsafe extern "C" {
+    /// C++ side in `src/jsc/bindings/BunPlugin.cpp` — removes `mock.module()`
+    /// entries whose path is not in `persistentMockPaths`, and evicts the
+    /// ESM registry / CJS require cache for each removed path.
+    safe fn BunPlugin__clearTransientModuleMocks(global: &JSGlobalObject);
+}
 // Callers use `group_log!` / `group_begin!` / `group_end!` below.
 /// Thin macro over `debug::group::begin()` so call sites stay `group_begin!()`.
 macro_rules! group_begin {
@@ -551,6 +558,20 @@ impl BunTestRoot {
             active.get().reporter = None;
         }
         self.active_file = None; // drops the Rc (deinit)
+
+        // Clear `mock.module(...)` entries installed by this file's top-level
+        // code or tests so the next file starts from the real modules.
+        // Preload-installed mocks are preserved (see
+        // `BunPlugin::OnLoad::persistentMockPaths`). Under `--isolate` the
+        // whole global is swapped out by `swap_global_for_test_isolation`
+        // immediately after this, making the call redundant but cheap.
+        let vm = VirtualMachine::get();
+        if !vm.is_shutting_down() {
+            // Single-threaded; the C++ side casts to `Zig::GlobalObject*`
+            // and touches only `onLoadPlugins`, `moduleLoader()`, and
+            // `requireMap()` — all stable for the VM lifetime.
+            BunPlugin__clearTransientModuleMocks(vm.global());
+        }
     }
 
     pub fn get_active_file_unless_in_preload(&mut self, vm: &VirtualMachine) -> Option<&mut BunTest> {

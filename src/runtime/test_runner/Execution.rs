@@ -512,7 +512,7 @@ impl Execution {
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
-            Execution::on_entry_completed(entry_ptr);
+            Execution::on_entry_completed(entry_ptr, sequence.test_entry.is_none());
 
             sequence.executing = false;
             if sequence.maybe_skip {
@@ -605,7 +605,7 @@ impl Execution {
         }
     }
 
-    fn on_entry_started(entry: &mut ExecutionEntry) {
+    fn on_entry_started(entry: &mut ExecutionEntry, in_hooks_only_sequence: bool) {
         if entry.callback.is_none() {
             return;
         }
@@ -618,9 +618,31 @@ impl Execution {
             group_log::log(format_args!("-> entry.timeout: 0"));
             entry.timespec = Timespec::EPOCH;
         }
+
+        // A `beforeAll`/`afterAll` registered during `--preload` executes
+        // here, after `loadPreloads()` cleared `vm.is_in_preload`. Flag its
+        // whole execution window — including async continuations, since the
+        // entry stays active until its promise settles — so `mock.module()`
+        // inside it installs process-lifetime mocks like preload top-level
+        // code. Restricted to hooks-only sequences (`test_entry == None`):
+        // those run in their own group that settles before any test group
+        // starts, so no concurrently-scheduled test body can observe the
+        // VM-global flag. Preload `beforeEach`/`afterEach` clones live
+        // inside test sequences and *do* interleave with sibling tests under
+        // `test.concurrent`; they stay transient — they re-run before every
+        // test in every file, so reinstalling per file is the correct
+        // per-file behavior anyway.
+        if entry.added_in_phase == AddedInPhase::Preload && in_hooks_only_sequence {
+            VirtualMachine::get().as_mut().is_in_preload_hook = true;
+        }
     }
 
-    fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
+    fn on_entry_completed(entry: NonNull<ExecutionEntry>, in_hooks_only_sequence: bool) {
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+        if unsafe { entry.as_ref() }.added_in_phase == AddedInPhase::Preload && in_hooks_only_sequence {
+            VirtualMachine::get().as_mut().is_in_preload_hook = false;
+        }
+    }
 
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
@@ -981,7 +1003,7 @@ fn step_sequence_one(
     if Some(next_item_ptr) == sequence.first_entry {
         Execution::on_sequence_started(sequence);
     }
-    Execution::on_entry_started(next_item);
+    Execution::on_entry_started(next_item, sequence.test_entry.is_none());
 
     if let Some(cb) = next_item.callback.as_ref() {
         group_log::log(format_args!("runSequence queued callback"));

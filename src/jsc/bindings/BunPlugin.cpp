@@ -12,6 +12,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/CyclicModuleRecord.h>
@@ -38,6 +39,7 @@
 namespace Zig {
 
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
+extern "C" bool Bun__VirtualMachine__isInPreload(void* bunVM);
 using OnAppendPluginCallback = void (*)(void*, JSGlobalObject* globalObject);
 
 static bool isValidNamespaceString(String& namespaceString)
@@ -145,12 +147,10 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
 
-    if (global->onLoadPlugins.virtualModules == nullptr) {
-        global->onLoadPlugins.virtualModules = new BunPlugin::VirtualModuleMap;
-    }
-    auto* virtualModules = global->onLoadPlugins.virtualModules;
-
-    virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, uncheckedDowncast<JSC::JSObject>(functionValue) });
+    // `Bun.plugin({ module })` virtual modules persist across per-file
+    // `bun test` teardown — they're process-level plugin registrations,
+    // not test-local mocks.
+    global->onLoadPlugins.addModuleMock(vm, moduleId, uncheckedDowncast<JSC::JSObject>(functionValue), /*persistent=*/true, /*mockBorn=*/false, /*cjsEntryPreExisted=*/false);
 
     auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});
@@ -396,16 +396,67 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
     return nullptr;
 }
 
-void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
+void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject, bool persistent, bool mockBorn, bool cjsEntryPreExisted)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
+    auto& onLoad = globalObject->onLoadPlugins;
 
-    if (globalObject->onLoadPlugins.virtualModules == nullptr) {
-        globalObject->onLoadPlugins.virtualModules = new BunPlugin::VirtualModuleMap;
+    if (onLoad.virtualModules == nullptr) {
+        onLoad.virtualModules = new BunPlugin::VirtualModuleMap;
     }
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+    auto* virtualModules = onLoad.virtualModules;
+
+    // Capture the displaced entry *before* overwriting so transient teardown
+    // can restore the preload / `Bun.plugin` mock this call is shadowing.
+    JSC::Strong<JSC::JSObject> displacedEntry;
+    bool displacedWasPersistent = false;
+    if (auto existing = virtualModules->get(path)) {
+        displacedEntry = JSC::Strong<JSC::JSObject> { vm, existing.get() };
+        displacedWasPersistent = onLoad.persistentMockPaths && onLoad.persistentMockPaths->contains(path);
+    }
 
     virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
+
+    if (persistent) {
+        if (onLoad.persistentMockPaths == nullptr) {
+            onLoad.persistentMockPaths = new BunPlugin::PersistentMockPathSet;
+        }
+        onLoad.persistentMockPaths->add(path);
+        // A persistent install clears any stale transient record for this
+        // path — the persistent entry now owns the slot and teardown must
+        // not evict it.
+        if (onLoad.transientMockRecords) {
+            onLoad.transientMockRecords->remove(path);
+        }
+    } else {
+        // Transient install: track what we displaced so teardown can put it
+        // back. Demote the path from `persistentMockPaths` — the current
+        // value in `virtualModules` is the transient mock and is not itself
+        // persistent. `displacedWasPersistent` remembers that the prior
+        // owner was persistent so teardown can re-promote the path when it
+        // restores the displaced entry.
+        if (onLoad.persistentMockPaths) {
+            onLoad.persistentMockPaths->remove(path);
+        }
+        if (onLoad.transientMockRecords == nullptr) {
+            onLoad.transientMockRecords = new BunPlugin::InstalledMocksMap;
+        }
+        // If this is the *first* transient install for this path in the
+        // current test file, record displacement state. If this overwrites
+        // a previous transient install (test file mocks the same path
+        // twice), keep the original displacement + the original ESM
+        // snapshot we already took — re-snapshotting would capture the
+        // previous mock's values, not the real module's.
+        auto it = onLoad.transientMockRecords->find(path);
+        if (it == onLoad.transientMockRecords->end()) {
+            InstalledMockRecord record;
+            record.displacedEntry = std::move(displacedEntry);
+            record.displacedWasPersistent = displacedWasPersistent;
+            record.wasMockBorn = mockBorn;
+            record.cjsEntryPreExisted = cjsEntryPreExisted;
+            onLoad.transientMockRecords->set(path, std::move(record));
+        }
+    }
 }
 
 class JSModuleMock final : public JSC::JSNonFinalObject {
@@ -631,6 +682,19 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     bool removeFromESM = false;
     bool removeFromCJS = false;
 
+    // Mocks installed while `--preload` is executing persist across `bun test`
+    // per-file teardown; mocks installed by a test file are transient. We need
+    // the flag here (not only inside `addModuleMock`) so we know whether to
+    // capture the original ESM namespace values for teardown-time restore.
+    const bool persistent = Bun__VirtualMachine__isInPreload(globalObject->bunVM());
+
+    // Snapshot of the module-environment values the mock is about to overwrite.
+    // Populated only for transient mocks against already-loaded ESM modules;
+    // replayed by `BunPlugin__clearTransientModuleMocks` so re-exporters that
+    // bind through this module's environment slots revert to the real values.
+    JSC::JSModuleNamespaceObject* mockedNamespace = nullptr;
+    WTF::Vector<std::pair<JSC::Identifier, JSC::Strong<JSC::Unknown>>> esmOriginals;
+
     auto specifierIdent = JSC::Identifier::fromString(vm, specifierString->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     if (auto* entry = globalObject->moduleLoader()->registryEntry(specifierIdent)) {
@@ -653,6 +717,23 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                         RETURN_IF_EXCEPTION(scope, {});
                         auto* object = exportsValue.getObject();
                         removeFromESM = false;
+                        if (!persistent) {
+                            mockedNamespace = moduleNamespaceObject;
+                        }
+
+                        auto snapshotAndOverride = [&](JSC::Identifier name, JSValue value) -> bool {
+                            if (!persistent) {
+                                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                                JSValue original = moduleNamespaceObject->get(globalObject, name);
+                                if (scope.exception()) [[unlikely]] {
+                                    (void)scope.tryClearException();
+                                    original = jsUndefined();
+                                }
+                                esmOriginals.append({ name, JSC::Strong<JSC::Unknown> { vm, original } });
+                            }
+                            moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+                            return !scope.exception();
+                        };
 
                         if (object) {
                             JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
@@ -667,14 +748,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                     (void)scope.tryClearException();
                                     value = jsUndefined();
                                 }
-                                moduleNamespaceObject->overrideExportValue(globalObject, name, value);
-                                RETURN_IF_EXCEPTION(scope, {});
+                                if (!snapshotAndOverride(name, value)) {
+                                    RETURN_IF_EXCEPTION(scope, {});
+                                }
                             }
 
                         } else {
                             // if it's not an object, I guess we just set the default export?
-                            moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
-                            RETURN_IF_EXCEPTION(scope, {});
+                            if (!snapshotAndOverride(vm.propertyNames->defaultKeyword, exportsValue)) {
+                                RETURN_IF_EXCEPTION(scope, {});
+                            }
                         }
 
                         // TODO: do we need to handle intermediate loading state here?
@@ -711,7 +794,51 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
+    // No loaded-and-linked namespace at install time means any module record
+    // this path acquires afterwards was materialized from the mock factory.
+    // A require-cache entry kept in place (exports replaced above) means its
+    // first requirer predates the mock and captured real values.
+    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock, persistent,
+        /*mockBorn=*/!mockedNamespace,
+        /*cjsEntryPreExisted=*/entryValue && !removeFromCJS);
+
+    // Attach the ESM teardown snapshot (if any) to the freshly-created
+    // transient record. `addModuleMock` already set up the record slot;
+    // filling in the namespace + originals here keeps the data-collection
+    // logic local to the overrideExportValue loop above.
+    if (!persistent && mockedNamespace) {
+        auto& onLoad = globalObject->onLoadPlugins;
+        if (onLoad.transientMockRecords) {
+            // Skip records whose first install was mock-born: the namespace a
+            // later re-mock finds was itself materialized from a mock factory,
+            // so "originals" snapshotted from it are mock values. Leaving the
+            // record snapshot-free keeps teardown on the eviction path.
+            if (auto it = onLoad.transientMockRecords->find(specifier); it != onLoad.transientMockRecords->end() && !it->value.wasMockBorn) {
+                if (!it->value.esmNamespace) {
+                    it->value.esmNamespace = JSC::Strong<JSC::JSModuleNamespaceObject> { vm, mockedNamespace };
+                }
+                // Merge per export name, keeping the first snapshot of each:
+                // it reflects the value the name held before any mock in this
+                // file touched it. A later mock of the same path may override
+                // a *different* export set (first `{a}`, then `{b}`) — `b`'s
+                // original comes from the second call's snapshot, while a
+                // re-snapshot of `a` would capture the first mock's value and
+                // must be ignored.
+                for (auto& pair : esmOriginals) {
+                    bool alreadyRecorded = false;
+                    for (const auto& existing : it->value.esmOriginals) {
+                        if (existing.first == pair.first) {
+                            alreadyRecorded = true;
+                            break;
+                        }
+                    }
+                    if (!alreadyRecorded) {
+                        it->value.esmOriginals.append(std::move(pair));
+                    }
+                }
+            }
+        }
+    }
 
     return JSValue::encode(jsUndefined());
 }
@@ -986,8 +1113,326 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
 
     delete global->onLoadPlugins.virtualModules;
     global->onLoadPlugins.virtualModules = nullptr;
+    global->onLoadPlugins.mustDoExpensiveRelativeLookup = false;
+
+    delete global->onLoadPlugins.persistentMockPaths;
+    global->onLoadPlugins.persistentMockPaths = nullptr;
+
+    delete global->onLoadPlugins.transientMockRecords;
+    global->onLoadPlugins.transientMockRecords = nullptr;
 
     return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+/// Clears per-test-file `mock.module(...)` registrations:
+/// - restores the ESM module-environment values the mock overrode (so cached
+///   re-exporters that bind through the same slot see the real value again),
+/// - restores the displaced preload / `Bun.plugin({ module })` entry if the
+///   transient mock shadowed one, or removes the `virtualModules` slot
+///   entirely if there was nothing to restore,
+/// - evicts the ESM registry entry and CJS require-cache entry for fully
+///   removed mocks, so the next import re-executes the real source,
+/// - transitively evicts cached modules that imported a module materialized
+///   from a transient mock factory (their bindings chain into environment
+///   slots that never held real values).
+///
+/// Persistent mocks (paths currently in `persistentMockPaths`) are left
+/// untouched. Called from Rust's per-file teardown in `bun test`.
+extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
+{
+    auto& onLoad = global->onLoadPlugins;
+    auto* transientRecords = onLoad.transientMockRecords;
+    if (transientRecords == nullptr || transientRecords->isEmpty()) {
+        return;
+    }
+
+    // Take ownership of the map so iteration doesn't alias with re-entry
+    // from any JS the restore path might invoke (overrideExportValue,
+    // requireMap::remove). A fresh empty map covers the tail case of a JS
+    // callback that itself calls mock.module() during teardown.
+    std::unique_ptr<Zig::BunPlugin::InstalledMocksMap> records { transientRecords };
+    onLoad.transientMockRecords = nullptr;
+
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* moduleLoader = global->moduleLoader();
+    auto* requireMap = global->requireMap();
+    auto* virtualModules = onLoad.virtualModules;
+
+    // Module records that were materialized *from* a transient mock factory
+    // (install saw no registry entry, so there were no original values to
+    // snapshot — the record's environment was born holding mock values).
+    // Evicting only such a record is not enough: cached importers hold live
+    // bindings into its environment slots, so they (and their importers) are
+    // evicted transitively below.
+    WTF::HashSet<JSC::AbstractModuleRecord*> mockBornRecords;
+    auto collectMockBornRecord = [&](const WTF::String& path) {
+        auto ident = JSC::Identifier::fromString(vm, path);
+        if (auto* regEntry = moduleLoader->registryEntry(ident)) {
+            if (auto* rec = regEntry->record()) {
+                mockBornRecords.add(rec);
+            }
+        }
+        return ident;
+    };
+
+    // CJS modules whose cached exports came from a transient mock: the
+    // require-map values of every evicted transient path, plus (transitively)
+    // any cached module whose `m_children` reaches one. A CJS consumer copies
+    // values out of the mocked module at require time, so unlike ESM there is
+    // no binding to restore — the consumer itself must re-run.
+    WTF::HashSet<JSC::JSCell*> poisonedCJSModules;
+    // Require-map keys (filenames) queued for eviction by the CJS walk.
+    // MarkedArgumentBuffer, not a plain Vector: these JSValues are held
+    // across allocating calls (jsString, JSMapIterator::create, map
+    // mutations), and heap-backed storage is invisible to the conservative
+    // scanner — an eviction below can sever a queued string's last other
+    // root before its turn comes.
+    JSC::MarkedArgumentBuffer cjsKeysToEvict;
+    size_t cjsKeysDrained = 0;
+    // Poison a cached CJS module and walk its `m_parent` chain: the *first*
+    // requirer of an ESM(-mocked) module gets no `m_children` edge (the
+    // namespace early-return in `overridableRequire` skips the recording
+    // call), but module creation recorded the requirer as the parent.
+    auto poisonModuleAndParents = [&](Bun::JSCommonJSModule* mod) {
+        while (mod && !poisonedCJSModules.contains(mod)) {
+            poisonedCJSModules.add(mod);
+            if (JSC::JSValue filename = mod->filename(); filename && filename.isString()) {
+                cjsKeysToEvict.append(filename);
+            }
+            mod = mod->m_parent.get();
+        }
+    };
+    // Callers skip this entirely when the require-cache entry predates the
+    // mock install: pre-mock requirers captured real values, and both the
+    // `m_parent` back-edge and `m_children` edges point at the same kept
+    // cell for pre- and post-mock requirers alike, so poisoning it would
+    // re-run pre-mock side effects (e.g. preload setup) on every file.
+    auto poisonRequireMapEntry = [&](JSC::JSString* pathString) {
+        JSC::JSValue cached = requireMap->get(global, pathString);
+        if (scope.clearExceptionExceptTermination() && cached && cached.isCell()) {
+            poisonedCJSModules.add(cached.asCell());
+            if (auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(cached)) {
+                poisonModuleAndParents(mod->m_parent.get());
+            }
+        }
+    };
+
+    for (auto& entry : *records) {
+        const auto& path = entry.key;
+        auto& record = entry.value;
+
+        // Skip paths that were re-installed as persistent after this
+        // transient record was created. `addModuleMock(persistent=true)`
+        // already cleared the path from `transientMockRecords`, but guard
+        // again — the map could have been mutated by a re-entry.
+        if (onLoad.persistentMockPaths && onLoad.persistentMockPaths->contains(path)
+            && !record.displacedWasPersistent) {
+            continue;
+        }
+
+        // 1. Revert the module-environment slots we wrote into at install.
+        //    Covers transitive re-exporters that bind through the same slot.
+        if (auto* ns = record.esmNamespace.get()) {
+            for (auto& [name, strong] : record.esmOriginals) {
+                ns->overrideExportValue(global, name, strong.get());
+                if (!scope.clearExceptionExceptTermination()) {
+                    break;
+                }
+            }
+        }
+        if (!scope.clearExceptionExceptTermination()) {
+            break;
+        }
+
+        // 2. Restore or remove the `virtualModules` slot.
+        if (record.displacedEntry && virtualModules) {
+            virtualModules->set(path, std::move(record.displacedEntry));
+            if (record.displacedWasPersistent) {
+                if (onLoad.persistentMockPaths == nullptr) {
+                    onLoad.persistentMockPaths = new Zig::BunPlugin::PersistentMockPathSet;
+                }
+                onLoad.persistentMockPaths->add(path);
+            }
+            // Install wrote the transient mock's exports in place into any
+            // cached `JSCommonJSModule` and there is no CJS snapshot to
+            // replay, so always drop the require-cache entry — the next
+            // `require()` misses and re-runs the restored (preload) factory.
+            auto* pathString = JSC::jsString(vm, path);
+            if (!record.cjsEntryPreExisted) {
+                poisonRequireMapEntry(pathString);
+            }
+            requireMap->remove(global, pathString);
+            if (!scope.clearExceptionExceptTermination()) {
+                break;
+            }
+            // ESM: with a snapshot, step 1 already restored the cached
+            // record's environment to the values it held before this
+            // install (the preload mock's values), so keep it. Mock-born:
+            // any registry record was materialized from the transient
+            // factory after install — evict it so the next import
+            // re-resolves through the restored preload shim.
+            if (record.wasMockBorn) {
+                auto ident = collectMockBornRecord(path);
+                WTF::Locker locker { moduleLoader->cellLock() };
+                moduleLoader->removeEntry(ident);
+            }
+        } else {
+            if (virtualModules) {
+                virtualModules->remove(path);
+            }
+            // Mock-born: the registry record was materialized from the mock
+            // factory — evict it so the next import re-executes the real
+            // source (its importers are evicted transitively below).
+            // Otherwise step 1 restored the record's env slots in place, so
+            // keep the entry: cached re-exporters bind through it, and a
+            // later file's mock.module() must find it to override those
+            // bindings again.
+            if (record.wasMockBorn) {
+                auto ident = collectMockBornRecord(path);
+                // JSModuleLoader::visitChildrenImpl iterates the registry maps
+                // on the GC thread under cellLock(); take the same lock so
+                // the removal can't race it.
+                WTF::Locker locker { moduleLoader->cellLock() };
+                moduleLoader->removeEntry(ident);
+            }
+            auto* pathString = JSC::jsString(vm, path);
+            if (!record.cjsEntryPreExisted) {
+                poisonRequireMapEntry(pathString);
+            }
+            requireMap->remove(global, pathString);
+            if (!scope.clearExceptionExceptTermination()) {
+                break;
+            }
+        }
+    }
+
+    // Transitively evict cached modules whose dependency graph reaches a
+    // mock-born record. Their import bindings chain into environment slots
+    // that never held real values, so unlike the snapshot/restore path there
+    // is nothing to revert in place — they must re-import. Reads of the
+    // registry don't race the GC marker (it only iterates under its own
+    // lock and never mutates); removals are deferred past each pass because
+    // `removeEntry` invalidates iteration, and they take `cellLock()` like
+    // every other registry mutation.
+    if (!mockBornRecords.isEmpty()) {
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            WTF::Vector<JSC::Identifier> dependentKeys;
+            for (auto& [key, entryBarrier] : moduleLoader->moduleMap()) {
+                if (!key.first) {
+                    continue;
+                }
+                auto* regEntry = entryBarrier.get();
+                if (!regEntry) {
+                    continue;
+                }
+                auto* rec = regEntry->record();
+                if (!rec || mockBornRecords.contains(rec)) {
+                    continue;
+                }
+                for (auto& [requestKey, loaded] : rec->loadedModules()) {
+                    if (loaded.m_module && mockBornRecords.contains(loaded.m_module.get())) {
+                        dependentKeys.append(JSC::Identifier::fromUid(vm, key.first));
+                        mockBornRecords.add(rec);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            if (!dependentKeys.isEmpty()) {
+                // A dependent that was also `require()`d has a require-map
+                // entry wrapping the same (now-evicted) module; drop and
+                // poison it so the CJS walk below catches its own consumers.
+                // Dependents were loaded under the mock, so their requirers
+                // captured tainted values: walk their parent chains.
+                for (auto& ident : dependentKeys) {
+                    auto* keyString = JSC::jsString(vm, ident.string());
+                    poisonRequireMapEntry(keyString);
+                    requireMap->remove(global, keyString);
+                    if (!scope.clearExceptionExceptTermination()) {
+                        break;
+                    }
+                }
+                WTF::Locker locker { moduleLoader->cellLock() };
+                for (auto& ident : dependentKeys) {
+                    moduleLoader->removeEntry(ident);
+                }
+            }
+        }
+    }
+
+    // Transitively evict CJS consumers of poisoned modules. Two edge kinds
+    // link a consumer to what it required: `m_children` (recorded for
+    // second-and-later requirers and for plain-CJS first requires) and the
+    // dep's `m_parent` back-edge (first requirer — the only edge when the
+    // require resolved to an ESM/mocked namespace). A consumer copies values
+    // out at require time, so there is nothing to restore in place — it must
+    // re-run. Pure-CJS consumers never appear in the ESM registry, hence the
+    // separate walk over the require map. Keys are collected per pass and
+    // removed afterwards to keep iteration and mutation separate.
+    if (!poisonedCJSModules.isEmpty() && !cjsKeysToEvict.hasOverflowed()) {
+        bool changed = true;
+        while (changed || cjsKeysDrained < cjsKeysToEvict.size()) {
+            changed = false;
+            auto* iter = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), requireMap, JSC::IterationKind::Entries);
+            if (!scope.clearExceptionExceptTermination() || !iter) {
+                break;
+            }
+            JSC::JSValue key;
+            JSC::JSValue value;
+            while (iter->nextKeyValue(global, key, value)) {
+                auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(value);
+                if (!mod || poisonedCJSModules.contains(mod)) {
+                    continue;
+                }
+                for (const auto& childBarrier : mod->m_children) {
+                    JSC::JSValue child = childBarrier.get();
+                    if (child && child.isCell() && poisonedCJSModules.contains(child.asCell())) {
+                        cjsKeysToEvict.append(key);
+                        poisonedCJSModules.add(mod);
+                        poisonModuleAndParents(mod->m_parent.get());
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            if (!scope.clearExceptionExceptTermination() || cjsKeysToEvict.hasOverflowed()) {
+                break;
+            }
+            size_t drainEnd = cjsKeysToEvict.size();
+            for (size_t i = cjsKeysDrained; i < drainEnd; ++i) {
+                JSC::JSValue depKey = cjsKeysToEvict.at(i);
+                requireMap->remove(global, depKey);
+                if (!scope.clearExceptionExceptTermination()) {
+                    break;
+                }
+                // Drop any same-path ESM wrapper record so `import` of this
+                // consumer re-evaluates as well.
+                auto keyStr = depKey.toWTFString(global);
+                if (!scope.clearExceptionExceptTermination()) {
+                    break;
+                }
+                auto ident = JSC::Identifier::fromString(vm, keyStr);
+                WTF::Locker locker { moduleLoader->cellLock() };
+                moduleLoader->removeEntry(ident);
+            }
+            cjsKeysDrained = drainEnd;
+        }
+    }
+
+    // `mustDoExpensiveRelativeLookup` is set when a `file:` URL or
+    // unresolvable relative specifier is mocked (see lines ~555, ~583). If
+    // no virtual modules remain, drop the flag — `moduleLoaderResolve`
+    // asserts `!mustDoExpensiveRelativeLookup` when `hasVirtualModules()`
+    // is false (ZigGlobalObject.cpp:3393). If persistent entries still
+    // exist, leave it alone: we don't know which ones need the flag.
+    if (virtualModules && virtualModules->isEmpty()) {
+        delete onLoad.virtualModules;
+        onLoad.virtualModules = nullptr;
+        onLoad.mustDoExpensiveRelativeLookup = false;
+    }
 }
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

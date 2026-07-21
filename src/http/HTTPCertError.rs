@@ -66,8 +66,9 @@ impl TLSHandshakeError {
                     .iter()
                     .all(|&b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
             {
-                let mut code = Vec::with_capacity(8 + reason.len());
-                code.extend_from_slice(b"ERR_SSL_");
+                const PREFIX: &[u8] = b"ERR_SSL_";
+                let mut code = Vec::with_capacity(PREFIX.len() + reason.len());
+                code.extend_from_slice(PREFIX);
                 code.extend_from_slice(reason);
                 return code.into_boxed_slice();
             }

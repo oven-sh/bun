@@ -797,14 +797,16 @@ impl<'a> Transpiler<'a> {
                 } else if self.options.production {
                     dot_env::DotEnvFileSuffix::Production
                 } else {
+                    // An explicit NODE_ENV outside {development, production,
+                    // test} must not fall through to the development files;
+                    // load `.env.{mode}` instead. Empty or the literal string
+                    // `"undefined"` (a common `NODE_ENV=${NODE_ENV}` footgun
+                    // when the var is unset) still default to development.
                     match node_env.as_deref() {
-                        Some(mode) if !mode.is_empty() && mode != b"development" => {
-                            // An explicit NODE_ENV outside {development,
-                            // production, test} must not fall through to the
-                            // development files; load `.env.{mode}` instead.
-                            dot_env::DotEnvFileSuffix::Custom(mode)
+                        None | Some(b"") | Some(b"development") | Some(b"undefined") => {
+                            dot_env::DotEnvFileSuffix::Development
                         }
-                        _ => dot_env::DotEnvFileSuffix::Development,
+                        Some(mode) => dot_env::DotEnvFileSuffix::Custom(mode),
                     }
                 };
                 env.load(dir, &env_files, suffix, skip_default_env)?;

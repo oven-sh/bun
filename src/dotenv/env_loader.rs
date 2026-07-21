@@ -778,7 +778,9 @@ impl<'a> Loader<'a> {
 
     /// `DotEnvFileSuffix::Custom` counterpart of `try_load_default`: build
     /// `.env.{mode}{extra}` at runtime, probe the directory listing, and load
-    /// via the dynamic path (tracked in `custom_files_loaded`).
+    /// it. Error handling matches `load_env_file` so a custom mode file
+    /// behaves like the built-in ones (EACCES/EBUSY print a diagnostic,
+    /// unexpected errnos propagate, ENOENT/EISDIR are silent).
     fn try_load_custom_mode<D: DirEntryProbe + ?Sized>(
         &mut self,
         dir: &D,
@@ -786,19 +788,75 @@ impl<'a> Loader<'a> {
         extra: &[u8],
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
+        // `NODE_ENV=local` would build `.env.local`, which the built-in
+        // `.env.local` slot already loads just before this call.
+        if extra.is_empty() && mode == b"local" {
+            return Ok(());
+        }
+
         let mut name = Vec::with_capacity(5 + mode.len() + extra.len());
         name.extend_from_slice(b".env.");
         name.extend_from_slice(mode);
         name.extend_from_slice(extra);
 
+        if self.custom_files_loaded.contains(&*name) {
+            return Ok(());
+        }
+
         // The resolver's entry map is keyed lowercase; probe with a lowered
         // copy. `mode` comes from user env so its case is unknown.
         let mut lower = name.clone();
         lower.make_ascii_lowercase();
-        if dir.has_query(&lower) {
-            self.load_env_file_dynamic::<false>(&name, value_buffer)?;
-            analytics::Features::dotenv_inc();
+        if !dir.has_query(&lower) {
+            return Ok(());
         }
+
+        let dir_handle = bun_sys::Fd::cwd();
+        let file = match bun_sys::File::openat(
+            dir_handle,
+            &name,
+            bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+            0,
+        ) {
+            Ok(file) => file,
+            Err(err) => {
+                use bun_sys::E;
+                match err.get_errno() {
+                    E::EISDIR | E::ENOENT => return Ok(()),
+                    E::EBUSY | E::EACCES => {
+                        if !self.quiet {
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> error loading {} file",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(&name)
+                            );
+                        }
+                        return Ok(());
+                    }
+                    _ => return Err(err.into()),
+                }
+            }
+        };
+
+        match read_env_file_contents(&file)? {
+            ReadEnvFile::Empty => {}
+            ReadEnvFile::ReadErr(err) => {
+                if !self.quiet {
+                    bun_core::pretty_errorln!(
+                        "<r><red>{}<r> error loading {} file",
+                        bstr::BStr::new(err.name()),
+                        bstr::BStr::new(&name)
+                    );
+                }
+            }
+            ReadEnvFile::Bytes(buf) => {
+                Parser::parse_bytes::<false, false, true>(&buf, &mut *self.map, value_buffer)?;
+            }
+        }
+
+        self.custom_files_loaded
+            .put(&*name, bun_ast::Source::default())?;
+        analytics::Features::dotenv_inc();
         Ok(())
     }
 

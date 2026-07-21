@@ -29,6 +29,9 @@ if ($Target.Count -eq 0) { "RESULT=error"; "ERROR=no target"; exit 2 }
 New-Item -ItemType Directory -Force $LogDir | Out-Null
 Get-ChildItem $LogDir -Filter 'wsf-*.log' | Remove-Item -Force -ErrorAction SilentlyContinue
 $env:WSF_LOG_DIR = $LogDir
+# Debug builds interleave scoped logs into the target's own output; the trace
+# already captures the syscalls, so silence them to keep stdout readable.
+$env:BUN_DEBUG_QUIET_LOGS = '1'
 $env:WSF_MODE = $(if ($Mode) { $Mode } elseif ($Schedule) { 'inject' } else { 'trace' })
 if ($Schedule) { $env:WSF_SCHEDULE = $Schedule } else { Remove-Item Env:WSF_SCHEDULE -ErrorAction SilentlyContinue }
 

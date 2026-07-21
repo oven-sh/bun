@@ -261,9 +261,11 @@ bool CallCtx::PreFault() {
     injected_ = r.status;
     if (fault_ == Fault::Pre) {
       // Real call is skipped: log the exit record here.
+      char rvas[64];
+      FormatRvas(rvas, sizeof rvas);
       LONG64 seq = InterlockedIncrement64(&g_seq);
-      LogLine("X %lld %lu %u %llx %llx %llx !P\n", seq, GetCurrentThreadId(), sys_,
-              (unsigned long long)injected_, (unsigned long long)rva,
+      LogLine("X %lld %lu %u %llx %s %llx !P\n", seq, GetCurrentThreadId(), sys_,
+              (unsigned long long)injected_, rvas,
               (unsigned long long)(nframes_ ? frames_[0] : 0));
       return true;
     }
@@ -274,14 +276,31 @@ bool CallCtx::PreFault() {
 
 CallCtx::~CallCtx() { SetDepth(Depth() - 1); }
 
+void CallCtx::FormatRvas(char* out, size_t cap) const {
+  size_t len = 0;
+  int emitted = 0;
+  out[0] = '\0';
+  for (int i = 0; i < nframes_ && emitted < 3; i++) {
+    uintptr_t ip = frames_[i];
+    if (ip < g_txtBase || ip >= g_txtEnd) continue; // frame0 may be outside bun
+    int n = snprintf(out + len, cap - len, "%s%llx", emitted ? "," : "",
+                     (unsigned long long)(ip - g_bunBase));
+    if (n < 0 || (size_t)n >= cap - len) break;
+    len += (size_t)n;
+    emitted++;
+  }
+  if (!emitted) snprintf(out, cap, "0");
+}
+
 ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
   ULONG_PTR ret = real;
   if (live_) {
     if (fault_ == Fault::Post) ret = injected_;
-    uintptr_t rva = bunFrame_ ? bunFrame_ - g_bunBase : 0;
+    char rvas[64];
+    FormatRvas(rvas, sizeof rvas);
     LONG64 seq = InterlockedIncrement64(&g_seq);
-    LogLine("X %lld %lu %u %llx %llx %llx%s\n", seq, GetCurrentThreadId(), sys_,
-            (unsigned long long)ret, (unsigned long long)rva,
+    LogLine("X %lld %lu %u %llx %s %llx%s\n", seq, GetCurrentThreadId(), sys_,
+            (unsigned long long)ret, rvas,
             (unsigned long long)(nframes_ ? frames_[0] : 0), fault_ == Fault::Post ? " !Q" : "");
   }
   return ret;

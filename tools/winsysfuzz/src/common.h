@@ -37,6 +37,10 @@ class CallCtx {
   ULONG_PTR Exit(ULONG_PTR real);
 
  private:
+  // Formats up to 3 candidate bun.exe callsite RVAs as "a,b,c" ("0" if none).
+  // The first is the schedule's key; the rest let the analyzer walk past an
+  // inlined std:: frame to the owning module.
+  void FormatRvas(char* out, size_t cap) const;
   uint32_t sys_;
   bool live_;      // false => reentrant call: pass straight through, no log/fault
   uint8_t nframes_;

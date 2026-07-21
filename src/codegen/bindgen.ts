@@ -909,7 +909,7 @@ function returnStrategyCppType(strategy: ReturnStrategy): string {
     case "jsvalue":
       return "JSC::EncodedJSValue";
     default:
-      throw new Error(`TODO: returnStrategyCppType for ${inspect(strategy satisfies never)}`);
+      throw new Error(`returnStrategyCppType: unhandled strategy ${inspect(strategy satisfies never)}`);
   }
 }
 
@@ -921,7 +921,7 @@ function returnStrategyZigType(strategy: ReturnStrategy): string {
     case "jsvalue":
       return "jsc.JSValue";
     default:
-      throw new Error(`TODO: returnStrategyZigType for ${inspect(strategy satisfies never)}`);
+      throw new Error(`returnStrategyZigType: unhandled strategy ${inspect(strategy satisfies never)}`);
   }
 }
 

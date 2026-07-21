@@ -1717,4 +1717,3 @@ fn parse_u64(s: &[u8]) -> crate::Result<u64> {
 fn parse_u32(s: &[u8]) -> crate::Result<u32> {
     bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
 }
-

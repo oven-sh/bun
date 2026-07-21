@@ -1,18 +1,12 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/RegularExpression.h>
-#include <JavaScriptCore/Options.h>
 
 using namespace JSC;
 using namespace JSC::Yarr;
 
 extern "C" RegularExpression* Yarr__RegularExpression__init(BunString pattern, uint16_t flags)
 {
-    // TODO: Remove this, we technically are accessing options before we finalize them.
-    // This means you cannot use BUN_JSC_dumpCompiledRegExpPatterns on the flag passed to `bun test -t`
-    // NOLINTBEGIN
-    Options::AllowUnfinalizedAccessScope scope {};
-    // NOLINTEND
     return new RegularExpression(pattern.toWTFString(BunString::ZeroCopy), OptionSet<Flags>(static_cast<Flags>(flags)));
 }
 extern "C" void Yarr__RegularExpression__deinit(RegularExpression* re)

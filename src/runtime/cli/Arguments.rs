@@ -15,8 +15,6 @@ use bun_core::ZStr;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, Global, Output, env_var};
-use bun_jsc::RegularExpression;
-use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::schema::api;
@@ -1713,24 +1711,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         Global::exit(1);
     }
     if let Some(name_pattern) = args.option(b"--test-name-pattern") {
+        // The Yarr regex is compiled in `TestCommand::exec` after
+        // `jsc::initialize()` so JSC Options are finalized first.
         ctx.test_options.test_filter_pattern = Some(name_pattern.into());
-        let regex = match RegularExpression::init(
-            bun_core::String::from_bytes(name_pattern),
-            RegexFlags::None,
-        ) {
-            Ok(r) => r,
-            Err(_) => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
-                    bun_core::fmt::QuotedFormatter { text: name_pattern },
-                );
-                Global::exit(1);
-            }
-        };
-        // The compiled regex lives in `bun_jsc::RegularExpression` (T6); the
-        // T3 `TestOptions` field is type-erased to `NonNull<()>` to break the
-        // back-edge. High tier owns construction/destruction.
-        ctx.test_options.test_filter_regex = core::ptr::NonNull::new(regex.cast::<()>());
     }
     if let Some(since) = args.option(b"--changed") {
         ctx.test_options.changed = Some(since.into());

@@ -1995,6 +1995,25 @@ impl TestCommand {
         jsc::initialize(false);
         bun_http::http_thread::init(&Default::default());
 
+        // Compile the `-t` / `--test-name-pattern` regex now that JSC Options
+        // are finalized (so e.g. BUN_JSC_dumpCompiledRegExpPatterns applies).
+        if let Some(pattern) = ctx.test_options.test_filter_pattern.as_deref() {
+            let regex = match jsc::RegularExpression::init(
+                bun_core::String::from_bytes(pattern),
+                jsc::regular_expression::Flags::None,
+            ) {
+                Ok(r) => r,
+                Err(_) => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
+                        bun_fmt::quote(pattern),
+                    );
+                    Global::exit(1);
+                }
+            };
+            ctx.test_options.test_filter_regex = core::ptr::NonNull::new(regex.cast::<()>());
+        }
+
         let enable_random = ctx.test_options.randomize;
         let seed: u32 = if enable_random {
             ctx.test_options

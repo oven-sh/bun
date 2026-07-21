@@ -64,8 +64,7 @@ describe.concurrent("node-module-module", () => {
       }),
     ).toThrow(new RangeError("portable boom"));
     expect(order).toEqual(["directory", "portable"]);
-    // Valid shapes: string | {directory?, portable?} | undefined. The empty-object shapes
-    // exercise the getIfPropertyExists() empty-value guard in the options-bag branch.
+    // Valid shapes: string | {directory?, portable?} | undefined.
     for (const ok of [
       undefined,
       "/tmp/cache",
@@ -97,8 +96,7 @@ describe.concurrent("node-module-module", () => {
   });
 
   test("Module._resolveFilename accepts an options object without paths", () => {
-    // getIfPropertyExists returns an empty JSValue for an absent property;
-    // passing that to isArray() used to dereference a null cell and segfault.
+    // An options object without .paths used to segfault on the isArray() check.
     expect(Module._resolveFilename("fs", null, false, {})).toBe("fs");
     expect(Module._resolveFilename("fs", null, false, Object.create(null))).toBe("fs");
     expect(Module._resolveFilename("fs", null, false, [])).toBe("fs");

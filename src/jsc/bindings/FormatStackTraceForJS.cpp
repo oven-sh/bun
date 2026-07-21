@@ -32,6 +32,20 @@ using namespace WebCore;
 
 namespace Bun {
 
+// StackFrame holds cells the GC does not scan from the vector itself. Anything that
+// allocates or calls into JS before the frames are formatted can collect them.
+static bool protectStackFrameCells(JSC::MarkedArgumentBuffer& protectedFrameCells, WTF::Vector<JSC::StackFrame>& stackTrace)
+{
+    protectedFrameCells.ensureCapacity(stackTrace.size() * 2);
+    for (auto& frame : stackTrace) {
+        if (auto* callee = frame.callee())
+            protectedFrameCells.append(callee);
+        if (auto* codeBlock = frame.codeBlock())
+            protectedFrameCells.append(codeBlock);
+    }
+    return !protectedFrameCells.hasOverflowed();
+}
+
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -740,14 +754,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     } else {
         auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
         JSC::MarkedArgumentBuffer protectedFrameCells;
-        protectedFrameCells.ensureCapacity(ownedStackTrace->size() * 2);
-        for (auto& frame : *ownedStackTrace) {
-            if (auto* callee = frame.callee())
-                protectedFrameCells.append(callee);
-            if (auto* codeBlock = frame.codeBlock())
-                protectedFrameCells.append(codeBlock);
-        }
-        if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
+        if (!protectStackFrameCells(protectedFrameCells, *ownedStackTrace)) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
@@ -792,19 +799,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     WTF::Vector<JSC::StackFrame> stackTrace;
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
-    // Root the frames' cells: both eager-compute paths below read name/message via
-    // [[Get]] before formatting, which may allocate or run a user getter. The lazy
-    // path moves the frames into the ErrorInstance, which visits them; rooting is a
-    // no-op there.
+    // Both eager-compute paths below read name/message via [[Get]] before formatting,
+    // which may allocate or run a user getter. The lazy path moves the frames into the
+    // ErrorInstance, which visits them; rooting is a no-op there.
     JSC::MarkedArgumentBuffer protectedFrameCells;
-    protectedFrameCells.ensureCapacity(stackTrace.size() * 2);
-    for (auto& frame : stackTrace) {
-        if (auto* callee = frame.callee())
-            protectedFrameCells.append(callee);
-        if (auto* codeBlock = frame.codeBlock())
-            protectedFrameCells.append(codeBlock);
-    }
-    if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
+    if (!protectStackFrameCells(protectedFrameCells, stackTrace)) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }

@@ -11,8 +11,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { DARWIN_STACK_SIZE } from "./flags.ts";

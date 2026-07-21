@@ -487,7 +487,10 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
 // side-effecting var need only be added in one place.
 static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
-    if (value.length() < 32 && WTF::setTimeZoneOverride(value)) {
+    if (value.length() >= 32)
+        return;
+    auto canonical = Bun::canonicalizeLegacyTimeZoneName(value);
+    if (WTF::setTimeZoneOverride(canonical.isNull() ? value : canonical)) {
         WTF::timeZoneDidChange();
         JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
     }

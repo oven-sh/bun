@@ -3323,11 +3323,39 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
+} // namespace Zig
+
+// These eight POSIX-style names are top-level tzdata zones (honored by glibc
+// and Node) that JSC's intlResolveTimeZoneID rejects because they contain no
+// '/'. Map them to their tzdata `backward` Link targets so a process started
+// with e.g. TZ=EST5EDT does not silently run on UTC. Case-sensitive to match
+// Node; EST/MST/HST already resolve via ICU's Etc/GMT aliases.
+String Bun::canonicalizeLegacyTimeZoneName(StringView timeZone)
+{
+    if (timeZone.isEmpty() || timeZone.length() > 7 || timeZone.contains('/'))
+        return String();
+    if (timeZone == "EST5EDT"_s) return "America/New_York"_s;
+    if (timeZone == "CST6CDT"_s) return "America/Chicago"_s;
+    if (timeZone == "MST7MDT"_s) return "America/Denver"_s;
+    if (timeZone == "PST8PDT"_s) return "America/Los_Angeles"_s;
+    if (timeZone == "CET"_s) return "Europe/Brussels"_s;
+    if (timeZone == "MET"_s) return "Europe/Brussels"_s;
+    if (timeZone == "EET"_s) return "Europe/Athens"_s;
+    if (timeZone == "WET"_s) return "Europe/Lisbon"_s;
+    return String();
+}
+
+namespace Zig {
+
 extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
+    String timeZoneString = Zig::toString(*timeZone);
+    if (auto canonical = Bun::canonicalizeLegacyTimeZoneName(timeZoneString); !canonical.isNull())
+        timeZoneString = WTF::move(canonical);
+
+    if (WTF::setTimeZoneOverride(timeZoneString)) {
         WTF::timeZoneDidChange();
         vm.dateCache.clearForTimeZoneChange();
         return true;

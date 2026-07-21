@@ -544,6 +544,11 @@ pub(crate) fn writable_stream(
             ..Default::default()
         }));
 
+    // +1 for `callback_context` below; released by `wrapper_callback`'s trailing
+    // `sink.finalize()`. The JS wrapper's +1 is the `Default` rc=1, released by
+    // `NetworkSink__finalize` when the wrapper is swept.
+    // SAFETY: freshly heap-allocated; exclusive access here.
+    unsafe { &*response_stream }.ref_();
     task.callback_context = response_stream.cast::<c_void>();
     task.on_writable = Some(on_writable_thunk);
 

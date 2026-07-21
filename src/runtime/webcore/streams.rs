@@ -2133,7 +2133,13 @@ pub type H3ResponseSink = HTTPServerWritable<true, true>;
 // NetworkSink
 // ──────────────────────────────────────────────────────────────────────────
 
+// Two owners hold a raw `*mut NetworkSink`: the `JSNetworkSink` wrapper
+// (`m_sinkPtr`, released via the generated `__finalize`) and the
+// `MultiPartUpload.callback_context` (released in `wrapper_callback`). Both
+// routes end in `finalize()`, so the allocation is freed by intrusive refcount.
+#[derive(bun_ptr::CellRefCounted)]
 pub struct NetworkSink {
+    pub ref_count: core::cell::Cell<u32>,
     // Stored as `BackRef`
     // (set-once); while `Some` the sink holds a counted ref on the intrusively
     // ref-counted `MultiPartUpload`, released in `detach_writable`.
@@ -2152,6 +2158,7 @@ pub struct NetworkSink {
 impl Default for NetworkSink {
     fn default() -> Self {
         Self {
+            ref_count: core::cell::Cell::new(1),
             task: None,
             signal: Signal::default(),
             global_this: None,
@@ -2241,6 +2248,9 @@ impl NetworkSink {
 
     pub fn finalize(&mut self) {
         self.detach_writable();
+        // SAFETY: `&mut self` carries write provenance over the whole
+        // allocation; this is the last use of `self`.
+        unsafe { NetworkSink::deref(core::ptr::from_mut::<Self>(self)) };
     }
 
     fn detach_writable(&mut self) {
@@ -2305,26 +2315,12 @@ impl NetworkSink {
         ))
     }
 
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
-    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn finalize_and_destroy(this: *mut Self) {
-        // SAFETY: this was heap-allocated; reclaim sole ownership before
-        // touching fields so no `&mut *this` is live alongside the Box.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        this.finalize();
-        drop(this);
-    }
-
     pub fn abort(&mut self) {
         self.ended = true;
         self.done = true;
         self.signal.close(None);
         self.cancel = true;
-        self.finalize();
+        self.detach_writable();
     }
 
     pub fn write(&mut self, data: &StreamResult) -> Writable {

@@ -8961,12 +8961,144 @@ registry = { url = "http://localhost:${port}/", token = "${token}" }
   const err = await stderr.text();
   await stdout.text();
 
-  // The manifest request must be refused with a clear error...
-  expect(err).toContain("is not on registry");
+  // The manifest request must be refused with a clear error (the name is
+  // rejected as non-URL-safe before the URL join)...
+  expect(err).toContain("Invalid package name");
   // ...and no request (carrying the registry Authorization header) may reach
   // a host other than the configured registry.
   expect(received).toEqual([]);
   expect(await exited).not.toBe(0);
+});
+
+describe("rejects percent-encoded dependency names that would bypass [install.scopes]", () => {
+  // `@priv%2fx` has no literal `/`, so scope routing would fall through to the
+  // default registry, which decodes it back to `@priv/x`. Match npm's
+  // validate-npm-package-name error gate and reject before any request.
+  for (const [label, depName, alias] of [
+    ["root dependency key", "@priv%2fx", "@priv%2fx"],
+    ["npm: alias target", "npm:@priv%2fx@*", "innocent"],
+    ["uppercase %2F", "@priv%2Fx", "@priv%2Fx"],
+    ["raw ? metacharacter", "@priv/x?", "@priv/x?"],
+    ["raw # metacharacter", "@priv/x#y", "@priv/x#y"],
+    ["backslash", "@priv\\x", "@priv\\x"],
+  ] as const) {
+    test(label, async () => {
+      const defaultHits: string[] = [];
+      using defaultReg = Bun.serve({
+        port: 0,
+        fetch(req) {
+          defaultHits.push(new URL(req.url).pathname);
+          return new Response("{}", { status: 404 });
+        },
+      });
+      const scopedHits: string[] = [];
+      using scopedReg = Bun.serve({
+        port: 0,
+        fetch(req) {
+          scopedHits.push(new URL(req.url).pathname);
+          return new Response("{}", { status: 404 });
+        },
+      });
+
+      await Promise.all([
+        write(
+          join(packageDir, "bunfig.toml"),
+          `
+[install]
+cache = false
+registry = "http://localhost:${defaultReg.port}/"
+[install.scopes]
+"@priv" = { url = "http://localhost:${scopedReg.port}/" }
+`,
+        ),
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: { [alias]: alias === depName ? "*" : depName },
+          }),
+        ),
+      ]);
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = await stderr.text();
+      await stdout.text();
+
+      expect(err.toLowerCase()).toContain("invalid package name");
+      expect({ defaultHits, scopedHits }).toEqual({ defaultHits: [], scopedHits: [] });
+      expect(await exited).not.toBe(0);
+      expect(await exists(join(packageDir, "node_modules", alias))).toBe(false);
+    });
+  }
+
+  test("literal @scope/name and legacy npm chars still route to the pinned registry", async () => {
+    const defaultHits: string[] = [];
+    using defaultReg = Bun.serve({
+      port: 0,
+      fetch(req) {
+        defaultHits.push(new URL(req.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+    const scopedHits: string[] = [];
+    using scopedReg = Bun.serve({
+      port: 0,
+      fetch(req) {
+        scopedHits.push(new URL(req.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        `
+[install]
+cache = false
+registry = "http://localhost:${defaultReg.port}/"
+[install.scopes]
+"@priv" = { url = "http://localhost:${scopedReg.port}/" }
+`,
+      ),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: { "@priv/x": "*", "@priv/pkg~1": "*" },
+        }),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    await stdout.text();
+    await exited;
+
+    // Control: well-formed scoped names, including legacy chars npm only
+    // warns about (`~`), must not be rejected and must route to the pinned
+    // registry only.
+    expect(err).not.toContain("Invalid package name");
+    expect(defaultHits).toEqual([]);
+    expect(scopedHits.sort()).toEqual(["/@priv%2fpkg~1", "/@priv%2fx"]);
+  });
 });
 
 test("registry override from a project .env only keeps the saved token when the host matches and the scheme is not downgraded", async () => {

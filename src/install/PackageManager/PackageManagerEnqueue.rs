@@ -1007,6 +1007,28 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         // and `name_str` is still read afterwards on the
                         // fall-through path.
                         let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();
+
+                        // Non-URL-safe bytes (`%`, `?`, `#`, `\`, ...) let the
+                        // registry resolve a different path than scope routing
+                        // saw (e.g. `@priv%2fx` bypasses `[install.scopes]`).
+                        if !strings::is_url_safe_package_name(&name_str) {
+                            if dependency.behavior.is_required() {
+                                if let Some(fail) = fail_fn {
+                                    fail(this, dependency, id, crate::Error::InvalidPackageName);
+                                } else {
+                                    this.log_mut().add_error_fmt(
+                                        None,
+                                        bun_ast::Loc::EMPTY,
+                                        format_args!(
+                                            "Invalid package name {} (package names may only contain URL-friendly characters)",
+                                            bun_fmt::quote(&name_str),
+                                        ),
+                                    );
+                                }
+                            }
+                            return Ok(());
+                        }
+
                         let task_id = Task::Id::for_manifest(&name_str);
 
                         debug_assert!(task_id.get() != 0);

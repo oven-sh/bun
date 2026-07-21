@@ -590,6 +590,35 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
     !scoped || (slash_index > 0 && slash_index + 1 < target.len())
 }
 
+/// npm's `validForOldPackages` error gate: every byte must pass
+/// `encodeURIComponent` unchanged, except for the leading `@` and the single
+/// `/` of a scoped name. Anything else (`%`, `?`, `#`, `\`, space, non-ASCII)
+/// would change the URL path the registry resolves.
+pub fn is_url_safe_package_name(target: &[u8]) -> bool {
+    #[inline]
+    fn is_uri_component_char(c: u8) -> bool {
+        matches!(c, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+            | b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')')
+    }
+    if target.is_empty() || matches!(target[0], b'.' | b'_') {
+        return false;
+    }
+    if target[0] == b'@' {
+        let Some(slash) = index_of_char(target, b'/') else {
+            return false;
+        };
+        let slash = slash as usize;
+        if slash < 2 || slash + 1 >= target.len() {
+            return false;
+        }
+        return target[1..slash].iter().all(|&c| is_uri_component_char(c))
+            && target[slash + 1..]
+                .iter()
+                .all(|&c| is_uri_component_char(c));
+    }
+    target.iter().all(|&c| is_uri_component_char(c))
+}
+
 // Secret-redaction scanners are canonical in crate::strings_impl (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
 pub use crate::strings_impl::{

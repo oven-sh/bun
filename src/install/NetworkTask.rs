@@ -424,6 +424,10 @@ impl NetworkTask {
         is_optional: bool,
         needs_extended: bool,
     ) -> Result<(), ForManifestError> {
+        // Every producer must validate `name` before `scope_for_package_name`;
+        // see `is_url_safe_package_name` in PackageManagerEnqueue.rs and
+        // PopulateManifestCache.rs.
+        debug_assert!(strings::is_url_safe_package_name(name));
         let pm = self.pm_mut();
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with.

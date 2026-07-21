@@ -115,10 +115,12 @@ test("install does not abort on an unresolved optional dependency with an empty 
 
   // The empty-name optional dependency must not abort the install.
   expect(stderr).not.toContain('Invalid dependency name ""');
+  // An invalid (empty) package name is now dropped before any manifest
+  // request; for an optional dependency that must be silent.
+  expect(stderr).not.toContain("Invalid package name");
+  expect(emptyNameManifestRequested).toBe(false);
   // The requested package must still be installed.
   expect(await Bun.file(join(String(dir), "node_modules", "top", "package.json")).exists()).toBe(true);
-  // Sanity check that we actually exercised the empty-name resolution path.
-  expect(emptyNameManifestRequested).toBe(true);
   // Assert the exit code last for a more useful message if a behavioral check fails.
   expect(exitCode).toBe(0);
 });

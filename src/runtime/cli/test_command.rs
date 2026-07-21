@@ -3142,6 +3142,10 @@ impl TestCommand {
 
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
+            // Snapshot ref'd-handle count so the post-test drain (below) waits only
+            // on handles this file created, not a prior file's leak or a --parallel
+            // worker's IPC pipe.
+            let keepalive_baseline = script_keepalive_count(vm);
             let promise = vm.load_entry_point_for_test_runner(file_path)?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
@@ -3234,11 +3238,13 @@ impl TestCommand {
                 }
 
                 // A file that registered no test()/describe() is a plain script:
-                // drain ref'd handles so late uncaught errors surface, like `bun <file>`.
+                // drain ref'd handles it created so late uncaught errors surface,
+                // like `bun <file>`. Handles that predate the file (prior leak,
+                // preload, --parallel worker IPC) are excluded by the baseline.
                 if buntest.collection.root_scope.entries.is_empty() {
                     let drain_base = vm.unhandled_error_counter;
                     while drain_base == vm.unhandled_error_counter
-                        && vm.event_loop_has_pending_work()
+                        && script_keepalive_count(vm) > keepalive_baseline
                     {
                         vm.event_loop_ref().tick();
                         vm.event_loop_ref().auto_tick();
@@ -3270,6 +3276,22 @@ impl TestCommand {
         }
         Ok(())
     }
+}
+
+/// Count of ref'd handles keeping the event loop alive, with JS timers counted
+/// individually (they share one loop ref, so `active_count()` alone can't tell
+/// a new timer from a prior file's). Used to scope the post-test drain to work
+/// created by the current file.
+fn script_keepalive_count(vm: &VirtualMachine) -> usize {
+    let state = crate::jsc_hooks::runtime_state();
+    let timers = if state.is_null() {
+        0
+    } else {
+        // SAFETY: `runtime_state()` returns the live per-thread `RuntimeState`;
+        // `active_timer_count` is plain data, read on the owning JS thread.
+        unsafe { (*state).timer.active_timer_count.max(0) as usize }
+    };
+    vm.active_keepalive_count() + timers
 }
 
 pub(crate) fn handle_top_level_test_error_before_javascript_start(err: &crate::Error) -> ! {

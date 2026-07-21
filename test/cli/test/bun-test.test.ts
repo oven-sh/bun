@@ -1574,6 +1574,35 @@ describe.concurrent("script files with no test() registrations", () => {
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });
+
+  test("does not wait on a handle leaked by a prior file", async () => {
+    using dir = tempDir("prior-file-leak", {
+      "a.test.js": `
+        const { test } = require("bun:test");
+        setInterval(() => {}, 60_000);
+        test("noop", () => {});
+      `,
+      "b.test.js": `
+        (async () => {
+          await new Promise(r => setTimeout(r, 20));
+          throw new Error("file B delayed error");
+        })();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // a passes; b's own delayed error is still surfaced; a's leaked interval
+    // is not waited on so the run does not hang.
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("file B delayed error");
+    expect(exitCode).toBe(1);
+  });
 });
 
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {

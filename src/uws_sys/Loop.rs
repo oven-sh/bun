@@ -182,6 +182,11 @@ impl PosixLoop {
         self.active > 0
     }
 
+    #[inline]
+    pub fn active_count(&self) -> u32 {
+        self.active
+    }
+
     // This exists as a method so that we can stick a debugger in here
     pub fn add_active(&mut self, value: u32) {
         bun_core::scoped_log!(

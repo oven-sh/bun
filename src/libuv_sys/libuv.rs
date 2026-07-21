@@ -507,6 +507,10 @@ impl Loop {
         unsafe { uv_loop_alive(self) != 0 }
     }
     #[inline]
+    pub fn active_count(&self) -> u32 {
+        self.active_handles
+    }
+    #[inline]
     pub fn tick(&mut self) {
         // SAFETY: self is a live loop.
         let _ = unsafe { uv_run(self, RunMode::Default) };

@@ -1059,22 +1059,18 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
-    /// Like [`is_event_loop_alive`] without the `unhandled_error_counter == 0`
-    /// gate: true iff there are ref'd handles or queued tasks keeping the loop
-    /// alive. Used by the test runner to drain a script file after tests finish.
-    pub fn event_loop_has_pending_work(&self) -> bool {
+    /// Count of ref'd handles and outstanding tasks keeping the loop alive.
+    /// The test runner snapshots this before loading a script-style file and
+    /// drains only while the count exceeds that baseline, so a prior file's
+    /// leaked handle (or a --parallel worker's IPC pipe) is not waited on.
+    pub fn active_keepalive_count(&self) -> usize {
         let el = self.event_loop_shared();
         let active = self
             .platform_loop_opt()
-            .map(|h| h.is_active())
-            .unwrap_or(false);
-        (active as usize)
-            + self.active_tasks
-            + el.tasks.readable_length()
-            + (el.has_pending_refs() as usize)
-            > 0
-            || !el.immediate_tasks.is_empty()
-            || !el.next_immediate_tasks.is_empty()
+            .map(|h| h.active_count() as usize)
+            .unwrap_or(0);
+        let concurrent = el.concurrent_ref.load(core::sync::atomic::Ordering::SeqCst).max(0) as usize;
+        active + self.active_tasks + concurrent
     }
 
     pub fn wakeup(&mut self) {

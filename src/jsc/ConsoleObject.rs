@@ -1729,10 +1729,7 @@ pub mod formatter {
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
-                // `StackCheck::default()` has `cached_stack_end = 0` ⇒ the
-                // check always passes; callers that want a real bound
-                // overwrite with `StackCheck::init()` explicitly.
-                stack_check: StackCheck::default(),
+                stack_check: StackCheck::init(),
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
@@ -2010,6 +2007,7 @@ pub mod formatter {
                     | Tag::Error
                     | Tag::Class
                     | Tag::Event
+                    | Tag::JSX
             )
         }
     }
@@ -3387,9 +3385,6 @@ pub mod formatter {
             if self.global_this.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }
-            if !can_circ {
-                return Ok(true);
-            }
 
             if !self.stack_check.is_safe_to_recurse() {
                 self.failed = true;
@@ -3397,6 +3392,10 @@ pub mod formatter {
                     return Err(self.global_this.throw_stack_overflow());
                 }
                 return Ok(false);
+            }
+
+            if !can_circ {
+                return Ok(true);
             }
 
             if self.map_node.is_none() {

@@ -2516,6 +2516,55 @@ config:
   });
 
   describe("stringify", () => {
+    test.skipIf(!isASAN)(
+      "anchor name derived from a property name survives a GC between the anchor scan and emit",
+      async () => {
+        // The anchor name for a shared value is the first property name it was seen under,
+        // stored as a BunString that borrowed the scan iterator's PropertyNameArray entry
+        // without a ref. A Proxy whose ownKeys returns fresh strings is the one case where
+        // nothing else holds that StringImpl; once the inner iterator drops and a later
+        // getter GCs, the emit pass reads freed bytes. Malloc=1 routes WTF allocations
+        // through system malloc so ASAN sees the free.
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const shared = { x: 1 };
+            function keys() {
+              const out = [];
+              for (let i = 0; i < 8; i++) out.push("freshkey_padding_to_avoid_small_string_" + i);
+              return out;
+            }
+            const inner = new Proxy({}, {
+              ownKeys: keys,
+              getOwnPropertyDescriptor() { return { enumerable: true, configurable: true, value: shared }; },
+              has() { return true; },
+              get() { return shared; },
+            });
+            const outer = { inner };
+            Object.defineProperty(outer, "zz", {
+              enumerable: true,
+              get() { Bun.gc(true); Bun.gc(true); Bun.gc(true); return shared; },
+            });
+            const anchor = keys()[0];
+            const out = Bun.YAML.stringify(outer);
+            if (!out.includes("&" + anchor)) throw new Error("anchor name corrupted");
+            if (!out.includes("*" + anchor)) throw new Error("alias name corrupted");
+            process.stdout.write("ok");
+          `,
+          ],
+          env: { ...bunEnv, Malloc: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("ok");
+        expect(exitCode).toBe(0);
+      },
+    );
+
     // Basic data type tests
     test("stringifies null", () => {
       expect(YAML.stringify(null)).toBe("null");

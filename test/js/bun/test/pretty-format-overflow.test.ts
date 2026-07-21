@@ -50,4 +50,40 @@ test("deep nesting", () => {
     // Verify it actually formatted and showed the diff (not just crashed)
     expect(stderr).toContain("expect(received).toEqual(expected)");
   }, 30000);
+
+  test.each(["array", "object"])(
+    "toEqual diff of a %s nested past the native stack limit does not crash",
+    async kind => {
+      // `b` is shallow so toEqual returns a mismatch immediately; the crash was in
+      // the diff formatter rendering `a` afterwards.
+      const build =
+        kind === "array"
+          ? "let a = []; for (let i = 0; i < 30000; i++) a = [a];"
+          : "let a = {}; for (let i = 0; i < 30000; i++) a = {x: a};";
+      const dir = tempDirWithFiles("pretty-format-stack", {
+        "deep.test.js": `
+          import { test, expect } from "bun:test";
+          test("deep", () => {
+            ${build}
+            expect(a).toEqual(${kind === "array" ? '["leaf"]' : '{ x: "leaf" }'});
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "deep.test.js"],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      // The diff formatter stopped at the stack limit and the matcher threw its
+      // normal mismatch error, so the runner reports a failing test.
+      expect(stderr).toContain("expect(received).toEqual(expected)");
+      expect(stderr).toContain("1 fail");
+      expect(exitCode).toBe(1);
+    },
+  );
 });

@@ -3,8 +3,6 @@
 pub mod error;
 pub use error::{Error, Result};
 
-use core::cell::RefCell;
-
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
@@ -373,10 +371,6 @@ impl<'a> URL<'a> {
 
     pub fn from_utf8(input: &[u8]) -> crate::Result<OwnedURL> {
         Self::from_string(&BunString::borrow_utf8(input))
-    }
-
-    pub fn is_localhost(&self) -> bool {
-        self.hostname.is_empty() || self.hostname == b"localhost" || self.hostname == b"0.0.0.0"
     }
 
     #[inline]
@@ -906,7 +900,6 @@ pub struct QueryStringMap {
     slice: *const [u8],
     pub buffer: Vec<u8>,
     pub list: ParamList,
-    pub name_count: Option<usize>,
 }
 
 impl Clone for QueryStringMap {
@@ -931,28 +924,13 @@ impl Clone for QueryStringMap {
             slice,
             buffer,
             list: self.list.clone(),
-            name_count: self.name_count,
         }
     }
 }
 
-thread_local! {
-    // Unused in current code (commented-out path in get_name_count).
-    static NAME_COUNT_BUF: RefCell<[*const [u8]; 8]> = const { RefCell::new([std::ptr::from_ref::<[u8]>(&[]); 8]) };
-}
-
 impl QueryStringMap {
-    pub fn get_name_count(&mut self) -> usize {
+    pub fn get_name_count(&self) -> usize {
         self.list.len()
-        // if (this.name_count == null) {
-        //     var count: usize = 0;
-        //     var iterate = this.iter();
-        //     while (iterate.next(&_name_count) != null) {
-        //         count += 1;
-        //     }
-        //     this.name_count = count;
-        // }
-        // return this.name_count.?;
     }
 
     pub fn iter(&self) -> Iterator<'_> {
@@ -964,45 +942,6 @@ impl QueryStringMap {
         // `self.buffer` or an external query_string the caller keeps alive).
         let slice = unsafe { &*self.slice };
         &slice[ptr.offset as usize..ptr.offset as usize + ptr.length as usize]
-    }
-
-    pub fn get_index(&self, input: &[u8]) -> Option<usize> {
-        let hash = wyhash(input);
-        self.list.iter().position(|p| p.name_hash == hash)
-    }
-
-    pub fn get(&self, input: &[u8]) -> Option<&[u8]> {
-        let hash = wyhash(input);
-        let i = self.list.iter().position(|p| p.name_hash == hash)?;
-        Some(self.str(self.list[i].value))
-    }
-
-    pub fn has(&self, input: &[u8]) -> bool {
-        self.get_index(input).is_some()
-    }
-
-    pub fn get_all<'s>(&'s self, input: &[u8], target: &mut [&'s [u8]]) -> usize {
-        let hash = wyhash(input);
-        self.get_all_with_hash_from_offset(target, hash, 0)
-    }
-
-    pub fn get_all_with_hash_from_offset<'s>(
-        &'s self,
-        target: &mut [&'s [u8]],
-        hash: u64,
-        offset: usize,
-    ) -> usize {
-        let mut remainder = &self.list[offset..];
-        let mut target_i: usize = 0;
-        while !remainder.is_empty() && target_i < target.len() {
-            let Some(i) = remainder.iter().position(|p| p.name_hash == hash) else {
-                break;
-            };
-            target[target_i] = self.str(remainder[i].value);
-            remainder = &remainder[i + 1..];
-            target_i += 1;
-        }
-        target_i
     }
 
     pub fn init_with_scanner(
@@ -1143,7 +1082,6 @@ impl QueryStringMap {
             list,
             buffer: buf,
             slice: slice_ptr,
-            name_count: None,
         }))
     }
 
@@ -1197,7 +1135,6 @@ impl QueryStringMap {
                 buffer: Vec::new(),
                 // `slice` borrows the caller's query_string; lifetime not tracked here
                 slice: std::ptr::from_ref::<[u8]>(query_string),
-                name_count: None,
             }));
         }
 
@@ -1262,7 +1199,6 @@ impl QueryStringMap {
             list,
             buffer: buf,
             slice: slice_ptr,
-            name_count: None,
         }))
     }
 }

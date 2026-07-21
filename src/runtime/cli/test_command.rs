@@ -3243,8 +3243,7 @@ impl TestCommand {
                 // idle loop after preloads so prior-file handles can't hang it.
                 if buntest.collection.root_scope.entries.is_empty() && idle_after_preloads {
                     let drain_base = vm.unhandled_error_counter;
-                    while drain_base == vm.unhandled_error_counter
-                        && script_keepalive_count(vm) > 0
+                    while drain_base == vm.unhandled_error_counter && script_keepalive_count(vm) > 0
                     {
                         vm.event_loop_ref().tick();
                         vm.event_loop_ref().auto_tick();

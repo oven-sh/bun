@@ -2810,6 +2810,74 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
+  // When an ESM module is wrapped in an __esm lazy initializer, a cyclic
+  // require() of that module must observe its exported bindings as
+  // uninitialized until the wrapper body reaches the original declaration.
+  // Previously the initializer was hoisted into the outer `var` when it was
+  // side-effect free, so the CJS partner saw the value already assigned.
+  itBundled("edgecase/WrappedESMCycleConstInitializerNotHoisted", {
+    files: {
+      "/entry.mjs": /* js */ `
+        export const fromEsm = "E";
+        import c from "./c.cjs";
+        console.log("entry got", c);
+      `,
+      "/c.cjs": /* js */ `
+        let seen;
+        try { seen = JSON.stringify(require("./entry.mjs")); }
+        catch (e) { seen = "err:" + e.constructor.name; }
+        module.exports = "cjs saw " + seen;
+      `,
+    },
+    run: { stdout: `entry got cjs saw {}` },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/var import_c, fromEsm;/);
+      expect(out).toContain(`fromEsm = "E"`);
+      expect(out).not.toMatch(/var .*fromEsm\s*=\s*"E"/);
+    },
+  });
+  itBundled("edgecase/WrappedESMCycleArrowInitializerNotHoisted", {
+    files: {
+      "/entry.mjs": /* js */ `
+        export const fn = () => "F";
+        import c from "./c.cjs";
+        console.log("entry got", c);
+      `,
+      "/c.cjs": /* js */ `
+        let seen;
+        try { seen = typeof require("./entry.mjs").fn; }
+        catch (e) { seen = "err:" + e.constructor.name; }
+        module.exports = "cjs saw fn=" + seen;
+      `,
+    },
+    run: { stdout: `entry got cjs saw fn=undefined` },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/var import_c, fn;/);
+    },
+  });
+  itBundled("edgecase/WrappedESMCycleClassDeclNotHoisted", {
+    files: {
+      "/entry.mjs": /* js */ `
+        export class Foo { static x = 1 }
+        import c from "./c.cjs";
+        console.log("entry got", c);
+      `,
+      "/c.cjs": /* js */ `
+        let seen;
+        try { seen = typeof require("./entry.mjs").Foo; }
+        catch (e) { seen = "err:" + e.constructor.name; }
+        module.exports = "cjs saw Foo=" + seen;
+      `,
+    },
+    run: { stdout: `entry got cjs saw Foo=undefined` },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toMatch(/^class Foo/m);
+      expect(out).toMatch(/Foo = class/);
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

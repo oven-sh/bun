@@ -8857,18 +8857,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for stmt in part.stmts.iter() {
                 match &stmt.data {
                     js_ast::StmtData::SFunction(_) => {}
-                    js_ast::StmtData::SClass(class) => {
-                        if !class.class.can_be_moved() {
-                            return true;
-                        }
-                    }
+                    js_ast::StmtData::SClass(_) => return true,
                     js_ast::StmtData::SLocal(local) => {
                         if local.was_commonjs_export || self.commonjs_named_exports.count() == 0 {
                             for decl in local.decls.slice() {
                                 if let Some(value) = &decl.value {
-                                    if !matches!(value.data, js_ast::ExprData::EMissing(_))
-                                        && !value.can_be_moved()
-                                    {
+                                    if !matches!(value.data, js_ast::ExprData::EMissing(_)) {
                                         return true;
                                     }
                                 }
@@ -8878,9 +8872,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return true;
                     }
                     js_ast::StmtData::SExportDefault(ed) => {
-                        if !ed.can_be_moved() {
-                            return true;
+                        // `export default function` becomes an SFunction that the linker
+                        // hoists out of the wrapper; every other form lowers to an
+                        // SLocal/SClass whose initializer stays inside.
+                        if let js_ast::StmtOrExpr::Stmt(s) = &ed.value {
+                            if matches!(s.data, js_ast::StmtData::SFunction(_)) {
+                                continue;
+                            }
                         }
+                        return true;
                     }
                     js_ast::StmtData::SExportEquals(e) => {
                         if !e.value.can_be_moved() {

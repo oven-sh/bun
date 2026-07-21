@@ -269,15 +269,17 @@ impl Listener {
                         // Surface coded syscall failures the way node:net
                         // does (EADDRINUSE vs EACCES need different caller
                         // handling) rather than an invalid-arguments TypeError.
-                        if let ListenPipeError::Sys(sys_err) = &e {
+                        if let ListenPipeError::Sys(sys_err, uv_rc) = &e {
                             // get_error_code_tag_name does not reject EUNKNOWN /
                             // UV_EAI_* (>=3000); neither is a node-style code, so
                             // route those through the generic error below.
                             if let Some((name, se)) = sys_err.get_error_code_tag_name() {
                                 if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
                                     let err = jsc::SystemError {
-                                        // Negated errno per fill_system_error_common.
-                                        errno: -(se as c_int),
+                                        // The raw negative UV_E* code: node's JS errno
+                                        // (-4091 EADDRINUSE on Windows), NOT the
+                                        // platform-independent E discriminant (-98).
+                                        errno: *uv_rc,
                                         code: bun_core::String::static_(name),
                                         message: bun_core::String::clone_utf8(
                                             format!(
@@ -300,7 +302,7 @@ impl Listener {
                         let detail = match &e {
                             ListenPipeError::Other(err) => err.name(),
                             // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
-                            ListenPipeError::Sys(_) => "UNKNOWN",
+                            ListenPipeError::Sys(..) => "UNKNOWN",
                         };
                         return Err(global.throw_invalid_arguments(format_args!(
                             "Failed to listen at {}: {}",
@@ -1660,12 +1662,15 @@ pub struct WindowsNamedPipeListeningContext {
     _priv: (),
 }
 
-/// `Sys` keeps the structured uv error so the JS error carries its real
-/// code/errno; `Other` covers the non-syscall setup failures, whose payload
+/// `Sys` keeps the structured uv error (for the node-style code/name) plus
+/// the raw negative `UV_E*` return code — node's JS `errno` is the host uv
+/// code (-4091 for EADDRINUSE on Windows), while `bun_sys::Error::errno`
+/// holds the platform-independent `E` discriminant (98), which must never
+/// reach JS. `Other` covers the non-syscall setup failures, whose payload
 /// names the failure in the caller's generic invalid-arguments message.
 #[cfg(windows)]
 pub(crate) enum ListenPipeError {
-    Sys(bun_sys::Error),
+    Sys(bun_sys::Error, core::ffi::c_int),
     Other(crate::Error),
 }
 
@@ -1820,7 +1825,7 @@ impl WindowsNamedPipeListeningContext {
             // handling, and a generic bind failure hides that.
             use bun_sys::ReturnCodeExt as _;
             return Err(match listen_rc.to_error(bun_sys::Tag::listen) {
-                Some(err) => ListenPipeError::Sys(err),
+                Some(err) => ListenPipeError::Sys(err, listen_rc.int()),
                 // Unreachable in practice: the uv→errno mapping is total.
                 None => ListenPipeError::Other(crate::Error::FailedToBindPipe),
             });

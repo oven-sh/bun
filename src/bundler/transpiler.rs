@@ -803,10 +803,14 @@ impl<'a> Transpiler<'a> {
                     // `"undefined"` (a common `NODE_ENV=${NODE_ENV}` footgun
                     // when the var is unset) still default to development.
                     match node_env.as_deref() {
-                        None | Some(b"") | Some(b"development") | Some(b"undefined") => {
-                            dot_env::DotEnvFileSuffix::Development
+                        Some(m)
+                            if !m.is_empty()
+                                && !m.eq_ignore_ascii_case(b"development")
+                                && !m.eq_ignore_ascii_case(b"undefined") =>
+                        {
+                            dot_env::DotEnvFileSuffix::Custom(m)
                         }
-                        Some(mode) => dot_env::DotEnvFileSuffix::Custom(mode),
+                        _ => dot_env::DotEnvFileSuffix::Development,
                     }
                 };
                 env.load(dir, &env_files, suffix, skip_default_env)?;

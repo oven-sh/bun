@@ -110,10 +110,14 @@ async function run(op: Op) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const result = JSON.parse(stdout.trim());
-  expect(exitCode).toBe(0);
-  return result;
+  try {
+    const result = JSON.parse(stdout.trim());
+    expect(exitCode).toBe(0);
+    return result;
+  } catch (e) {
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "<valid JSON>", stderr: "", exitCode: 0 });
+    throw e;
+  }
 }
 
 // uSockets sweeps short socket timeouts on a ~4s tick, so a 1s idle timeout

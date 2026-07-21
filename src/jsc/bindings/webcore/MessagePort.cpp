@@ -517,6 +517,12 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
 
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
+    // Node only fires [kNewListener] (and so start()) when the add actually lands;
+    // an already-aborted signal or a duplicate both return false here and must not
+    // start the port. Mirrors the `result` gate in removeEventListener below.
+    auto result = EventTarget::addEventListener(eventType, WTF::move(listener), options);
+    if (!result)
+        return false;
     if (eventType == eventNames().messageEvent) {
         m_hasMessageEventListener = true;
         // start() re-attaches each time, so a listener added after a pause
@@ -531,7 +537,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
                 m_pipe->registerCloseContext(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
         }
     }
-    return EventTarget::addEventListener(eventType, WTF::move(listener), options);
+    return result;
 }
 
 bool MessagePort::removeEventListener(const AtomString& eventType, EventListener& listener, const EventListenerOptions& options)

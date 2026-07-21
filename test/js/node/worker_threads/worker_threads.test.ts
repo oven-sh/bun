@@ -352,6 +352,34 @@ describe("receiveMessageOnPort interacts with the port's start/stop state like N
     ).toEqual({ message: "m" });
   });
 
+  test("removeAllListeners('message') leaves the port receiving (discards)", async () => {
+    expect(
+      await outcome(p => {
+        p.on("message", () => {});
+        p.removeAllListeners("message");
+      }),
+    ).toBe(undefined);
+  });
+
+  test("removeAllListeners() leaves the port receiving (discards)", async () => {
+    expect(
+      await outcome(p => {
+        p.on("message", () => {});
+        p.removeAllListeners();
+      }),
+    ).toBe(undefined);
+  });
+
+  test("addEventListener with an already-aborted signal does not start the port (buffers)", async () => {
+    expect(
+      await outcome(p => {
+        const ac = new AbortController();
+        ac.abort();
+        p.addEventListener("message", () => {}, { signal: ac.signal });
+      }),
+    ).toEqual({ message: "m" });
+  });
+
   test("a started-but-listenerless port does not grow its queue", async () => {
     const { port1, port2 } = new MessageChannel();
     try {

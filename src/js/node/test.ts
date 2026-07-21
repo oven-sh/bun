@@ -3214,6 +3214,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
           // directly (not through republishChildEvent), so top-level numbering
           // is taken from the same counter the republish path bumps.
           const testNumber = ++counts.topLevel;
+          const error = wrapTestError(err);
           const fileNode = {
             __proto__: null,
             name: file,
@@ -3228,13 +3229,13 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
           reporter.emitMessage("test:complete", {
             ...fileNode,
             testNumber,
-            details: { __proto__: null, duration_ms: 0, type: "test", passed: false, error: err },
+            details: { __proto__: null, duration_ms: 0, type: "test", passed: false, error },
           });
           reporter.emitMessage("test:start", { ...fileNode });
           reporter.emitMessage("test:fail", {
             ...fileNode,
             testNumber,
-            details: { __proto__: null, duration_ms: 0, type: "test", error: err },
+            details: { __proto__: null, duration_ms: 0, type: "test", error },
           });
           counts.tests++;
           counts.failed++;

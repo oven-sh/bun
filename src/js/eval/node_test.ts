@@ -101,8 +101,9 @@ function createTestFileList(patterns: string[], cwd: string): string[] {
       let stat;
       try {
         stat = statSync(absolute);
-      } catch {
-        continue;
+      } catch (err) {
+        if ((err as { code?: string })?.code === "ENOENT") continue;
+        throw err;
       }
       if (stat.isFile()) {
         results.add(absolute);

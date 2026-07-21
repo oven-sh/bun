@@ -277,8 +277,11 @@ function jsToYaml(indentation: string, name, value, seen?: Set<unknown>) {
       result += jsToYaml(indentation, "name", errName, seen);
     }
     if (errIsAssertion) {
-      result += jsToYaml(indentation, "expected", errExpected, new Set(seen));
-      result += jsToYaml(indentation, "actual", errActual, new Set(seen));
+      // Guard a self-referential expected/actual (e.expected = e); the entries
+      // loop above already printed <Circular>, but recursing here re-enters
+      // this same isErrorObj block on the seen value and stack-overflows.
+      if (!seen!.has(errExpected)) result += jsToYaml(indentation, "expected", errExpected, new Set(seen));
+      if (!seen!.has(errActual)) result += jsToYaml(indentation, "actual", errActual, new Set(seen));
       if (errOperator) {
         result += jsToYaml(indentation, "operator", errOperator, seen);
       }

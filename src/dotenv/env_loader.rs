@@ -638,7 +638,7 @@ impl<'a> Loader<'a> {
         // `Source.contents: &'static [u8]` lifetime constraint (callers like
         // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, self.map, &mut value_buffer).map(drop)
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(
@@ -897,7 +897,11 @@ impl<'a> Loader<'a> {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut *self.map, value_buffer)?;
+                if Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut *self.map, value_buffer)?
+                    && !self.quiet
+                {
+                    Self::warn_expansion_capped(base);
+                }
             }
         }
 
@@ -944,7 +948,11 @@ impl<'a> Loader<'a> {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut *self.map, value_buffer)?;
+                if Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut *self.map, value_buffer)?
+                    && !self.quiet
+                {
+                    Self::warn_expansion_capped(file_path);
+                }
             }
         }
 
@@ -953,6 +961,16 @@ impl<'a> Loader<'a> {
         self.custom_files_loaded
             .put(file_path, bun_ast::Source::default())?;
         Ok(())
+    }
+
+    #[cold]
+    fn warn_expansion_capped(file_path: &[u8]) {
+        bun_core::pretty_errorln!(
+            "<r><yellow>warn<r><d>:<r> {} variable expansion exceeds size limit ({} bytes per value, {} total); oversized values set to empty",
+            bun_core::fmt::quote(file_path),
+            MAX_EXPANDED_VALUE_LEN,
+            MAX_EXPANDED_TOTAL_LEN,
+        );
     }
 }
 
@@ -994,6 +1012,26 @@ struct Parser<'a> {
 // Input is UTF-8, so this set must be ASCII-only: 0xA0 is a continuation byte
 // there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
 const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
+
+/// Upper bound on a single expanded value. A `.env` file whose `${}` references
+/// transitively exceed this produces an empty value (and a one-time warning)
+/// instead of aborting the process on allocation failure. Sized well above any
+/// legitimate env var but well below where allocation becomes a DoS vector.
+const MAX_EXPANDED_VALUE_LEN: usize = 4 * 1024 * 1024;
+
+/// Upper bound on the sum of expanded-value bytes stored per `_parse` call.
+/// Bounds the linear case (many variables each referencing one at-cap value)
+/// that the per-value cap alone does not.
+const MAX_EXPANDED_TOTAL_LEN: usize = 32 * 1024 * 1024;
+
+enum Expansion<'a> {
+    /// No `$` reference in the input; keep the original value.
+    Unchanged,
+    /// Expanded result (borrow of `value_buffer`).
+    Value(&'a [u8]),
+    /// Expansion would exceed [`MAX_EXPANDED_VALUE_LEN`]; caller sets the value empty.
+    TooLarge,
+}
 
 impl<'a> Parser<'a> {
     fn skip_line(&mut self) {
@@ -1160,9 +1198,9 @@ impl<'a> Parser<'a> {
         Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
     }
 
-    fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
+    fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Expansion<'_>, AllocError> {
         if value.len() < 2 {
-            return Ok(None);
+            return Ok(Expansion::Unchanged);
         }
 
         self.value_buffer.clear();
@@ -1212,16 +1250,28 @@ impl<'a> Parser<'a> {
                     if end < value.len() && value[end] == b'}' {
                         end += 1;
                     }
-                    self.value_buffer
-                        .splice(0..0, value[end..last].iter().copied());
-                    self.value_buffer
-                        .splice(0..0, lookup_value.unwrap_or(default_value).iter().copied());
+                    let tail = &value[end..last];
+                    let insert = lookup_value.unwrap_or(default_value);
+                    // The literal pieces of `value` sum to at most `value.len()` (file-bounded);
+                    // only the looked-up substitutions can grow without bound.
+                    if self
+                        .value_buffer
+                        .len()
+                        .saturating_add(tail.len())
+                        .saturating_add(insert.len())
+                        > MAX_EXPANDED_VALUE_LEN
+                    {
+                        self.value_buffer.clear();
+                        return Ok(Expansion::TooLarge);
+                    }
+                    self.value_buffer.splice(0..0, tail.iter().copied());
+                    self.value_buffer.splice(0..0, insert.iter().copied());
                 }
                 last = pos;
             }
             if pos == 0 {
                 if last == value.len() {
-                    return Ok(None);
+                    return Ok(Expansion::Unchanged);
                 }
                 break;
             }
@@ -1231,14 +1281,15 @@ impl<'a> Parser<'a> {
             self.value_buffer
                 .splice(0..0, value[..last].iter().copied());
         }
-        Ok(Some(self.value_buffer.as_slice()))
+        Ok(Expansion::Value(self.value_buffer.as_slice()))
     }
 
     fn _parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         &mut self,
         map: &mut Map,
-    ) -> Result<(), AllocError> {
+    ) -> Result<bool, AllocError> {
         let mut count = map.map.count();
+        let mut expansion_capped = false;
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
                 self.skip_line();
@@ -1269,31 +1320,51 @@ impl<'a> Parser<'a> {
             // `values_mut()`. Values are dupe'd by `_parse` above, so length
             // is bounded by file size.
             let total = map.map.count();
+            let mut expanded_total: usize = 0;
             let mut idx = count;
             while idx < total {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
-                if let Some(expanded) = self.expand_value(map, &current)? {
-                    map.map.values_mut()[idx] = HashTableValue {
-                        value: Box::from(expanded),
-                        conditional: false,
-                    };
-                }
+                let expansion = match self.expand_value(map, &current)? {
+                    Expansion::Unchanged => {
+                        idx += 1;
+                        continue;
+                    }
+                    Expansion::Value(expanded)
+                        if expanded_total.saturating_add(expanded.len())
+                            <= MAX_EXPANDED_TOTAL_LEN =>
+                    {
+                        expanded_total += expanded.len();
+                        Box::from(expanded)
+                    }
+                    Expansion::Value(_) | Expansion::TooLarge => {
+                        expansion_capped = true;
+                        Box::default()
+                    }
+                };
+                map.map.values_mut()[idx] = HashTableValue {
+                    value: expansion,
+                    conditional: false,
+                };
                 idx += 1;
             }
             count = 0;
         }
         let _ = count;
-        Ok(())
+        Ok(expansion_capped)
     }
 
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
+    ///
+    /// Returns `true` when at least one `${}` expansion was capped (per-value at
+    /// [`MAX_EXPANDED_VALUE_LEN`] or per-file aggregate at [`MAX_EXPANDED_TOTAL_LEN`])
+    /// and the affected value was set to empty.
     pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), AllocError> {
+    ) -> Result<bool, AllocError> {
         // Clear the buffer before each parse to ensure no leftover data
         value_buffer.clear();
         let mut parser = Parser {

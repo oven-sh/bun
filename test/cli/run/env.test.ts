@@ -251,6 +251,77 @@ test(".env value expansion", () => {
   expect(stdout).toBe("foo|foo bar|foo foo bar moo");
 });
 
+test(".env value expansion is bounded", async () => {
+  // Doubling chain: X0="a", Xi=$X{i-1}$X{i-1}. Uncapped, X24 would be 16 MiB and
+  // the geometric series keeps doubling until allocation aborts the process.
+  let env = "X0=a\n";
+  for (let i = 1; i <= 24; i++) env += `X${i}=$X${i - 1}$X${i - 1}\n`;
+  const dir = tempDirWithFiles("dotenv-expand-cap", {
+    ".env": env,
+    "index.ts": `console.log(JSON.stringify({ X0: process.env.X0, X24: process.env.X24 }));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    cwd: dir,
+    env: { ...bunEnv, NODE_ENV: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({ X0: "a", X24: "" });
+  expect(exitCode).toBe(0);
+});
+
+test(".env total expansion is bounded", async () => {
+  // A0..A22 doubles to exactly 4 MiB (at the per-value cap). Then ten B lines
+  // each reference A22; uncapped, all ten would be 4 MiB for ~40 MiB retained.
+  // The per-file aggregate cap stops storing expansions once the sum exceeds
+  // its limit, so the tail of B9 must be empty.
+  let env = "A0=a\n";
+  for (let i = 1; i <= 22; i++) env += `A${i}=$A${i - 1}$A${i - 1}\n`;
+  for (let i = 0; i <= 9; i++) env += `B${i}=$A22\n`;
+  const dir = tempDirWithFiles("dotenv-expand-aggregate", {
+    ".env": env,
+    "index.ts": `console.log(JSON.stringify({ B0: process.env.B0?.length ?? -1, B9: process.env.B9 }));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    cwd: dir,
+    env: { ...bunEnv, NODE_ENV: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({ B0: 4194304, B9: "" });
+  expect(exitCode).toBe(0);
+});
+
+// ulimit -v is a no-op under ASAN (which reserves ~20 TiB of shadow VM).
+test.skipIf(!isLinux || isASAN)(".env value expansion doesn't abort the process", async () => {
+  // A 419-byte .env whose doubling chain requests 2^35 bytes. Under a
+  // virtual-memory limit the unfixed loader hits Rust's alloc-error abort
+  // before any user code runs.
+  let env = "X0=ab\n";
+  for (let i = 1; i <= 34; i++) env += `X${i}=$X${i - 1}$X${i - 1}\n`;
+  const dir = tempDirWithFiles("dotenv-expand-abort", {
+    ".env": env,
+  });
+  await using proc = Bun.spawn({
+    cmd: ["bash", "-c", `ulimit -v 4000000 && exec "$0" -e 'console.log("alive", process.env.X34)'`, bunExe()],
+    cwd: dir,
+    env: { ...bunEnv, NODE_ENV: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode, exitCode }).toEqual({
+    stdout: "alive",
+    signalCode: null,
+    exitCode: 0,
+  });
+  expect(stderr).not.toContain("memory allocation");
+});
+
 test(".env comments", () => {
   const dir = tempDirWithFiles("dotenv-comments", {
     ".env": "#FOZ\nFOO = foo#FAIL\nBAR='bar' #BAZ",

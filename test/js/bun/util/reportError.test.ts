@@ -123,9 +123,6 @@ test("native error printer handles lone surrogates in message and stack frame na
   expect(exitCode).toBe(1);
 });
 
-// The uncaught-exception printer constructs its own Formatter. Before this fix
-// it left `stack_check` at the always-passes default, so formatting a deeply
-// nested non-Error value recursed until the native stack overflowed (SIGSEGV).
 describe.each(["throw a;", "Promise.reject(a);"])("%s", stmt => {
   test.concurrent("native error printer survives a deeply nested thrown value", async () => {
     const src = `
@@ -141,11 +138,11 @@ describe.each(["throw a;", "Promise.reject(a);"])("%s", stmt => {
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const lines = stderr.trimEnd().split("\n");
 
-    // console.log of the same value is guarded (throws RangeError); the
-    // uncaught-exception printer must be at least as safe.
-    expect(stderr).toContain("control:RangeError");
+    expect(lines[0]).toBe("control:RangeError");
     expect(proc.signalCode).toBeNull();
+    expect(lines.at(-1)).toMatch(/^Bun v\S+ \(.+\)$/);
     expect(exitCode).toBe(1);
   });
 });

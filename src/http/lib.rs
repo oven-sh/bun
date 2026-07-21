@@ -54,7 +54,7 @@ pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
 pub use header_builder::HeaderBuilder;
 pub use headers::{Headers, HeadersExt};
-pub use http_cert_error::HTTPCertError;
+pub use http_cert_error::{HTTPCertError, TLSHandshakeError};
 pub use http_context::{HTTPContext, HTTPSocket};
 pub use http_request_body::HTTPRequestBody;
 pub use http_thread::HttpThread as HTTPThread;
@@ -439,6 +439,10 @@ pub struct HTTPClientResult<'a> {
     /// JS side never dereferences the client's borrowed URL buffers, which
     /// the HTTP thread frees after the result callback returns.
     pub dns_hostname: Option<Box<[u8]>>,
+    /// Owned copy of the uSockets handshake-failure sentinel when `fail` is
+    /// `TLSHandshakeFailed`; carries the OpenSSL reason so the JS side can
+    /// report Node's `ERR_SSL_*` code instead of a certificate error.
+    pub tls_handshake_error: Option<TLSHandshakeError>,
 
     /// Owns the response metadata aka headers, url and status code
     pub metadata: Option<HTTPResponseMetadata>,
@@ -501,6 +505,7 @@ impl<'a> HTTPClientResult<'a> {
             fail: self.fail,
             dns_error: self.dns_error,
             dns_hostname: self.dns_hostname,
+            tls_handshake_error: self.tls_handshake_error,
             metadata: self.metadata,
             body_size: self.body_size,
             certificate_info: self.certificate_info,
@@ -4229,6 +4234,7 @@ impl<'a> HTTPClient<'a> {
             fail,
             dns_error,
             dns_hostname,
+            tls_handshake_error,
             metadata,
             body_size,
             certificate_info,
@@ -4242,6 +4248,7 @@ impl<'a> HTTPClient<'a> {
                 r.fail,
                 r.dns_error,
                 r.dns_hostname,
+                r.tls_handshake_error,
                 r.metadata,
                 r.body_size,
                 r.certificate_info,
@@ -4385,6 +4392,7 @@ impl<'a> HTTPClient<'a> {
             fail,
             dns_error,
             dns_hostname,
+            tls_handshake_error,
             metadata,
             body_size,
             certificate_info,
@@ -4430,6 +4438,7 @@ impl<'a> HTTPClient<'a> {
             fail,
             dns_error,
             dns_hostname,
+            tls_handshake_error,
             metadata,
             body_size,
             certificate_info,
@@ -4443,6 +4452,7 @@ impl<'a> HTTPClient<'a> {
                 r.fail,
                 r.dns_error,
                 r.dns_hostname,
+                r.tls_handshake_error,
                 r.metadata,
                 r.body_size,
                 r.certificate_info,
@@ -4472,6 +4482,7 @@ impl<'a> HTTPClient<'a> {
             fail,
             dns_error,
             dns_hostname,
+            tls_handshake_error,
             metadata,
             body_size,
             certificate_info,
@@ -4647,6 +4658,7 @@ impl<'a> HTTPClient<'a> {
                     fail: self.state.fail,
                     dns_error: self.state.dns_error,
                     dns_hostname: self.state.dns_hostname.take(),
+                    tls_handshake_error: self.state.tls_handshake_error.take(),
                     has_more: self.state.fail.is_none() && !self.state.is_done(),
                     body_size,
                     certificate_info: None,
@@ -4664,6 +4676,7 @@ impl<'a> HTTPClient<'a> {
             fail: self.state.fail,
             dns_error: self.state.dns_error,
             dns_hostname: self.state.dns_hostname.take(),
+            tls_handshake_error: self.state.tls_handshake_error.take(),
             // check if we are reporting cert errors, do not have a fail state and we are not done
             has_more: certificate_info.is_some()
                 || (self.state.fail.is_none() && !self.state.is_done()),

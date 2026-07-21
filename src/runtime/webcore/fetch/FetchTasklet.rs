@@ -1326,6 +1326,31 @@ impl FetchTasklet {
             }
         }
 
+        // A TLS handshake that failed for a non-certificate reason (server
+        // sent a fatal alert, peer isn't speaking TLS at all, or the socket
+        // closed mid-handshake). The HTTP thread captured the OpenSSL reason
+        // so the error reports Node's `ERR_SSL_*` / `ECONNRESET` identity
+        // instead of a certificate verification error.
+        if fail == http::Error::TLSHandshakeFailed {
+            let tls_err = self.result.tls_handshake_error.take().unwrap_or_default();
+            let code = tls_err.node_error_code();
+            let message = if tls_err.reason.is_empty() {
+                BunString::static_("TLS handshake failed")
+            } else {
+                BunString::clone_utf8(&tls_err.reason)
+            };
+            return BodyValueError::SystemError(jsc::SystemError {
+                errno: 0,
+                code: BunString::clone_utf8(&code),
+                message,
+                path,
+                syscall: BunString::EMPTY,
+                hostname: BunString::EMPTY,
+                fd: core::ffi::c_int::MIN,
+                dest: BunString::EMPTY,
+            });
+        }
+
         let code = if fail == http::Error::ConnectionClosed {
             BunString::static_("ECONNRESET")
         } else {

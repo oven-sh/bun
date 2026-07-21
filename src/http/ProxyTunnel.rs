@@ -378,10 +378,10 @@ fn on_handshake(
     this.state.request_stage = HTTPStage::ProxyHeaders;
     this.state.request_sent_len = 0;
     let handshake_error = HTTPCertError::from_verify_error(ssl_error);
+    // handshake completed but we may have ssl errors
+    this.flags.did_have_handshaking_error = handshake_error.error_no != 0;
     if handshake_success {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake success");
-        // handshake completed but we may have ssl errors
-        this.flags.did_have_handshaking_error = handshake_error.error_no != 0;
         if this.flags.reject_unauthorized {
             // only reject the connection if reject_unauthorized == true
             if this.flags.did_have_handshaking_error {
@@ -455,8 +455,18 @@ fn on_handshake(
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake failed");
         // if we are here is because server rejected us, and the error_no is the cause of this
         // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
-        if this.flags.did_have_handshaking_error && handshake_error.error_no != 0 {
-            let err = crate::get_cert_error_from_no(handshake_error.error_no);
+        if this.flags.did_have_handshaking_error {
+            // A negative `error_no` is one of the uSockets handshake sentinels
+            // (-71 EPROTO / -46 ECONNRESET), not an `X509_V_ERR_*` code.
+            // Capture the OpenSSL reason so the JS side can report it instead
+            // of a certificate error.
+            let err = if handshake_error.error_no < 0 {
+                this.state.tls_handshake_error =
+                    Some(crate::TLSHandshakeError::from_verify_error(&ssl_error));
+                crate::Error::TLSHandshakeFailed
+            } else {
+                crate::get_cert_error_from_no(handshake_error.error_no)
+            };
             // SAFETY: `this` dead (NLL); reenter via raw ptr.
             ProxyTunnel::close_from_callback(proxy_nn, err);
             return;

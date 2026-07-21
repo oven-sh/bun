@@ -1187,10 +1187,18 @@ impl<const SSL: bool> Handler<SSL> {
                 // if we are here is because server rejected us, and the error_no is the cause of this
                 // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
                 if client.flags.did_have_handshaking_error {
-                    client.close_and_fail::<SSL>(
-                        get_cert_error_from_no(handshake_error.error_no),
-                        socket,
-                    );
+                    // A negative `error_no` is one of the uSockets handshake
+                    // sentinels (-71 EPROTO / -46 ECONNRESET), not an
+                    // `X509_V_ERR_*` code. Capture the OpenSSL reason so the
+                    // JS side can report it instead of a certificate error.
+                    let err = if handshake_error.error_no < 0 {
+                        client.state.tls_handshake_error =
+                            Some(crate::TLSHandshakeError::from_verify_error(&ssl_error));
+                        crate::Error::TLSHandshakeFailed
+                    } else {
+                        get_cert_error_from_no(handshake_error.error_no)
+                    };
+                    client.close_and_fail::<SSL>(err, socket);
                     return;
                 }
                 // if handshake_success it self is false, this means that the connection was rejected

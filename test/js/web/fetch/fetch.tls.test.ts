@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -696,6 +698,109 @@ describe.concurrent("fetch-tls", () => {
       const stderr = await proc.stderr.text();
       expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(stderr).toContain("ignoring extra certs");
+    }
+  });
+
+  // A TLS handshake that fails for a reason unrelated to certificate
+  // verification (the server aborts the handshake with a fatal ALPN alert, or
+  // the peer isn't speaking TLS at all) must surface the OpenSSL reason, not
+  // a certificate verification error. With rejectUnauthorized:false a
+  // certificate error is impossible by construction.
+  it("reports the OpenSSL reason for non-certificate TLS handshake failures", async () => {
+    // TLS server that only offers an ALPN protocol fetch() never advertises,
+    // so BoringSSL aborts the handshake with a fatal no_application_protocol
+    // alert before any certificate verification runs.
+    const alpn = tls.createServer({ ...CERT_LOCALHOST_IP, ALPNProtocols: ["bun-bogus-alpn"] }, () => {});
+    alpn.on("tlsClientError", () => {});
+    alpn.listen(0, "127.0.0.1");
+    await once(alpn, "listening");
+
+    // Plain TCP server behind an https:// URL: the ClientHello is answered
+    // with bytes that are not a TLS record (WRONG_VERSION_NUMBER).
+    const plain = net.createServer(s => {
+      s.on("error", () => {});
+      s.end("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+    });
+    plain.listen(0, "127.0.0.1");
+    await once(plain, "listening");
+
+    // CONNECT proxy that opens the tunnel and then feeds non-TLS bytes into
+    // it: the inner TLS handshake (SSLWrapper) must report the same identity
+    // as the direct path.
+    const proxy = net.createServer(cs => {
+      cs.on("error", () => {});
+      let buf = "";
+      cs.on("data", d => {
+        buf += d;
+        if (buf.includes("\r\n\r\n") && buf.startsWith("CONNECT")) {
+          cs.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          cs.write(Buffer.alloc(480, "GARBAGE NOT TLS "));
+          buf = "";
+        }
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+
+    try {
+      const alpnPort = (alpn.address() as net.AddressInfo).port;
+      const plainPort = (plain.address() as net.AddressInfo).port;
+      const proxyPort = (proxy.address() as net.AddressInfo).port;
+
+      // Run the probes in a subprocess with proxy-bypass env cleared so the
+      // explicit `proxy:` option is honored for loopback targets regardless of
+      // the ambient environment.
+      const fixture = `
+        const probe = async (url, opts) => {
+          try { await fetch(url, { ...opts, tls: { rejectUnauthorized: false } }); return { code: "RESOLVED" }; }
+          catch (e) { return { code: e?.code ?? "NO_CODE", message: String(e?.message ?? "") }; }
+        };
+        const [alpnMismatch, plainBehindHttps, tunnelGarbage] = await Promise.all([
+          probe("https://127.0.0.1:${alpnPort}/"),
+          probe("https://127.0.0.1:${plainPort}/"),
+          probe("https://127.0.0.1:1/x", { proxy: "http://127.0.0.1:${proxyPort}" }),
+        ]);
+        console.log(JSON.stringify({ alpnMismatch, plainBehindHttps, tunnelGarbage }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: {
+          ...bunEnv,
+          NO_PROXY: undefined,
+          no_proxy: undefined,
+          HTTP_PROXY: undefined,
+          http_proxy: undefined,
+          HTTPS_PROXY: undefined,
+          https_proxy: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const result = JSON.parse(stdout.trim() || "null");
+      // None of these can be a certificate verification error.
+      expect({ result, stderr }).toEqual({
+        result: {
+          alpnMismatch: {
+            code: expect.stringMatching(/^ERR_SSL_/),
+            message: expect.stringMatching(/NO_APPLICATION_PROTOCOL/i),
+          },
+          plainBehindHttps: {
+            code: "ERR_SSL_WRONG_VERSION_NUMBER",
+            message: expect.stringMatching(/WRONG_VERSION_NUMBER/i),
+          },
+          tunnelGarbage: {
+            code: "ERR_SSL_WRONG_VERSION_NUMBER",
+            message: expect.stringMatching(/WRONG_VERSION_NUMBER/i),
+          },
+        },
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      alpn.close();
+      plain.close();
+      proxy.close();
     }
   });
 });

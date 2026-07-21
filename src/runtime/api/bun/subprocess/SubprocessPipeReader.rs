@@ -350,8 +350,10 @@ impl PipeReader {
                 // boxed slice so JS becomes the owner — same pattern as
                 // `MarkedArrayBuffer::from_string`.
                 let slice: &'static mut [u8] = Box::leak(bytes.into_boxed_slice());
-                Ok(MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
-                    .to_node_buffer(global_this))
+                Ok(
+                    MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
+                        .to_node_buffer(global_this),
+                )
             }
             _ => Ok(JSValue::UNDEFINED),
         }

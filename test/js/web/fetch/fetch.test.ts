@@ -787,7 +787,7 @@ describe("fetch", () => {
     expect(await response.text()).toBe("buntastic");
   });
 
-  ["GET", "HEAD"].forEach(method =>
+  ["GET", "HEAD", "TRACE"].forEach(method =>
     it.concurrent(`fail on ${method} with body`, async () => {
       // The request is rejected before any network I/O, so the URL is irrelevant.
       expect(async () => {

@@ -144,7 +144,9 @@ pub struct TSConfigJSON {
     /// More info: https://github.com/microsoft/TypeScript/issues/31869
     pub base_url_for_paths: Box<[u8]>,
 
-    pub extends: Box<[u8]>,
+    /// TypeScript 5 allows `extends` to be an array; a single string is the
+    /// one-element case. Later entries override earlier ones.
+    pub extends: Vec<Box<[u8]>>,
     /// The verbatim values of "compilerOptions.paths". The keys are patterns to
     /// match and the values are arrays of fallback paths to search. Each key and
     /// each fallback path can optionally have a single "*" wildcard character.
@@ -171,7 +173,7 @@ impl Default for TSConfigJSON {
             abs_path: Box::default(),
             base_url: Box::default(),
             base_url_for_paths: Box::default(),
-            extends: Box::default(),
+            extends: Vec::new(),
             paths: PathsMap::default(),
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
@@ -365,7 +367,17 @@ impl TSConfigJSON {
             // explicit extends reference follows the full chain like tsc.
             if from_extends || !source.path.is_node_module() {
                 if let Some(str) = extends_value.as_str() {
-                    result.extends = Box::from(str);
+                    if !str.is_empty() {
+                        result.extends.push(Box::from(str));
+                    }
+                } else if let Some(array) = extends_value.as_array() {
+                    for item in array.items() {
+                        if let Some(str) = item.as_str() {
+                            if !str.is_empty() {
+                                result.extends.push(Box::from(str));
+                            }
+                        }
+                    }
                 }
             }
         }

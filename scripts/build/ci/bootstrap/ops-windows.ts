@@ -40,6 +40,18 @@ function ps(script: string, options: RunOptions = {}): Promise<RunResult> {
   return run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", strict], options);
 }
 
+/**
+ * Run a read-only PowerShell PROBE and return its stdout. A probe answers a
+ * question ("is scoop on PATH?", "where is nssm.exe?") whose "not found"
+ * case is a NORMAL result encoded as empty output — not a failure. Windows
+ * PowerShell 5.1 maps a cmdlet that found nothing to $? = $false and exits
+ * the process with 1, which would misread a normal "no" as an error; the
+ * appended `exit 0` pins the exit code so only stdout carries meaning.
+ */
+function psProbe(script: string): Promise<string> {
+  return runOutput(["powershell", "-NoProfile", "-Command", `${script}\nexit 0`]);
+}
+
 // ---------------------------------------------------------------------------
 // Files and directories
 // ---------------------------------------------------------------------------
@@ -97,13 +109,10 @@ export async function findFile(under: string, fileName: string): Promise<string 
     log(`[dry-run] would locate ${fileName} under ${under}`);
     return `${under}\\${fileName}`;
   }
-  const output = await runOutput([
-    "powershell",
-    "-NoProfile",
-    "-Command",
-    `$f = Get-ChildItem ${psq(under)} -Recurse -Filter ${psq(fileName)} | Select-Object -First 1
+  const output = await psProbe(
+    `$f = Get-ChildItem ${psq(under)} -Recurse -Filter ${psq(fileName)} -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($f) { $f.FullName }`,
-  ]);
+  );
   return output || undefined;
 }
 
@@ -114,13 +123,10 @@ export async function findDirectory(under: string, dirName: string): Promise<str
     log(`[dry-run] would locate directory ${dirName} under ${under}`);
     return `${under}\\${dirName}`;
   }
-  const output = await runOutput([
-    "powershell",
-    "-NoProfile",
-    "-Command",
-    `$d = Get-ChildItem ${psq(under)} -Recurse -Directory -Filter ${psq(dirName)} | Select-Object -First 1
+  const output = await psProbe(
+    `$d = Get-ChildItem ${psq(under)} -Recurse -Directory -Filter ${psq(dirName)} -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($d) { $d.FullName }`,
-  ]);
+  );
   return output || undefined;
 }
 
@@ -223,14 +229,11 @@ export async function commandOnPath(command: string): Promise<string | undefined
     log(`[dry-run] would check whether "${command}" is on PATH (assuming not yet)`);
     return undefined;
   }
-  const output = await runOutput([
-    "powershell",
-    "-NoProfile",
-    "-Command",
+  const output = await psProbe(
     `$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
 $c = Get-Command ${psq(command)} -ErrorAction SilentlyContinue
 if ($c) { $c.Path }`,
-  ]);
+  );
   return output || undefined;
 }
 
@@ -258,12 +261,7 @@ export async function serviceExists(name: string): Promise<boolean> {
     log(`[dry-run] would check whether service "${name}" exists (assuming not)`);
     return false;
   }
-  const output = await runOutput([
-    "powershell",
-    "-NoProfile",
-    "-Command",
-    `(Get-Service -Name ${psq(name)} -ErrorAction SilentlyContinue).Status`,
-  ]);
+  const output = await psProbe(`(Get-Service -Name ${psq(name)} -ErrorAction SilentlyContinue).Status`);
   return output.length > 0;
 }
 

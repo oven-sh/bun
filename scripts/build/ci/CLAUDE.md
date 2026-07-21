@@ -52,42 +52,49 @@ number to bump anywhere. Merging _is_ publishing.
 | `packer.ts`                                          | Renders the Windows Packer template as JSON from a `WindowsImage` entry (no checked-in `.pkr.hcl`).                                                                                                                                                                                                                                                                                           |
 | `delivery.ts`                                        | The shim `machine.mjs` runs on a fresh box: fetch the spec-pinned node, then `node bootstrap.ts`.                                                                                                                                                                                                                                                                                             |
 
-## Common tasks
+## What we provision
 
-**Bump a tool** (say LLVM): edit `llvm.version` / `llvm.major` in `spec.ts`.
-Every image that references `llvm` gets a new hash and re-bakes on your PR.
-Nothing else to touch.
+Eight images, all in `images` in `spec.ts` (`bun run ci:images` prints their
+current names). Linux images are AWS AMIs; Windows are Azure gallery images.
 
-**Add or remove a package**: edit the relevant `packages` list on the
-image entry (or the shared list it references) in `spec.ts`.
+| key | os / arch | role |
+|---|---|---|
+| `linux-aarch64-13-debian` | debian 13, arm64 | **build host** — bakes every cross toolchain (NDK, glibc/musl/windows/macos sysroots) |
+| `linux-x64-13-debian` | debian 13, x64 | test |
+| `linux-{x64,aarch64}-2504-ubuntu` | ubuntu 25.04 | test |
+| `linux-{x64,aarch64}-323-alpine-musl` | alpine 3.23 (musl) | test |
+| `windows-x64-2019` | Windows Server 2019, x64 | build + test |
+| `windows-aarch64-11` | Windows 11, arm64 | build + test |
 
-**Change how something is installed** (a URL layout, a tarball format):
-edit the builder in `artifacts.ts`. The resolved URLs are part of the hash,
-so exactly the images whose downloads changed re-bake.
+## How do I…
 
-**Change bootstrap logic without changing any fact** (a fix inside a
-component in `components/`, an edit to `runtime.ts` or the ops modules):
-the hashes do NOT change and existing
-images are reused — recipe code is deliberately outside the hash so a comment
-edit never triggers an hour-long bake. When such a change _must_ reach the
-images, bump `epoch` in `spec.ts`. That is the one manual step left, and
-it is intentional.
+Every change below is a **fact edit** unless noted. Editing a fact (or any
+recipe code under `scripts/build/ci/`) moves the affected images' hashes, so
+they bake once on your PR and are reused after — you never bump a version or
+force a rebuild by hand. Sanity-check with `bun run ci:images` (dry-runs all
+8 plans in about a second) before pushing.
 
-**Add an image**: add an entry to `images` in `spec.ts` (the type tells you
-every field you owe), and map a CI platform to it in `.buildkite/ci.mjs`.
+| Task | Where |
+|---|---|
+| **Bump a dep version** | its `version` in `spec.ts` (shared facts like `llvm`, `nodejs`, `bun` are declared once and fan out) |
+| **Add / remove a package** (apt, apk, Scoop) | the package list in `spec.ts` |
+| **Add a whole new tool** | new `components/<tool>.ts` (how to install) + register it in `components/registry.ts` + add its name to the image's `components` list in `spec.ts` (install order) + its facts on the entry |
+| **Remove a tool** | delete its name from the `components` list in `spec.ts` |
+| **Change a download's mirror / host** | the base-URL fact in `spec.ts` (e.g. `nodejs.distBase`) |
+| **Change a download's URL scheme** | the builder in `artifacts.ts` (code — the *resolved* URL is hashed, so it rebakes correctly) |
+| **Set the work / checkout dir** | `paths.workDir` on that platform's entry (linux and windows are separate facts) |
+| **Set a cache dir, or turn a cache off** | `paths.caches.{prefetch,install}` — a path enables it, `null` disables it |
+| **Turn an optional feature on / off** | its nullable config block on the entry (`null` = off). This is the idiom — Dev Drive would be `devDrive: {...} \| null` if added |
+| **Reorder install steps** | reorder the `components` list — order is data (VS Build Tools before cargo, ci-user before prefetch) |
 
-**Review what a bake will do**, without touching anything:
+**Review what a bake will do** without touching anything:
 
 ```sh
 node scripts/build/ci/bootstrap.ts --image=linux-aarch64-13-debian --ci --repo-ref=main --dry-run
 ```
 
-Prints every step, every command, every download (URL + whether it is
-checksum-pinned), and every file write. Works from any OS.
-
-**Check the whole fleet at once** (`bun run ci:images`): prints all 8
-content-addressed names and dry-runs every image's plan, failing loudly on
-the first one that can't. `node scripts/build/ci/check.ts`.
+Prints every step, command, download (URL + whether checksum-pinned), and
+file write. Works from any OS.
 
 ## How a bake happens
 
@@ -111,6 +118,13 @@ the first one that can't. `node scripts/build/ci/check.ts`.
    wildcards, no newest-wins.
 
 ## What the hash means (and doesn't)
+
+The hash covers the image's **facts** (its `spec.ts` entry), its **resolved
+downloads**, and the **recipe code** that produces it (`recipe.ts` digests
+every file under `scripts/build/ci` plus `machine.ts`, per OS) — so changing
+how images are baked renames them and nothing is silently reused. Tooling
+that produces nothing on an image (`check.ts`, `existence.ts`, this doc) is
+excluded and freely editable.
 
 The hash means **same recipe**, not **same bytes**. Some inputs float by
 nature and are marked `FLOATING` in `spec.ts`: OS package repositories

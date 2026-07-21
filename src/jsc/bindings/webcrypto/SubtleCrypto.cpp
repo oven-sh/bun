@@ -1109,6 +1109,47 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     RELEASE_AND_RETURN(scope, algorithm->importKey(format, WTF::move(keyData), *params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
 }
 
+ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, KeyFormat format, Vector<uint8_t>&& keyData, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages)
+{
+    auto& vm = state.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::ImportKey);
+    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+    if (paramsOrException.hasException())
+        return paramsOrException.releaseException();
+    auto params = paramsOrException.releaseReturnValue();
+
+    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
+    auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
+
+    RefPtr<CryptoKey> result;
+    std::optional<Exception> exception;
+    auto callback = [&result](CryptoKey& key) {
+        result = &key;
+    };
+    auto exceptionCallback = [&exception](ExceptionCode ec, const String& msg) {
+        exception = Exception { ec, msg.isEmpty() ? String() : msg };
+    };
+
+    KeyData data = WTF::move(keyData);
+    algorithm->importKey(format, WTF::move(data), *params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
+    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+
+    if (exception)
+        return WTF::move(*exception);
+    if (!result)
+        return Exception { OperationError };
+
+    if ((result->type() == CryptoKeyType::Private || result->type() == CryptoKeyType::Secret) && !result->usagesBitmap()) {
+        return Exception { SyntaxError,
+            result->type() == CryptoKeyType::Private
+                ? "Usages cannot be empty when importing a private key."_s
+                : "Usages cannot be empty when importing a secret key."_s };
+    }
+
+    return result.releaseNonNull();
+}
+
 void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromise>&& promise)
 {
     if (!isSupportedExportKey(*promise->globalObject(), key.algorithmIdentifier())) {

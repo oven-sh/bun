@@ -13,7 +13,16 @@
 #include "CryptoKey.h"
 #include "CryptoKeyType.h"
 #include "JSCryptoKey.h"
+#include "JSCryptoKeyUsage.h"
 #include "CryptoGenKeyPair.h"
+#include "SubtleCrypto.h"
+#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertObject.h"
+#include "JSDOMConvertSequences.h"
+#include "JSDOMConvertStrings.h"
+#include "JSDOMConvertUnion.h"
+#include "JSDOMConvertEnumeration.h"
+#include "JSDOMExceptionHandling.h"
 #include "JSBuffer.h"
 #include "BunString.h"
 #include "BunProcess.h"
@@ -899,7 +908,63 @@ std::optional<bool> KeyObject::equals(const KeyObject& other) const
 
 JSValue KeyObject::toCryptoKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue algorithmValue, JSValue extractableValue, JSValue keyUsagesValue)
 {
-    return jsUndefined();
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+
+    auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*globalObject, algorithmValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto extractable = convert<IDLBoolean>(*globalObject, extractableValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*globalObject, keyUsagesValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    SubtleCrypto::KeyFormat format;
+    Vector<uint8_t> keyData;
+
+    switch (type()) {
+    case CryptoKeyType::Secret: {
+        format = SubtleCrypto::KeyFormat::Raw;
+        keyData.appendVector(symmetricKey());
+        break;
+    }
+    case CryptoKeyType::Public: {
+        format = SubtleCrypto::KeyFormat::Spki;
+        ncrypto::EVPKeyPointer::PublicKeyEncodingConfig config;
+        config.format = ncrypto::EVPKeyPointer::PKFormatType::DER;
+        config.type = ncrypto::EVPKeyPointer::PKEncodingType::SPKI;
+        auto res = m_data->asymmetricKey.writePublicKey(config);
+        if (!res) {
+            throwCryptoError(globalObject, scope, res.openssl_error.value_or(0), "Failed to encode public key");
+            return {};
+        }
+        BUF_MEM* bptr = res.value;
+        keyData.append(std::span { reinterpret_cast<const uint8_t*>(bptr->data), bptr->length });
+        break;
+    }
+    case CryptoKeyType::Private: {
+        format = SubtleCrypto::KeyFormat::Pkcs8;
+        ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
+        config.format = ncrypto::EVPKeyPointer::PKFormatType::DER;
+        config.type = ncrypto::EVPKeyPointer::PKEncodingType::PKCS8;
+        auto res = m_data->asymmetricKey.writePrivateKey(config);
+        if (!res) {
+            throwCryptoError(globalObject, scope, res.openssl_error.value_or(0), "Failed to encode private key");
+            return {};
+        }
+        BUF_MEM* bptr = res.value;
+        keyData.append(std::span { reinterpret_cast<const uint8_t*>(bptr->data), bptr->length });
+        break;
+    }
+    }
+
+    auto result = SubtleCrypto::importKeySync(*globalObject, format, WTF::move(keyData), WTF::move(algorithm), extractable, WTF::move(keyUsages));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (result.hasException()) {
+        WebCore::propagateException(*globalObject, scope, result.releaseException());
+        return {};
+    }
+
+    Ref<CryptoKey> cryptoKey = result.releaseReturnValue();
+    RELEASE_AND_RETURN(scope, toJS(globalObject, domGlobalObject, cryptoKey.get()));
 }
 
 static std::optional<const Vector<uint8_t>*> getSymmetricKey(const WebCore::CryptoKey& key)

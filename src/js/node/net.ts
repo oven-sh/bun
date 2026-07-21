@@ -1722,7 +1722,10 @@ Socket.prototype._onTimeout = function () {
 
 Object.defineProperty(Socket.prototype, "bufferSize", {
   get: function () {
-    return this.writableLength;
+    // Node returns undefined once the handle is gone (after close).
+    if (this._handle) {
+      return this.writableLength;
+    }
   },
 });
 

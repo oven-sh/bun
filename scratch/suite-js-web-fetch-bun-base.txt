@@ -1,0 +1,1502 @@
+bun test v1.4.0-canary.1 (f413d611e)
+
+js/web/fetch/fetch-gzip.test.ts:
+
+      at gcTick (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/harness.ts:316:20)
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/fetch-gzip.test.ts:31:3)
+ HTTP/1.1 GET http://localhost:54320/
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:54320
+ Accept-Encoding: gzip, deflate, br, zstd
+
+      at gcTick (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/harness.ts:316:20)
+      at fetch (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/fetch-gzip.test.ts:22:7)
+< 200 OK
+< Content-Encoding: gzip
+< Content-Type: text/html; charset=utf-8
+< Date: Tue, 21 Jul 2026 00:14:11 GMT
+< Content-Length: 16139
+
+
+      at gcTick (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/harness.ts:316:20)
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/fetch-gzip.test.ts:34:3)
+
+      at gcTick (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/harness.ts:316:20)
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/fetch-gzip.test.ts:37:3)
+
+      at gcTick (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/harness.ts:316:20)
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/fetch-gzip.test.ts:40:5)
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/fetch-gzip.test.ts:41:43)
+
+      at gcTick (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/harness.ts:316:20)
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/fetch-gzip.test.ts:43:3)
+ HTTP/1.1 GET http://localhost:54323/hey
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:54323
+ Accept-Encoding: gzip, deflate, br, zstd
+< 302 Found
+< Location: /redirect
+< Date: Tue, 21 Jul 2026 00:14:11 GMT
+< Content-Length: 0
+
+ HTTP/1.1 GET http://localhost:54323/redirect
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:54323
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 OK
+< Content-Encoding: gzip
+< Content-Type: text/html; charset=utf-8
+< Date: Tue, 21 Jul 2026 00:14:11 GMT
+< Content-Length: 16139
+
+ HTTP/1.1 GET http://localhost:54328/hey
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:54328
+ Accept-Encoding: gzip, deflate, br, zstd
+< 302 Found
+< Location: ://localhost:54328/redirect
+< Date: Tue, 21 Jul 2026 00:14:11 GMT
+< Content-Length: 0
+
+ HTTP/1.1 GET http://localhost:54328/redirect
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:54328
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 OK
+< Content-Encoding: gzip
+< Content-Type: text/html; charset=utf-8
+< Date: Tue, 21 Jul 2026 00:14:11 GMT
+< Content-Length: 16139
+
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: BrotliDecompressionError
+Decompression error: BrotliDecompressionError
+Decompression error: BrotliDecompressionError
+Decompression error: BrotliDecompressionError
+Decompression error: ZstdDecompressionError
+Decompression error: ZstdDecompressionError
+Decompression error: ZstdDecompressionError
+Decompression error: ZstdDecompressionError
+
+js/web/fetch/headers.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: ENOENT reading "bun:internal-for-testing"
+-------------------------------
+
+
+js/web/fetch/fetch-syscall-fault.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: ZlibError
+Decompression error: BrotliDecompressionError
+Decompression error: ZstdDecompressionError
+
+js/web/fetch/abort-signal-leak.test.ts:
+{
+  Structure: 5437,
+  Function: 5109,
+  string: 4051,
+  UnlinkedFunctionExecutable: 3037,
+  FunctionExecutable: 2989,
+  NativeExecutable: 1630,
+  SymbolTable: 1033,
+  JSLexicalEnvironment: 952,
+  StructureRareData: 861,
+  FunctionRareData: 722,
+  FunctionCodeBlock: 719,
+  Object: 666,
+  UnlinkedFunctionCodeBlock: 608,
+  Promise: 444,
+  AsyncFunction: 430,
+  symbol: 418,
+  GetterSetter: 369,
+  PropertyTable: 347,
+  Array: 249,
+  DOMAttributeGetterSetter: 228,
+  Uint8Array: 180,
+  CustomGetterSetter: 140,
+  "Cell Butterfly": 111,
+  StructureChain: 104,
+  AbortSignal: 102,
+  FullPromiseReaction: 91,
+  InternalFieldTuple: 84,
+  RegExp: 70,
+  AsyncFunctionGenerator: 61,
+  Response: 53,
+  AbortController: 52,
+  SlimPromiseReaction: 52,
+  DOMException: 51,
+  Request: 51,
+  Exception: 50,
+  NativePromiseContext: 49,
+  ModuleRegistryEntry: 45,
+  JSSourceCode: 44,
+  ModuleRecord: 44,
+  JSModuleEnvironment: 42,
+  Set: 37,
+  ReadableStream: 34,
+  DebugHTTPServer: 25,
+  UnlinkedModuleProgramCodeBlock: 24,
+  Timeout: 22,
+  ReadableStreamDefaultController: 19,
+  ReadableStreamDefaultReader: 19,
+  WeakRef: 17,
+  ModuleProgramExecutable: 14,
+  FileInternalReadableStreamSource: 11,
+  BytesInternalReadableStreamSource: 10,
+  BlobInternalReadableStreamSource: 9,
+  Error: 9,
+  Map: 9,
+  NativeStreamSourceAdapter: 9,
+  ReadRequest: 9,
+  ReadableStreamIntoArrayOperation: 9,
+  ScopeFunctions: 9,
+  Sentinel: 9,
+  ArrayBuffer: 7,
+  ImportMeta: 7,
+  JSAsyncGeneratorFunction: 7,
+  Subprocess: 7,
+  ModuleNamespaceObject: 6,
+  FormData: 5,
+  JSPropertyNameEnumerator: 5,
+  PromiseCombinatorsGlobalContext: 5,
+  Arguments: 4,
+  Callee: 4,
+  KeyObject: 4,
+  ModuleProgramCodeBlock: 4,
+  Module: 4,
+  URL: 4,
+  BigInt: 3,
+  Blob: 3,
+  Expect: 3,
+  Uint32Array: 3,
+  ArrayBufferSink: 2,
+  AsyncGeneratorFunction: 2,
+  BuildMessage: 2,
+  Cipher: 2,
+  CloseEvent: 2,
+  Crypto: 2,
+  DebugHTTPSServer: 2,
+  DiffieHellman: 2,
+  Dirent: 2,
+  ECDH: 2,
+  EventTarget: 2,
+  Event: 2,
+  FinalizationRegistry: 2,
+  GeneratorFunction: 2,
+  HTTPParser: 2,
+  Hash: 2,
+  Headers: 2,
+  Hmac: 2,
+  Iterator: 2,
+  MIMEParams: 2,
+  MIMEType: 2,
+  MessageEvent: 2,
+  ModuleLoadingContext: 2,
+  NodeJSFS: 2,
+  SecretKeyObject: 2,
+  Sign: 2,
+  SparseArrayValueMap: 2,
+  Stats: 2,
+  StringDecoder: 2,
+  SubtleCrypto: 2,
+  TextEncoder: 2,
+  TransformStream: 2,
+  URLSearchParams: 2,
+  Verify: 2,
+  WebSocket: 2,
+  X509Certificate: 2,
+  "Array Iterator": 1,
+  AsymmetricKeyObject: 1,
+  AsyncDisposableStack: 1,
+  AsyncFromSyncIterator: 1,
+  AsyncGenerator: 1,
+  AsyncIterator: 1,
+  BigInt64ArrayPrototype: 1,
+  BigUint64ArrayPrototype: 1,
+  BlockList: 1,
+  Boolean: 1,
+  Buffer: 1,
+  BunRequest: 1,
+  Bun: 1,
+  CryptoHasher: 1,
+  DataView: 1,
+  DiffieHellmanGroup: 1,
+  DisposableStack: 1,
+  DoneCallback: 1,
+  ErrorCodeCache: 1,
+  EventEmitter: 1,
+  ExpectObjectContaining: 1,
+  ExpectStatic: 1,
+  ExpectStringContaining: 1,
+  ExpectTypeOf: 1,
+  File: 1,
+  Float16ArrayPrototype: 1,
+  Float32ArrayPrototype: 1,
+  Float64ArrayPrototype: 1,
+  Generator: 1,
+  GlobalObject: 1,
+  H2FrameParser: 1,
+  "Headers Iterator": 1,
+  Immediate: 1,
+  Int16ArrayPrototype: 1,
+  Int32ArrayPrototype: 1,
+  Int8ArrayPrototype: 1,
+  InternalModuleRegistry: 1,
+  Intl: 1,
+  "Iterator Helper": 1,
+  JSGlobalLexicalEnvironment: 1,
+  JSGlobalProxy: 1,
+  JSON: 1,
+  Listener: 1,
+  "Map Iterator": 1,
+  Math: 1,
+  ModuleGraphLoadingState: 1,
+  ModuleLoader: 1,
+  NativeBrotli: 1,
+  NativeZlib: 1,
+  NativeZstd: 1,
+  NextTickQueue: 1,
+  NodeHTTPResponse: 1,
+  NodeHTTPServerSocket: 1,
+  Number: 1,
+  PrivateKeyObject: 1,
+  ProcessBindingConstants: 1,
+  ProcessBindingHTTPParser: 1,
+  Process: 1,
+  Prototype: 1,
+  PublicKeyObject: 1,
+  ReadableH3ResponseSinkController: 1,
+  ReadableHTTPResponseSinkController: 1,
+  ReadableStreamAsyncIterator: 1,
+  Reflect: 1,
+  "RegExp String Iterator": 1,
+  ResolveMessage: 1,
+  ResumableFetchSink: 1,
+  SHA1: 1,
+  SecureContext: 1,
+  ServerRouteList: 1,
+  "Set Iterator": 1,
+  ShadowRealm: 1,
+  SocketAddress: 1,
+  StreamsRuntime: 1,
+  "String Iterator": 1,
+  String: 1,
+  Symbol: 1,
+  TCPSocket: 1,
+  TLSSocket: 1,
+  TextDecoder: 1,
+  TextEncoderStreamEncoder: 1,
+  TransformStreamDefaultController: 1,
+  Uint16ArrayPrototype: 1,
+  Uint32ArrayPrototype: 1,
+  Uint8ArrayPrototype: 1,
+  Uint8ClampedArrayPrototype: 1,
+  WeakMap: 1,
+  WeakSet: 1,
+  "WebAssembly.SuspendError": 1,
+  "WebAssembly.Suspending": 1,
+  WebAssembly: 1,
+  WritableStreamDefaultController: 1,
+  WritableStreamDefaultWriter: 1,
+  WritableStream: 1,
+  console: 1,
+  require: 1,
+  resolve: 1,
+}
+{
+  Structure: 5432,
+  Function: 4756,
+  string: 3882,
+  UnlinkedFunctionExecutable: 3037,
+  FunctionExecutable: 2989,
+  NativeExecutable: 1630,
+  SymbolTable: 1032,
+  StructureRareData: 861,
+  FunctionCodeBlock: 722,
+  UnlinkedFunctionCodeBlock: 609,
+  Object: 513,
+  JSLexicalEnvironment: 508,
+  symbol: 418,
+  FunctionRareData: 374,
+  GetterSetter: 369,
+  PropertyTable: 344,
+  DOMAttributeGetterSetter: 228,
+  Promise: 212,
+  Uint8Array: 168,
+  Array: 146,
+  CustomGetterSetter: 140,
+  AsyncFunction: 128,
+  "Cell Butterfly": 111,
+  StructureChain: 104,
+  RegExp: 66,
+  ModuleRegistryEntry: 45,
+  JSSourceCode: 44,
+  ModuleRecord: 44,
+  JSModuleEnvironment: 42,
+  Set: 37,
+  DebugHTTPServer: 25,
+  UnlinkedModuleProgramCodeBlock: 24,
+  Timeout: 22,
+  WeakRef: 17,
+  ModuleProgramExecutable: 14,
+  ReadableStream: 13,
+  BytesInternalReadableStreamSource: 10,
+  ReadableStreamDefaultController: 10,
+  ReadableStreamDefaultReader: 10,
+  Map: 9,
+  ScopeFunctions: 9,
+  Sentinel: 9,
+  ArrayBuffer: 7,
+  ImportMeta: 7,
+  JSAsyncGeneratorFunction: 7,
+  ModuleNamespaceObject: 6,
+  JSPropertyNameEnumerator: 5,
+  Arguments: 4,
+  KeyObject: 4,
+  ModuleProgramCodeBlock: 4,
+  Module: 4,
+  URL: 4,
+  BigInt: 3,
+  Callee: 3,
+  InternalFieldTuple: 3,
+  Uint32Array: 3,
+  AbortController: 2,
+  AbortSignal: 2,
+  ArrayBufferSink: 2,
+  AsyncFunctionGenerator: 2,
+  AsyncGeneratorFunction: 2,
+  BuildMessage: 2,
+  Cipher: 2,
+  CloseEvent: 2,
+  Crypto: 2,
+  DOMException: 2,
+  DebugHTTPSServer: 2,
+  DiffieHellman: 2,
+  Dirent: 2,
+  ECDH: 2,
+  EventTarget: 2,
+  Event: 2,
+  FinalizationRegistry: 2,
+  FormData: 2,
+  GeneratorFunction: 2,
+  HTTPParser: 2,
+  Hash: 2,
+  Headers: 2,
+  Hmac: 2,
+  Iterator: 2,
+  MIMEParams: 2,
+  MIMEType: 2,
+  MessageEvent: 2,
+  NodeJSFS: 2,
+  SecretKeyObject: 2,
+  Sign: 2,
+  SparseArrayValueMap: 2,
+  Stats: 2,
+  StringDecoder: 2,
+  SubtleCrypto: 2,
+  TextEncoder: 2,
+  TransformStream: 2,
+  URLSearchParams: 2,
+  Verify: 2,
+  WebSocket: 2,
+  X509Certificate: 2,
+  "Array Iterator": 1,
+  AsymmetricKeyObject: 1,
+  AsyncDisposableStack: 1,
+  AsyncFromSyncIterator: 1,
+  AsyncGenerator: 1,
+  AsyncIterator: 1,
+  BigInt64ArrayPrototype: 1,
+  BigUint64ArrayPrototype: 1,
+  BlobInternalReadableStreamSource: 1,
+  Blob: 1,
+  BlockList: 1,
+  Boolean: 1,
+  Buffer: 1,
+  BunRequest: 1,
+  Bun: 1,
+  CryptoHasher: 1,
+  DataView: 1,
+  DiffieHellmanGroup: 1,
+  DisposableStack: 1,
+  DoneCallback: 1,
+  ErrorCodeCache: 1,
+  EventEmitter: 1,
+  Exception: 1,
+  ExpectObjectContaining: 1,
+  ExpectStatic: 1,
+  ExpectStringContaining: 1,
+  ExpectTypeOf: 1,
+  Expect: 1,
+  FileInternalReadableStreamSource: 1,
+  File: 1,
+  Float16ArrayPrototype: 1,
+  Float32ArrayPrototype: 1,
+  Float64ArrayPrototype: 1,
+  FullPromiseReaction: 1,
+  Generator: 1,
+  GlobalObject: 1,
+  H2FrameParser: 1,
+  "Headers Iterator": 1,
+  Immediate: 1,
+  Int16ArrayPrototype: 1,
+  Int32ArrayPrototype: 1,
+  Int8ArrayPrototype: 1,
+  InternalModuleRegistry: 1,
+  Intl: 1,
+  "Iterator Helper": 1,
+  JSGlobalLexicalEnvironment: 1,
+  JSGlobalProxy: 1,
+  JSON: 1,
+  Listener: 1,
+  "Map Iterator": 1,
+  Math: 1,
+  ModuleLoader: 1,
+  NativeBrotli: 1,
+  NativeZlib: 1,
+  NativeZstd: 1,
+  NextTickQueue: 1,
+  NodeHTTPResponse: 1,
+  NodeHTTPServerSocket: 1,
+  Number: 1,
+  PrivateKeyObject: 1,
+  ProcessBindingConstants: 1,
+  ProcessBindingHTTPParser: 1,
+  Process: 1,
+  Prototype: 1,
+  PublicKeyObject: 1,
+  ReadableH3ResponseSinkController: 1,
+  ReadableHTTPResponseSinkController: 1,
+  ReadableStreamAsyncIterator: 1,
+  Reflect: 1,
+  "RegExp String Iterator": 1,
+  Request: 1,
+  ResolveMessage: 1,
+  Response: 1,
+  ResumableFetchSink: 1,
+  SHA1: 1,
+  SecureContext: 1,
+  ServerRouteList: 1,
+  "Set Iterator": 1,
+  ShadowRealm: 1,
+  SocketAddress: 1,
+  StreamsRuntime: 1,
+  "String Iterator": 1,
+  String: 1,
+  Subprocess: 1,
+  Symbol: 1,
+  TCPSocket: 1,
+  TLSSocket: 1,
+  TextDecoder: 1,
+  TextEncoderStreamEncoder: 1,
+  TransformStreamDefaultController: 1,
+  Uint16ArrayPrototype: 1,
+  Uint32ArrayPrototype: 1,
+  Uint8ArrayPrototype: 1,
+  Uint8ClampedArrayPrototype: 1,
+  WeakMap: 1,
+  WeakSet: 1,
+  "WebAssembly.SuspendError": 1,
+  "WebAssembly.Suspending": 1,
+  WebAssembly: 1,
+  WritableStreamDefaultController: 1,
+  WritableStreamDefaultWriter: 1,
+  WritableStream: 1,
+  console: 1,
+  require: 1,
+  resolve: 1,
+}
+{
+  Structure: 5433,
+  Function: 4915,
+  string: 4047,
+  UnlinkedFunctionExecutable: 3044,
+  FunctionExecutable: 2996,
+  NativeExecutable: 1630,
+  SymbolTable: 1044,
+  StructureRareData: 861,
+  FunctionCodeBlock: 732,
+  UnlinkedFunctionCodeBlock: 619,
+  JSLexicalEnvironment: 612,
+  Object: 565,
+  symbol: 418,
+  FunctionRareData: 374,
+  GetterSetter: 369,
+  Promise: 368,
+  PropertyTable: 345,
+  DOMAttributeGetterSetter: 228,
+  Uint8Array: 168,
+  Array: 149,
+  CustomGetterSetter: 140,
+  AsyncFunction: 129,
+  "Cell Butterfly": 111,
+  StructureChain: 104,
+  AbortSignal: 102,
+  DOMException: 102,
+  RegExp: 66,
+  AsyncFunctionGenerator: 55,
+  InternalFieldTuple: 54,
+  AbortController: 52,
+  Request: 51,
+  Response: 51,
+  SlimPromiseReaction: 51,
+  NativePromiseContext: 50,
+  ModuleRegistryEntry: 45,
+  JSSourceCode: 44,
+  ModuleRecord: 44,
+  JSModuleEnvironment: 42,
+  Set: 37,
+  DebugHTTPServer: 25,
+  UnlinkedModuleProgramCodeBlock: 24,
+  Timeout: 22,
+  WeakRef: 17,
+  ModuleProgramExecutable: 14,
+  ReadableStream: 13,
+  BytesInternalReadableStreamSource: 10,
+  ReadableStreamDefaultController: 10,
+  ReadableStreamDefaultReader: 10,
+  Map: 9,
+  ScopeFunctions: 9,
+  Sentinel: 9,
+  ArrayBuffer: 7,
+  ImportMeta: 7,
+  JSAsyncGeneratorFunction: 7,
+  ModuleNamespaceObject: 6,
+  FullPromiseReaction: 5,
+  JSPropertyNameEnumerator: 5,
+  Arguments: 4,
+  KeyObject: 4,
+  ModuleProgramCodeBlock: 4,
+  Module: 4,
+  URL: 4,
+  BigInt: 3,
+  Callee: 3,
+  Exception: 3,
+  Uint32Array: 3,
+  ArrayBufferSink: 2,
+  AsyncGeneratorFunction: 2,
+  BuildMessage: 2,
+  Cipher: 2,
+  CloseEvent: 2,
+  Crypto: 2,
+  DebugHTTPSServer: 2,
+  DiffieHellman: 2,
+  Dirent: 2,
+  ECDH: 2,
+  EventTarget: 2,
+  Event: 2,
+  FinalizationRegistry: 2,
+  FormData: 2,
+  GeneratorFunction: 2,
+  HTTPParser: 2,
+  Hash: 2,
+  Headers: 2,
+  Hmac: 2,
+  Iterator: 2,
+  MIMEParams: 2,
+  MIMEType: 2,
+  MessageEvent: 2,
+  NodeJSFS: 2,
+  SecretKeyObject: 2,
+  Sign: 2,
+  SparseArrayValueMap: 2,
+  Stats: 2,
+  StringDecoder: 2,
+  SubtleCrypto: 2,
+  TextEncoder: 2,
+  TransformStream: 2,
+  URLSearchParams: 2,
+  Verify: 2,
+  WebSocket: 2,
+  X509Certificate: 2,
+  "Array Iterator": 1,
+  AsymmetricKeyObject: 1,
+  AsyncDisposableStack: 1,
+  AsyncFromSyncIterator: 1,
+  AsyncGenerator: 1,
+  AsyncIterator: 1,
+  BigInt64ArrayPrototype: 1,
+  BigUint64ArrayPrototype: 1,
+  BlobInternalReadableStreamSource: 1,
+  Blob: 1,
+  BlockList: 1,
+  Boolean: 1,
+  Buffer: 1,
+  BunRequest: 1,
+  Bun: 1,
+  CryptoHasher: 1,
+  DataView: 1,
+  DiffieHellmanGroup: 1,
+  DisposableStack: 1,
+  DoneCallback: 1,
+  ErrorCodeCache: 1,
+  EventEmitter: 1,
+  ExpectObjectContaining: 1,
+  ExpectStatic: 1,
+  ExpectStringContaining: 1,
+  ExpectTypeOf: 1,
+  Expect: 1,
+  FileInternalReadableStreamSource: 1,
+  File: 1,
+  Float16ArrayPrototype: 1,
+  Float32ArrayPrototype: 1,
+  Float64ArrayPrototype: 1,
+  Generator: 1,
+  GlobalObject: 1,
+  H2FrameParser: 1,
+  "Headers Iterator": 1,
+  Immediate: 1,
+  Int16ArrayPrototype: 1,
+  Int32ArrayPrototype: 1,
+  Int8ArrayPrototype: 1,
+  InternalModuleRegistry: 1,
+  Intl: 1,
+  "Iterator Helper": 1,
+  JSGlobalLexicalEnvironment: 1,
+  JSGlobalProxy: 1,
+  JSON: 1,
+  Listener: 1,
+  "Map Iterator": 1,
+  Math: 1,
+  ModuleLoader: 1,
+  NativeBrotli: 1,
+  NativeZlib: 1,
+  NativeZstd: 1,
+  NextTickQueue: 1,
+  NodeHTTPResponse: 1,
+  NodeHTTPServerSocket: 1,
+  Number: 1,
+  PrivateKeyObject: 1,
+  ProcessBindingConstants: 1,
+  ProcessBindingHTTPParser: 1,
+  Process: 1,
+  PromiseCombinatorsGlobalContext: 1,
+  Prototype: 1,
+  PublicKeyObject: 1,
+  ReadableH3ResponseSinkController: 1,
+  ReadableHTTPResponseSinkController: 1,
+  ReadableStreamAsyncIterator: 1,
+  Reflect: 1,
+  "RegExp String Iterator": 1,
+  ResolveMessage: 1,
+  ResumableFetchSink: 1,
+  SHA1: 1,
+  SecureContext: 1,
+  ServerRouteList: 1,
+  "Set Iterator": 1,
+  ShadowRealm: 1,
+  SocketAddress: 1,
+  StreamsRuntime: 1,
+  "String Iterator": 1,
+  String: 1,
+  Subprocess: 1,
+  Symbol: 1,
+  TCPSocket: 1,
+  TLSSocket: 1,
+  TextDecoder: 1,
+  TextEncoderStreamEncoder: 1,
+  TransformStreamDefaultController: 1,
+  Uint16ArrayPrototype: 1,
+  Uint32ArrayPrototype: 1,
+  Uint8ArrayPrototype: 1,
+  Uint8ClampedArrayPrototype: 1,
+  WeakMap: 1,
+  WeakSet: 1,
+  "WebAssembly.SuspendError": 1,
+  "WebAssembly.Suspending": 1,
+  WebAssembly: 1,
+  WritableStreamDefaultController: 1,
+  WritableStreamDefaultWriter: 1,
+  WritableStream: 1,
+  console: 1,
+  require: 1,
+  resolve: 1,
+}
+{
+  Structure: 5432,
+  Function: 4758,
+  string: 3896,
+  UnlinkedFunctionExecutable: 3044,
+  FunctionExecutable: 2996,
+  NativeExecutable: 1630,
+  SymbolTable: 1044,
+  StructureRareData: 861,
+  FunctionCodeBlock: 734,
+  UnlinkedFunctionCodeBlock: 619,
+  Object: 514,
+  JSLexicalEnvironment: 508,
+  symbol: 418,
+  FunctionRareData: 374,
+  GetterSetter: 369,
+  PropertyTable: 344,
+  DOMAttributeGetterSetter: 228,
+  Promise: 213,
+  Uint8Array: 154,
+  Array: 146,
+  CustomGetterSetter: 140,
+  AsyncFunction: 128,
+  "Cell Butterfly": 111,
+  StructureChain: 104,
+  RegExp: 66,
+  ModuleRegistryEntry: 45,
+  JSSourceCode: 44,
+  ModuleRecord: 44,
+  JSModuleEnvironment: 42,
+  Set: 37,
+  DebugHTTPServer: 25,
+  UnlinkedModuleProgramCodeBlock: 24,
+  Timeout: 22,
+  WeakRef: 17,
+  ModuleProgramExecutable: 14,
+  ReadableStream: 12,
+  BytesInternalReadableStreamSource: 10,
+  ReadableStreamDefaultController: 10,
+  ReadableStreamDefaultReader: 10,
+  Map: 9,
+  ScopeFunctions: 9,
+  Sentinel: 9,
+  ArrayBuffer: 7,
+  ImportMeta: 7,
+  JSAsyncGeneratorFunction: 7,
+  ModuleNamespaceObject: 6,
+  JSPropertyNameEnumerator: 5,
+  Arguments: 4,
+  KeyObject: 4,
+  ModuleProgramCodeBlock: 4,
+  Module: 4,
+  URL: 4,
+  BigInt: 3,
+  Callee: 3,
+  InternalFieldTuple: 3,
+  Uint32Array: 3,
+  AbortController: 2,
+  AbortSignal: 2,
+  ArrayBufferSink: 2,
+  AsyncFunctionGenerator: 2,
+  AsyncGeneratorFunction: 2,
+  BuildMessage: 2,
+  Cipher: 2,
+  CloseEvent: 2,
+  Crypto: 2,
+  DOMException: 2,
+  DebugHTTPSServer: 2,
+  DiffieHellman: 2,
+  Dirent: 2,
+  ECDH: 2,
+  EventTarget: 2,
+  Event: 2,
+  FinalizationRegistry: 2,
+  FormData: 2,
+  GeneratorFunction: 2,
+  HTTPParser: 2,
+  Hash: 2,
+  Headers: 2,
+  Hmac: 2,
+  Iterator: 2,
+  MIMEParams: 2,
+  MIMEType: 2,
+  MessageEvent: 2,
+  NodeJSFS: 2,
+  SecretKeyObject: 2,
+  Sign: 2,
+  SparseArrayValueMap: 2,
+  Stats: 2,
+  StringDecoder: 2,
+  SubtleCrypto: 2,
+  TextEncoder: 2,
+  TransformStream: 2,
+  URLSearchParams: 2,
+  Verify: 2,
+  WebSocket: 2,
+  X509Certificate: 2,
+  "Array Iterator": 1,
+  AsymmetricKeyObject: 1,
+  AsyncDisposableStack: 1,
+  AsyncFromSyncIterator: 1,
+  AsyncGenerator: 1,
+  AsyncIterator: 1,
+  BigInt64ArrayPrototype: 1,
+  BigUint64ArrayPrototype: 1,
+  BlobInternalReadableStreamSource: 1,
+  Blob: 1,
+  BlockList: 1,
+  Boolean: 1,
+  Buffer: 1,
+  BunRequest: 1,
+  Bun: 1,
+  CryptoHasher: 1,
+  DataView: 1,
+  DiffieHellmanGroup: 1,
+  DisposableStack: 1,
+  DoneCallback: 1,
+  ErrorCodeCache: 1,
+  EventEmitter: 1,
+  Exception: 1,
+  ExpectObjectContaining: 1,
+  ExpectStatic: 1,
+  ExpectStringContaining: 1,
+  ExpectTypeOf: 1,
+  Expect: 1,
+  FileInternalReadableStreamSource: 1,
+  File: 1,
+  Float16ArrayPrototype: 1,
+  Float32ArrayPrototype: 1,
+  Float64ArrayPrototype: 1,
+  FullPromiseReaction: 1,
+  Generator: 1,
+  GlobalObject: 1,
+  H2FrameParser: 1,
+  "Headers Iterator": 1,
+  Immediate: 1,
+  Int16ArrayPrototype: 1,
+  Int32ArrayPrototype: 1,
+  Int8ArrayPrototype: 1,
+  InternalModuleRegistry: 1,
+  Intl: 1,
+  "Iterator Helper": 1,
+  JSGlobalLexicalEnvironment: 1,
+  JSGlobalProxy: 1,
+  JSON: 1,
+  Listener: 1,
+  "Map Iterator": 1,
+  Math: 1,
+  ModuleLoader: 1,
+  NativeBrotli: 1,
+  NativeZlib: 1,
+  NativeZstd: 1,
+  NextTickQueue: 1,
+  NodeHTTPResponse: 1,
+  NodeHTTPServerSocket: 1,
+  Number: 1,
+  PrivateKeyObject: 1,
+  ProcessBindingConstants: 1,
+  ProcessBindingHTTPParser: 1,
+  Process: 1,
+  Prototype: 1,
+  PublicKeyObject: 1,
+  ReadableH3ResponseSinkController: 1,
+  ReadableHTTPResponseSinkController: 1,
+  ReadableStreamAsyncIterator: 1,
+  Reflect: 1,
+  "RegExp String Iterator": 1,
+  Request: 1,
+  ResolveMessage: 1,
+  Response: 1,
+  ResumableFetchSink: 1,
+  SHA1: 1,
+  SecureContext: 1,
+  ServerRouteList: 1,
+  "Set Iterator": 1,
+  ShadowRealm: 1,
+  SocketAddress: 1,
+  StreamsRuntime: 1,
+  "String Iterator": 1,
+  String: 1,
+  Subprocess: 1,
+  Symbol: 1,
+  TCPSocket: 1,
+  TLSSocket: 1,
+  TextDecoder: 1,
+  TextEncoderStreamEncoder: 1,
+  TransformStreamDefaultController: 1,
+  Uint16ArrayPrototype: 1,
+  Uint32ArrayPrototype: 1,
+  Uint8ArrayPrototype: 1,
+  Uint8ClampedArrayPrototype: 1,
+  WeakMap: 1,
+  WeakSet: 1,
+  "WebAssembly.SuspendError": 1,
+  "WebAssembly.Suspending": 1,
+  WebAssembly: 1,
+  WritableStreamDefaultController: 1,
+  WritableStreamDefaultWriter: 1,
+  WritableStream: 1,
+  console: 1,
+  require: 1,
+  resolve: 1,
+}
+{
+  Structure: 5428,
+  Function: 4756,
+  string: 3902,
+  UnlinkedFunctionExecutable: 3050,
+  FunctionExecutable: 3002,
+  NativeExecutable: 1630,
+  SymbolTable: 1056,
+  StructureRareData: 861,
+  FunctionCodeBlock: 741,
+  UnlinkedFunctionCodeBlock: 626,
+  Object: 513,
+  JSLexicalEnvironment: 509,
+  symbol: 418,
+  FunctionRareData: 374,
+  GetterSetter: 369,
+  PropertyTable: 344,
+  Promise: 263,
+  DOMAttributeGetterSetter: 228,
+  Uint8Array: 154,
+  Array: 147,
+  CustomGetterSetter: 140,
+  AsyncFunction: 128,
+  "Cell Butterfly": 111,
+  StructureChain: 104,
+  RegExp: 66,
+  Response: 51,
+  ModuleRegistryEntry: 45,
+  JSSourceCode: 44,
+  ModuleRecord: 44,
+  JSModuleEnvironment: 42,
+  Set: 37,
+  DebugHTTPServer: 25,
+  UnlinkedModuleProgramCodeBlock: 24,
+  Timeout: 23,
+  WeakRef: 17,
+  ModuleProgramExecutable: 14,
+  ReadableStream: 12,
+  BytesInternalReadableStreamSource: 10,
+  ReadableStreamDefaultController: 10,
+  ReadableStreamDefaultReader: 10,
+  Map: 9,
+  ScopeFunctions: 9,
+  Sentinel: 9,
+  ArrayBuffer: 7,
+  ImportMeta: 7,
+  JSAsyncGeneratorFunction: 7,
+  ModuleNamespaceObject: 6,
+  JSPropertyNameEnumerator: 5,
+  Arguments: 4,
+  KeyObject: 4,
+  ModuleProgramCodeBlock: 4,
+  Module: 4,
+  URL: 4,
+  AsyncFunctionGenerator: 3,
+  BigInt: 3,
+  Callee: 3,
+  InternalFieldTuple: 3,
+  Uint32Array: 3,
+  AbortController: 2,
+  AbortSignal: 2,
+  ArrayBufferSink: 2,
+  AsyncGeneratorFunction: 2,
+  BuildMessage: 2,
+  Cipher: 2,
+  CloseEvent: 2,
+  Crypto: 2,
+  DebugHTTPSServer: 2,
+  DiffieHellman: 2,
+  Dirent: 2,
+  ECDH: 2,
+  EventTarget: 2,
+  Event: 2,
+  FinalizationRegistry: 2,
+  FormData: 2,
+  GeneratorFunction: 2,
+  HTTPParser: 2,
+  Hash: 2,
+  Headers: 2,
+  Hmac: 2,
+  Iterator: 2,
+  MIMEParams: 2,
+  MIMEType: 2,
+  MessageEvent: 2,
+  NodeJSFS: 2,
+  SecretKeyObject: 2,
+  Sign: 2,
+  SparseArrayValueMap: 2,
+  Stats: 2,
+  StringDecoder: 2,
+  SubtleCrypto: 2,
+  TextEncoder: 2,
+  TransformStream: 2,
+  URLSearchParams: 2,
+  Verify: 2,
+  WebSocket: 2,
+  X509Certificate: 2,
+  "Array Iterator": 1,
+  AsymmetricKeyObject: 1,
+  AsyncDisposableStack: 1,
+  AsyncFromSyncIterator: 1,
+  AsyncGenerator: 1,
+  AsyncIterator: 1,
+  BigInt64ArrayPrototype: 1,
+  BigUint64ArrayPrototype: 1,
+  BlobInternalReadableStreamSource: 1,
+  Blob: 1,
+  BlockList: 1,
+  Boolean: 1,
+  Buffer: 1,
+  BunRequest: 1,
+  Bun: 1,
+  CryptoHasher: 1,
+  DOMException: 1,
+  DataView: 1,
+  DiffieHellmanGroup: 1,
+  DisposableStack: 1,
+  DoneCallback: 1,
+  ErrorCodeCache: 1,
+  EventEmitter: 1,
+  ExpectObjectContaining: 1,
+  ExpectStatic: 1,
+  ExpectStringContaining: 1,
+  ExpectTypeOf: 1,
+  Expect: 1,
+  FileInternalReadableStreamSource: 1,
+  File: 1,
+  Float16ArrayPrototype: 1,
+  Float32ArrayPrototype: 1,
+  Float64ArrayPrototype: 1,
+  FullPromiseReaction: 1,
+  Generator: 1,
+  GlobalObject: 1,
+  H2FrameParser: 1,
+  "Headers Iterator": 1,
+  Immediate: 1,
+  Int16ArrayPrototype: 1,
+  Int32ArrayPrototype: 1,
+  Int8ArrayPrototype: 1,
+  InternalModuleRegistry: 1,
+  Intl: 1,
+  "Iterator Helper": 1,
+  JSGlobalLexicalEnvironment: 1,
+  JSGlobalProxy: 1,
+  JSON: 1,
+  Listener: 1,
+  "Map Iterator": 1,
+  Math: 1,
+  ModuleLoader: 1,
+  NativeBrotli: 1,
+  NativeZlib: 1,
+  NativeZstd: 1,
+  NextTickQueue: 1,
+  NodeHTTPResponse: 1,
+  NodeHTTPServerSocket: 1,
+  Number: 1,
+  PrivateKeyObject: 1,
+  ProcessBindingConstants: 1,
+  ProcessBindingHTTPParser: 1,
+  Process: 1,
+  Prototype: 1,
+  PublicKeyObject: 1,
+  ReadableH3ResponseSinkController: 1,
+  ReadableHTTPResponseSinkController: 1,
+  ReadableStreamAsyncIterator: 1,
+  Reflect: 1,
+  "RegExp String Iterator": 1,
+  Request: 1,
+  ResolveMessage: 1,
+  ResumableFetchSink: 1,
+  SHA1: 1,
+  SecureContext: 1,
+  ServerRouteList: 1,
+  "Set Iterator": 1,
+  ShadowRealm: 1,
+  SocketAddress: 1,
+  StreamsRuntime: 1,
+  "String Iterator": 1,
+  String: 1,
+  Subprocess: 1,
+  Symbol: 1,
+  TCPSocket: 1,
+  TLSSocket: 1,
+  TextDecoder: 1,
+  TextEncoderStreamEncoder: 1,
+  TransformStreamDefaultController: 1,
+  Uint16ArrayPrototype: 1,
+  Uint32ArrayPrototype: 1,
+  Uint8ArrayPrototype: 1,
+  Uint8ClampedArrayPrototype: 1,
+  WeakMap: 1,
+  WeakSet: 1,
+  "WebAssembly.SuspendError": 1,
+  "WebAssembly.Suspending": 1,
+  WebAssembly: 1,
+  WritableStreamDefaultController: 1,
+  WritableStreamDefaultWriter: 1,
+  WritableStream: 1,
+  console: 1,
+  require: 1,
+  resolve: 1,
+}
+
+js/web/fetch/response.test.ts:
+46 |   });
+47 | });
+48 | 
+49 | test("print size", () => {
+50 |   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
+51 |     .toMatchInlineSnapshot(`
+          ^
+error: expect(received).toMatchInlineSnapshot(expected)
+
+@@ -11,3 +11,3 @@
+    bodyUsed: false,
+-   FileRef ("/test/js/web/fetch/response.test.ts") {
++   FileRef ("<cwd>/js/web/fetch/response.test.ts") {
+      type: "text/javascript;charset=utf-8"
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/response.test.ts:51:6)
+(fail) print size [0.45ms]
+
+js/web/fetch/blob-oom.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+js/web/fetch/fetch-http3-adversarial.test.ts:
+(fail) http3 adversarial body=4194304 > 8 concurrent POST /echo [5000.06ms]
+  ^ this test timed out after 5000ms.
+
+# Unhandled error between tests
+-------------------------------
+177 | 
+178 |   test("8 concurrent POST /echo", async () => {
+179 |     const results = await Promise.all(
+180 |       Array.from({ length: 8 }, async () => {
+181 |         const res = await fetch(`${base}/echo`, { ...h3, method: "POST", body: data });
+182 |         const got = await res.bytes();
+                                    ^
+error: HTTP3ContentLengthMismatch fetching "https://127.0.0.1:55131/echo". For more information, pass `verbose: true` in the second argument to fetch()
+  path: "https://127.0.0.1:55131/echo",
+ errno: 0,
+  code: "HTTP3ContentLengthMismatch"
+
+      at async <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/fetch-http3-adversarial.test.ts:182:31)
+-------------------------------
+
+{
+  delta: 3211264,
+  count: 1000,
+  bodySize: 65143,
+  bodiesLeakedPerRequest: 49.2956111938351,
+  threshold: 1000,
+}
+
+--pass--
+
+{
+  delta: 2129920,
+  count: 1000,
+  bodySize: 65143,
+  bodiesLeakedPerRequest: 32.69606864897226,
+  threshold: 1000,
+}
+
+--pass--
+
+{
+  delta: 1261568,
+  count: 1000,
+  bodySize: 65143,
+  bodiesLeakedPerRequest: 19.366132969006646,
+  threshold: 1000,
+}
+
+--pass--
+
+{
+  delta: 117653504,
+  count: 50,
+  bodySize: 36000000,
+  bodiesLeakedPerRequest: 3.268152888888889,
+  threshold: 20,
+}
+
+--pass--
+
+{
+  delta: 115326976,
+  count: 50,
+  bodySize: 36000000,
+  bodiesLeakedPerRequest: 3.203527111111111,
+  threshold: 20,
+}
+
+--pass--
+
+{
+  delta: 123781120,
+  count: 50,
+  bodySize: 36000000,
+  bodiesLeakedPerRequest: 3.4383644444444443,
+  threshold: 20,
+}
+
+--pass--
+
+
+js/web/fetch/fetch-leak.test.ts:
+{
+  rss: [
+    63602688, 89292800, 94814208, 94896128, 94978048, 95551488, 95551488, 95551488,
+    95551488, 95551488, 97533952, 97533952, 97550336, 97959936, 97959936, 98009088,
+    98320384, 98402304, 98418688, 98418688, 98418688, 98418688, 98418688, 98418688,
+    98418688, 98418688, 98418688, 98418688, 98418688, 98418688, 98418688, 98418688,
+    98418688, 98418688, 98418688, 98418688, 98418688, 98418688, 98418688, 98418688,
+    98418688, 98418688, 98418688, 98418688, 98418688, 98418688, 98418688, 98418688,
+    98418688, 98418688, 98418688
+  ],
+  delta: "33 MB",
+}
+{
+  rss: [
+    48513024, 56344576, 56344576, 56360960, 56360960, 60030976, 60030976, 60227584,
+    60227584, 60227584, 60227584, 60227584, 60243968, 62652416, 62652416, 62701568,
+    62701568, 62701568, 62734336, 62750720, 62750720, 62750720, 62750720, 62750720,
+    62750720, 62750720, 62750720, 62750720, 62750720, 62750720, 62750720, 62750720,
+    62750720, 62750720, 62750720, 62750720, 62750720, 62750720, 62750720, 62750720,
+    62750720, 62750720, 62750720, 62750720, 62750720, 62750720, 62750720, 62750720,
+    62750720, 62750720, 62750720
+  ],
+  delta: "13 MB",
+}
+{
+  rss: [
+    48332800, 55345152, 57458688, 58294272, 58376192, 58376192, 58376192, 58376192,
+    58376192, 59883520, 59899904, 59899904, 59965440, 59998208, 60194816, 60260352,
+    60260352, 60260352, 60276736, 60276736, 60276736, 60276736, 60276736, 60293120,
+    60293120, 60358656, 60358656, 60358656, 60358656, 60358656, 60358656, 60358656,
+    60358656, 60358656, 60358656, 60358656, 60358656, 60358656, 60358656, 60358656,
+    60358656, 60358656, 60358656, 60358656, 60358656, 60391424, 60391424, 60391424,
+    60391424, 60391424, 60391424
+  ],
+  delta: "11 MB",
+}
+{
+  rss: [
+    29474816, 29671424, 29835264, 31457280, 31457280, 31670272, 31670272, 32178176,
+    32194560, 32194560, 32194560, 32194560, 32260096, 32292864, 32292864, 32489472,
+    32522240, 32522240, 32538624, 32538624, 32538624, 32538624, 32538624, 32538624,
+    32538624, 32538624, 32538624, 32538624, 32538624, 32538624, 32538624, 32538624,
+    32538624, 32538624, 32538624, 32538624, 32538624, 32538624, 32538624, 32538624,
+    32538624, 32538624, 32538624, 32538624, 32538624, 32538624, 32555008, 32555008,
+    32555008, 32555008, 32555008
+  ],
+  delta: "2 MB",
+}
+{
+  rss: [
+    79446016, 112295936, 115408896, 118931456, 119341056, 119341056, 119341056, 119570432,
+    119570432, 119570432, 121634816, 121634816, 121700352, 122028032, 122028032, 122175488,
+    122945536, 122945536, 122978304, 122978304, 122978304, 122978304, 122978304, 122978304,
+    122978304, 122978304, 123043840, 123043840, 123043840, 123043840, 123060224, 123060224,
+    123060224, 123060224, 123060224, 123060224, 123092992, 123092992, 123092992, 129187840,
+    129187840, 129187840, 129187840, 129187840, 129187840, 129187840, 129187840, 129187840,
+    129187840, 129187840, 129187840
+  ],
+  delta: "47 MB",
+}
+{
+  rss: [
+    27639808, 27885568, 28999680, 29179904, 29212672, 35569664, 35569664, 35569664,
+    37814272, 37814272, 37814272, 37814272, 37863424, 55115776, 55296000, 55459840,
+    55459840, 56082432, 61849600, 61849600, 61849600, 62193664, 62193664, 62193664,
+    62193664, 62193664, 62193664, 62193664, 62193664, 62193664, 62193664, 62193664,
+    62193664, 62226432, 62226432, 62226432, 62242816, 62242816, 62242816, 62242816,
+    62242816, 62242816, 62242816, 62242816, 62242816, 62242816, 62242816, 62242816,
+    62242816, 62242816, 62242816
+  ],
+  delta: "33 MB",
+}
+{
+  rss: [
+    42483712, 55836672, 56344576, 57212928, 57294848, 61554688, 61554688, 61784064,
+    61816832, 61816832, 61849600, 61865984, 61915136, 61964288, 61964288, 62029824,
+    66338816, 66338816, 66338816, 66338816, 66338816, 66338816, 66338816, 66453504,
+    66453504, 66453504, 66453504, 66453504, 66453504, 66453504, 66453504, 66453504,
+    66453504, 66453504, 66453504, 66453504, 66453504, 66453504, 66453504, 66453504,
+    66453504, 66453504, 66469888, 66469888, 66469888, 66469888, 66469888, 66469888,
+    66469888, 66469888, 66469888
+  ],
+  delta: "22 MB",
+}
+{"baselineMB":26,"finalMB":27,"deltaMB":1}
+{"baselineMB":33,"finalMB":36,"deltaMB":3}
+{"baselineMB":44,"finalMB":54,"deltaMB":10}
+{"form":"string","baselineMB":24,"finalMB":30,"deltaMB":6.2}
+{"form":"object","baselineMB":24,"finalMB":30,"deltaMB":6.2}
+{"baselineMB":24,"finalMB":29,"deltaMB":5.1}
+{"baseline":0,"after":0,"delta":0}
+pull: 1
+
+js/web/fetch/fetch.test.ts:
+cancel DOMException {
+  line: 258,
+  column: 29,
+  sourceURL: "/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/fetch.test.ts",
+  stack: "abort@[native code]\npull@/Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/fetch/fetch.test.ts:258:29\nprocessTicksAndRejections@",
+  code: 20,
+  name: "AbortError",
+  message: "The operation was aborted.",
+  INDEX_SIZE_ERR: 1,
+  DOMSTRING_SIZE_ERR: 2,
+  HIERARCHY_REQUEST_ERR: 3,
+  WRONG_DOCUMENT_ERR: 4,
+  INVALID_CHARACTER_ERR: 5,
+  NO_DATA_ALLOWED_ERR: 6,
+  NO_MODIFICATION_ALLOWED_ERR: 7,
+  NOT_FOUND_ERR: 8,
+  NOT_SUPPORTED_ERR: 9,
+  INUSE_ATTRIBUTE_ERR: 10,
+  INVALID_STATE_ERR: 11,
+  SYNTAX_ERR: 12,
+  INVALID_MODIFICATION_ERR: 13,
+  NAMESPACE_ERR: 14,
+  INVALID_ACCESS_ERR: 15,
+  VALIDATION_ERR: 16,
+  TYPE_MISMATCH_ERR: 17,
+  SECURITY_ERR: 18,
+  NETWORK_ERR: 19,
+  ABORT_ERR: 20,
+  URL_MISMATCH_ERR: 21,
+  QUOTA_EXCEEDED_ERR: 22,
+  TIMEOUT_ERR: 23,
+  INVALID_NODE_TYPE_ERR: 24,
+  DATA_CLONE_ERR: 25,
+  toString: [Function: toString],
+}
+ HTTP/1.1 GET http://127.0.0.1:50081/
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: 127.0.0.1:50081
+ Accept-Encoding: gzip, deflate, br, zstd
+ HTTP/1.1 GET http://127.0.0.1:50081/
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: 127.0.0.1:50081
+ Accept-Encoding: gzip, deflate, br, zstd
+ HTTP/1.1 GET https://127.0.0.1:50082/
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: 127.0.0.1:50082
+ Accept-Encoding: gzip, deflate, br, zstd
+ HTTP/1.1 GET https://127.0.0.1:50082/
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: 127.0.0.1:50082
+ Accept-Encoding: gzip, deflate, br, zstd
+ HTTP/1.1 GET https://127.0.0.1:50082/
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: 127.0.0.1:50082
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 OK
+< Content-Type: text/html
+< Date: Tue, 21 Jul 2026 00:16:08 GMT
+< Content-Length: 1326
+
+< 200 OK
+< Content-Type: text/html
+< Date: Tue, 21 Jul 2026 00:16:08 GMT
+< Content-Length: 1326
+
+< 200 OK
+< Content-Type: text/html
+< Date: Tue, 21 Jul 2026 00:16:08 GMT
+< Content-Length: 1326
+
+< 200 OK
+< Content-Type: text/html
+< Date: Tue, 21 Jul 2026 00:16:08 GMT
+< Content-Length: 1326
+
+< 200 OK
+< Content-Type: text/html
+< Date: Tue, 21 Jul 2026 00:16:08 GMT
+< Content-Length: 1326
+
+{
+  rss: "27 MB",
+  Response: 51,
+  Promise: 23,
+}
+{
+  rss: "85 MB",
+  Response: 51,
+  Promise: 23,
+}
+{
+  rss: "132 MB",
+  Response: 51,
+  Promise: 23,
+}
+{
+  rss: "151 MB",
+  Response: 51,
+  Promise: 23,
+}
+{
+  rss: "151 MB",
+  Response: 51,
+  Promise: 23,
+}
+{
+  rss: "152 MB",
+  Response: 51,
+  Promise: 23,
+}
+{
+  rss: "153 MB",
+  Response: 51,
+  Promise: 23,
+}
+{
+  rss: "153 MB",
+  Response: 51,
+  Promise: 23,
+}
+{
+  rss: "153 MB",
+  Response: 51,
+  Promise: 23,
+}
+{
+  rss: "153 MB",
+  Response: 51,
+  Promise: 23,
+}
+
+ 10746 pass
+ 12 skip
+ 12 todo
+ 5 fail
+ 4 errors
+snapshots: 4 passed, 1 failed
+ 146828 expect() calls
+Ran 10775 tests across 67 files. [146.62s]

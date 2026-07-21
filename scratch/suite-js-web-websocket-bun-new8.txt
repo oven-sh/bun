@@ -1,0 +1,422 @@
+bun test v1.4.0-canary.1 (f413d611e)
+
+js/web/websocket/websocket-syscall-fault.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: ENOENT reading "bun:internal-for-testing"
+-------------------------------
+
+failed to connect to the docker API at unix:///Users/ciro/.orbstack/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /Users/ciro/.orbstack/run/docker.sock: connect: no such file or directory
+
+js/web/websocket/websocket-blob.test.ts:
+Server: WebSocket opened
+Client: WebSocket opened
+Sending blob with length: 5
+Server received: <Buffer 48 65 6c 6c 6f>
+Client received message: File (5 bytes)
+Received bytes: [ 72, 101, 108, 108, 111 ]
+Client: WebSocket closed 1000 
+Server: WebSocket closed
+Sending empty blob with length: 0
+Client received message: File (0 KB)
+Received bytes length: 0
+Client: WebSocket closed 1000 
+Client: WebSocket opened
+Sending ping with blob
+Server received ping with data: <Buffer 50 49 4e 47>
+Client received pong: File (4 bytes)
+Client: WebSocket closed 1000 
+failed to connect to the docker API at unix:///Users/ciro/.orbstack/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /Users/ciro/.orbstack/run/docker.sock: connect: no such file or directory
+Listening: ws://127.0.0.1:63379/
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'TFykRVwqQweOeUyVvlHWlA=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '8kyMNoY6SXeKn2YaXSvp3w=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'ZHNhBrLHTzqNePCRupnzBQ=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'UP8cLuV9SvifaJGgG8K8pw=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'PTHAAezbQj6NtUJOS+PfpA=='
+}
+Received connection: 127.0.0.1
+Received bytes: <Buffer 88 82 ab f8 80 08 a8 10>
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'ZuOcfQzKQ4ORf/z7V2qNDw=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'LXbU+Mq3RXCjBd1440RDEg=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'zcuWPKu/Q6a+MwubEYC0MQ=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'T09vVYTDSgOpgrVTJNwlAA=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'l7N9Ft2OSmiXC57xyKPJeg=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '/vwHzcXHSSyagNvjO797Xg=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'M5wT+GOFSPmGRlIIRHsM7g=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'gANS/nz4SrCOTxAPPsHp/A=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '1oJJmzouT66n4OpFA7Yqgw=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'Q98B1EvaSqO943EhWkGZyQ=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '+/c8fO7vSUueydlhRfXvOg=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '/+z9nSdsR3SsYGVzTOnwZQ=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'Dn3GkDHURxuasD9FRj/xRg=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '22NJMYRYTG6v8x3381nVdw=='
+}
+Received connection: 127.0.0.1
+Received bytes: <Buffer 81 89 53 b5 7b 43 26 c1 1d 7b 7e 45 e4 db e5>
+Received message: <Buffer 75 74 66 38 2d f0 9f 98 b6>
+Received bytes: <Buffer 82 89 3c 59 63 df 49 2d 05 e7 11 a9 fc 46 be>
+Received message: <Buffer 75 74 66 38 2d f0 9f 99 82>
+Received bytes: <Buffer 82 89 70 9c 5e 35 05 e8 38 0d 5d 6c c1 ac f3>
+Received message: <Buffer 75 74 66 38 2d f0 9f 99 83>
+Received bytes: <Buffer 82 89 04 d7 de 49 71 a3 b8 71 29 27 41 ed ad>
+Received message: <Buffer 75 74 66 38 2d f0 9f a4 a9>
+Received bytes: <Buffer 89 80 84 f2 c4 1f>
+Received ping: <Buffer >
+Received bytes: <Buffer 89 85 fa 7e a6 0d 9b 0d c5 64 93>
+Received ping: <Buffer 61 73 63 69 69>
+Received bytes: <Buffer 89 89 c3 7b 9f 26 af 1a eb 4f ad 4a b2 e4 6a>
+Received ping: <Buffer 6c 61 74 69 6e 31 2d c2 a9>
+Received bytes: <Buffer 89 89 60 40 30 ed 15 34 56 d5 4d b0 af 75 d6>
+Received ping: <Buffer 75 74 66 38 2d f0 9f 98 b6>
+Received bytes: <Buffer 89 89 b9 81 12 72 cc f5 74 4a 94 71 8d eb 3b>
+Received ping: <Buffer 75 74 66 38 2d f0 9f 99 82>
+Received bytes: <Buffer 89 89 e3 31 2d f6 96 45 4b ce ce c1 b2 6f 60>
+Received ping: <Buffer 75 74 66 38 2d f0 9f 99 83>
+Received bytes: <Buffer 89 89 ca 85 db 3f bf f1 bd 07 e7 75 44 9b 63>
+Received ping: <Buffer 75 74 66 38 2d f0 9f a4 a9>
+Received bytes: <Buffer 8a 80 1b ab ad 3e>
+Received pong: <Buffer >
+Received bytes: <Buffer 8a 85 d3 57 4e 08 b2 24 2d 61 ba>
+Received pong: <Buffer 61 73 63 69 69>
+Received bytes: <Buffer 8a 89 63 fb 49 09 0f 9a 3d 60 0d ca 64 cb ca>
+Received pong: <Buffer 6c 61 74 69 6e 31 2d c2 a9>
+Received bytes: <Buffer 82 81 3c 96 23 6f 3c>
+Received message: <Buffer 00>
+Received bytes: <Buffer 82 81 fa b0 60 d2 fa>
+Received message: <Buffer 00>
+Received bytes: <Buffer 81 85 2c 58 3d d5 4d 2b 5e bc 45>
+Received message: <Buffer 61 73 63 69 69>
+Received bytes: <Buffer 81 89 02 8d b1 b9 6e ec c5 d0 6c bc 9c 7b ab>
+Received message: <Buffer 6c 61 74 69 6e 31 2d c2 a9>
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'yPHa8P3ARVG5WeKYwEIN5Q=='
+}
+Received connection: 127.0.0.1
+Received close: 1000 <Buffer >
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'k0DebpXZQQWVQIqqZDIT4g=='
+}
+Received connection: 127.0.0.1
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'tUb4ioEkQ5y+r/WBTzSCAA=='
+}
+Received connection: 127.0.0.1
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received bytes: <Buffer 8a 89 0b 98 49 42 7e ec 2f 7a 26 68 d6 db 88>
+Received pong: <Buffer 75 74 66 38 2d f0 9f 99 83>
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '9g8Ct6RYTVW+5V18Jl3kug=='
+}
+Received connection: 127.0.0.1
+Received bytes: <Buffer 89 80 4c 9a 7c ab>
+Received ping: <Buffer >
+Received bytes: <Buffer 89 80 a4 42 73 be>
+Received ping: <Buffer >
+Received bytes: <Buffer 8a 89 86 e0 4a 29 f3 94 2c 11 ab 10 d5 b1 30>
+Received pong: <Buffer 75 74 66 38 2d f0 9f 98 b6>
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'k4wTmLQTS9ilm1/PiVAWAw=='
+}
+Received connection: 127.0.0.1
+Received bytes: <Buffer 8a 89 db 55 9b 09 ae 21 fd 31 f6 a5 04 90 59>
+Received pong: <Buffer 75 74 66 38 2d f0 9f 99 82>
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'efeFWtvJSiSwgFWPFO3oDg=='
+}
+Received connection: 127.0.0.1
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received bytes: <Buffer 8a 89 d2 82 7b 20 a7 f6 1d 18 ff 72 e4 84 7b>
+Received pong: <Buffer 75 74 66 38 2d f0 9f a4 a9>
+Received bytes: <Buffer 88 82 e3 97 99 b8 e0 7f>
+Received bytes: <Buffer 88 82 fd 7b 43 28 fe 92>
+Received upgrade: {
+  host: '127.0.0.1:63379',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'z0dN7ad/Q4y2DvWKVcIkBw=='
+}
+Received connection: 127.0.0.1
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+
+js/web/websocket/websocket-permessage-deflate-simple.test.ts:
+Server: WebSocket opened
+Client connected
+Client extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover
+1 | const host = process.argv[2];
+2 | 
+3 | const ws = new WebSocket(host);
+               ^
+SyntaxError: Invalid url for WebSocket invalid url
+      at /Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/web/websocket/websocket-subprocess.ts:3:12
+
+Bun v1.4.0-canary.1+f413d611e (macOS arm64)
+
+js/web/websocket/websocket.test.js:
+(fail) #16995 [15574.65ms]
+  ^ this test timed out after 5000ms.
+Connected!
+(fail) WebSocket > should connect [15698.41ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > should connect over https [15697.73ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > should connect many times over https [15697.68ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > rejectUnauthorized should reject self-sign certs when true/default [15696.33ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > rejectUnauthorized should NOT reject self-sign certs when false [15694.84ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > should not accept untrusted certificates [15693.65ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > should FAIL to connect over http when the status code is invalid [15691.22ms]
+  ^ this test timed out after 5000ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+(fail) WebSocket > should connect over http  [15690.79ms]
+  ^ this test timed out after 5000ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+(fail) WebSocket > nodebuffer > should support 'nodebuffer' binaryType [15690.23ms]
+  ^ this test timed out after 5000ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+(fail) WebSocket > nodebuffer > should support 'nodebuffer' binaryType when the handler is not immediately provided [15687.49ms]
+  ^ this test timed out after 5000ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+(fail) WebSocket > should send and receive messages [15686.54ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > should be able to send big messages [15685.93ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > headers should keep the original case [15684.02ms]
+  ^ this test timed out after 5000ms.
+(fail) websocket in subprocess > should exit [15683.76ms]
+  ^ this test timed out after 5000ms.
+(fail) websocket in subprocess > should exit after timeout [15591.99ms]
+  ^ this test timed out after 5000ms.
+(fail) websocket in subprocess > should exit after server stop and 0 messages [15587.52ms]
+  ^ this test timed out after 5000ms.
+
+# Unhandled error between tests
+-------------------------------
+error: WebSocket connection to 'https://localhost:63560/' failed: WebSocket is closed before the connection is established
+ErrorEvent {
+  type: "error",
+  message: "WebSocket connection to 'https://localhost:63560/' failed: WebSocket is closed before the connection is established",
+  error: error: WebSocket connection to 'https://localhost:63560/' failed: WebSocket is closed before the connection is established
+,
+}
+-------------------------------
+
+Closed!
+Connected!
+ErrorEvent {
+  type: "error",
+  message: "WebSocket connection to 'http://localhost:63632/' failed: Connection ended",
+  error: error: WebSocket connection to 'http://localhost:63632/' failed: Connection ended
+,
+}
+Closed!
+Closed!
+{
+  current_websocket_count: 29,
+  initial_websocket_count: 54,
+}
+
+ 195 pass
+ 10 skip
+ 18 fail
+ 2 errors
+ 4 snapshots, 457 expect() calls
+Ran 223 tests across 25 files. [21.21s]

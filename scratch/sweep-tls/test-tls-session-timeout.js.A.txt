@@ -1,0 +1,285 @@
+Connecting to ::1
+depth=0 C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+verify return:1
+DONE
+ ----- [COMMAND] ---
+/opt/homebrew/bin/openssl, s_client -connect localhost:65373 -CAfile /Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/node/test/fixtures/keys/rsa_cert.crt -servername localhost -sess_out /Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/node/test/.tmp.0/tls-session-ticket.txt
+ ----- [STDOUT] ---
+CONNECTED(00000005)
+---
+Certificate chain
+ 0 s:C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+   i:C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+   a:PKEY: RSA, 2048 (bit); sigalg: sha256WithRSAEncryption
+   v:NotBefore: Sep  3 14:46:54 2022 GMT; NotAfter: Jun 17 14:46:54 2296 GMT
+---
+Server certificate
+-----BEGIN CERTIFICATE-----
+MIIEAjCCAuqgAwIBAgIUVaZoDmyyS79pzShST5zhsKbvWR0wDQYJKoZIhvcNAQEL
+BQAwgbAxCzAJBgNVBAYTAlVLMRQwEgYDVQQIDAtBY2tuYWNrIEx0ZDETMBEGA1UE
+BwwKUmh5cyBKb25lczEQMA4GA1UECgwHbm9kZS5qczEdMBsGA1UECwwUVGVzdCBU
+TFMgQ2VydGlmaWNhdGUxFDASBgNVBAsMC0VuZ2luZWVyaW5nMRIwEAYDVQQDDAls
+b2NhbGhvc3QxGzAZBgkqhkiG9w0BCQEWDGFsZXhAYXViLmRldjAgFw0yMjA5MDMx
+NDQ2NTRaGA8yMjk2MDYxNzE0NDY1NFowgbAxCzAJBgNVBAYTAlVLMRQwEgYDVQQI
+DAtBY2tuYWNrIEx0ZDETMBEGA1UEBwwKUmh5cyBKb25lczEQMA4GA1UECgwHbm9k
+ZS5qczEdMBsGA1UECwwUVGVzdCBUTFMgQ2VydGlmaWNhdGUxFDASBgNVBAsMC0Vu
+Z2luZWVyaW5nMRIwEAYDVQQDDAlsb2NhbGhvc3QxGzAZBgkqhkiG9w0BCQEWDGFs
+ZXhAYXViLmRldjCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALfcWIiK
+J7HAt78/wNnHkeyoWWZQ7v+W8nud5wlU3Cp1ndrHmOlAHSnq7F+p46/Nw3eTlXtQ
+Vv8Cb6eRI1kwBmGxbMJTZng+OHnRBjPd/Qei6vv/IgZK04vJhjeGAsrYrxNuGCNA
++F2TD35C0qWm9svx8uA40CgatU4WdFAZyvvSIV9+ybv2aBmEpUyBiIc8momAYe8K
+2QaD3MyBLunrf5DdlZ520VLZGExfe4IHL+YfoQ6VEI0FtGYDjHE3PJ/kZBqSLdP4
+jP204yN08/4LBXYuoR3KWYG6KTy+t9NveogcsooEAjyVc3brBa0DeQ3gvs0/5xsq
+UJGWpy2+GbKUsfUCAwEAAaMQMA4wDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsF
+AAOCAQEALcyUnR9nUaKtYwomY5nf7GzaVLGiprbN2irZgfrbdBRIbNGTaOOzzoDW
+31pmrppYT5P8e1ORN+eHaD7h1mVhT6b2tix3xPxKasuu6iYYGRRu4SiKEfHKwYtU
+g/Q/eFI1MquhitOYEZA7C/6TK6Stx4ot5sNPAmgbYRLz6ljUCMeGHM/JHIMlrAbt
+2R3Wyo0UWQINqAT11miJcL0a9UCGScCZxmz90Hs+uk6MtiY8kNSXHL5So4tg7qFz
+nFWSMhIu+1f4hbxD9inOTJczzw1iCXuWRe3+rvqPDxJyHGMiriiXrdBY6CXa20jx
+P1lIqHSThAkWfOgOhmQ0OdvSWlKvNA==
+-----END CERTIFICATE-----
+subject=C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+issuer=C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+---
+Acceptable client certificate CA names
+C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+Client Certificate Types: RSA sign, ECDSA sign
+Requested Signature Algorithms: ECDSA+SHA256:RSA-PSS+SHA256:RSA+SHA256:ECDSA+SHA384:RSA-PSS+SHA384:RSA+SHA384:RSA-PSS+SHA512:RSA+SHA512:RSA+SHA1
+Shared Requested Signature Algorithms: ECDSA+SHA256:RSA-PSS+SHA256:RSA+SHA256:ECDSA+SHA384:RSA-PSS+SHA384:RSA+SHA384:RSA-PSS+SHA512:RSA+SHA512
+Peer signing digest: SHA256
+Peer signature type: rsa_pss_rsae_sha256
+Peer Temp Key: X25519, 253 bits
+---
+SSL handshake has read 1872 bytes and written 1645 bytes
+Verification: OK
+---
+New, TLSv1.2, Cipher is ECDHE-RSA-AES128-GCM-SHA256
+Protocol: TLSv1.2
+Server public key is 2048 bit
+Secure Renegotiation IS supported
+Compression: NONE
+Expansion: NONE
+No ALPN negotiated
+SSL-Session:
+    Protocol  : TLSv1.2
+    Cipher    : ECDHE-RSA-AES128-GCM-SHA256
+    Session-ID: 1B854C60E212C35257AF54109459C43579CCB76357B49F220BB12E1EA999EBEA
+    Session-ID-ctx: 
+    Master-Key: 4A466B0456260FA1ABAACE85AD5323BAFC0AD29B94CB6F7FE124844367CE7134FD8534469A39BB7F7051B74A70A90BD6
+    PSK identity: None
+    PSK identity hint: None
+    SRP username: None
+    TLS session ticket lifetime hint: 5 (seconds)
+    TLS session ticket:
+    0000 - 65 90 af 05 ee ec 28 74-61 03 de 64 18 ae 5f c3   e.....(ta..d.._.
+    0010 - 2f 3d d4 10 a6 b8 bd 1a-60 47 92 88 d1 4e 6c 64   /=......`G...Nld
+    0020 - f6 ae ed 6f 17 58 10 c8-80 c5 6f 93 63 e1 c6 87   ...o.X....o.c...
+    0030 - 7e c6 25 c9 64 7e b1 cd-26 01 1c 4b 32 df e4 84   ~.%.d~..&..K2...
+    0040 - 10 ca 49 2e eb 1c 28 75-9b 4d fd 31 97 91 2c e0   ..I...(u.M.1..,.
+    0050 - f4 4f 91 90 e9 45 bc 0d-7f dc e5 dd 48 d4 60 ee   .O...E......H.`.
+    0060 - 6f 5f 4a b4 e3 c4 40 7a-11 62 c8 3d 88 d8 34 d4   o_J...@z.b.=..4.
+    0070 - c4 e0 b9 18 a6 9b 61 78-81 92 51 ab 8e e1 19 55   ......ax..Q....U
+    0080 - 1e 31 a2 97 b5 55 e9 cf-bd 3d ac 10 d3 09 15 19   .1...U...=......
+    0090 - e2 8e 54 b5 49 4a 0e 1c-16 61 d8 71 f0 91 63 ab   ..T.IJ...a.q..c.
+
+    Start Time: 1784591718
+    Timeout   : 7200 (sec)
+    Verify return code: 0 (ok)
+    Extended master secret: yes
+---
+
+ ----- [SESSION FILE] ---
+Session file size: 1901 bytes
+Connecting to ::1
+DONE
+ ----- [COMMAND] ---
+/opt/homebrew/bin/openssl, s_client -connect localhost:65373 -CAfile /Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/node/test/fixtures/keys/rsa_cert.crt -servername localhost -sess_in /Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/node/test/.tmp.0/tls-session-ticket.txt -sess_out /Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/node/test/.tmp.0/tls-session-ticket.txt
+ ----- [STDOUT] ---
+CONNECTED(00000005)
+---
+Server certificate
+-----BEGIN CERTIFICATE-----
+MIIEAjCCAuqgAwIBAgIUVaZoDmyyS79pzShST5zhsKbvWR0wDQYJKoZIhvcNAQEL
+BQAwgbAxCzAJBgNVBAYTAlVLMRQwEgYDVQQIDAtBY2tuYWNrIEx0ZDETMBEGA1UE
+BwwKUmh5cyBKb25lczEQMA4GA1UECgwHbm9kZS5qczEdMBsGA1UECwwUVGVzdCBU
+TFMgQ2VydGlmaWNhdGUxFDASBgNVBAsMC0VuZ2luZWVyaW5nMRIwEAYDVQQDDAls
+b2NhbGhvc3QxGzAZBgkqhkiG9w0BCQEWDGFsZXhAYXViLmRldjAgFw0yMjA5MDMx
+NDQ2NTRaGA8yMjk2MDYxNzE0NDY1NFowgbAxCzAJBgNVBAYTAlVLMRQwEgYDVQQI
+DAtBY2tuYWNrIEx0ZDETMBEGA1UEBwwKUmh5cyBKb25lczEQMA4GA1UECgwHbm9k
+ZS5qczEdMBsGA1UECwwUVGVzdCBUTFMgQ2VydGlmaWNhdGUxFDASBgNVBAsMC0Vu
+Z2luZWVyaW5nMRIwEAYDVQQDDAlsb2NhbGhvc3QxGzAZBgkqhkiG9w0BCQEWDGFs
+ZXhAYXViLmRldjCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALfcWIiK
+J7HAt78/wNnHkeyoWWZQ7v+W8nud5wlU3Cp1ndrHmOlAHSnq7F+p46/Nw3eTlXtQ
+Vv8Cb6eRI1kwBmGxbMJTZng+OHnRBjPd/Qei6vv/IgZK04vJhjeGAsrYrxNuGCNA
++F2TD35C0qWm9svx8uA40CgatU4WdFAZyvvSIV9+ybv2aBmEpUyBiIc8momAYe8K
+2QaD3MyBLunrf5DdlZ520VLZGExfe4IHL+YfoQ6VEI0FtGYDjHE3PJ/kZBqSLdP4
+jP204yN08/4LBXYuoR3KWYG6KTy+t9NveogcsooEAjyVc3brBa0DeQ3gvs0/5xsq
+UJGWpy2+GbKUsfUCAwEAAaMQMA4wDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsF
+AAOCAQEALcyUnR9nUaKtYwomY5nf7GzaVLGiprbN2irZgfrbdBRIbNGTaOOzzoDW
+31pmrppYT5P8e1ORN+eHaD7h1mVhT6b2tix3xPxKasuu6iYYGRRu4SiKEfHKwYtU
+g/Q/eFI1MquhitOYEZA7C/6TK6Stx4ot5sNPAmgbYRLz6ljUCMeGHM/JHIMlrAbt
+2R3Wyo0UWQINqAT11miJcL0a9UCGScCZxmz90Hs+uk6MtiY8kNSXHL5So4tg7qFz
+nFWSMhIu+1f4hbxD9inOTJczzw1iCXuWRe3+rvqPDxJyHGMiriiXrdBY6CXa20jx
+P1lIqHSThAkWfOgOhmQ0OdvSWlKvNA==
+-----END CERTIFICATE-----
+subject=C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+issuer=C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+---
+No client certificate CA names sent
+---
+SSL handshake has read 147 bytes and written 1751 bytes
+Verification: OK
+---
+Reused, TLSv1.2, Cipher is ECDHE-RSA-AES128-GCM-SHA256
+Protocol: TLSv1.2
+Server public key is 2048 bit
+Secure Renegotiation IS supported
+Compression: NONE
+Expansion: NONE
+No ALPN negotiated
+SSL-Session:
+    Protocol  : TLSv1.2
+    Cipher    : ECDHE-RSA-AES128-GCM-SHA256
+    Session-ID: 1B854C60E212C35257AF54109459C43579CCB76357B49F220BB12E1EA999EBEA
+    Session-ID-ctx: 
+    Master-Key: 4A466B0456260FA1ABAACE85AD5323BAFC0AD29B94CB6F7FE124844367CE7134FD8534469A39BB7F7051B74A70A90BD6
+    PSK identity: None
+    PSK identity hint: None
+    SRP username: None
+    TLS session ticket lifetime hint: 5 (seconds)
+    TLS session ticket:
+    0000 - 65 90 af 05 ee ec 28 74-61 03 de 64 18 ae 5f c3   e.....(ta..d.._.
+    0010 - 2f 3d d4 10 a6 b8 bd 1a-60 47 92 88 d1 4e 6c 64   /=......`G...Nld
+    0020 - f6 ae ed 6f 17 58 10 c8-80 c5 6f 93 63 e1 c6 87   ...o.X....o.c...
+    0030 - 7e c6 25 c9 64 7e b1 cd-26 01 1c 4b 32 df e4 84   ~.%.d~..&..K2...
+    0040 - 10 ca 49 2e eb 1c 28 75-9b 4d fd 31 97 91 2c e0   ..I...(u.M.1..,.
+    0050 - f4 4f 91 90 e9 45 bc 0d-7f dc e5 dd 48 d4 60 ee   .O...E......H.`.
+    0060 - 6f 5f 4a b4 e3 c4 40 7a-11 62 c8 3d 88 d8 34 d4   o_J...@z.b.=..4.
+    0070 - c4 e0 b9 18 a6 9b 61 78-81 92 51 ab 8e e1 19 55   ......ax..Q....U
+    0080 - 1e 31 a2 97 b5 55 e9 cf-bd 3d ac 10 d3 09 15 19   .1...U...=......
+    0090 - e2 8e 54 b5 49 4a 0e 1c-16 61 d8 71 f0 91 63 ab   ..T.IJ...a.q..c.
+
+    Start Time: 1784591718
+    Timeout   : 7200 (sec)
+    Verify return code: 0 (ok)
+    Extended master secret: yes
+---
+
+ ----- [SESSION FILE] ---
+Session file size: 1901 bytes
+Connecting to ::1
+depth=0 C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+verify return:1
+801DBFF901000000:error:0A000126:SSL routines::unexpected eof while reading:ssl/record/rec_layer_s3.c:703:
+801DBFF901000000:error:0A000197:SSL routines:SSL_shutdown:shutdown while in init:ssl/ssl_lib.c:2804:
+ ----- [COMMAND] ---
+/opt/homebrew/bin/openssl, s_client -connect localhost:65373 -CAfile /Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/node/test/fixtures/keys/rsa_cert.crt -servername localhost -sess_in /Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/node/test/.tmp.0/tls-session-ticket.txt -sess_out /Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/node/test/.tmp.0/tls-session-ticket.txt
+ ----- [STDOUT] ---
+CONNECTED(00000005)
+---
+Certificate chain
+ 0 s:C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+   i:C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+   a:PKEY: RSA, 2048 (bit); sigalg: sha256WithRSAEncryption
+   v:NotBefore: Sep  3 14:46:54 2022 GMT; NotAfter: Jun 17 14:46:54 2296 GMT
+---
+Server certificate
+-----BEGIN CERTIFICATE-----
+MIIEAjCCAuqgAwIBAgIUVaZoDmyyS79pzShST5zhsKbvWR0wDQYJKoZIhvcNAQEL
+BQAwgbAxCzAJBgNVBAYTAlVLMRQwEgYDVQQIDAtBY2tuYWNrIEx0ZDETMBEGA1UE
+BwwKUmh5cyBKb25lczEQMA4GA1UECgwHbm9kZS5qczEdMBsGA1UECwwUVGVzdCBU
+TFMgQ2VydGlmaWNhdGUxFDASBgNVBAsMC0VuZ2luZWVyaW5nMRIwEAYDVQQDDAls
+b2NhbGhvc3QxGzAZBgkqhkiG9w0BCQEWDGFsZXhAYXViLmRldjAgFw0yMjA5MDMx
+NDQ2NTRaGA8yMjk2MDYxNzE0NDY1NFowgbAxCzAJBgNVBAYTAlVLMRQwEgYDVQQI
+DAtBY2tuYWNrIEx0ZDETMBEGA1UEBwwKUmh5cyBKb25lczEQMA4GA1UECgwHbm9k
+ZS5qczEdMBsGA1UECwwUVGVzdCBUTFMgQ2VydGlmaWNhdGUxFDASBgNVBAsMC0Vu
+Z2luZWVyaW5nMRIwEAYDVQQDDAlsb2NhbGhvc3QxGzAZBgkqhkiG9w0BCQEWDGFs
+ZXhAYXViLmRldjCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALfcWIiK
+J7HAt78/wNnHkeyoWWZQ7v+W8nud5wlU3Cp1ndrHmOlAHSnq7F+p46/Nw3eTlXtQ
+Vv8Cb6eRI1kwBmGxbMJTZng+OHnRBjPd/Qei6vv/IgZK04vJhjeGAsrYrxNuGCNA
++F2TD35C0qWm9svx8uA40CgatU4WdFAZyvvSIV9+ybv2aBmEpUyBiIc8momAYe8K
+2QaD3MyBLunrf5DdlZ520VLZGExfe4IHL+YfoQ6VEI0FtGYDjHE3PJ/kZBqSLdP4
+jP204yN08/4LBXYuoR3KWYG6KTy+t9NveogcsooEAjyVc3brBa0DeQ3gvs0/5xsq
+UJGWpy2+GbKUsfUCAwEAAaMQMA4wDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsF
+AAOCAQEALcyUnR9nUaKtYwomY5nf7GzaVLGiprbN2irZgfrbdBRIbNGTaOOzzoDW
+31pmrppYT5P8e1ORN+eHaD7h1mVhT6b2tix3xPxKasuu6iYYGRRu4SiKEfHKwYtU
+g/Q/eFI1MquhitOYEZA7C/6TK6Stx4ot5sNPAmgbYRLz6ljUCMeGHM/JHIMlrAbt
+2R3Wyo0UWQINqAT11miJcL0a9UCGScCZxmz90Hs+uk6MtiY8kNSXHL5So4tg7qFz
+nFWSMhIu+1f4hbxD9inOTJczzw1iCXuWRe3+rvqPDxJyHGMiriiXrdBY6CXa20jx
+P1lIqHSThAkWfOgOhmQ0OdvSWlKvNA==
+-----END CERTIFICATE-----
+subject=C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+issuer=C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+---
+Acceptable client certificate CA names
+C=UK, ST=Acknack Ltd, L=Rhys Jones, O=node.js, OU=Test TLS Certificate, OU=Engineering, CN=localhost, emailAddress=alex@aub.dev
+Client Certificate Types: RSA sign, ECDSA sign
+Requested Signature Algorithms: ECDSA+SHA256:RSA-PSS+SHA256:RSA+SHA256:ECDSA+SHA384:RSA-PSS+SHA384:RSA+SHA384:RSA-PSS+SHA512:RSA+SHA512:RSA+SHA1
+Shared Requested Signature Algorithms: ECDSA+SHA256:RSA-PSS+SHA256:RSA+SHA256:ECDSA+SHA384:RSA-PSS+SHA384:RSA+SHA384:RSA-PSS+SHA512:RSA+SHA512
+Peer signing digest: SHA256
+Peer signature type: rsa_pss_rsae_sha256
+Peer Temp Key: X25519, 253 bits
+---
+SSL handshake has read 1872 bytes and written 1805 bytes
+Verification: OK
+---
+New, TLSv1.2, Cipher is ECDHE-RSA-AES128-GCM-SHA256
+Protocol: TLSv1.2
+Server public key is 2048 bit
+Secure Renegotiation IS supported
+Compression: NONE
+Expansion: NONE
+No ALPN negotiated
+SSL-Session:
+    Protocol  : TLSv1.2
+    Cipher    : ECDHE-RSA-AES128-GCM-SHA256
+    Session-ID: 6EC765C4F21DC167BEAB8F6578C9D5696AD8925D8B15232555AE947ACFF60A9A
+    Session-ID-ctx: 
+    Master-Key: 1509DF3C0512899B1E4FC1863AED7E8434E758886CA987409974956BF1010E63BE0006F59C327386870803D2C9851472
+    PSK identity: None
+    PSK identity hint: None
+    SRP username: None
+    TLS session ticket lifetime hint: 5 (seconds)
+    TLS session ticket:
+    0000 - 65 90 af 05 ee ec 28 74-61 03 de 64 18 ae 5f c3   e.....(ta..d.._.
+    0010 - 22 b4 3e d9 10 f1 aa b0-bd f0 e8 f4 62 db 90 64   ".>.........b..d
+    0020 - 35 f5 33 77 71 d9 e0 f4-e0 68 55 1f 55 cb 38 c0   5.3wq....hU.U.8.
+    0030 - a2 0f da e4 86 2f b8 4b-11 a4 b2 ea 6a d7 1e c8   ...../.K....j...
+    0040 - d6 fb cb a2 ed b5 24 0f-ff 95 b5 33 79 03 fc 8c   ......$....3y...
+    0050 - ff 96 66 53 51 4f 70 14-c2 21 91 08 f7 70 3f 2e   ..fSQOp..!...p?.
+    0060 - 1e f2 8e 07 c6 de 50 24-dc 46 68 65 2e 66 53 a3   ......P$.Fhe.fS.
+    0070 - fe 56 e3 af 58 22 1f 94-46 d5 9a 5f 9a 4c 25 d2   .V..X"..F.._.L%.
+    0080 - 7b dd 54 11 13 ab a4 4d-4d 85 9e b0 14 3c d0 11   {.T....MM....<..
+    0090 - 53 93 c1 0b 3f 0f 24 dd-dc b7 11 af 81 28 83 6c   S...?.$......(.l
+
+    Start Time: 1784591724
+    Timeout   : 7200 (sec)
+    Verify return code: 0 (ok)
+    Extended master secret: yes
+---
+
+ ----- [SESSION FILE] ---
+Session file size: 1901 bytes
+115 |       };
+116 |       const lines = clientOutput.split('\n');
+117 |       if (!lines.some(grepConnectionType)) {
+118 |         throw new Error('unexpected output from openssl client');
+119 |       }
+120 |       assert.strictEqual(code, 0);
+                   ^
+AssertionError: Expected values to be strictly equal:
+
+1 !== 0
+
+ generatedMessage: true,
+     actual: 1,
+   expected: 0,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/ciro/code/bun/.claude/worktrees/wave-tls/test/js/node/test/sequential/test-tls-session-timeout.js:120:14
+      at emit (node:events:99:22)
+      at #handleOnExit (node:child_process:560:14)
+      at processTicksAndRejections (native:7:39)
+
+Bun v1.4.0-canary.1+f413d611e (macOS arm64)

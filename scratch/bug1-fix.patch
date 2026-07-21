@@ -1,0 +1,38 @@
+diff --git a/src/runtime/socket/UpgradedDuplex.rs b/src/runtime/socket/UpgradedDuplex.rs
+index 1bd30019b1..100cb97815 100644
+--- a/src/runtime/socket/UpgradedDuplex.rs
++++ b/src/runtime/socket/UpgradedDuplex.rs
+@@ -212,6 +212,17 @@ impl UpgradedDuplex {
+         // global is set in `from()` whenever origin is set.
+         let Some(global) = self.global else { return };
+ 
++        if data.is_none() {
++            // The duplex's write side can already be ended (TLS-inception
++            // teardown ends the outer stream first); a second end() surfaces
++            // a spurious EPIPE. writableEnded is node's flag for that state.
++            if let Ok(Some(ended)) = duplex.get(&global, "writableEnded") {
++                if ended.to_boolean() {
++                    return;
++                }
++            }
++        }
++
+         let name = if msg_more { "write" } else { "end" };
+         let write_or_end = match duplex.get(&global, name) {
+             Ok(Some(f)) if f.is_callable() => f,
+diff --git a/src/uws/lib.rs b/src/uws/lib.rs
+index 2f0ce5dc0b..03198dfe91 100644
+--- a/src/uws/lib.rs
++++ b/src/uws/lib.rs
+@@ -659,6 +659,11 @@ pub mod ssl_wrapper {
+                     return false;
+                 }
+             }
++            // SSL_shutdown only queues close_notify into the write BIO; nothing
++            // else pumps it on the memory-BIO paths (duplex / named pipe), so
++            // drain it now or the peer never sees our shutdown.
++            let mut buffer = [0u8; BUFFER_SIZE];
++            Self::r(this).handle_writing(&mut buffer);
+             ret == 1 // truly closed
+         }
+ 

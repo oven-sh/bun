@@ -1,0 +1,63 @@
+bun test v1.4.0-canary.1 (f413d611e)
+Connected Successfully
+Connected Successfully
+
+js/node/tls/node-tls-internals.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: ENOENT reading "bun:internal-for-testing"
+-------------------------------
+
+ HTTP/1.1 GET https://localhost:61878/
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:61878
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 OK
+< Content-Type: text/plain
+< Date: Tue, 21 Jul 2026 00:05:58 GMT
+< Connection: keep-alive
+< Keep-Alive: timeout=5
+< Transfer-Encoding: chunked
+
+
+js/node/tls/tls-syscall-fault.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+js/node/tls/node-tls-connect.test.ts:
+Socket error: error: read ECONNRESET
+   errno: -54,
+ syscall: "read",
+    code: "ECONNRESET"
+
+      at close (node:net:630:40)
+
+(fail) 'session' and 'keylog' are emitted for a TLSSocket over a duplex stream (tls.connect({ socket })) [5001.02ms]
+  ^ this test timed out after 5000ms.
+
+js/node/tls/tls-connect-socket-churn.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+js/node/tls/ssl-ctx-cache.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+ 192 pass
+ 7 skip
+ 7 todo
+ 5 fail
+ 4 errors
+ 3 snapshots, 697 expect() calls
+Ran 211 tests across 23 files. [13.28s]

@@ -659,6 +659,11 @@ pub mod ssl_wrapper {
                     return false;
                 }
             }
+            // SSL_shutdown only queues close_notify into the write BIO; nothing
+            // else pumps it on the memory-BIO paths (duplex / named pipe), so
+            // drain it now or the peer never sees our shutdown.
+            let mut buffer = [0u8; BUFFER_SIZE];
+            Self::r(this).handle_writing(&mut buffer);
             ret == 1 // truly closed
         }
 
@@ -1038,10 +1043,9 @@ pub mod ssl_wrapper {
                             let _ = Self::r(this).shutdown(false);
                             Self::r(this).handle_end_of_renegotiation();
                         }
-                        Self::r(this).flags.set_fatal_error(
-                            err == boring_sys::SSL_ERROR_SSL
-                                || err == boring_sys::SSL_ERROR_SYSCALL,
-                        );
+                        if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL {
+                            Self::r(this).flags.set_fatal_error(true);
+                        }
 
                         // flush the reading
                         if read > 0 {
@@ -1052,6 +1056,13 @@ pub mod ssl_wrapper {
                             {
                                 return false;
                             }
+                        }
+                        // A NewSessionTicket/keylog line that rode in ahead of the
+                        // peer's close_notify is still parked; deliver it before the
+                        // close tears the wrapper down (mirrors the C ZERO_RETURN path).
+                        Self::flush_pending_events(this, buffer);
+                        if Self::r(this).ssl.is_none() || Self::r(this).flags.closed_notified() {
+                            return false;
                         }
                         Self::r(this).trigger_close_callback();
                         return false;

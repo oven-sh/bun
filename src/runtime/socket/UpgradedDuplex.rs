@@ -212,6 +212,20 @@ impl UpgradedDuplex {
         // global is set in `from()` whenever origin is set.
         let Some(global) = self.global else { return };
 
+        // Teardown-phase bytes (close_notify / the trailing end()) aimed at a
+        // duplex whose write side already ended (TLS-inception teardown) only
+        // surface a spurious EPIPE - drop them. Ordinary data writes skip the
+        // probe so write-after-end still errors like node.
+        let teardown = data.is_none() || self.wrapper.as_ref().is_some_and(|w| w.is_shutdown());
+        if teardown {
+            match duplex.get(&global, "writableEnded") {
+                Ok(Some(ended)) if ended.to_boolean() => return,
+                Ok(_) => {}
+                // Best-effort probe: consume the exception and fall through.
+                Err(err) => drop(global.take_exception(err)),
+            }
+        }
+
         let name = if msg_more { "write" } else { "end" };
         let write_or_end = match duplex.get(&global, name) {
             Ok(Some(f)) if f.is_callable() => f,

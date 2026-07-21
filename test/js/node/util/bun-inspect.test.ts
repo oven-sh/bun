@@ -97,27 +97,23 @@ describe("Bun.inspect", () => {
     expect(() => Bun.inspect(e)).toThrowErrorMatchingInlineSnapshot(`"Maximum call stack size exceeded."`);
   });
 
-  describe.each(["log", "throw", "reject", "cause"])("printing a deeply nested error via %s", face => {
-    it.concurrent("does not crash", async () => {
-      const src =
-        face === "cause"
-          ? `let e = new Error("leaf"); for (let i = 0; i < 16 * 1024; i++) e = new Error("c", { cause: e }); throw e;`
-          : `let e = new Error("leaf"); for (let i = 0; i < 16 * 1024; i++) e = new AggregateError([e], "agg");` +
-            {
-              log: ` console.log(e);`,
-              throw: ` throw e;`,
-              reject: ` Promise.reject(e); await 0;`,
-            }[face];
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", src],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(proc.signalCode).toBeNull();
-      expect(exitCode).toBe(1);
+  it.concurrent.each([
+    ["log", `e = new AggregateError([e], "agg");`, `console.log(e);`],
+    ["throw", `e = new AggregateError([e], "agg");`, `throw e;`],
+    ["reject", `e = new AggregateError([e], "agg");`, `Promise.reject(e); await 0;`],
+    ["cause", `e = new Error("c", { cause: e });`, `throw e;`],
+  ])("printing a deeply nested error via %s does not crash", async (_, wrap, emit) => {
+    const src = `let e = new Error("leaf"); for (let i = 0; i < 16 * 1024; i++) ${wrap} process.stderr.write("built\\n"); ${emit}`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
     });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr.slice(0, 6)).toBe("built\n");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
   });
 
   it("depth = 0", () => {

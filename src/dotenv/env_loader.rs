@@ -629,18 +629,6 @@ impl<'a> Loader<'a> {
         Ok(())
     }
 
-    // mostly for tests
-    pub fn load_from_string<const OVERWRITE: bool, const EXPAND: bool>(
-        &mut self,
-        str: &[u8],
-    ) -> Result<(), AllocError> {
-        // Go straight to `parse_bytes` to avoid the
-        // `Source.contents: &'static [u8]` lifetime constraint (callers like
-        // `node:util.parseEnv` pass JS-owned non-'static buffers).
-        let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, self.map, &mut value_buffer)
-    }
-
     pub fn load<D: DirEntryProbe + ?Sized>(
         &mut self,
         dir: &D,
@@ -1305,6 +1293,163 @@ impl<'a> Parser<'a> {
         };
         parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
     }
+}
+
+/// Node.js-compatible dotenv grammar — a direct port of
+/// `Dotenv::ParseContent` from node's `src/node_dotenv.cc`. Used only by
+/// `node:util.parseEnv`; Bun's own `.env` loading uses Bun's [`Parser`]
+/// above, which intentionally accepts a richer grammar.
+///
+/// Writes into a plain `StringArrayHashMap` (case-sensitive on every
+/// platform) rather than [`Map`], because Node's `Dotenv` stores into a
+/// case-sensitive `std::map` regardless of OS, whereas [`Map`] is
+/// case-insensitive on Windows to match `process.env` semantics.
+pub fn parse_node_compat(
+    src: &[u8],
+    map: &mut StringArrayHashMap<Box<[u8]>>,
+) -> Result<(), AllocError> {
+    #[inline]
+    fn put(
+        map: &mut StringArrayHashMap<Box<[u8]>>,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), AllocError> {
+        map.put(key, Box::from(value))
+    }
+
+    // Node strips every '\r' byte unconditionally before parsing, so
+    // '\r\n' → '\n' and lone '\r' is deleted (not a line break).
+    let mut lines: Vec<u8> = Vec::with_capacity(src.len());
+    for &b in src {
+        if b != b'\r' {
+            lines.push(b);
+        }
+    }
+
+    // Node's trim_spaces: only ' ', '\t', '\n'.
+    #[inline]
+    fn trim_spaces(input: &[u8]) -> &[u8] {
+        const WS: &[u8] = b" \t\n";
+        let start = match input.iter().position(|b| !WS.contains(b)) {
+            Some(i) => i,
+            None => return b"",
+        };
+        let end = input.iter().rposition(|b| !WS.contains(b)).unwrap();
+        &input[start..=end]
+    }
+
+    let mut content: &[u8] = trim_spaces(&lines);
+
+    while !content.is_empty() {
+        // Skip empty lines and comment lines.
+        if content[0] == b'\n' || content[0] == b'#' {
+            match strings::index_of_char(content, b'\n') {
+                Some(i) => content = &content[i as usize + 1..],
+                None => content = b"",
+            }
+            continue;
+        }
+
+        // Find '=' or '\n' in a single pass.
+        let equal_or_newline = strings::index_of_any(content, b"=\n");
+        match equal_or_newline {
+            None => break,
+            Some(i) if content[i] == b'\n' => {
+                content = trim_spaces(&content[i + 1..]);
+                continue;
+            }
+            Some(i) => {
+                let mut key = trim_spaces(&content[..i]);
+                content = &content[i + 1..];
+
+                if content.is_empty() || content[0] == b'\n' {
+                    put(map, key, b"")?;
+                    continue;
+                }
+
+                content = trim_spaces(content);
+
+                if key.is_empty() {
+                    continue;
+                }
+
+                if key.starts_with(b"export ") {
+                    key = trim_spaces(&key[7..]);
+                }
+
+                if content.is_empty() {
+                    put(map, key, b"")?;
+                    break;
+                }
+
+                // Double-quoted: expand literal "\n" → newline.
+                if content[0] == b'"' {
+                    if let Some(closing) = strings::index_of_char(&content[1..], b'"') {
+                        let closing = closing as usize + 1;
+                        let raw = &content[1..closing];
+                        let mut multi: Vec<u8> = Vec::with_capacity(raw.len());
+                        let mut j = 0;
+                        while j < raw.len() {
+                            if raw[j] == b'\\' && j + 1 < raw.len() && raw[j + 1] == b'n' {
+                                multi.push(b'\n');
+                                j += 2;
+                            } else {
+                                multi.push(raw[j]);
+                                j += 1;
+                            }
+                        }
+                        put(map, key, &multi)?;
+                        match strings::index_of_char(&content[closing + 1..], b'\n') {
+                            Some(n) => content = &content[closing + 1 + n as usize + 1..],
+                            None => content = b"",
+                        }
+                        continue;
+                    }
+                }
+
+                // Quoted values (single, double, backtick). No escapes.
+                let c0 = content[0];
+                if c0 == b'\'' || c0 == b'"' || c0 == b'`' {
+                    match strings::index_of_char(&content[1..], c0) {
+                        None => match strings::index_of_char(content, b'\n') {
+                            Some(n) => {
+                                put(map, key, &content[..n as usize])?;
+                                content = &content[n as usize + 1..];
+                            }
+                            None => {
+                                put(map, key, content)?;
+                                break;
+                            }
+                        },
+                        Some(closing) => {
+                            let closing = closing as usize + 1;
+                            put(map, key, &content[1..closing])?;
+                            match strings::index_of_char(&content[closing + 1..], b'\n') {
+                                Some(n) => content = &content[closing + 1 + n as usize + 1..],
+                                None => content = b"",
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    // Unquoted value; inline '#' starts a comment.
+                    let (mut value, rest): (&[u8], &[u8]) =
+                        match strings::index_of_char(content, b'\n') {
+                            Some(n) => (&content[..n as usize], &content[n as usize + 1..]),
+                            None => (content, b""),
+                        };
+                    if let Some(h) = strings::index_of_char(value, b'#') {
+                        value = &value[..h as usize];
+                    }
+                    put(map, key, trim_spaces(value))?;
+                    content = rest;
+                }
+
+                content = trim_spaces(content);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Downstream callers spell this `dot_env::Value` / `dotenv::map::Entry`; both alias the

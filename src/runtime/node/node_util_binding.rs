@@ -5,6 +5,7 @@ use bun_sys::UV_E;
 
 use crate::node::types::Encoding;
 use crate::node::util::validators;
+use bun_collections::StringArrayHashMap;
 use bun_dotenv::env_loader as envloader;
 
 #[bun_jsc::host_fn]
@@ -186,17 +187,17 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // before slicing.
     let str = content.to_js_string(global)?.to_slice(global);
 
-    let mut map = envloader::Map::init();
-    let mut p = envloader::Loader::init(&mut map);
-    p.load_from_string::<true, false>(str.slice())?;
-    drop(p);
+    // Case-sensitive on every platform (Node's Dotenv uses `std::map`);
+    // `envloader::Map` is case-insensitive on Windows.
+    let mut map: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::default();
+    envloader::parse_node_compat(str.slice(), &mut map)?;
 
     let obj = JSValue::create_empty_object(global, map.count());
     for (k, v) in map.iter() {
         obj.put(
             global,
             ZigString::init_utf8(k),
-            bun_string_jsc::create_utf8_for_js(global, &v.value)?,
+            bun_string_jsc::create_utf8_for_js(global, v)?,
         );
     }
     Ok(obj)

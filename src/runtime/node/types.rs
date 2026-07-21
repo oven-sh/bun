@@ -1698,9 +1698,10 @@ impl FileSystemFlags {
             // regardless of whether JSC boxed it as an int32 or a double. Go's
             // `syscall/js` bridge reads arguments out of wasm memory with
             // getFloat64, so valid flags like 578 (O_RDWR|O_CREAT|O_TRUNC)
-            // arrive double-boxed and must not be rejected.
-            let number = validators::validate_int32(ctx, val, "flags", None, None)?;
-            let flags = number.max(0);
+            // arrive double-boxed and must not be rejected. Negative values pass
+            // through to open(2) unchanged (Node does not clamp), so the syscall
+            // fails instead of silently degrading to O_RDONLY.
+            let flags = validators::validate_int32(ctx, val, "flags", None, None)?;
             // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
             // use the platform's native MSVC/libuv values which differ from the
             // internal bun.O representation. Convert them here so downstream

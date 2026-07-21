@@ -106,10 +106,9 @@ async function run(op: Op) {
   }
 }
 
-// uSockets sweeps short socket timeouts on a ~4s tick, so a 1s idle timeout
-// fires anywhere up to ~4s after the last byte. Add subprocess startup under
-// a debug + ASAN build and a single case sits around 5-6s; this is the rare
-// outlier where the default 5s budget is too tight.
+// uSockets sweeps short socket timeouts on a ~4s tick, so a 1s idle timeout can fire up
+// to ~4s late; with debug+ASAN subprocess startup a case runs ~5-6s, the rare outlier
+// where the default 5s budget is too tight.
 const perTestTimeoutMs = 15_000;
 
 describe("S3Options.timeout", () => {

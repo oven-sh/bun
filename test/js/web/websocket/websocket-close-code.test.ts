@@ -128,6 +128,18 @@ describe.concurrent("WebSocket close() argument validation", () => {
     ws.close();
   });
 
+  // RFC 6455 §7.1.5: a Close frame with no status code is reported as 1005 "no
+  // status received", which is how a peer tells close() apart from close(1000).
+  it("close() with no code reports 1005 to the server and to JS", async () => {
+    const serverGotClose = Promise.withResolvers<{ code: number; reason: string }>();
+    using server = upgradeServer(serverGotClose.resolve);
+    const ws = await open(server);
+    const clientClosed = new Promise(resolve => (ws.onclose = e => resolve({ code: e.code, reason: e.reason })));
+    ws.close();
+    expect(await serverGotClose.promise).toEqual({ code: 1005, reason: "" });
+    expect(await clientClosed).toEqual({ code: 1005, reason: "" });
+  });
+
   describe.each(VALID_CODES)("close(%i) is allowed", code => {
     it("and the code and reason reach the server", async () => {
       const serverGotClose = Promise.withResolvers<{ code: number; reason: string }>();
@@ -143,14 +155,17 @@ describe.concurrent("WebSocket close() argument validation", () => {
 
 describe.concurrent("WebSocket client and server-sent close frames", () => {
   // Raw TCP server: complete the WS handshake, then run `afterUpgrade(socket)`.
-  function rawWsServer(afterUpgrade: (socket: Socket) => void) {
+  // Bytes the client sends afterwards go to `onClientData` when it is given;
+  // otherwise the socket is ended (the other tests have the server speak first).
+  function rawWsServer(afterUpgrade: (socket: Socket) => void, onClientData?: (chunk: Buffer) => void) {
     return new Promise<ReturnType<typeof createServer>>(resolveServer => {
       const server = createServer(sock => {
         let buf = "";
         let upgraded = false;
         sock.on("data", chunk => {
           if (upgraded) {
-            sock.end();
+            if (onClientData) onClientData(chunk);
+            else sock.end();
             return;
           }
           buf += chunk.toString("latin1");
@@ -225,6 +240,85 @@ describe.concurrent("WebSocket client and server-sent close frames", () => {
       code: 1007,
       reason: "Server sent invalid UTF8",
       wasClean: false,
+    });
+  });
+
+  // Collects the first frame the client sends. A client always masks, and a
+  // close payload is at most 125 bytes, so the layout is a 2-byte header, the
+  // 4-byte masking key, then the payload.
+  function captureClientFrame() {
+    const { promise, resolve } = Promise.withResolvers<{
+      opcode: number;
+      payloadLength: number;
+      code: number | null;
+      reason: string;
+    }>();
+    let buf = Buffer.alloc(0);
+    const onClientData = (chunk: Buffer) => {
+      buf = Buffer.concat([buf, chunk]);
+      if (buf.length < 2) return;
+      const payloadLength = buf[1] & 0x7f;
+      if (buf.length < 6 + payloadLength) return;
+      const payload = Buffer.from(buf.subarray(6, 6 + payloadLength));
+      for (let i = 0; i < payload.length; i++) payload[i] ^= buf[2 + (i % 4)];
+      resolve({
+        opcode: buf[0] & 0x0f,
+        payloadLength,
+        code: payloadLength >= 2 ? payload.readUInt16BE(0) : null,
+        reason: payload.subarray(2).toString(),
+      });
+    };
+    return { promise, onClientData };
+  }
+
+  // Run `close` on an open socket, then report the close frame it put on the
+  // wire alongside the CloseEvent the client dispatched for itself.
+  async function closeAndReadFrame(close: (ws: WebSocket) => void) {
+    const frame = captureClientFrame();
+    const server = await rawWsServer(() => {}, frame.onClientData);
+    const address = server.address() as import("node:net").AddressInfo;
+    const ws = new WebSocket(`ws://127.0.0.1:${address.port}`);
+    const closed = Promise.withResolvers<{ code: number; reason: string }>();
+    ws.addEventListener("close", e => closed.resolve({ code: e.code, reason: e.reason }));
+    ws.addEventListener("error", () => closed.reject(new Error("WebSocket errored")));
+    ws.addEventListener("open", () => close(ws));
+    const [sent, closeEvent] = await Promise.all([frame.promise, closed.promise]);
+    await new Promise(r => server.close(r));
+    return { frame: sent, closeEvent };
+  }
+
+  // https://websockets.spec.whatwg.org/#dom-websocket-close step 3: "If neither
+  // code nor reason is present, the WebSocket Close message must not have a
+  // body." A 1000 body would tell the peer it asked for a normal closure.
+  it("close() with no code sends a close frame with no payload", async () => {
+    expect(await closeAndReadFrame(ws => ws.close())).toEqual({
+      frame: { opcode: 0x8, payloadLength: 0, code: null, reason: "" },
+      closeEvent: { code: 1005, reason: "" },
+    });
+  });
+
+  it("close(1000) sends the code on the wire", async () => {
+    expect(await closeAndReadFrame(ws => ws.close(1000))).toEqual({
+      frame: { opcode: 0x8, payloadLength: 2, code: 1000, reason: "" },
+      closeEvent: { code: 1000, reason: "" },
+    });
+  });
+
+  // A reason cannot be framed on its own: RFC 6455 §5.5.1 puts it after the
+  // 2-byte status code, so a code-less close() with a reason still sends 1000.
+  it("close() with only a reason sends 1000 in front of it", async () => {
+    expect(await closeAndReadFrame(ws => ws.close(undefined, "bye"))).toEqual({
+      frame: { opcode: 0x8, payloadLength: 5, code: 1000, reason: "bye" },
+      closeEvent: { code: 1000, reason: "bye" },
+    });
+  });
+
+  // An explicitly passed reason counts as present even when it is empty, so the
+  // frame keeps its body. Only an omitted reason leaves the payload out.
+  it('close(undefined, "") sends 1000 with an empty reason', async () => {
+    expect(await closeAndReadFrame(ws => ws.close(undefined, ""))).toEqual({
+      frame: { opcode: 0x8, payloadLength: 2, code: 1000, reason: "" },
+      closeEvent: { code: 1000, reason: "" },
     });
   });
 });

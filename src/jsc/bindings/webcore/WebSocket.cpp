@@ -118,6 +118,11 @@ static size_t getFramingOverhead(size_t payloadSize)
 
 const size_t maxReasonSizeInBytes = 123;
 
+// RFC 6455 7.4.1: reserved, never valid on the wire. Handed to the native client
+// to mean "close() was called without a code", which sends a Close frame with no
+// payload; the peer then reports 1005 "no status received" (7.1.5).
+static constexpr uint16_t closeCodeNotSpecified = 1005;
+
 // Close codes an endpoint may put on the wire (RFC 6455 7.4 + the IANA registry).
 // Deliberately the RFC endpoint set, not the browser's "1000 or 3000-4999":
 // non-browser clients legitimately send 1001 or 1011, and `ws` accepts the same set.
@@ -989,7 +994,11 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         if (utf8Reason.length() > maxReasonSizeInBytes)
             return Exception { SyntaxError, makeString("The close reason must not be greater than "_s, maxReasonSizeInBytes, " UTF-8 bytes. Received "_s, utf8Reason.length(), " bytes."_s) };
     }
-    int code = optionalCode ? optionalCode.value() : static_cast<int>(1000);
+    // https://websockets.spec.whatwg.org/#dom-websocket-close step 3: with neither
+    // a code nor a reason present, the Close message must not have a body. A reason
+    // still needs one, since the wire format puts the status code in front of it.
+    // An empty reason is still present; only an absent one is a null String.
+    int code = optionalCode ? optionalCode.value() : static_cast<int>(reason.isNull() ? closeCodeNotSpecified : 1000);
 
     if (m_state == CLOSING || m_state == CLOSED)
         return {};

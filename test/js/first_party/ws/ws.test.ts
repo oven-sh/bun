@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe } from "harness";
 import { createServer } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -190,12 +190,14 @@ describe("WebSocket", () => {
     }
   });
   describe("close()", () => {
+    // No code means no body on the close frame, which RFC 6455 §7.1.5 reports as
+    // 1005 "no status received" on both ends. Matches npm `ws`.
     test("(no arguments)", (ws, done) => {
       ws.on("open", () => {
         ws.close();
       });
       ws.on("close", (code: number, reason: string, wasClean: boolean) => {
-        expect(code).toBe(1000);
+        expect(code).toBe(1005);
         expect(reason).toBeString();
         expect(wasClean).toBeTrue();
         done();
@@ -483,7 +485,9 @@ async function listen(): Promise<URL> {
   const pathname = path.resolve(import.meta.dir, "../../web/websocket/websocket-server-echo.mjs");
   const { promise, resolve, reject } = Promise.withResolvers();
   const server = spawn({
-    cmd: [bunExe(), pathname],
+    // Node runs the echo server, as in websocket-client.test.ts: these tests
+    // cover the client, and a debug build spends the 1s budget just booting.
+    cmd: [nodeExe() ?? bunExe(), pathname],
     cwd: import.meta.dir,
     env: bunEnv,
     stdout: "inherit",

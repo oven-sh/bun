@@ -62,6 +62,10 @@ const MAX_CONTROL_PAYLOAD: usize = 125;
 const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
 /// Outgoing control frame prefix: 2-byte header + 4-byte masking key.
 const CONTROL_HEADER_SIZE: usize = 6;
+/// RFC 6455 §7.4.1: reserved, never valid on the wire. C++ passes it to
+/// [`WebSocket::close`] for a `ws.close()` with no code: send a Close frame with
+/// no payload, which §7.1.5 says both ends report as 1005 "no status received".
+const CLOSE_CODE_NOT_SPECIFIED: u16 = 1005;
 
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
@@ -892,7 +896,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         if payload_len >= 2 {
             let received_code = u16::from_be_bytes([payload[0], payload[1]]);
             let (echo_code, dispatch_code) = received_close_codes(received_code);
-            self.send_close_with_body(echo_code, Some(dispatch_code), &payload[2..payload_len]);
+            self.send_close_with_body(
+                Some(echo_code),
+                Some(dispatch_code),
+                &payload[2..payload_len],
+            );
         } else {
             self.send_close();
         }
@@ -902,7 +910,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn send_close(&self) {
         // Received a bodyless Close: echo a normal-closure frame on the wire,
         // but report 1005 ("no status received") to JS per RFC 6455 §7.1.5.
-        self.send_close_with_body(1000, Some(1005), &[]);
+        self.send_close_with_body(Some(1000), Some(CLOSE_CODE_NOT_SPECIFIED), &[]);
     }
 
     fn enqueue_encoded_bytes(&self, bytes: &[u8]) -> bool {
@@ -1144,13 +1152,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.enqueue_encoded_bytes(&ping_frame_bytes[..CONTROL_HEADER_SIZE + ping_len])
     }
 
-    /// `code` is the status code written to the wire frame. `dispatch_code`
-    /// overrides the code reported to JS (`CloseEvent.code`) when it differs
-    /// from the wire code — e.g. a received bodyless Close echoes 1000 but
-    /// reports 1005; when `None`, JS sees `code`.
-    fn send_close_with_body(&self, code: u16, dispatch_code: Option<u16>, body: &[u8]) {
-        let body_len = body.len().min(MAX_CLOSE_REASON);
-        log!("Sending close with code {}", code);
+    /// `code` is the status code written to the wire frame; `None` sends the
+    /// bodyless Close frame RFC 6455 §5.5.1 allows (`body` is then unused, as a
+    /// reason cannot be framed without a code). `dispatch_code` overrides the
+    /// code reported to JS (`CloseEvent.code`) when it differs from the wire
+    /// code — e.g. a received bodyless Close echoes 1000 but reports 1005; when
+    /// `None`, JS sees `code`.
+    fn send_close_with_body(&self, code: Option<u16>, dispatch_code: Option<u16>, body: &[u8]) {
+        let body_len = if code.is_some() {
+            body.len().min(MAX_CLOSE_REASON)
+        } else {
+            0
+        };
+        // 2-byte status code + reason, or nothing at all.
+        let payload_len = if code.is_some() { 2 + body_len } else { 0 };
+        log!("Sending close with code {:?}", code);
         if self.has_pending_close_dispatch() {
             // A close is already mid-flush (user-initiated ws.close() under
             // backpressure); don't enqueue a second close frame on top of it.
@@ -1167,10 +1183,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         // → terminate → cancel(Failure) would RST and discard the buffered
         // frame.
         let mut frame = [0u8; CONTROL_HEADER_SIZE + 2 + MAX_CLOSE_REASON];
-        let header = WebsocketHeader::new(((body_len + 2) & 0x7F) as u8, true, Opcode::Close);
+        let header = WebsocketHeader::new((payload_len & 0x7F) as u8, true, Opcode::Close);
         frame[..2].copy_from_slice(&header.slice());
         // the 4-byte masking key lives at frame[2..6]
-        frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
+        if let Some(code) = code {
+            frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
+        }
 
         let mut reason = bun_core::String::empty();
         if body_len > 0 {
@@ -1185,17 +1203,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         // we must mask the code (and the reason, if any)
-        let frame_len = CONTROL_HEADER_SIZE + 2 + body_len;
+        let frame_len = CONTROL_HEADER_SIZE + payload_len;
         {
             let (head, payload) = frame.split_at_mut(CONTROL_HEADER_SIZE);
             let mask_buf: &mut [u8; 4] = (&mut head[2..CONTROL_HEADER_SIZE])
                 .try_into()
                 .expect("infallible: size matches");
-            Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..2 + body_len]);
+            Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..payload_len]);
         }
 
         if self.enqueue_encoded_bytes(&frame[..frame_len]) {
-            let dispatch_code = dispatch_code.unwrap_or(code);
+            let dispatch_code = dispatch_code.or(code).unwrap_or(CLOSE_CODE_NOT_SPECIFIED);
             if self.send_buffer.borrow().readable_length() == 0 {
                 self.shutdown_after_close_frame();
                 self.clear_data();
@@ -1487,6 +1505,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             .and_then(|str| encode_close_reason(str, &mut reason_buf))
             .unwrap_or(0);
 
+        let code = (code != CLOSE_CODE_NOT_SPECIFIED).then_some(code);
         this.send_close_with_body(code, None, &reason_buf[..reason_len]);
     }
 

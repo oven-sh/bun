@@ -20,9 +20,7 @@ describe("anonymous export default .name", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe('"default"\n');
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: '"default"\n', stderr: "", exitCode: 0 });
   });
 
   test.concurrent("named function keeps its own name", async () => {
@@ -36,9 +34,7 @@ describe("anonymous export default .name", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe('"Foo"\n');
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: '"Foo"\n', stderr: "", exitCode: 0 });
   });
 });
 

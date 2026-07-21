@@ -44,13 +44,16 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     expect(exitCode).toBe(0);
   });
 
-  test("transpile-only output uses a valid identifier for the generated default name", async () => {
-    using dir = tempDir("issue-31401-transpile", {
+  test("bundled output uses a valid identifier for the generated default name", async () => {
+    // `--no-bundle` now keeps the function anonymous, so check the bundled output
+    // where convertStmtsForChunk still assigns the generated `_1_default` name.
+    using dir = tempDir("issue-31401-bundle", {
       "1.ts": `export default function () {}\n`,
+      "entry.ts": `import f from "./1.ts"; console.log(typeof f);\n`,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--no-bundle", join(String(dir), "1.ts")],
+      cmd: [bunExe(), "build", join(String(dir), "entry.ts")],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
@@ -60,7 +63,7 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
 
     expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
     // Must be a valid identifier: the leading digit gets an underscore prefix.
-    expect(normalizeBunSnapshot(stdout)).toContain("export default function _1_default() {}");
+    expect(normalizeBunSnapshot(stdout)).toContain("function _1_default() {}");
     expect(exitCode).toBe(0);
   });
 });

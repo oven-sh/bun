@@ -5,7 +5,7 @@
 pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
 pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
 pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
-    "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
+    "fetch() request with GET/HEAD method cannot have body.";
 pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
 pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
@@ -336,7 +336,7 @@ impl StringOrURL {
 // Bun__fetch entry point
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
+/// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
@@ -1601,7 +1601,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
+    // WHATWG Fetch (Request constructor step 36): only GET and HEAD forbid a
+    // request body. OPTIONS with content is legal (RFC 9110 §9.3.7).
+    if !ALLOW_GET_BODY
+        && matches!(method, Method::GET | Method::HEAD)
+        && body.has_body()
+        && !upgraded_connection
+    {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
             format_args!("{FETCH_ERROR_UNEXPECTED_BODY}"),

@@ -704,6 +704,20 @@ impl String {
             _ => ZigStringSlice::EMPTY,
         }
     }
+    /// Like [`to_utf8`] but unpaired surrogates are encoded as 3-byte WTF-8
+    /// instead of being replaced with U+FFFD. Use when the bytes are a key
+    /// and distinct JS strings must map to distinct byte strings.
+    ///
+    /// [`to_utf8`]: Self::to_utf8
+    #[inline]
+    pub fn to_wtf8(&self) -> ZigStringSlice {
+        match self.0.tag {
+            Tag::WTFStringImpl => self.as_wtf().to_wtf8(),
+            Tag::ZigString => self.as_zig().to_slice_wtf8(),
+            Tag::StaticZigString => ZigStringSlice::from_utf8_never_free(self.as_zig().slice()),
+            _ => ZigStringSlice::EMPTY,
+        }
+    }
     pub fn to_utf8_without_ref(&self) -> ZigStringSlice {
         match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().to_utf8_without_ref(),
@@ -1942,6 +1956,27 @@ impl ZigString {
                 return ZigStringSlice::Owned(v);
             }
             // None ⇒ all-ASCII; safe to borrow as-is.
+        }
+        ZigStringSlice::Static(Self::untagged(self.tagged_ptr()), self.len)
+    }
+
+    /// Like [`to_slice`] but unpaired surrogates are encoded as 3-byte WTF-8
+    /// instead of being replaced with U+FFFD.
+    ///
+    /// [`to_slice`]: Self::to_slice
+    #[inline]
+    pub fn to_slice_wtf8(&self) -> ZigStringSlice {
+        if self.len == 0 {
+            return ZigStringSlice::EMPTY;
+        }
+        if self.is_16bit() {
+            return ZigStringSlice::Owned(crate::strings::to_wtf8_alloc(self.utf16_slice()));
+        }
+        let bytes = self.slice();
+        if !self.is_utf8() {
+            if let Some(v) = crate::strings::to_utf8_from_latin1(bytes) {
+                return ZigStringSlice::Owned(v);
+            }
         }
         ZigStringSlice::Static(Self::untagged(self.tagged_ptr()), self.len)
     }

@@ -69,6 +69,16 @@ impl JSString {
         str.to_slice()
     }
 
+    /// Like [`to_slice`] but encodes unpaired surrogates as 3-byte WTF-8 so
+    /// distinct JS strings map to distinct byte strings.
+    ///
+    /// [`to_slice`]: Self::to_slice
+    pub fn to_slice_wtf8(&self, global: &JSGlobalObject) -> ZigStringSlice {
+        let mut str = ZigString::init(b"");
+        self.to_zig_string(global, &mut str);
+        str.to_slice_wtf8()
+    }
+
     // `to_slice_clone` always allocates
     // an owned UTF-8 copy so the result outlives the GC'd JSString. Returning
     // `to_slice()` here (a borrow that may alias JSC-owned memory) would hand

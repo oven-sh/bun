@@ -1661,6 +1661,19 @@ pub(crate) mod strings_impl {
         }
     }
 
+    /// Like `append_wtf8_from_utf16` but **preserves** unpaired surrogates as
+    /// their 3-byte WTF-8 encoding instead of replacing them with U+FFFD.
+    fn append_wtf8_from_utf16_lossless(list: &mut Vec<u8>, utf16: &[u16]) {
+        let mut i = 0usize;
+        let mut buf = [0u8; 4];
+        while i < utf16.len() {
+            let (cp, adv) = decode_wtf16_raw(&utf16[i..]);
+            i += adv as usize;
+            let n = encode_wtf8_rune(&mut buf, cp);
+            list.extend_from_slice(&buf[..n]);
+        }
+    }
+
     /// Port of `convertUTF16ToUTF8Append`. Caller must reserve
     /// `simdutf::length::utf8::from::utf16::le(utf16)` spare bytes for the fast path.
     pub fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
@@ -1698,6 +1711,40 @@ pub(crate) mod strings_impl {
     #[inline]
     pub fn to_utf8_alloc(utf16: &[u16]) -> Vec<u8> {
         convert_utf16_to_utf8(Vec::new(), utf16)
+    }
+
+    /// WTF-16 → WTF-8. Identical to [`to_utf8_alloc`] for well-formed UTF-16,
+    /// but unpaired surrogates are encoded as their 3-byte WTF-8 sequence
+    /// (`ED A0 80`..`ED BF BF`) instead of being replaced with U+FFFD, so the
+    /// mapping is injective and distinct WTF-16 inputs produce distinct byte
+    /// strings.
+    pub fn to_wtf8_alloc(utf16: &[u16]) -> Vec<u8> {
+        // Every UTF-16 code unit encodes to at most 3 WTF-8 bytes.
+        let mut list: Vec<u8> = Vec::with_capacity(utf16.len() * 3 + 16);
+        // SAFETY: simdutf writes only initialized bytes into the spare slice
+        // and reports the count; on SURROGATE we commit 0 and fall back to the
+        // lossless scalar encoder.
+        let r = unsafe {
+            crate::vec::fill_spare(&mut list, 0, |spare| {
+                let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
+                    utf16.as_ptr(),
+                    utf16.len(),
+                    spare.as_mut_ptr(),
+                );
+                (
+                    if r.status == simdutf::Status::SURROGATE {
+                        0
+                    } else {
+                        r.count
+                    },
+                    r,
+                )
+            })
+        };
+        if r.status == simdutf::Status::SURROGATE {
+            append_wtf8_from_utf16_lossless(&mut list, utf16);
+        }
+        list
     }
 
     /// Transcode raw UTF-16-LE *bytes* (no alignment requirement) to a fresh

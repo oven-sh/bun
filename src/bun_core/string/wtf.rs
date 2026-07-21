@@ -22,6 +22,7 @@ pub use crate::external_shared::WTFString;
 pub trait WTFStringImplExt {
     fn to_latin1_slice(&self) -> ZigStringSlice;
     fn to_utf8(&self) -> ZigStringSlice;
+    fn to_wtf8(&self) -> ZigStringSlice;
     fn to_utf8_without_ref(&self) -> ZigStringSlice;
     fn to_utf8_borrowed(&self) -> ZigStringSlice;
     fn to_owned_slice_z(&self) -> crate::ZBox;
@@ -59,6 +60,23 @@ impl WTFStringImplExt for WTFStringImplStruct {
         }
 
         ZigStringSlice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
+    }
+
+    /// Like [`to_utf8`] but encodes unpaired surrogates as 3-byte WTF-8
+    /// instead of U+FFFD, so distinct inputs map to distinct byte strings.
+    ///
+    /// [`to_utf8`]: WTFStringImplExt::to_utf8
+    #[inline]
+    fn to_wtf8(&self) -> ZigStringSlice {
+        if self.is_8bit() {
+            if let Some(utf8) = strings::to_utf8_from_latin1(self.latin1_slice()) {
+                return ZigStringSlice::init_owned(utf8);
+            }
+
+            return self.to_latin1_slice();
+        }
+
+        ZigStringSlice::init_owned(strings::to_wtf8_alloc(self.utf16_slice()))
     }
 
     #[inline]

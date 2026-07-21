@@ -1477,7 +1477,7 @@ where
             )));
         }
 
-        let topic = arguments.ptr[0].to_slice(global)?;
+        let topic = arguments.ptr[0].to_slice_wtf8(global)?;
 
         if topic.slice().is_empty() {
             return Ok(JSValue::js_number(0.0));
@@ -1686,7 +1686,7 @@ where
             return Err(global.throw(format_args!("publish requires a topic string")));
         }
 
-        let topic_slice = topic.to_slice();
+        let topic_slice = topic.to_slice_wtf8();
         if topic_slice.slice().is_empty() {
             return Err(global.throw(format_args!("publish requires a non-empty topic")));
         }

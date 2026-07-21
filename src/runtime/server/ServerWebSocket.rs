@@ -287,7 +287,7 @@ impl ServerWebSocket {
     }
 
     /// Shared body for `subscribe` / `unsubscribe` / `isSubscribed`: identical
-    /// arg-count guard, closed short-circuit, string-type guard, UTF-8 slice,
+    /// arg-count guard, closed short-circuit, string-type guard, WTF-8 slice,
     /// non-empty guard, then dispatch to the uWS topic op. Only the JS-visible
     /// name, the closed-socket return value, and the terminal op differ.
     #[inline]
@@ -316,7 +316,7 @@ impl ServerWebSocket {
             ));
         }
 
-        let topic = args.ptr[0].to_slice(global_this)?;
+        let topic = args.ptr[0].to_slice_wtf8(global_this)?;
 
         if topic.slice().is_empty() {
             return Err(
@@ -820,7 +820,7 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires a topic string")));
         }
 
-        let topic_slice = topic_value.to_slice(global_this)?;
+        let topic_slice = topic_value.to_slice_wtf8(global_this)?;
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publish requires a non-empty topic")));
         }
@@ -890,7 +890,7 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publishText requires a topic string")));
         }
 
-        let topic_slice = topic_value.to_slice(global_this)?;
+        let topic_slice = topic_value.to_slice_wtf8(global_this)?;
 
         let compress =
             Self::parse_compress_arg(global_this, "publishText", compress_value, args.len)?;
@@ -944,7 +944,7 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publishBinary requires a topic string")));
         }
 
-        let topic_slice = topic_value.to_slice(global_this)?;
+        let topic_slice = topic_value.to_slice_wtf8(global_this)?;
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
         }
@@ -984,7 +984,7 @@ impl ServerWebSocket {
             return Ok(JSValue::js_number(0.0));
         };
 
-        let topic_slice = topic_str.to_slice(global_this);
+        let topic_slice = topic_str.to_slice_wtf8(global_this);
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
         }
@@ -1016,9 +1016,9 @@ impl ServerWebSocket {
             return Ok(JSValue::js_number(0.0));
         };
 
-        let topic_slice = topic_str.to_slice(global_this);
+        let topic_slice = topic_str.to_slice_wtf8(global_this);
         if topic_slice.slice().is_empty() {
-            return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
+            return Err(global_this.throw(format_args!("publishText requires a non-empty topic")));
         }
 
         let slice = str.to_slice(global_this);

@@ -1878,11 +1878,15 @@ impl<'a> BundleOptions<'a> {
         }
 
         if !transform.extension_order.is_empty() {
-            opts.extension_order.default.default = transform
+            let user_list: Box<[Box<[u8]>]> = transform
                 .extension_order
                 .iter()
                 .map(|s| Box::<[u8]>::from(s.as_ref()))
                 .collect();
+            opts.extension_order.default.esm = user_list.clone();
+            opts.extension_order.node_modules.default = user_list.clone();
+            opts.extension_order.node_modules.esm = user_list.clone();
+            opts.extension_order.default.default = user_list;
         }
 
         if let Some(t) = transform.target {

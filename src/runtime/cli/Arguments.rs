@@ -36,6 +36,18 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
+/// Like [`slice_to_owned`], but splits each argument on commas so a single
+/// `--flag=a,b,c` behaves the same as repeated `--flag=a --flag=b --flag=c`.
+#[inline]
+fn comma_list_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
+    input
+        .iter()
+        .flat_map(|s| s.split(|&b| b == b','))
+        .filter(|s| !s.is_empty())
+        .map(Box::<[u8]>::from)
+        .collect()
+}
+
 pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
@@ -896,11 +908,11 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         None
     };
 
-    opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
+    opts.main_fields = comma_list_to_owned(args.options(b"--main-fields"));
     // we never actually supported inject.
     // opts.inject = args.options(b"--inject");
     opts.env_files = slice_to_owned(args.options(b"--env-file"));
-    opts.extension_order = slice_to_owned(args.options(b"--extension-order"));
+    opts.extension_order = comma_list_to_owned(args.options(b"--extension-order"));
 
     if args.flag(b"--no-env-file") {
         opts.disable_default_env_files = true;

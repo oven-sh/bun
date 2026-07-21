@@ -209,7 +209,9 @@ struct State {
     fd: Fd,
     writers: Writers,
     buf: Vec<u8>,
-    /// quick hack to get windows working; ideally this should be removed.
+    /// Stable copy of the in-flight chunk for libuv: `uv_write`/`uv_fs_write`
+    /// hold the `uv_buf_t` pointer until completion, but `enqueue()` may grow
+    /// (reallocate) `buf` meanwhile. POSIX drains synchronously so reads `buf`.
     #[cfg(windows)]
     winbuf: Vec<u8>,
     writer_idx: usize,
@@ -602,11 +604,11 @@ impl IOWriter {
         let result = self.get_buffer_impl();
         #[cfg(windows)]
         {
+            // Copy into the stable side-buffer libuv will point into across the
+            // async write; `buf` may reallocate before completion (see `winbuf`).
             let s = self.state();
             s.winbuf.clear();
             s.winbuf.extend_from_slice(result);
-            // `state()` ties `s` to `&self`, so the slice borrow already has
-            // the `'self` lifetime the signature wants — no raw-parts needed.
             return s.winbuf.as_slice();
         }
         #[cfg(not(windows))]

@@ -615,7 +615,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 // No explicit env: inherit the live `process.env` so runtime
                 // mutations (set/delete/PATH edits) reach the child.
-                let process_env = global_this.process_env_object();
+                let process_env = global_this.process_env_object()?;
                 process_env.ensure_still_alive();
                 if let Some(object) = process_env.get_object() {
                     append_envp_from_js(
@@ -908,7 +908,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         } else {
             // No options object means no explicit env: inherit the live
             // `process.env` so runtime mutations reach the child.
-            let process_env = global_this.process_env_object();
+            let process_env = global_this.process_env_object()?;
             process_env.ensure_still_alive();
             if let Some(object) = process_env.get_object() {
                 append_envp_from_js(

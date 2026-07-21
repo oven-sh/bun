@@ -1169,8 +1169,8 @@ impl JSGlobalObject {
 
     /// The live `process.env` JS object (forces the lazy init). Mutations made
     /// via `process.env.X = ...` / `delete process.env.X` are visible here.
-    pub fn process_env_object(&self) -> JSValue {
-        ZigGlobalObject__processEnvObject(self)
+    pub fn process_env_object(&self) -> JsResult<JSValue> {
+        crate::from_js_host_call(self, || ZigGlobalObject__processEnvObject(self))
     }
 
     #[inline]

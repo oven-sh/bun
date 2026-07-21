@@ -614,7 +614,7 @@ pub(crate) fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         return Ok(JSValue::NULL);
     }
 
-    let mut path_str = match global_this.process_env_object().get(global_this, "PATH")? {
+    let mut path_str = match global_this.process_env_object()?.get(global_this, "PATH")? {
         Some(v) if !v.is_undefined_or_null() => v.to_slice(global_this)?,
         _ => ZigStringSlice::from_utf8_never_free(b""),
     };

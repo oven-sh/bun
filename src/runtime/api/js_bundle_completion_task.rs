@@ -492,6 +492,7 @@ impl JSBundleCompletionTask {
                     let write_args = fs_args::WriteFile {
                         encoding: Encoding::Buffer,
                         flag: FileSystemFlags::W,
+                        flag_specified: true,
                         mode: node_fs::DEFAULT_PERMISSION,
                         file: PathOrFileDescriptor::Path(PathLike::String(
                             bun_ptr::cow_slice::CowSlice::init_unchecked(write_path, false),

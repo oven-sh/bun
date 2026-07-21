@@ -5741,3 +5741,66 @@ describe("fs.close on stdio descriptors", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("appendFile honors the flag option", () => {
+  it("appendFileSync { flag: 'wx' } fails with EEXIST on an existing file and does not touch it", () => {
+    using dir = tempDir("append-wx", { "f": "0123456789" });
+    const file = path.join(String(dir), "f");
+    expect(() => fs.appendFileSync(file, "XX", { flag: "wx" })).toThrow(expect.objectContaining({ code: "EEXIST" }));
+    expect(readFileSync(file, "utf8")).toBe("0123456789");
+  });
+
+  it("appendFileSync { flag: 'ax' } fails with EEXIST on an existing file and does not touch it", () => {
+    using dir = tempDir("append-ax", { "f": "0123456789" });
+    const file = path.join(String(dir), "f");
+    expect(() => fs.appendFileSync(file, "XX", { flag: "ax" })).toThrow(expect.objectContaining({ code: "EEXIST" }));
+    expect(readFileSync(file, "utf8")).toBe("0123456789");
+  });
+
+  it("appendFileSync { flag: 'w' } truncates an existing file", () => {
+    using dir = tempDir("append-w", { "f": "0123456789" });
+    const file = path.join(String(dir), "f");
+    fs.appendFileSync(file, "XX", { flag: "w" });
+    expect(readFileSync(file, "utf8")).toBe("XX");
+  });
+
+  it("appendFileSync { flag: 'r+' } fails with ENOENT on a missing file and does not create it", () => {
+    using dir = tempDir("append-rplus", {});
+    const file = path.join(String(dir), "missing");
+    expect(() => fs.appendFileSync(file, "XX", { flag: "r+" })).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("appendFileSync defaults to appending (flag 'a')", () => {
+    using dir = tempDir("append-default", { "f": "0123456789" });
+    const file = path.join(String(dir), "f");
+    fs.appendFileSync(file, "XX");
+    expect(readFileSync(file, "utf8")).toBe("0123456789XX");
+  });
+
+  it("fs.promises.appendFile honors { flag: 'wx' } on an existing file", async () => {
+    using dir = tempDir("append-promise-wx", { "f": "0123456789" });
+    const file = path.join(String(dir), "f");
+    await expect(fs.promises.appendFile(file, "XX", { flag: "wx" })).rejects.toMatchObject({
+      code: "EEXIST",
+    });
+    expect(readFileSync(file, "utf8")).toBe("0123456789");
+  });
+
+  it("fs.promises.appendFile { flag: 'w' } truncates an existing file", async () => {
+    using dir = tempDir("append-promise-w", { "f": "0123456789" });
+    const file = path.join(String(dir), "f");
+    await fs.promises.appendFile(file, "XX", { flag: "w" });
+    expect(readFileSync(file, "utf8")).toBe("XX");
+  });
+
+  it("callback appendFile honors { flag: 'wx' } on an existing file", async () => {
+    using dir = tempDir("append-cb-wx", { "f": "0123456789" });
+    const file = path.join(String(dir), "f");
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    fs.appendFile(file, "XX", { flag: "wx" }, resolve);
+    const err = await promise;
+    expect(err?.code).toBe("EEXIST");
+    expect(readFileSync(file, "utf8")).toBe("0123456789");
+  });
+});

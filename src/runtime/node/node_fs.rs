@@ -4218,6 +4218,9 @@ pub mod args {
     pub struct WriteFile {
         pub encoding: Encoding,
         pub flag: FileSystemFlags,
+        /// Whether the caller passed an explicit `flag` option. When false,
+        /// each op applies its own default (`w` for write, `a` for append).
+        pub flag_specified: bool,
         pub mode: Mode,
         pub file: PathOrFileDescriptor,
         pub flush: bool,
@@ -4264,6 +4267,7 @@ pub mod args {
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::W;
+            let mut flag_specified = false;
             let mut mode: Mode = DEFAULT_PERMISSION;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
                 if let Some(signal) = s {
@@ -4281,7 +4285,10 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
+                        if let Some(parsed) = FileSystemFlags::from_js(ctx, flag_)? {
+                            flag = parsed;
+                            flag_specified = true;
+                        }
                     }
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
@@ -4320,6 +4327,7 @@ pub mod args {
                 file: path,
                 encoding,
                 flag,
+                flag_specified,
                 mode,
                 data,
                 dirfd: FD::cwd(),
@@ -4867,26 +4875,16 @@ impl NodeFS {
     }
 
     pub fn append_file(&mut self, args: &args::AppendFile, _: Flavor) -> Maybe<ret::AppendFile> {
-        let mut data = args.data.slice();
-        match &args.file {
-            PathOrFileDescriptor::Fd(fd) => {
-                while !data.is_empty() {
-                    let written = Syscall::write(*fd, data)?;
-                    data = &data[written..];
-                }
-                Ok(())
-            }
-            PathOrFileDescriptor::Path(path_) => {
-                let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?;
-                let _close = scopeguard::guard(fd, |fd| fd.close());
-                while !data.is_empty() {
-                    let written = Syscall::write(fd, data)?;
-                    data = &data[written..];
-                }
-                Ok(())
-            }
-        }
+        // `appendFile` is `writeFile` whose flag defaults to `a` instead of
+        // `w`. An explicit `flag` option is honored as-is (Node does not force
+        // `O_APPEND` on top of it), so `{flag:"wx"}`, `{flag:"w"}`, `{flag:"r+"}`
+        // behave exactly as they would for `writeFile`.
+        let flag = if args.flag_specified {
+            args.flag
+        } else {
+            FileSystemFlags::A
+        };
+        Self::write_file_with_flag(&mut self.sync_error_buf, args, flag)
     }
 
     pub fn close(&mut self, args: &args::Close, _: Flavor) -> Maybe<ret::Close> {
@@ -7508,13 +7506,21 @@ impl NodeFS {
         pathbuf: &mut PathBuffer,
         args: &args::WriteFile,
     ) -> Maybe<ret::WriteFile> {
+        Self::write_file_with_flag(pathbuf, args, args.flag)
+    }
+
+    pub fn write_file_with_flag(
+        pathbuf: &mut PathBuffer,
+        args: &args::WriteFile,
+        flag: FileSystemFlags,
+    ) -> Maybe<ret::WriteFile> {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z_with_force_copy::<true>(pathbuf);
                 // O_TRUNC is dropped on purpose: keeping the existing blocks
                 // allocated makes rewriting a large file cheaper, and the resize
                 // below sets the final size. O_APPEND writes at EOF, so it keeps it.
-                let mut flags = args.flag.as_int();
+                let mut flags = flag.as_int();
                 if (flags & sys::O::APPEND) == 0 {
                     flags &= !sys::O::TRUNC;
                 }
@@ -7551,7 +7557,7 @@ impl NodeFS {
                 // the write offset at write() time: an O_APPEND write would land
                 // after the grown end, leaving a hole where the data belongs.
                 let appends = if is_path {
-                    (args.flag.as_int() & sys::O::APPEND) != 0
+                    (flag.as_int() & sys::O::APPEND) != 0
                 } else {
                     // `flag` is the option, not how the caller opened this fd.
                     match sys::get_fcntl_flags(fd) {
@@ -7606,7 +7612,7 @@ impl NodeFS {
         // Resize only when the flags asked to truncate (the open above dropped
         // O_TRUNC): `r+` & co. overwrite in place, and Node never resizes a
         // descriptor it was handed.
-        if (args.flag.as_int() & sys::O::TRUNC) != 0
+        if (flag.as_int() & sys::O::TRUNC) != 0
             && matches!(args.file, PathOrFileDescriptor::Path(_))
         {
             // If this errors, we silently ignore it.

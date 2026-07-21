@@ -56,7 +56,11 @@ impl ExecState {
 
     #[inline]
     fn exit_code(&self) -> ExitCode {
-        if self.err.is_some() || self.had_refusal { 1 } else { 0 }
+        if self.err.is_some() || self.had_refusal {
+            1
+        } else {
+            0
+        }
     }
 }
 

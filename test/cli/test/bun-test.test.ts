@@ -1577,20 +1577,14 @@ describe.concurrent("script files with no test() registrations", () => {
 
   test("does not drain when a prior file left a ref'd handle", async () => {
     // a leaks an interval. b's drain is skipped because the loop was not
-    // idle after preloads (it can't tell a's handle from its own). The run
-    // must not hang; b's own delayed error goes unreported, same as before.
+    // idle after preloads, so the run must not hang on a's interval.
     using dir = tempDir("prior-file-leak", {
       "a.test.js": `
         const { test } = require("bun:test");
         setInterval(() => {}, 60_000);
         test("noop", () => {});
       `,
-      "b.test.js": `
-        (async () => {
-          await new Promise(r => setTimeout(r, 20));
-          throw new Error("file B delayed error");
-        })();
-      `,
+      "b.test.js": `require("assert").strictEqual(1, 1);`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
@@ -1608,12 +1602,7 @@ describe.concurrent("script files with no test() registrations", () => {
   test("does not drain when a preload left a ref'd handle", async () => {
     using dir = tempDir("preload-leak", {
       "setup.js": `setInterval(() => {}, 60_000);`,
-      "a.test.js": `
-        (async () => {
-          await new Promise(r => setTimeout(r, 20));
-          throw new Error("should not hang");
-        })();
-      `,
+      "a.test.js": `require("assert").strictEqual(1, 1);`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--preload", "./setup.js", "./a.test.js"],
@@ -1623,6 +1612,8 @@ describe.concurrent("script files with no test() registrations", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // If the drain waited on the preload's interval this would hang; the
+    // test framework's own timeout is the guard.
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
   });

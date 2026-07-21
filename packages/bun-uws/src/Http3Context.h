@@ -7,6 +7,7 @@
 #include "Http3Request.h"
 #include "Http3Response.h"
 #include "Http3ResponseData.h"
+#include "HttpParser.h"
 
 namespace uWS {
 
@@ -35,7 +36,16 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
-            if (req.getHeader("expect") == "100-continue") res->writeContinue();
+            if (req.getHeader("expect") == "100-continue") {
+                /* RFC 9110 10.1.1: a Content-Length over the configured limit
+                 * is a 413 from the head alone; skip the 100 so the handler
+                 * can answer the final status directly. */
+                std::string_view cl = req.getHeader("content-length");
+                uint64_t len = cl.length() ? HttpParser::toUnsignedInteger(cl) : 0;
+                if (len == UINT64_MAX || len <= cd->maxRequestBodySize) {
+                    res->writeContinue();
+                }
+            }
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {
                 res->writeStatus("404 Not Found")->end();

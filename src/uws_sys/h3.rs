@@ -459,6 +459,9 @@ impl App {
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
     }
+    pub fn set_max_request_body_size(&mut self, max_request_body_size: u64) {
+        c::uws_h3_app_set_max_request_body_size(self, max_request_body_size)
+    }
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
     where
@@ -612,6 +615,10 @@ mod c {
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
+        pub(super) safe fn uws_h3_app_set_max_request_body_size(
+            app: &mut App,
+            max_request_body_size: u64,
+        );
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
             hostname: *const c_char,

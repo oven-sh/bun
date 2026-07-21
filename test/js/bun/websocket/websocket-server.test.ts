@@ -766,6 +766,7 @@ describe("ServerWebSocket", () => {
         },
       });
       const ws = new WebSocket(`ws://${server.hostname}:${server.port}/`);
+      ws.onerror = e => reject(new Error(`client ws error: ${e}`));
       let received: string | undefined;
       ws.onmessage = e => (received = String(e.data));
       const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();

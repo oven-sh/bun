@@ -834,6 +834,22 @@ impl EventLoop {
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard).
     ///
+    /// Zero a window of stack below the caller's frame. Timer/immediate
+    /// callback invocations spill the callback `JSValue` and its argument
+    /// buffer into callee frames at a stable depth under the event-loop tick;
+    /// a later zero-argument invocation from the same call shape leaves those
+    /// slots untouched, and JSC's conservative scan then re-pins the stale
+    /// cells on every gc() for as long as the loop shape repeats (observed as
+    /// FinalizationRegistry tests wedging on musl/windows release lanes).
+    #[inline(never)]
+    pub fn scrub_callee_stack() {
+        let mut window = core::mem::MaybeUninit::<[u8; 8192]>::uninit();
+        // A real memset of the callee window; black_box keeps it from being
+        // elided and from being promoted out of the stack frame.
+        unsafe { core::ptr::write_bytes(window.as_mut_ptr().cast::<u8>(), 0, 8192) };
+        core::hint::black_box(window.as_mut_ptr());
+    }
+
     /// # Safety
     /// `virtual_machine` must be the live per-thread VM that owns this `EventLoop`.
     pub unsafe fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
@@ -856,6 +872,9 @@ impl EventLoop {
         unsafe { (*this).immediate_tasks = core::mem::take(&mut (*this).next_immediate_tasks) };
 
         let mut exception_thrown = false;
+        if !to_run_now.is_empty() {
+            Self::scrub_callee_stack();
+        }
         for task in to_run_now.iter() {
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
             // until `runImmediateTask` consumes them; `virtual_machine` is the

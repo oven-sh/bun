@@ -1043,6 +1043,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // `drain_timers` forms short-lived `&mut` only around heap pop/peek.
         // SAFETY: `state` is the live per-thread `RuntimeState`; the `timer`
         // field address is stable for the VM lifetime.
+        bun_jsc::event_loop::EventLoop::scrub_callee_stack();
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
     #[cfg(not(unix))]
@@ -1162,6 +1163,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     {
         // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
         // on `auto_tick` re: aliased-&mut across `fire()`.
+        bun_jsc::event_loop::EventLoop::scrub_callee_stack();
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
     #[cfg(not(unix))]

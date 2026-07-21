@@ -61,8 +61,10 @@ describe("crypto.hash", () => {
       ["shake256", 16],
     ] as const) {
       const expected = crypto.createHash(algorithm, { outputLength: length }).update("abc").digest("hex");
+      const expectedBase64 = crypto.createHash(algorithm, { outputLength: length }).update("abc").digest("base64");
       expect(crypto.hash(algorithm, "abc", { outputLength: length })).toBe(expected);
       expect(crypto.hash(algorithm, "abc", { outputLength: length, outputEncoding: "hex" })).toBe(expected);
+      expect(crypto.hash(algorithm, "abc", { outputLength: length, outputEncoding: "base64" })).toBe(expectedBase64);
 
       const buf = crypto.hash(algorithm, Buffer.from("abc"), { outputLength: length, outputEncoding: "buffer" });
       expect(Buffer.isBuffer(buf)).toBe(true);

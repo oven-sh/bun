@@ -282,7 +282,7 @@ void MessagePort::peerClosed()
     // Deliver whatever the peer sent before it closed, then fire 'close'. Node orders
     // them that way, and registerCloseContext()'s retroactive notify can land before any
     // drain is scheduled -- e.g. on('close') registered before on('message').
-    if (m_started && m_hasMessageEventListener)
+    if (m_started)
         flushQueuedMessagesBeforeClose();
     // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
     // so the loop can idle, matching node.

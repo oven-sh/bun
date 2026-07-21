@@ -61,6 +61,7 @@
 #include "NodeVMScriptFetcher.h"
 #include "wtf/FileHandle.h"
 
+#include "../vm/NodeVMEvalTimeout.h"
 #include "../vm/SigintWatcher.h"
 
 #include "JavaScriptCore/GetterSetter.h"
@@ -574,6 +575,46 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         return true;
     }
     return false;
+}
+
+bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSGlobalObject* evaluationGlobalObject, JSC::ThrowScope& scope, SigintReceiver* receiver, NodeVMEvalTimeout* deadline)
+{
+    bool timedOut = deadline && deadline->expired();
+    bool sigintReceived = receiver->getSigintReceived();
+
+    if (vm.hasTerminationRequest()) {
+        // The termination was requested by something other than this
+        // evaluation's deadline or SIGINT watcher (e.g. Worker.terminate()).
+        // Leave it in place so it keeps propagating.
+        if (!sigintReceived && !timedOut)
+            return false;
+        // Discard microtasks the terminated evaluation already scheduled;
+        // clearForGlobalObject(nullptr) is a no-op.
+        vm.drainMicrotasksForGlobalObject(evaluationGlobalObject);
+        // The termination may have fired inside an afterEvaluate microtask
+        // checkpoint, leaving the termination exception pending; clear it so
+        // the ERR_SCRIPT_EXECUTION_* error below replaces it.
+        if (vm.hasPendingTerminationException())
+            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+        vm.clearHasTerminationRequest();
+    } else if (!timedOut) {
+        return false;
+    }
+    // Reaching here with no termination request means the deadline expired
+    // after the evaluation's last trap check; Node reports a timeout anyway.
+
+    if (sigintReceived) {
+        receiver->setSigintReceived(false);
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    } else {
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, deadline->milliseconds(), "ms"_s));
+    }
+    // Now that this evaluation's own error has been thrown, hand the shared
+    // termination signal back to any enclosing deadline that already expired.
+    // This is not gated on `deadline`: a breakOnSigint evaluation with no (or
+    // an unexpired) deadline consumes the same coalesced signal.
+    NodeVMEvalTimeout::raiseExpiredDeadline(vm);
+    return true;
 }
 
 // Returns an encoded exception if the options are invalid.

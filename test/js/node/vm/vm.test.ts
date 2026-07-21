@@ -1236,3 +1236,187 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("node:vm timeout option", () => {
+  // A timed evaluation must fully disarm its deadline once it returns. The
+  // JSC-Watchdog-based implementation restored the time limit but left the
+  // armed wall-clock deadline (and its in-flight timer) behind, so the first
+  // trap check after the stale deadline elapsed either re-armed a watchdog
+  // with no time limit (ASSERTION FAILED: hasTimeLimit() in
+  // Watchdog::startTimer on debug builds) or terminated whatever unrelated
+  // JS happened to be running (release builds).
+  test("a completed timed evaluation does not affect later code", async () => {
+    const fixture = `
+      import vm from "node:vm";
+      // Warm up so the timed evaluation below stays well under its deadline.
+      vm.runInNewContext("1", {});
+      vm.runInNewContext("1", {}, { timeout: 250 });
+      // Let the stale 250ms deadline elapse while no JS is running.
+      Bun.sleepSync(400);
+      // Debug builds used to abort here (Watchdog::startTimer with no limit).
+      vm.runInNewContext("1", {});
+      // Release builds used to terminate the main script here once the stale
+      // CPU budget ran out.
+      const start = Date.now();
+      while (Date.now() - start < 400) {}
+      console.log("OK");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("OK\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("terminates a runaway script", () => {
+    expect(() => runInThisContext("while (true) {}", { timeout: 100 })).toThrow(
+      expect.objectContaining({
+        code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+        message: "Script execution timed out after 100ms",
+      }),
+    );
+  });
+
+  // runInThisContext evaluates in the caller's own global, so timing out must
+  // not discard microtasks the caller queued before the call.
+  test("a timed-out runInThisContext does not cancel the caller's microtasks", async () => {
+    let survived = false;
+    Promise.resolve().then(() => {
+      survived = true;
+    });
+    expect(() => runInThisContext("while (true) {}", { timeout: 100 })).toThrow(
+      expect.objectContaining({
+        code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+        message: "Script execution timed out after 100ms",
+      }),
+    );
+    await Promise.resolve();
+    expect(survived).toBe(true);
+  });
+
+  test("nested: the inner deadline fires first and propagates out", () => {
+    const context = createContext({
+      runInVM: (timeout: number) => runInNewContext("while (true) {}", context, { timeout }),
+    });
+    expect(() => runInNewContext("runInVM(50)", context, { timeout: 100_000 })).toThrow(
+      expect.objectContaining({
+        code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+        message: "Script execution timed out after 50ms",
+      }),
+    );
+  });
+
+  // The outer deadline fires while the inner (longer) evaluation is running.
+  // The inner call must not claim that termination as its own timeout.
+  test("nested: the outer deadline fires first and is reported by the outer call", () => {
+    const context = createContext({
+      runInVM: (timeout: number) => runInNewContext("while (true) {}", context, { timeout }),
+    });
+    expect(() => runInNewContext("runInVM(100000)", context, { timeout: 100 })).toThrow(
+      expect.objectContaining({
+        code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+        message: "Script execution timed out after 100ms",
+      }),
+    );
+  });
+
+  // Every deadline's one-shot timer feeds the same per-VM NeedTermination
+  // signal. When an inner evaluation times out and consumes it, an enclosing
+  // deadline that also already expired must be raised again on its behalf,
+  // or the enclosing script (whose own timer will never fire again) runs
+  // forever once it catches the inner error. The inner evaluation blocks in
+  // a host call past both deadlines so both timers have fired by the time it
+  // returns.
+  test("nested: an inner timeout does not swallow an expired outer deadline", async () => {
+    const fixture = `
+      import vm from "node:vm";
+      const context = vm.createContext({
+        sleepSync: Bun.sleepSync,
+        runInner: () => vm.runInNewContext("sleepSync(600)", context, { timeout: 150 }),
+      });
+      try {
+        vm.runInNewContext("try { runInner() } catch (err) {} while (true) {}", context, { timeout: 250 });
+        console.log("UNEXPECTED_OK");
+      } catch (err) {
+        console.log(err.message);
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("Script execution timed out after 250ms\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("SourceTextModule.evaluate honors the timeout option", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const mod = new vm.SourceTextModule("while (true) {}");
+      await mod.link(() => {});
+      try {
+        await mod.evaluate({ timeout: 100 });
+        console.log("UNEXPECTED_OK");
+      } catch (err) {
+        console.log(err.code);
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // A module with no `context` option evaluates in the caller's own global.
+  // Timing out must not discard the caller's already-queued microtasks
+  // (test-vm-module-basic.js hangs if they are dropped).
+  test("a timed-out context-less module does not cancel the caller's microtasks", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const mod = new vm.SourceTextModule("while (true) {}");
+      await mod.link(() => {});
+      let survived = false;
+      Promise.resolve().then(() => { survived = true; });
+      try {
+        await mod.evaluate({ timeout: 100 });
+        console.log("UNEXPECTED_OK");
+      } catch (err) {
+        console.log(err.code);
+      }
+      console.log("microtask survived: " + survived);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\nmicrotask survived: true\n");
+    expect(exitCode).toBe(0);
+  });
+});

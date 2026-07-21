@@ -1478,6 +1478,16 @@ describe("deno_task", () => {
         .stdout("0\n")
         .runAsTest("long pipeline");
 
+      // Every `cat` here shares the subshell's stdin Arc<IOReader>. When EOF fires, each
+      // reader's done-handler starts the next `cat` via the Yield trampoline, which calls
+      // add_reader()+start() on the same already-done IOReader. drain_readers() must pop
+      // each entry before dispatching (so the readers Vec can mutate safely and add_reader's
+      // dedup never matches a freed-then-reused NodeId) and start() must drain
+      // late-registered readers rather than restarting the finished pipe.
+      TestBuilder.command`echo hi | (cat && cat && cat && cat && cat && cat && cat && cat && cat && cat && cat && cat)`
+        .stdout("hi\n")
+        .runAsTest("many readers on shared stdin IOReader");
+
       // Test pipeline stack consistency with complex nesting
       TestBuilder.command`echo outer | (echo inner1 | echo inner2 | (echo deep1 | echo deep2) | echo inner3) | echo final | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
         .stdout("final\n")

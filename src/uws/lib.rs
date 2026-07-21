@@ -1043,7 +1043,8 @@ pub mod ssl_wrapper {
                             let _ = Self::r(this).shutdown(false);
                             Self::r(this).handle_end_of_renegotiation();
                         }
-                        if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL {
+                        if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL
+                        {
                             Self::r(this).flags.set_fatal_error(true);
                         }
 

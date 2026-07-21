@@ -1381,8 +1381,12 @@ describe("deno_task", () => {
       expect(await $`${{ raw: `printf '[%s]' "$IFS"` }}`.env(envNoSpecials).text()).toBe("[ \t\n]");
     });
 
-    test("$SECONDS starts at 0", async () => {
-      expect(await $`${{ raw: `printf '%s' "$SECONDS"` }}`.env(envNoSpecials).text()).toBe("0");
+    test("$SECONDS expands to the interpreter's elapsed whole seconds", async () => {
+      const out = await $`${{ raw: `printf '%s' "$SECONDS"` }}`.env(envNoSpecials).text();
+      expect(out).toMatch(/^\d+$/);
+      // Interpreter-start → expansion is in-process work with no I/O; bound
+      // generously so a loaded debug+ASAN runner never spuriously fails.
+      expect(Number(out)).toBeLessThan(5);
     });
 
     test("$SHLVL defaults to 1 when unset in the environment", async () => {

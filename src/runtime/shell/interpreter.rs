@@ -2175,9 +2175,9 @@ impl ShellExecEnv {
 
     /// Fallback for bash's dynamic / auto-initialized shell variables when
     /// `label` was not found in `shell_env` or `export_env`. Appends the
-    /// expansion to `out` and returns `true` on a hit. A user assignment
+    /// expansion to `out`; an unknown name appends nothing. A user assignment
     /// (which lands in one of the env maps) therefore shadows these.
-    pub fn append_special_var(&self, label: &[u8], out: &mut Vec<u8>) -> bool {
+    pub fn append_special_var(&self, label: &[u8], out: &mut Vec<u8>) {
         use std::io::Write as _;
         match label {
             b"RANDOM" => {
@@ -2216,9 +2216,8 @@ impl ShellExecEnv {
                 // SAFETY: uv_os_getppid has no preconditions.
                 let _ = write!(out, "{}", unsafe { bun_libuv_sys::uv_os_getppid() });
             }
-            _ => return false,
+            _ => {}
         }
-        true
     }
 }
 

@@ -2,11 +2,7 @@
 // process._getActiveRequests() and process.getActiveResourcesInfo(). Intrusive
 // doubly-linked list keyed by symbols: register/unregister add no GC cells.
 
-const getActiveTimeoutCount = $newRustFunction(
-  "runtime/timer/Timer.rs",
-  "internal_bindings.getActiveTimeoutCount",
-  0,
-);
+const getActiveTimeoutCount = $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.getActiveTimeoutCount", 0);
 const getActiveImmediateCount = $newRustFunction(
   "runtime/timer/Timer.rs",
   "internal_bindings.getActiveImmediateCount",

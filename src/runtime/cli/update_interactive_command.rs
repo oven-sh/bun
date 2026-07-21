@@ -1463,7 +1463,9 @@ impl UpdateInteractiveCommand {
                 let help_text: &[u8] = b"Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest";
                 let elipsised_help_text = Self::truncate_with_ellipsis(
                     help_text,
-                    current_size.width - b"? Select packages to update - ".len(),
+                    current_size
+                        .width
+                        .saturating_sub(b"? Select packages to update - ".len()),
                     true,
                 );
                 bun_core::prettyln!(

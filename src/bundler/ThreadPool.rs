@@ -81,21 +81,6 @@ unsafe impl Send for ThreadPool {}
 // raw-pointer targets (`ThreadPoolLib::ThreadPool`, `BundleV2`) are `Sync`.
 unsafe impl Sync for ThreadPool {}
 
-impl Default for ThreadPool {
-    /// Placeholder so `bundle_v2` can `arena().alloc(ThreadPool::default())`
-    /// before overwriting with [`ThreadPool::init`].
-    fn default() -> Self {
-        Self {
-            io_pool: None,
-            worker_pool: ptr::null_mut(),
-            worker_pool_is_owned: false,
-            workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
-            generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
-            v2: ptr::null(),
-        }
-    }
-}
-
 mod io_thread_pool {
     use super::*;
 

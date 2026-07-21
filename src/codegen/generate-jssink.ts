@@ -1,4 +1,6 @@
-import { join, resolve } from "path";
+import { spawnSync } from "node:child_process";
+import { join, resolve } from "node:path";
+import { writeIfNotChanged } from "./helpers";
 
 const classes = [
   "ArrayBufferSink",
@@ -1204,24 +1206,23 @@ function lutInput() {
 
 const outDir = resolve(process.argv[2]);
 
-await Bun.write(resolve(outDir + "/JSSink.h"), header());
-await Bun.write(resolve(outDir + "/JSSink.cpp"), await implementation());
-await Bun.write(resolve(outDir + "/JSSink.lut.txt"), lutInput());
+writeIfNotChanged(resolve(outDir + "/JSSink.h"), header());
+writeIfNotChanged(resolve(outDir + "/JSSink.cpp"), await implementation());
+writeIfNotChanged(resolve(outDir + "/JSSink.lut.txt"), lutInput());
 {
   const { src, symbols } = rustSink();
-  await Bun.write(resolve(outDir + "/generated_jssink.rs"), src);
+  writeIfNotChanged(resolve(outDir + "/generated_jssink.rs"), src);
   console.log(`generated_jssink.rs: ${classes.length} sinks, ${symbols.length} exported symbols`);
 }
 
-Bun.spawnSync(
+const result = spawnSync(
+  process.execPath,
   [
-    process.execPath,
-    "run",
-    join(import.meta.dir, "create-hash-table.ts"),
+    ...process.execArgv,
+    join(import.meta.dirname, "create-hash-table.ts"),
     resolve(outDir + "/JSSink.lut.txt"),
     join(outDir, "JSSink.lut.h"),
   ],
-  {
-    stdio: ["inherit", "inherit", "inherit"],
-  },
+  { stdio: "inherit" },
 );
+if (result.status !== 0) process.exit(result.status ?? 1);

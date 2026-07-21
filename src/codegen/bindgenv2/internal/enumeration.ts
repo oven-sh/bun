@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import util from "node:util";
 import {
-  CodeStyle,
+  type CodeStyle,
   joinIndented,
   NamedType,
   reindent,

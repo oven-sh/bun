@@ -1,4 +1,4 @@
-import { CodeStyle, Type } from "./base";
+import { type CodeStyle, Type } from "./base";
 
 export const ArrayBuffer = new (class extends Type {
   get idlType() {

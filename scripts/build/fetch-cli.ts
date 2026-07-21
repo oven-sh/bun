@@ -1,7 +1,7 @@
 /**
  * Fetch CLI — the single entry point ninja invokes for all downloads.
  *
- * Ninja rules reference this file via `cfg.bun <this-file> <kind> <args...>`.
+ * Ninja rules reference this file via `cfg.jsRuntime <this-file> <kind> <args...>`.
  * This is BUILD-time code (runs under ninja), not CONFIGURE-time. The
  * configure-time modules (source.ts, deps/*.ts) emit ninja rules that call
  * into here but don't execute any of it themselves.
@@ -34,7 +34,7 @@ import { writeIfChanged } from "./fs.ts";
  *
  * This is a stable way for library modules to build the ninja command
  * without knowing where fetch-cli.ts lives — import this constant and
- * use it in `command: "${cfg.bun} ${fetchCliPath} <kind> ..."`.
+ * use it in `command: "${cfg.jsRuntime} ${fetchCliPath} <kind> ..."`.
  */
 export const fetchCliPath: string = import.meta.filename;
 

@@ -28,7 +28,7 @@ import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
-import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import { findCargo, findMsvcLinker, findPackageManager, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
@@ -63,27 +63,31 @@ export function resolveToolchain(targetOs?: OS): Toolchain {
   // ninja's generator rule invokes reconfigure, cwd is the build dir.
   const repoRoot = findRepoRoot();
 
-  // esbuild — comes from the root bun install. Path is deterministic.
+  // esbuild — comes from the root install. Path is deterministic.
   // If not present, the first codegen build will fail with a clear error
-  // (and the build itself runs `bun install` first via the root install
-  // stamp, so this path will exist by the time esbuild rules fire).
+  // (and the build itself runs the package install first via the root
+  // install stamp, so this path will exist by the time esbuild rules fire).
   const esbuild = resolve(repoRoot, "node_modules", ".bin", host.os === "windows" ? "esbuild.exe" : "esbuild");
 
-  const bun = findBun(host.os);
+  const packageManager = findPackageManager(host.os);
 
-  // jsRuntime: shell-ready prefix for running .ts subprocesses. Propagate
+  // jsRuntime: command prefix for running .ts subprocesses. Propagate
   // whatever's running us — if node, the strip-types flag comes along; if
-  // bun, it's just the path. process.versions.bun distinguishes (undefined
-  // in node). Pre-quoted so rule commands can splice it directly.
+  // bun, it's just the path. Kept as argv (for spawnSync) and pre-quoted
+  // string (for rule commands).
   const q = (p: string) => quote(p, host.os === "windows");
-  const jsRuntime =
-    process.versions.bun !== undefined ? q(process.execPath) : `${q(process.execPath)} --experimental-strip-types`;
+  const jsRuntimeArgv =
+    process.versions.bun !== undefined
+      ? [process.execPath]
+      : [process.execPath, "--experimental-strip-types", "--no-warnings"];
+  const jsRuntime = jsRuntimeArgv.map(q).join(" ");
 
   return {
     ...llvm,
     cmake,
-    bun,
+    packageManager,
     jsRuntime,
+    jsRuntimeArgv,
     esbuild,
     cargo: rust?.cargo,
     cargoHome: rust?.cargoHome,

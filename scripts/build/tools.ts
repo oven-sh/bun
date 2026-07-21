@@ -108,29 +108,45 @@ interface Rejection {
   reason: string;
 }
 
+export interface PackageManager {
+  exe: string;
+  installArgs: string[];
+  lockfile: string;
+}
+
 /**
- * Find the bun executable for codegen (`bun install`, `bun build`, scripts
- * using Bun APIs). Must be the actual bun binary — NOT process.execPath,
- * since configure may run under node.
- *
- * Search order: ~/.bun/bin (curl-install location), then PATH, then
- * process.execPath only if it's actually bun. CI agents pin an old system
- * bun but codegen scripts need newer CLI flags, so the user install goes
- * first.
+ * Find a package manager for the codegen install steps. Prefer bun when
+ * available (reuses the checked-in bun.lock), otherwise any of npm/pnpm/yarn.
+ * All codegen scripts run under `cfg.jsRuntime`, so bun is NOT required; this
+ * only affects which `install` command populates node_modules/.
  */
-export function findBun(os: OS): string {
+export function findPackageManager(os: OS): PackageManager {
   const exe = os === "windows" ? "bun.exe" : "bun";
   const userBun = join(homedir(), ".bun", "bin", exe);
-  if (isExecutable(userBun)) return userBun;
+  const bunPath = isExecutable(userBun)
+    ? userBun
+    : process.versions.bun !== undefined
+      ? process.execPath
+      : findTool({ names: ["bun"], required: false })?.path;
+  if (bunPath) {
+    return { exe: bunPath, installArgs: ["install", "--frozen-lockfile"], lockfile: "bun.lock" };
+  }
 
-  // Running under bun at a non-standard path — use that.
-  if (process.versions.bun !== undefined) return process.execPath;
+  const npm = findTool({ names: ["npm"], required: false });
+  if (npm) return { exe: npm.path, installArgs: ["ci"], lockfile: "package-lock.json" };
 
+  const pnpm = findTool({ names: ["pnpm"], required: false });
+  if (pnpm) return { exe: pnpm.path, installArgs: ["install", "--frozen-lockfile"], lockfile: "pnpm-lock.yaml" };
+
+  const yarn = findTool({ names: ["yarn"], required: false });
+  if (yarn) return { exe: yarn.path, installArgs: ["install", "--immutable"], lockfile: "yarn.lock" };
+
+  // npm ships with node; this should be unreachable.
   return findTool({
-    names: ["bun"],
+    names: ["npm"],
     required: true,
-    hint: "Codegen requires bun (for `bun install`, `bun build`, and scripts using Bun APIs). Install: curl -fsSL https://bun.sh/install | bash",
-  })!.path;
+    hint: "No package manager found (tried bun, npm, pnpm, yarn). Install Node.js, which bundles npm.",
+  }) as never;
 }
 
 /**

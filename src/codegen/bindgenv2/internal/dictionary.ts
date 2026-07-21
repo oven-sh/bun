@@ -1,7 +1,7 @@
 import { hasRawAny, isAny } from "./any";
 import {
   addIndent,
-  CodeStyle,
+  type CodeStyle,
   dedent,
   headersForTypes,
   joinIndented,

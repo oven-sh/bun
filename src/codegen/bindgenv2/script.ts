@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+import { pathToFileURL } from "node:url";
 import * as helpers from "../helpers";
 import { NamedType, Type } from "./internal/base";
 
@@ -18,11 +18,13 @@ Commands:
 let codegenPath: string;
 let sources: string[];
 
-function getNamedExports(): NamedType[] {
-  return sources.flatMap(path => {
-    const exports = import.meta.require(path);
-    return Object.values(exports).filter(v => v instanceof NamedType);
-  });
+async function getNamedExports(): Promise<NamedType[]> {
+  const all: NamedType[] = [];
+  for (const path of sources) {
+    const exports = await import(pathToFileURL(path).href);
+    all.push(...(Object.values(exports).filter(v => v instanceof NamedType) as NamedType[]));
+  }
+  return all;
 }
 
 function getNamedDependencies(type: Type, result: Set<NamedType>): void {
@@ -53,18 +55,18 @@ function toZigNamespace(name: string): string {
   return result;
 }
 
-function listOutputs(): void {
+async function listOutputs(): Promise<void> {
   const outputs: string[] = [];
-  for (const type of getNamedExports()) {
+  for (const type of await getNamedExports()) {
     if (type.hasCppSource) outputs.push(cppSourcePath(type));
   }
   process.stdout.write(outputs.join(";"));
 }
 
-function generate(): void {
+async function generate(): Promise<void> {
   const names = new Set<string>();
 
-  const namedExports = getNamedExports();
+  const namedExports = await getNamedExports();
   {
     const namedDependencies = new Set<NamedType>();
     for (const type of namedExports) {
@@ -107,7 +109,7 @@ function generate(): void {
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const args = helpers.argParse(["command", "codegen-path", "sources", "help"]);
   if (Object.keys(args).length === 0) {
     process.stderr.write(USAGE);
@@ -133,10 +135,10 @@ function main(): void {
 
   switch (command) {
     case "list-outputs":
-      listOutputs();
+      await listOutputs();
       break;
     case "generate":
-      generate();
+      await generate();
       break;
     default:
       if (typeof command === "string") {
@@ -148,4 +150,4 @@ function main(): void {
   }
 }
 
-main();
+await main();

@@ -1,5 +1,11 @@
+import { createRequire } from "node:module";
 import util from "node:util";
+import type * as OptionalModule from "./optional";
 import type { NullableType, OptionalType } from "./optional";
+
+// Lazy: base.ts ↔ optional.ts is circular; resolving at first access avoids TDZ.
+const lazyRequire = createRequire(import.meta.url);
+const optionalModule = () => lazyRequire("./optional.ts") as typeof OptionalModule;
 
 /** Default is "compact". */
 export type CodeStyle = "compact" | "pretty";
@@ -7,12 +13,12 @@ export type CodeStyle = "compact" | "pretty";
 export abstract class Type {
   /** Treats `undefined` as a not-provided value. */
   get optional(): OptionalType {
-    return require("./optional").optional(this);
+    return optionalModule().optional(this);
   }
 
   /** Treats `null` or `undefined` as a not-provided value. */
   get nullable(): NullableType {
-    return require("./optional").nullable(this);
+    return optionalModule().nullable(this);
   }
 
   abstract readonly idlType: string;

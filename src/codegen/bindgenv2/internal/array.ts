@@ -1,5 +1,5 @@
 import { hasRawAny } from "./any";
-import { CodeStyle, Type } from "./base";
+import { type CodeStyle, Type } from "./base";
 
 export abstract class ArrayType extends Type {}
 

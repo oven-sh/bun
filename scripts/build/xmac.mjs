@@ -1,20 +1,73 @@
-#!/usr/bin/env bun
-// @bun
-//
 // xmac — download and extract macOS SDKs from Apple's public software-update
 // CDN for cross-compilation, without redistributing Apple's SDK. Like xwin,
 // but for macOS. Used by scripts/build/macos-sdk.ts to obtain the macOS SDK
 // when cross-compiling darwin targets from a Linux host.
 //
-// VENDORED, GENERATED FILE — do not edit by hand.
+// VENDORED, GENERATED FILE — the body below is bundled from upstream.
 //   source:     https://github.com/jarred-sumner/xmac
 //   commit:     f68d2181f1e0fe52ac4c141efe076e262962e855
 //   regenerate: bun build --minify-syntax --target=bun xmac.ts --outfile=<bun>/scripts/build/xmac.mjs
-//               (then re-add this header)
+//               (then re-add this header + the node shim)
 //
 // The tool only talks to swscan.apple.com / swdist.apple.com / swcdn.apple.com
-// and requires `xz` on PATH. Run `bun scripts/build/xmac.mjs --help` for usage.
-//
+// and requires `xz` on PATH. Run `scripts/build/xmac.mjs --help` for usage.
+
+// ── Node-compat shim ──────────────────────────────────────────────────────
+// The vendored body was bundled with --target=bun; this shim provides just
+// enough of the Bun global for it to run under Node as well. Keeping the
+// body pristine makes re-vendoring a diff-only operation.
+if (typeof globalThis.Bun === "undefined") {
+  const { spawn } = await import("node:child_process");
+  const { createHash } = await import("node:crypto");
+  const { accessSync, constants, statSync } = await import("node:fs");
+  const { delimiter, join } = await import("node:path");
+  const { once } = await import("node:events");
+  const { setTimeout } = await import("node:timers/promises");
+  const { Readable } = await import("node:stream");
+
+  const CryptoHasher = class {
+    #h;
+    constructor(algo) { this.#h = createHash(algo); }
+    update(d) { this.#h.update(d); return this; }
+    digest(enc) { return enc ? this.#h.digest(enc) : new Uint8Array(this.#h.digest()); }
+  };
+
+  const which = name => {
+    const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
+    for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+      for (const ext of exts) {
+        const p = join(dir, name + ext);
+        try {
+          if (statSync(p).isFile()) { accessSync(p, constants.X_OK); return p; }
+        } catch {}
+      }
+    }
+    return null;
+  };
+
+  const wrapSpawn = (cmd, opts = {}) => {
+    const map = v => (v === "pipe" || v === "ignore" || v === "inherit" ? v : "pipe");
+    const cp = spawn(cmd[0], cmd.slice(1), {
+      stdio: [map(opts.stdin), map(opts.stdout), map(opts.stderr)],
+    });
+    const exited = new Promise(res => cp.once("close", code => res(code ?? -1)));
+    const stdin = cp.stdin && {
+      write: chunk => new Promise((res, rej) => cp.stdin.write(chunk, e => (e ? rej(e) : res(chunk.length)))),
+      flush: async () => { if (cp.stdin.writableNeedDrain) await once(cp.stdin, "drain"); },
+      end: () => new Promise(res => cp.stdin.end(res)),
+    };
+    return {
+      stdin,
+      stdout: cp.stdout ? Readable.toWeb(cp.stdout) : undefined,
+      stderr: cp.stderr ? Readable.toWeb(cp.stderr) : undefined,
+      exited,
+      kill: sig => cp.kill(sig),
+    };
+  };
+
+  globalThis.Bun = { CryptoHasher, which, sleep: setTimeout, spawn: wrapSpawn };
+}
+// ──────────────────────────────────────────────────────────────────────────
 
 // src/main.ts
 import * as fs7 from "fs";

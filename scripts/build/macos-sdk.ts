@@ -156,9 +156,11 @@ export async function ensureMacosSdk(cfg: {
   await mkdir(cfg.cacheDir, { recursive: true });
 
   try {
+    const [rt, ...rtArgs] = cfg.jsRuntimeArgv;
     const result = spawnSync(
-      cfg.bun,
+      rt,
       [
+        ...rtArgs,
         XMAC_PATH,
         "splat",
         "--accept-license",

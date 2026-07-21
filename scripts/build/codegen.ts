@@ -102,27 +102,28 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   // a linux box for other linux/freebsd targets; these rules run on the host.
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
-  const bun = q(cfg.bun);
   const esbuild = q(cfg.esbuild);
   const { platform, arch } = codegenTarget(cfg);
 
-  // Generic codegen: `cd <repo-root> && [env VARS] bun <args>`.
-  // Both `bun run script.ts` and `bun script.ts` go through this — the
-  // caller puts the `run` subcommand in $args when needed.
+  // Generic codegen: `cd <repo-root> && [env VARS] <jsRuntime> <script> <args>`.
+  // Scripts are node-compatible; when running under Node, the --import hook
+  // (node-loader.ts) provides the tsconfig path mappings (bindgen/bindgenv2)
+  // that *.bind.ts rely on. Bun resolves those via tsconfig natively so the
+  // hook is a no-op there.
   //
   // TARGET_PLATFORM/ARCH: scripts that inline process.platform into the
   // bundled JS modules (replacements.ts, bundle-modules.ts,
   // create-hash-table.ts) read these so a cross-compiled binary doesn't
   // ship with the build host's platform baked in.
   //
-  // restat = 1 because most scripts use writeIfNotChanged(). Scripts that
-  // don't (generate-jssink) always write → restat is a no-op for
-  // them, no harm.
+  // restat = 1 because most scripts use writeIfNotChanged().
+  const nodeLoader = q(resolve(cfg.cwd, "src", "codegen", "node-loader.ts"));
+  const runtime = `${cfg.jsRuntime} --import ${nodeLoader}`;
   const env = hostWin
     ? `set TARGET_PLATFORM=${platform}&& set TARGET_ARCH=${arch}&& `
     : `TARGET_PLATFORM=${platform} TARGET_ARCH=${arch} `;
   n.rule("codegen", {
-    command: hostWin ? `cmd /c "cd /d $cwd && ${env}${bun} $args"` : `cd $cwd && ${env}${bun} $args`,
+    command: hostWin ? `cmd /c "cd /d $cwd && ${env}${runtime} $args"` : `cd $cwd && ${env}${runtime} $args`,
     description: "gen $desc",
     restat: true,
   });
@@ -134,30 +135,29 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
     description: "esbuild $desc",
   });
 
-  // bun install. Inputs: package.json + bun.lock. Outputs: a stamp file we
-  // touch on success, plus each node_modules/<dep>/package.json as IMPLICIT
-  // outputs (so deleting node_modules/ correctly retriggers install).
+  // Package install. Inputs: package.json + lockfile. Outputs: a stamp file
+  // we touch on success, plus each node_modules/<dep>/package.json as
+  // IMPLICIT outputs (so deleting node_modules/ correctly retriggers install).
   //
   // Why stamp + restat instead of just the node_modules paths as outputs:
-  // `bun install --frozen-lockfile` with no changes doesn't touch anything.
-  // If package.json was edited at time T and install ran at T-1day, the
-  // node_modules files have mtimes from T-1day < T → ninja loops forever.
-  // Touching the stamp gives ninja something with mtime T to compare against.
-  // Restat lets implicit outputs keep their old mtimes, pruning downstream.
-  //
-  // CMake only tracked package.json as input; we add bun.lock so lockfile
-  // version bumps actually reinstall.
+  // a frozen install with no changes doesn't touch anything. If package.json
+  // was edited at time T and install ran at T-1day, the node_modules files
+  // have mtimes from T-1day < T → ninja loops forever. Touching the stamp
+  // gives ninja something with mtime T to compare against. Restat lets
+  // implicit outputs keep their old mtimes, pruning downstream.
   const touch = hostWin ? "type nul >" : "touch";
-  n.rule("bun_install", {
+  const pm = q(cfg.packageManager.exe);
+  const pmArgs = quoteArgs(cfg.packageManager.installArgs, hostWin);
+  n.rule("pkg_install", {
     command: hostWin
-      ? `cmd /c "cd /d $dir && ${bun} install --frozen-lockfile && ${touch} $stamp"`
-      : `cd $dir && ${bun} install --frozen-lockfile && ${touch} $stamp`,
+      ? `cmd /c "cd /d $dir && ${pm} ${pmArgs} && ${touch} $stamp"`
+      : `cd $dir && ${pm} ${pmArgs} && ${touch} $stamp`,
     description: "install $dir",
     restat: true,
-    // bun install can be memory-hungry and grabs a lockfile; serialize.
-    pool: "bun_install",
+    // install can be memory-hungry and grabs a lockfile; serialize.
+    pool: "pkg_install",
   });
-  n.pool("bun_install", 1);
+  n.pool("pkg_install", 1);
 
   // Codegen dir stamp — all outputs go into cfg.codegenDir, but the dir must
   // exist first. Scripts generally mkdir themselves, but some (esbuild) don't.
@@ -168,7 +168,7 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
     vars: { dir: n.rel(cfg.codegenDir) },
   });
 
-  // Stamps dir — holds bun_install stamp files.
+  // Stamps dir — holds pkg_install stamp files.
   const stampsDir = resolve(cfg.buildDir, "stamps");
   n.build({
     outputs: [resolve(stampsDir, ".dir")],
@@ -230,7 +230,7 @@ export interface CodegenOutputs {
   bindgenV2Cpp: string[];
 
   /**
-   * Stamp output from `bun install` at repo root.
+   * Stamp output from the package install at repo root.
    * The esbuild tool and the cppbind lezer parser live here. Any
    * step that uses esbuild (or imports node_modules deps at configure
    * time) depends on this.
@@ -250,8 +250,8 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
 
   const dirStamp = codegenDirStamp(cfg);
 
-  // ─── Root bun install (provides esbuild + lezer-cpp for cppbind) ───
-  const rootInstall = emitBunInstall(n, cfg, cfg.cwd);
+  // ─── Root install (provides esbuild + lezer-cpp for cppbind) ───
+  const rootInstall = emitPackageInstall(n, cfg, cfg.cwd);
 
   const o: CodegenOutputs = {
     all: [],
@@ -310,21 +310,21 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Emit a `bun install` step for a package directory. Returns the stamp file
- * path — use it as an implicit input on anything that needs node_modules/.
+ * Emit a package-install step for a directory. Returns the stamp file path —
+ * use it as an implicit input on anything that needs node_modules/.
  *
  * The stamp is the explicit output; each node_modules/<dep>/package.json is
  * an implicit output (so deleting node_modules/ correctly retriggers install,
  * and restat prunes downstream when install was a no-op).
  */
-function emitBunInstall(n: Ninja, cfg: Config, pkgDir: string): string {
+function emitPackageInstall(n: Ninja, cfg: Config, pkgDir: string): string {
   const depPackageJsons = readPackageDeps(pkgDir);
   assert(depPackageJsons.length > 0, `package.json has no dependencies: ${pkgDir}/package.json`);
 
   const pkgJson = resolve(pkgDir, "package.json");
-  const lockfile = resolve(pkgDir, "bun.lock");
-  // bun.lock is optional (some packages might not have one yet), but if it
-  // exists it MUST be an input — lockfile bumps reinstall.
+  const lockfile = resolve(pkgDir, cfg.packageManager.lockfile);
+  // Lockfile is optional (some packages might not have one for the active
+  // manager), but if it exists it MUST be an input — version bumps reinstall.
   const inputs = [pkgJson];
   try {
     readFileSync(lockfile); // exists check
@@ -335,14 +335,13 @@ function emitBunInstall(n: Ninja, cfg: Config, pkgDir: string): string {
 
   // Stamp lives in the build dir, not the package dir — keeps the source
   // tree clean and makes `rm -rf build/` fully reset install state.
-  // Uniqueify by hashing the package dir path (multiple installs possible).
   const stampName = pkgDir.replace(/[^A-Za-z0-9]+/g, "_");
   const stamp = resolve(cfg.buildDir, "stamps", `install_${stampName}.stamp`);
 
   n.build({
     outputs: [stamp],
     implicitOutputs: depPackageJsons,
-    rule: "bun_install",
+    rule: "pkg_install",
     inputs,
     orderOnlyInputs: [resolve(cfg.buildDir, "stamps", ".dir")],
     // stamp must be absolute — the command `cd $dir && ... && touch $stamp`
@@ -373,7 +372,7 @@ function shJoin(cfg: Config, args: string[]): string {
 
 function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const sourceDir = resolve(cfg.cwd, "packages", "bun-error");
-  const installStamp = emitBunInstall(n, cfg, sourceDir);
+  const installStamp = emitPackageInstall(n, cfg, sourceDir);
 
   const outDir = resolve(cfg.codegenDir, "bun-error");
   const outputs = [resolve(outDir, "index.js"), resolve(outDir, "bun-error.css")];
@@ -468,7 +467,7 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
 
 function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const sourceDir = resolve(cfg.cwd, "src", "node-fallbacks");
-  const installStamp = emitBunInstall(n, cfg, sourceDir);
+  const installStamp = emitPackageInstall(n, cfg, sourceDir);
 
   const outDir = resolve(cfg.codegenDir, "node-fallbacks");
   // Two outputs per source: the bundled `.js` (read at runtime by debug
@@ -490,8 +489,7 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
     vars: {
       cwd: sourceDir,
       desc: "node-fallbacks/*.js",
-      // `bun run build-fallbacks` resolves to `./build-fallbacks.ts` in cwd
-      args: shJoin(cfg, ["run", "build-fallbacks", outDir, ...sources.nodeFallbacks]),
+      args: shJoin(cfg, [script, outDir, ...sources.nodeFallbacks]),
     },
   });
 
@@ -503,18 +501,18 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const rrOut = resolve(outDir, "react-refresh.js");
   n.build({
     outputs: [rrOut],
-    rule: "codegen",
-    inputs: [resolve(sourceDir, "package.json"), resolve(sourceDir, "bun.lock")],
-    implicitInputs: [installStamp],
+    rule: "esbuild",
+    inputs: [resolve(sourceDir, "package.json")],
+    implicitInputs: [installStamp, o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: sourceDir,
       desc: "node-fallbacks/react-refresh.js",
       args: shJoin(cfg, [
-        "build",
         rrSrc,
         `--outfile=${rrOut}`,
-        "--target=browser",
+        "--bundle",
+        "--platform=browser",
         "--format=cjs",
         "--minify",
         `--define:process.env.NODE_ENV="development"`,
@@ -549,7 +547,7 @@ function emitStringMaps({ n, cfg, sources, o, dirStamp }: Ctx): void {
       vars: {
         cwd: cfg.cwd,
         desc: `string-map ${stem}`,
-        args: shJoin(cfg, ["run", script, src, out]),
+        args: shJoin(cfg, [script, src, out]),
       },
     });
     o.all.push(out);
@@ -582,7 +580,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     vars: {
       cwd: cfg.cwd,
       desc: "ErrorCode+*.h",
-      args: shJoin(cfg, ["run", script, cfg.codegenDir]),
+      args: shJoin(cfg, [script, cfg.codegenDir]),
     },
   });
 
@@ -617,7 +615,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     vars: {
       cwd: cfg.cwd,
       desc: "ZigGeneratedClasses.{cpp,h,rs}",
-      args: shJoin(cfg, ["run", script, ...sources.zigGeneratedClasses, cfg.codegenDir]),
+      args: shJoin(cfg, [script, ...sources.zigGeneratedClasses, cfg.codegenDir]),
     },
   });
 
@@ -654,7 +652,7 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
     vars: {
       cwd: cfg.cwd,
       desc: "generated_host_exports.rs",
-      args: shJoin(cfg, ["run", script, cfg.codegenDir]),
+      args: shJoin(cfg, [script, cfg.codegenDir]),
     },
   });
 
@@ -751,13 +749,14 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs,
     rule: "codegen",
     inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir]),
+      args: shJoin(cfg, [script, debugFlag(cfg), cfg.buildDir]),
     },
   });
 
@@ -790,11 +789,12 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs,
     rule: "codegen",
     inputs: [script, ...sources.bakeRuntime],
+    implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "bake.{client,server,error}.js",
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
+      args: shJoin(cfg, [script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
     },
   });
 
@@ -820,9 +820,19 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // configure immediately with a clear error. Better to catch that here than
   // get a cryptic "multiple rules generate <unknown>" from ninja.
   const sourcesArg = sources.bindgenV2.join(",");
+  const nodeLoader = resolve(cfg.cwd, "src", "codegen", "node-loader.ts");
+  const [rt, ...rtArgs] = cfg.jsRuntimeArgv;
   const listResult = spawnSync(
-    cfg.bun,
-    ["run", script, "--command=list-outputs", `--sources=${sourcesArg}`, `--codegen-path=${cfg.codegenDir}`],
+    rt,
+    [
+      ...rtArgs,
+      "--import",
+      nodeLoader,
+      script,
+      "--command=list-outputs",
+      `--sources=${sourcesArg}`,
+      `--codegen-path=${cfg.codegenDir}`,
+    ],
     { cwd: cfg.cwd, encoding: "utf8" },
   );
   if (listResult.status !== 0) {
@@ -851,13 +861,7 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
     vars: {
       cwd: cfg.cwd,
       desc: "bindgenv2",
-      args: shJoin(cfg, [
-        "run",
-        script,
-        "--command=generate",
-        `--codegen-path=${cfg.codegenDir}`,
-        `--sources=${sourcesArg}`,
-      ]),
+      args: shJoin(cfg, [script, "--command=generate", `--codegen-path=${cfg.codegenDir}`, `--sources=${sourcesArg}`]),
     },
   });
 
@@ -881,7 +885,7 @@ function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     vars: {
       cwd: cfg.cwd,
       desc: ".bind.ts → GeneratedBindings.cpp",
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
+      args: shJoin(cfg, [script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
     },
   });
 
@@ -914,7 +918,7 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
     vars: {
       cwd: cfg.cwd,
       desc: "JSSink.{cpp,h,lut.h,rs}",
-      args: shJoin(cfg, ["run", script, cfg.codegenDir]),
+      args: shJoin(cfg, [script, cfg.codegenDir]),
     },
   });
 
@@ -983,7 +987,7 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
       vars: {
         cwd: cfg.cwd,
         desc: basename(out),
-        args: shJoin(cfg, ["run", script, src, out]),
+        args: shJoin(cfg, [script, src, out]),
       },
     });
     o.all.push(out);

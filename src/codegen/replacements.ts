@@ -129,16 +129,16 @@ export const define: Record<string, string> = {
   $streamWaiting: "5",
   $streamWritable: "6",
 
-  "process.platform": JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform),
-  "process.arch": JSON.stringify(Bun.env.TARGET_ARCH ?? process.arch),
+  "process.platform": JSON.stringify(process.env.TARGET_PLATFORM ?? process.platform),
+  "process.arch": JSON.stringify(process.env.TARGET_ARCH ?? process.arch),
 };
 
 // ------------------------------ //
 
 for (const name in enums) {
   const value = enums[name];
-  if (typeof value !== "object") throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  if (typeof value === null) throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
+  if (typeof value !== "object") throw new Error("Invalid enum object " + name + " defined in " + import.meta.filename);
+  if (typeof value === null) throw new Error("Invalid enum object " + name + " defined in " + import.meta.filename);
   const keys = Array.isArray(value) ? value : Object.keys(value).filter(k => !k.match(/^[0-9]+$/));
   define[`$${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
   define[`$${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k) + 1}`).join(", ") + "}";

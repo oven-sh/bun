@@ -24,6 +24,24 @@ fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResu
     arr.push(global, item)
 }
 
+/// Owned href bytes for a span, prepending the autolink scheme prefix
+/// (`mailto:` for emails, `http://` for www) that the HTML renderer adds.
+/// Non-autolink spans keep the raw href; an empty href stays unallocated.
+fn href_bytes_with_prefix(detail: &md::SpanDetail<'_>) -> Box<[u8]> {
+    if !detail.autolink_email && !detail.autolink_www {
+        return Box::from(detail.href);
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    if detail.autolink_email {
+        buf.extend_from_slice(b"mailto:");
+    }
+    if detail.autolink_www {
+        buf.extend_from_slice(b"http://");
+    }
+    buf.extend_from_slice(detail.href);
+    buf.into_boxed_slice()
+}
+
 /// Map a host-fn `JsError` back into the parser's error enum so it can
 /// bubble through `md::render_with_renderer` and be re-thrown at the top.
 #[inline]
@@ -872,7 +890,7 @@ impl<'a> ParseRenderer<'a> {
         self.marked_args.append(array);
         self.stack.push(ParseStackEntry {
             children: array,
-            href: Box::from(detail.href),
+            href: href_bytes_with_prefix(&detail),
             title: Box::from(detail.title),
             ..Default::default()
         });
@@ -1334,7 +1352,7 @@ impl<'a> JsCallbackRenderer<'a> {
             return Err(self.global_object.throw_stack_overflow());
         }
         self.stack.push(CallbackStackEntry {
-            href: Box::from(detail.href),
+            href: href_bytes_with_prefix(&detail),
             title: Box::from(detail.title),
             ..Default::default()
         });

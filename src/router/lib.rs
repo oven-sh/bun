@@ -1121,18 +1121,14 @@ impl Route {
                     let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
                     let name_len = name.len();
 
-                    // NOTE: DirnameStore::append returns `&'static [u8]` (process-
+                    // NOTE: `intern_route_path` returns `&'static [u8]` (process-
                     // lifetime arena), so rebinding here drops the borrow on
                     // `route_file_buf` and avoids needing lifetime transmutes
                     // below.
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
+                    let public_path: &'static [u8] = intern_route_path(public_path);
                     let name: &'static [u8] = &public_path[name_offset..][0..name_len];
                     let match_name: &'static [u8] = if has_uppercase {
-                        dirname_store
-                            .append_lower_case(&name[1..])
-                            .expect("unreachable")
+                        intern_route_path_lower_case(&name[1..])
                     } else {
                         &name[1..]
                     };
@@ -1141,9 +1137,7 @@ impl Route {
                     debug_assert!(name[0] == b'/');
                     (public_path, name, match_name)
                 } else {
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
+                    let public_path: &'static [u8] = intern_route_path(public_path);
                     (
                         public_path,
                         Route::INDEX_ROUTE_NAME,
@@ -1229,10 +1223,7 @@ impl Route {
                     }
                 };
 
-                abs_path_str = FileSystem::instance()
-                    .dirname_store()
-                    .append(_abs)
-                    .expect("unreachable");
+                abs_path_str = intern_route_path(_abs);
 
                 // SAFETY: sole mutation; `base_`/`extname` (which may borrow
                 // `(*entry).base_.remainder_buf`) are not used after this.
@@ -1247,11 +1238,7 @@ impl Route {
                     abs_path_str,
                     &mut bufs.normalized_abs_path_buf,
                 );
-                let interned: &'static [u8] = FileSystem::instance()
-                    .dirname_store()
-                    .append(normalized)
-                    .expect("unreachable");
-                Interned::from_static(interned)
+                Interned::from_static(intern_route_path(normalized))
             };
             #[cfg(not(windows))]
             let abs_path = Interned::from_static(abs_path_str);
@@ -1267,14 +1254,11 @@ impl Route {
             }
 
             // NOTE: name/match_name/public_path are already `&'static` via
-            // DirnameStore::append above. `entry.base()` borrows the entry (it
+            // `intern_route_path` above. `entry.base()` borrows the entry (it
             // may be inline-stored for ≤31-byte names); intern it
             // explicitly to get `&'static` without a lifetime transmute.
             // SAFETY: read-only reborrow; the `&mut` write above is dead.
-            let basename: &'static [u8] = FileSystem::instance()
-                .dirname_store()
-                .append(unsafe { &*entry }.base())
-                .expect("unreachable");
+            let basename: &'static [u8] = intern_route_path(unsafe { &*entry }.base());
 
             Some(Route {
                 name,
@@ -1379,6 +1363,37 @@ thread_local! {
         #[cfg(windows)]
         normalized_abs_path_buf: bun_sys::windows::PathBuffer::ZEROED,
     }));
+
+    static ROUTE_PATH_INTERN: RefCell<bun_collections::HashMap<&'static [u8], ()>> =
+        RefCell::new(bun_collections::HashMap::new());
+}
+
+/// Intern `value` into the process-lifetime `DirnameStore`, deduplicated by
+/// content. `BSSStringList::append` does not dedupe, so without this every
+/// `FileSystemRouter::reload()` would re-append each route's public path,
+/// absolute path and basename, eventually exhausting the store's slot capacity
+/// (`AllocError`) and leaking one heap buffer per append. Same pattern as
+/// `intern_transpile_path` in `jsc_hooks.rs`.
+fn intern_route_path(value: &[u8]) -> &'static [u8] {
+    ROUTE_PATH_INTERN.with_borrow_mut(|set| {
+        if let Some((interned, ())) = set.get_key_value(value) {
+            return *interned;
+        }
+        let interned: &'static [u8] =
+            bun_core::handle_oom(FileSystem::get().dirname_store().append(value));
+        set.insert(interned, ());
+        interned
+    })
+}
+
+fn intern_route_path_lower_case(value: &[u8]) -> &'static [u8] {
+    if value.len() <= 256 {
+        let mut scratch = [0u8; 256];
+        intern_route_path(strings::copy_lowercase(value, &mut scratch[..value.len()]))
+    } else {
+        let mut scratch = vec![0u8; value.len()];
+        intern_route_path(strings::copy_lowercase(value, &mut scratch))
+    }
 }
 
 pub struct Match<'a> {

@@ -1,4 +1,5 @@
 import { FileSystemRouter } from "bun";
+import { dirnameStoreAppendCount } from "bun:internal-for-testing";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
@@ -400,6 +401,37 @@ it("reload() works", () => {
   expect(router.match("/posts")!.name).toBe("/posts");
   router.reload();
   expect(router.match("/posts")!.name).toBe("/posts");
+});
+
+it("reload() does not leak route paths into the process-global intern store", () => {
+  // Route::parse interns each route's public path, absolute path, basename and
+  // lowercased match name into the never-freed DirnameStore. Without content
+  // dedup every reload() re-appended identical strings, leaking one heap
+  // buffer per append and eventually panicking with `unreachable: AllocError`
+  // when the store's slot capacity was exhausted.
+  const routes = 40;
+  const reloads = 50;
+  const files: Record<string, string> = { "pages/sub/Nested.tsx": "export default 1;\n" };
+  for (let i = 0; i < routes; i++) files[`pages/Page${i}.tsx`] = "export default 1;\n";
+  using dir = tempDir("fsr-reload-intern", files);
+
+  const router = new Bun.FileSystemRouter({
+    dir: path.join(String(dir), "pages"),
+    style: "nextjs",
+    fileExtensions: [".tsx"],
+  });
+  router.reload();
+  const before = dirnameStoreAppendCount();
+  for (let i = 0; i < reloads; i++) router.reload();
+  const delta = dirnameStoreAppendCount() - before;
+  // Route::parse itself must perform zero new appends after the first reload.
+  // The resolver's bust-then-reread path still interns a couple of directory
+  // paths per reload (tracked separately), so allow O(dirs) residual but fail
+  // on any O(routes) growth. Without the fix delta is routes * 4 * reloads
+  // (~8000 here); with it, ~6 * reloads.
+  expect(delta).toBeLessThan(routes * reloads);
+  expect(router.match("/Page7")?.filePath).toEndWith("Page7.tsx");
+  expect(router.match("/sub/Nested")?.filePath).toEndWith("Nested.tsx");
 });
 
 it("reload() works with new dirs/files", () => {

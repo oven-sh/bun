@@ -122,6 +122,15 @@ pub mod fs {
                     // SAFETY: see `append_slice`.
                     unsafe { &*$backing() }.exists(value)
                 }
+                /// Total number of `append*` calls (inline + overflow).
+                /// Exposed via `bun:internal-for-testing` so leak tests can
+                /// assert "N reloads performed zero new appends".
+                pub fn append_count(&self) -> u32 {
+                    // SAFETY: see `append_slice`.
+                    let b = unsafe { &*$backing() };
+                    let _g = b.mutex.lock();
+                    b.slice_buf_used as u32 + b.overflow_list.count
+                }
             }
         };
     }

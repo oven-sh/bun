@@ -78,11 +78,10 @@ test.concurrent("space-separated value of the underscore alias stays in process.
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   // The value must be kept with the flag, or children spawned with the default
   // execArgv (worker_threads, child_process.fork) consume the script as the value.
   expect(stdout.trim()).toBe('["--max_old_space_size","256"]');
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 

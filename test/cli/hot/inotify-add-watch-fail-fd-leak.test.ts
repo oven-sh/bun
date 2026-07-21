@@ -102,22 +102,19 @@ async function runAndCount(env: Record<string, string | undefined>): Promise<num
   return Number(line.slice("DIR_FDS=".length));
 }
 
-test.skipIf(!isLinux || !cc)(
-  "--watch closes the directory fd when inotify_add_watch fails with ENOSPC",
-  async () => {
-    const existing = bunEnv.LD_PRELOAD;
-    const shimEnv = { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath };
+test.skipIf(!isLinux || !cc)("--watch closes the directory fd when inotify_add_watch fails with ENOSPC", async () => {
+  const existing = bunEnv.LD_PRELOAD;
+  const shimEnv = { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath };
 
-    const [baseline, failing] = await Promise.all([runAndCount(bunEnv), runAndCount(shimEnv)]);
+  const [baseline, failing] = await Promise.all([runAndCount(bunEnv), runAndCount(shimEnv)]);
 
-    // When inotify succeeds the watchlist holds one dir fd per directory; when
-    // inotify fails that fd must be closed, so the failing run should hold
-    // DIR_COUNT fewer directory fds than the baseline. Without the fix the fd
-    // is leaked and the two counts are equal.
-    expect({ baseline, failing, released: baseline - failing }).toEqual({
-      baseline: expect.any(Number),
-      failing: expect.any(Number),
-      released: DIR_COUNT,
-    });
-  },
-);
+  // When inotify succeeds the watchlist holds one dir fd per directory; when
+  // inotify fails that fd must be closed, so the failing run should hold
+  // DIR_COUNT fewer directory fds than the baseline. Without the fix the fd
+  // is leaked and the two counts are equal.
+  expect({ baseline, failing, released: baseline - failing }).toEqual({
+    baseline: expect.any(Number),
+    failing: expect.any(Number),
+    released: DIR_COUNT,
+  });
+});

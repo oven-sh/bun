@@ -529,6 +529,19 @@ it("supports serialize/deserialize", () => {
   expect(Database.deserialize(input)).toBeInstanceOf(Database);
 });
 
+it("serialize(name) rejects a db closed during name toString()", () => {
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE t(a)");
+  expect(() =>
+    db.serialize({
+      toString() {
+        db.close();
+        return "main";
+      },
+    }),
+  ).toThrow("Can't do this on a closed database");
+});
+
 it("Database.deserialize should support strict mode", () => {
   const db1 = new Database(":memory:");
   db1.run("CREATE TABLE test (name TEXT)");

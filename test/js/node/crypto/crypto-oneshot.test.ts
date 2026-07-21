@@ -185,6 +185,18 @@ describe("SHA-512/224 and SHA-512/256 sign/verify", () => {
       }).toEqual({ oneShot: true, streaming: true });
     });
 
+    test("RSA-PSS signatures round-trip", () => {
+      const padding = crypto.constants.RSA_PKCS1_PSS_PADDING;
+      const oneShot = crypto.sign(digest, message, { key: rsaPrivate, padding });
+      const streaming = crypto.createSign(digest).update(message).sign({ key: rsaPrivate, padding });
+      expect({
+        oneShotVerify: crypto.verify(digest, message, { key: rsaPublic, padding }, oneShot),
+        streamingVerify: crypto.createVerify(digest).update(message).verify({ key: rsaPublic, padding }, streaming),
+        // PSS output is randomized, so the two signatures must differ.
+        randomized: !oneShot.equals(streaming),
+      }).toEqual({ oneShotVerify: true, streamingVerify: true, randomized: true });
+    });
+
     test("the RSA-SHA512/<t> alias resolves", () => {
       const alias = digest === "sha512-224" ? "RSA-SHA512/224" : "RSA-SHA512/256";
       expect({

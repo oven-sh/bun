@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // The runtime transpiler hoists top-level class declarations to help cyclic
 // imports. That hoist must not jump over an earlier reference to the class
 // binding, or the temporal dead zone disappears.
-describe("top-level class declaration TDZ", () => {
+describe.concurrent("top-level class declaration TDZ", () => {
   const tdzFixture = (decl: string) => /* js */ `
     const out = [];
     try {
@@ -61,12 +61,12 @@ describe("top-level class declaration TDZ", () => {
         console.log(new A().m(), unrelated, make());
       `,
     });
-    const order = ["class A", "unrelated = 1", "function make", "class B"]
-      .map(s => [s, stdout.indexOf(s)] as const)
-      .sort((a, b) => a[1] - b[1])
-      .map(([s]) => s);
-    expect({ order, exitCode }).toEqual({
-      order: ["class A", "unrelated = 1", "function make", "class B"],
+    const tokens = ["class A", "unrelated = 1", "function make", "class B"];
+    const indexed = tokens.map(s => [s, stdout.indexOf(s)] as const);
+    const order = [...indexed].sort((a, b) => a[1] - b[1]).map(([s]) => s);
+    expect({ missing: indexed.filter(([, i]) => i < 0).map(([s]) => s), order, exitCode }).toEqual({
+      missing: [],
+      order: tokens,
       exitCode: 0,
     });
   });

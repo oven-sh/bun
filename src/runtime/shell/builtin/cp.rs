@@ -696,7 +696,9 @@ impl ShellCpTask {
             flags: crate::node::fs::args::CpFlags {
                 mode: crate::node::fs::constants::Copyfile::from_raw(0),
                 recursive: self.opts.recursive,
-                force: true,
+                // `-n`: skip existing destinations silently (node:fs swallows
+                // EEXIST when `!force && !error_on_exist`).
+                force: self.opts.overwrite_existing_file,
                 error_on_exist: false,
                 deinit_paths: false,
             },
@@ -829,7 +831,7 @@ impl FlagParser for Opts {
                 Some(ParseFlagResult::ContinueParsing)
             }
             b'n' => {
-                self.overwrite_existing_file = true;
+                self.overwrite_existing_file = false;
                 self.remove_and_create_new_file_if_not_found = false;
                 Some(ParseFlagResult::ContinueParsing)
             }

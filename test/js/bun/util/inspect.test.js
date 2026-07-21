@@ -346,14 +346,17 @@ describe("deep / self-referencing values do not overflow the formatter stack", (
     ],
     ["a deep Proxy chain", `let x = {}; for (let i = 0; i < 100000; i++) x = new Proxy(x, {});`],
   ])("console.log of %s throws RangeError instead of crashing", async (_, setup) => {
+    // print_jsx writes indent per level before recursing, so the partial console.log
+    // output before the stack check fires can be large; discard it and read the
+    // caught error name from stderr.
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `${setup} try { console.log(x); } catch (e) { process.stdout.write("CAUGHT:" + e.name); }`],
+      cmd: [bunExe(), "-e", `${setup} try { console.log(x); } catch (e) { process.stderr.write("CAUGHT:" + e.name); }`],
       env: bunEnv,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toEndWith("CAUGHT:RangeError");
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toEndWith("CAUGHT:RangeError");
     expect(exitCode).toBe(0);
   });
 

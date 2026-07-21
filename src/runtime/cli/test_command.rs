@@ -3238,12 +3238,23 @@ impl TestCommand {
                     }
                 }
 
-                // A file with no test()/describe() is a plain script: drain the
-                // loop so late errors surface (like `bun <file>`). Gated on an
-                // idle loop after preloads so prior-file handles can't hang it.
-                if buntest.collection.root_scope.entries.is_empty() && idle_after_preloads {
+                // A file with no bun:test registrations is a plain script: drain
+                // the loop so late errors surface (like `bun <file>`). Gated on
+                // an idle loop after preloads so nothing else can hang it.
+                if idle_after_preloads
+                    && buntest.collection.root_scope.is_bare()
+                    && buntest.bun_test_root.get().hook_scope.is_bare()
+                {
                     let drain_base = vm.unhandled_error_counter;
-                    while drain_base == vm.unhandled_error_counter && script_keepalive_count(vm) > 0
+                    // Bound by the default test timeout so a handle created by a
+                    // prior file's unref'd callback can't hang the run forever.
+                    let deadline = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
+                        .add_ms(i64::from(reporter.jest.default_timeout_ms));
+                    while drain_base == vm.unhandled_error_counter
+                        && script_keepalive_count(vm) > 0
+                        && bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
+                            .order(&deadline)
+                            .is_lt()
                     {
                         vm.event_loop_ref().tick();
                         vm.event_loop_ref().auto_tick();
@@ -3277,16 +3288,16 @@ impl TestCommand {
     }
 }
 
-/// Count of ref'd handles plus individual JS timers (timers share one loop
-/// ref, so `active_count()` alone misses additional timers). Zero means the
-/// file's own work is the only thing keeping the loop alive.
+/// Count of ref'd handles plus ref'd JS timers (they share one loop ref).
+/// Zero at `after_preloads` means every handle observed during the post-test
+/// drain was created by this file.
 fn script_keepalive_count(vm: &VirtualMachine) -> usize {
     let state = crate::jsc_hooks::runtime_state();
     let timers = if state.is_null() {
         0
     } else {
         // SAFETY: `runtime_state()` returns the live per-thread `RuntimeState`;
-        // `active_timer_count` is plain data, read on the owning JS thread.
+        // `active_timer_count` is plain data read on the owning JS thread.
         unsafe { (*state).timer.active_timer_count.max(0) as usize }
     };
     vm.active_keepalive_count() + timers

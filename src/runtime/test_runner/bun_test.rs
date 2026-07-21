@@ -1746,6 +1746,15 @@ pub struct DescribeScope {
 }
 
 impl DescribeScope {
+    /// True iff no test(), describe() or lifecycle hook was registered here.
+    pub fn is_bare(&self) -> bool {
+        self.entries.is_empty()
+            && self.before_all.is_empty()
+            && self.before_each.is_empty()
+            && self.after_each.is_empty()
+            && self.after_all.is_empty()
+    }
+
     pub fn create(base: BaseScope) -> Box<DescribeScope> {
         Box::new(DescribeScope {
             base,

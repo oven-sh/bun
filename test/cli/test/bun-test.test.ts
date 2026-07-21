@@ -1611,6 +1611,49 @@ describe.concurrent("script files with no test() registrations", () => {
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
+
+  test("does not drain when a preload registered a beforeAll hook", async () => {
+    using dir = tempDir("preload-hook", {
+      "setup.js": `
+        import { beforeAll, afterAll } from "bun:test";
+        beforeAll(() => { globalThis.srv = Bun.serve({ port: 0, fetch: () => new Response() }); });
+        afterAll(() => { globalThis.srv.stop(); });
+      `,
+      "a.test.js": `require("assert").strictEqual(1, 1);`,
+      "b.test.js": `import { test } from "bun:test"; test("noop", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./setup.js", "./a.test.js", "./b.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("drain is bounded by --timeout when a prior file's unref'd callback creates a handle", async () => {
+    using dir = tempDir("unref-prior", {
+      "a.test.js": `
+        const { test } = require("bun:test");
+        setTimeout(() => setInterval(() => {}, 60_000), 5).unref();
+        test("noop", () => {});
+      `,
+      "b.test.js": `setTimeout(() => {}, 100);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--timeout=500", "./a.test.js", "./b.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
 });
 
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {

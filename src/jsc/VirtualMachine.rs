@@ -1060,8 +1060,8 @@ impl VirtualMachine {
     }
 
     /// Count of ref'd handles and outstanding tasks keeping the loop alive.
-    /// Snapshotted by the test runner as a per-file drain baseline so prior
-    /// leaks (or a --parallel worker's IPC pipe) are not waited on.
+    /// The test runner's idle-after-preloads gate only drains a script file
+    /// when this was zero before it loaded (prior handles skip the drain).
     pub fn active_keepalive_count(&self) -> usize {
         let el = self.event_loop_shared();
         let active = self

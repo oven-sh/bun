@@ -100,6 +100,14 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # stdio builders have completed"). Tracked separately in #34690; this entry
 # is NOT removable with the one above.
 [ ASAN ] test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts [ CRASH ] # #34690: ExceptionScope::assertNoException during worker terminate bootstrap
+# Same ExceptionScope::assertNoException at ExceptionScope.h:61 as #34690:
+# the http2 server runs inside a Worker and the main thread calls
+# worker.terminate() on conn error, so terminate() races with a socket
+# handler on the worker's VM. Seen on debian-13 x64-asan across unrelated
+# branches (builds 75493/75670/75930/75949/75996/75998/76117/76129/76248/
+# 76250/76342). Tracked in #34846; root-cause fix is #34414. Remove with
+# #34690/#34414.
+[ ASAN ] test/js/node/test/parallel/test-http2-reset-flood.js [ CRASH ] # #34846/#34690: ExceptionScope::assertNoException during worker.terminate()
 
 # Tests failed due to ASAN: use-after-poison
 [ ASAN ] test/napi/napi.test.ts [ CRASH ] # can throw an exception from an async_complete_callback

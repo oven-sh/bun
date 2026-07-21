@@ -92,7 +92,7 @@ test.skipIf(isASAN && !isDebug)(
       }),
     ]);
 
-    expect(outcome).toEqual({ kind: "close", code: 1003, reason: expect.stringContaining("inary") });
+    expect(outcome).toEqual({ kind: "close", code: 1003, reason: "Binary messages are not supported" });
 
     // A fresh connection to the same inspectee still works.
     const ws2 = new WebSocket(url);

@@ -73,7 +73,7 @@ use bun_core::output::ansi as Color;
 struct Cursor;
 impl Cursor {
     const HOME: &'static str = concat!("\x1b", "[", "H");
-    const CLEAR_LINE: &'static str = concat!("\x1b", "[", "2K");
+    const CLEAR_TO_EOL: &'static str = concat!("\x1b", "[", "0K");
     const CLEAR_SCREEN: &'static str = concat!("\x1b", "[", "2J");
     const CLEAR_SCROLLBACK: &'static str = concat!("\x1b", "[", "3J");
 }
@@ -708,6 +708,7 @@ fn cmd_clear(repl: &mut Repl, _: &[u8]) -> ReplResult {
     repl.write(Cursor::CLEAR_SCREEN.as_bytes());
     repl.write(Cursor::CLEAR_SCROLLBACK.as_bytes());
     repl.write(Cursor::HOME.as_bytes());
+    repl.reset_render_tracking();
     ReplResult::SkipEval
 }
 
@@ -838,10 +839,29 @@ pub(super) struct Repl<'a> {
     editor_mode: bool,
     running: bool,
     is_tty: bool,
+    // Whether stdout is a terminal. Distinct from `is_tty` (which also requires
+    // stdin): the prompt-rendering escapes go to stdout, so a piped-stdin
+    // session with a real stdout terminal (`echo … | bun repl`) still needs the
+    // real width for `refresh_line`'s multi-row cursor math.
+    stdout_is_tty: bool,
     use_colors: bool,
-    terminal_width: u16,
+    // `Cell` because `refresh_line` (which takes `&self`) re-queries the live
+    // terminal width on every redraw so a mid-session resize can't leave the
+    // multi-row cursor math pointed at the wrong number of columns.
+    terminal_width: core::cell::Cell<u16>,
     terminal_height: u16,
     ctrl_c_pressed: bool,
+
+    // Multi-row render tracking for `refresh_line`. When the prompt + input is
+    // wider than the terminal it wraps onto several physical rows; the next
+    // redraw must erase all of them, not just the row the cursor sits on.
+    // `prev_render_rows` is the number of rows the previous redraw occupied and
+    // `prev_cursor_row` is the 1-based row the cursor ended on within it. These
+    // are `Cell`s so that `print`/`print_error` (which take `&self` and commit
+    // the current line with a trailing newline) can reset the tracking without a
+    // mutable borrow.
+    prev_render_rows: core::cell::Cell<u16>,
+    prev_cursor_row: core::cell::Cell<u16>,
 
     // Buffered stdin
     stdin_buf: [u8; 256],
@@ -878,10 +898,13 @@ impl<'a> Repl<'a> {
             editor_mode: false,
             running: false,
             is_tty: false,
+            stdout_is_tty: false,
             use_colors: false,
-            terminal_width: 80,
+            terminal_width: core::cell::Cell::new(80),
             terminal_height: 24,
             ctrl_c_pressed: false,
+            prev_render_rows: core::cell::Cell::new(1),
+            prev_cursor_row: core::cell::Cell::new(1),
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
             stdin_buf_end: 0,
@@ -912,8 +935,79 @@ impl<'a> Repl<'a> {
     // Terminal I/O
     // ========================================================================
 
+    /// Best-effort terminal size as `(cols, rows)`. The live OS window size
+    /// (`TIOCGWINSZ` / `GetConsoleScreenBufferInfo`) wins; `COLUMNS`/`LINES` are
+    /// only a fallback. Because this width drives cursor *positioning* (not just
+    /// text wrapping), the real PTY size must take precedence over a possibly
+    /// stale exported `COLUMNS`. Returns `None` when nothing reports a usable
+    /// width, leaving the caller's default. `Output::TERMINAL_SIZE` is never
+    /// populated, so it is not consulted.
+    fn detect_terminal_size() -> Option<(u16, u16)> {
+        let env_dim = |key: &bun_core::ZStr| -> Option<u16> {
+            match bun_core::fmt::parse_int::<u16>(bun_core::getenv_z(key)?, 10) {
+                Ok(n) if n > 0 => Some(n),
+                _ => None,
+            }
+        };
+        let env_cols = env_dim(bun_core::zstr!("COLUMNS"));
+        let env_rows = env_dim(bun_core::zstr!("LINES"));
+
+        let mut os_cols: u16 = 0;
+        let mut os_rows: u16 = 0;
+        #[cfg(unix)]
+        {
+            // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
+            let mut size: libc::winsize = bun_core::ffi::zeroed();
+            // SAFETY: ioctl with a valid winsize out-ptr; a bad fd just errors.
+            if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0 {
+                os_cols = size.ws_col;
+                os_rows = size.ws_row;
+            }
+        }
+        #[cfg(windows)]
+        {
+            if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
+                // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
+                let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
+                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`; `handle` is a
+                // valid console output HANDLE and `csbi` a valid out-ptr.
+                if unsafe { sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
+                    != sys::windows::FALSE
+                {
+                    let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                    let h = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+                    os_cols = u16::try_from(w.max(0)).unwrap_or(0);
+                    os_rows = u16::try_from(h.max(0)).unwrap_or(0);
+                }
+            }
+        }
+
+        // Live PTY size wins; COLUMNS/LINES only fill in when the ioctl/console
+        // query reports nothing usable.
+        let cols = (os_cols > 0).then_some(os_cols).or(env_cols)?;
+        let rows = (os_rows > 0).then_some(os_rows).or(env_rows).unwrap_or(0);
+        Some((cols, rows))
+    }
+
     fn setup_terminal(&mut self) {
-        self.is_tty = Output::is_stdout_tty() && Output::is_stdin_tty();
+        self.stdout_is_tty = Output::is_stdout_tty();
+        self.is_tty = self.stdout_is_tty && Output::is_stdin_tty();
+
+        // Get terminal size whenever stdout is a terminal — even if stdin is a
+        // pipe (`echo … | bun repl`), the prompt escapes still go to stdout and
+        // `refresh_line`'s multi-row clearing depends on `terminal_width`
+        // matching the real terminal, otherwise its cursor-up sequences walk
+        // into rows the REPL doesn't own. `Output::TERMINAL_SIZE` is never
+        // populated, so query the OS size directly.
+        if self.stdout_is_tty {
+            if let Some((cols, rows)) = Self::detect_terminal_size() {
+                self.terminal_width.set(cols);
+                if rows > 0 {
+                    self.terminal_height = rows;
+                }
+            }
+        }
 
         if !self.is_tty {
             self.use_colors = false;
@@ -922,13 +1016,6 @@ impl<'a> Repl<'a> {
 
         // Check for NO_COLOR
         self.use_colors = !env_var::NO_COLOR.get().unwrap_or(false);
-
-        // Get terminal size
-        let ts = Output::TERMINAL_SIZE.load();
-        if ts.col > 0 {
-            self.terminal_width = ts.col;
-            self.terminal_height = ts.row;
-        }
 
         // Enable raw mode
         #[cfg(unix)]
@@ -1019,10 +1106,18 @@ impl<'a> Repl<'a> {
     }
 
     fn print(&self, args: Arguments<'_>) {
+        // If a multi-row line is on screen with the cursor parked on an interior
+        // row (e.g. after Home on a wrapped line), drop to its last row first so
+        // the committing newline lands below everything rendered, not through it.
+        self.snap_to_render_end();
         let _ = Output::writer().write_fmt(args);
+        // Every REPL `print` ends its output with a newline, committing the
+        // current line; the next `refresh_line` starts fresh below it.
+        self.reset_render_tracking();
     }
 
     fn print_error(&self, args: Arguments<'_>) {
+        self.snap_to_render_end();
         if self.use_colors {
             let w = Output::writer();
             let _ = w.write_all(Color::RED.as_bytes());
@@ -1031,6 +1126,7 @@ impl<'a> Repl<'a> {
         } else {
             let _ = Output::writer().write_fmt(args);
         }
+        self.reset_render_tracking();
     }
 
     fn read_byte(&mut self) -> Option<u8> {
@@ -1195,6 +1291,21 @@ impl<'a> Repl<'a> {
         2 // "> " or "\u{276f} "
     }
 
+    /// Emit a CSI sequence of the form `ESC[<n><final>` (e.g. `ESC[3A` to move
+    /// the cursor up 3 rows). A count of zero is a no-op so callers don't have
+    /// to guard it.
+    fn write_csi_count(&self, count: usize, final_byte: u8) {
+        if count == 0 {
+            return;
+        }
+        let mut buf = [0u8; 16];
+        let mut w: &mut [u8] = &mut buf;
+        if write!(w, "{}{}{}", CSI, count, final_byte as char).is_ok() {
+            let written = 16 - w.len();
+            self.write(&buf[..written]);
+        }
+    }
+
     fn refresh_line(&self) {
         // Flush any buffered output (e.g., from console.log in JS) before drawing prompt
         Output::flush();
@@ -1202,40 +1313,105 @@ impl<'a> Repl<'a> {
         let prompt = self.get_prompt();
         let prompt_len = self.get_prompt_length();
         let line = self.line_editor.get_line();
+        let line_len = line.len();
+        let cursor = self.line_editor.cursor;
 
-        // Move to beginning of line
+        // Re-query the live width so a mid-session terminal resize can't leave
+        // the multi-row cursor math (below) pointed at a stale column count —
+        // the same hazard as the never-populated startup width, but reachable
+        // by resizing after startup. Gated on stdout (not `is_tty`) so a
+        // piped-stdin session still tracks its real stdout width; a non-TTY
+        // stdout or failed query keeps the current value.
+        if self.stdout_is_tty {
+            if let Some((cols, _rows)) = Self::detect_terminal_size() {
+                self.terminal_width.set(cols);
+            }
+        }
+
+        let cols = (self.terminal_width.get() as usize).max(1);
+
+        // Rows the freshly-drawn content will occupy, and the row the cursor
+        // ends on, both derived the same way as linenoise's multi-line refresh.
+        // `cursor` is a byte offset, but the terminal wraps on display columns,
+        // so measure the visible width of the text — multi-byte UTF-8 and wide
+        // (e.g. CJK) characters then advance the column correctly.
+        let end_col = prompt_len + strings::visible::width::exclude_ansi_colors::utf8(line);
+        let cursor_col =
+            prompt_len + strings::visible::width::exclude_ansi_colors::utf8(&line[..cursor]);
+        let mut rows = end_col.div_ceil(cols).max(1);
+        let old_rows = self.prev_render_rows.get() as usize;
+        let old_cursor_row = self.prev_cursor_row.get() as usize;
+
+        // --- Erase the previous (possibly multi-row) render ---
+        // Drop down to the last row of the old render, then clear each row from
+        // the bottom up so no stale wrapped copies are left behind.
+        self.write_csi_count(old_rows.saturating_sub(old_cursor_row), b'B');
+        for _ in 0..old_rows.saturating_sub(1) {
+            self.write(b"\r");
+            self.write(Cursor::CLEAR_TO_EOL.as_bytes());
+            self.write_csi_count(1, b'A');
+        }
         self.write(b"\r");
-        self.write(Cursor::CLEAR_LINE.as_bytes());
+        self.write(Cursor::CLEAR_TO_EOL.as_bytes());
 
         // Write prompt
         self.write(prompt);
 
         // Write line with syntax highlighting
-        if self.use_colors && !line.is_empty() && line.len() <= 2048 {
+        if self.use_colors && line_len > 0 && line_len <= 2048 {
             self.write_highlighted(line);
         } else {
             self.write(line);
         }
 
-        // Position cursor. The cursor is a byte offset, but the terminal column
-        // is the display width of the text before it, so multi-byte UTF-8 and
-        // wide (e.g. CJK) characters advance the column correctly.
-        let cursor_col =
-            strings::visible::width::exclude_ansi_colors::utf8(&line[..self.line_editor.cursor]);
-        let cursor_pos = prompt_len + cursor_col;
-        if cursor_pos < self.terminal_width as usize {
-            self.write(b"\r");
-            if cursor_pos > 0 {
-                let mut buf = [0u8; 16];
-                let mut w: &mut [u8] = &mut buf;
-                if write!(w, "{}{}C", CSI, cursor_pos).is_ok() {
-                    let written = 16 - w.len();
-                    self.write(&buf[..written]);
-                }
-            }
+        // If the cursor is at the end of content that exactly fills the last
+        // row, force a new row so the cursor doesn't hang off the right edge
+        // (where terminals disagree about whether it has wrapped yet). This
+        // also keeps `cursor_row <= rows` below when the content — even just
+        // the prompt on an empty line — lands exactly on a column boundary.
+        if cursor == line_len && end_col.is_multiple_of(cols) {
+            self.write(b"\n\r");
+            rows += 1;
         }
 
+        // --- Reposition the cursor to where it logically belongs ---
+        // Rows are 1-based here: the cursor always sits on at least row 1.
+        let cursor_row = (cursor_col / cols) + 1;
+        self.write_csi_count(rows.saturating_sub(cursor_row), b'A');
+        self.write(b"\r");
+        self.write_csi_count(cursor_col % cols, b'C');
+
+        // Record what we just drew so the next refresh can erase it.
+        self.prev_render_rows
+            .set(rows.min(u16::MAX as usize) as u16);
+        self.prev_cursor_row
+            .set(cursor_row.min(u16::MAX as usize) as u16);
+
         Output::flush();
+    }
+
+    /// Forget the previous `refresh_line` render. Call this after emitting
+    /// output that moves to a fresh line (a committing newline, a screen
+    /// clear): those rows are no longer ours to erase, so the next redraw must
+    /// start from a clean single-row state.
+    fn reset_render_tracking(&self) {
+        self.prev_render_rows.set(1);
+        self.prev_cursor_row.set(1);
+    }
+
+    /// Move the terminal cursor to the last row of the current render. After
+    /// editing a wrapped line the cursor can sit on an interior row; dropping to
+    /// the bottom first means a following committing newline lands *below* all
+    /// rendered rows instead of leaving a stale tail beneath it. No-op (and no
+    /// bytes emitted) when the cursor is already on the last row, so the common
+    /// end-of-line paths behave exactly as before.
+    fn snap_to_render_end(&self) {
+        let rows = self.prev_render_rows.get() as usize;
+        let cursor_row = self.prev_cursor_row.get() as usize;
+        if rows > cursor_row {
+            self.write_csi_count(rows - cursor_row, b'B');
+            self.write(b"\r");
+        }
     }
 
     fn write_highlighted(&self, text: &[u8]) {
@@ -2038,6 +2214,7 @@ impl<'a> Repl<'a> {
                 Key::CtrlL => {
                     self.write(Cursor::CLEAR_SCREEN.as_bytes());
                     self.write(Cursor::HOME.as_bytes());
+                    self.reset_render_tracking();
                     self.refresh_line();
                 }
                 Key::CtrlA => {

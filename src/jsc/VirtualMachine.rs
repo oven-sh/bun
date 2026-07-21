@@ -1069,7 +1069,10 @@ impl VirtualMachine {
             .platform_loop_opt()
             .map(|h| h.active_count() as usize)
             .unwrap_or(0);
-        let concurrent = el.concurrent_ref.load(core::sync::atomic::Ordering::SeqCst).max(0) as usize;
+        let concurrent = el
+            .concurrent_ref
+            .load(core::sync::atomic::Ordering::SeqCst)
+            .max(0) as usize;
         active + self.active_tasks + concurrent
     }
 

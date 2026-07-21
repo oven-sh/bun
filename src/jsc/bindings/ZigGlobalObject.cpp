@@ -3325,11 +3325,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 } // namespace Zig
 
-// These eight POSIX-style names are top-level tzdata zones (honored by glibc
-// and Node) that JSC's intlResolveTimeZoneID rejects because they contain no
-// '/'. Map them to their tzdata `backward` Link targets so a process started
-// with e.g. TZ=EST5EDT does not silently run on UTC. Case-sensitive to match
-// Node; EST/MST/HST already resolve via ICU's Etc/GMT aliases.
+// JSC's intlResolveTimeZoneID drops non-'/' zone names, so TZ=EST5EDT etc.
+// silently fell back to UTC. Map the eight affected names to their tzdata
+// `backward` Link targets (case-sensitive, matching Node).
 String Bun::canonicalizeLegacyTimeZoneName(StringView timeZone)
 {
     if (timeZone.isEmpty() || timeZone.length() > 7 || timeZone.contains('/'))

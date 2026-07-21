@@ -1,10 +1,6 @@
-// TZ=EST5EDT (and CET/EET/MET/WET/CST6CDT/MST7MDT/PST8PDT) are top-level tzdata
-// zones that POSIX shells, glibc `date`, and Node honor. They were silently
-// falling back to UTC in Bun because JSC's intlResolveTimeZoneID drops every
-// non-'/' name except UTC/GMT. Bun now canonicalizes them to their tzdata
-// `backward` Link targets before calling into JSC, matching Node's resolution.
-// The Intl.DateTimeFormat({ timeZone: "EST5EDT" }) option path is tracked
-// separately in issue #30618.
+// JSC's intlResolveTimeZoneID drops non-'/' zone names, so TZ=EST5EDT (and the
+// seven others below) silently fell back to UTC. Bun maps them to their tzdata
+// `backward` Link targets before calling into JSC, matching Node.
 
 import { setTimeZone } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
@@ -114,17 +110,17 @@ test("unrelated IANA zones still work", async () => {
 });
 
 test("unknown TZ values remain unknown", async () => {
-  // ICU rejects this and Bun leaves the override unset; the host default
-  // applies. On CI the host default is UTC, but that's not guaranteed, so only
-  // assert the process doesn't crash and doesn't adopt a bogus offset.
+  // ICU rejects this; the override stays unset and the host default applies.
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `process.stdout.write(String(new Date(${JSON.stringify(summer)}).getTimezoneOffset()))`],
+    cmd: [bunExe(), "-e", probe],
     env: { ...bunEnv, TZ: "Not/A_Zone" },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(Number.isFinite(Number(stdout))).toBe(true);
+  const out = JSON.parse(stdout);
+  expect(Number.isInteger(out.offset)).toBe(true);
+  expect(out.resolved).not.toBe("Not/A_Zone");
   expect(exitCode).toBe(0);
 });

@@ -2,6 +2,7 @@
 
 use core::ffi::c_char;
 
+use bun_core::env_var;
 use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
 use bun_jsc::zig_string::ZigString;
@@ -66,7 +67,7 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
-    feature_flag::NODE_NO_WARNINGS.get().unwrap_or(false)
+    env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
 #[unsafe(no_mangle)]
@@ -141,6 +142,15 @@ mod _impl {
     }
 
     // ───────────────────────────── title ─────────────────────────────
+
+    // Windows `process.title` getter support: the C++ getter needs to know
+    // whether a title was explicitly set (CLI `--title` or assignment) so it
+    // can prefer the store over `uv_get_process_title` without comparing
+    // against the "bun" default string.
+    #[unsafe(export_name = "Bun__Process__hasTitle")]
+    pub(super) extern "C" fn has_title() -> bool {
+        crate::cli::Bun__Node__ProcessTitle.lock().is_some()
+    }
 
     #[unsafe(export_name = "Bun__Process__getTitle")]
     pub(super) extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {

@@ -220,11 +220,6 @@ void updateWithBufferView(JSGlobalObject* globalObject, JSSign* sign, JSC::JSArr
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    if (bufferView->isDetached()) {
-        throwTypeError(globalObject, scope, "Buffer is detached"_s);
-        return;
-    }
-
     size_t byteLength = bufferView->byteLength();
     if (byteLength > INT_MAX) {
         throwRangeError(globalObject, scope, "data is too long"_s);
@@ -292,20 +287,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         return JSValue::encode(wrappedSign);
     }
 
-    if (!data.isCell() || !JSC::isTypedArrayTypeIncludingDataView(data.asCell()->type())) {
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data);
+    if (!view) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
     }
 
-    // Handle ArrayBufferView input
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
+    updateWithBufferView(globalObject, thisObject, view);
+    RETURN_IF_EXCEPTION(scope, {});
 
-        updateWithBufferView(globalObject, thisObject, view);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        return JSValue::encode(wrappedSign);
-    }
-
-    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
+    return JSValue::encode(wrappedSign);
 }
 
 JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* thisObject, const ncrypto::EVPKeyPointer& pkey, DSASigEnc dsa_sig_enc, int padding, std::optional<int> salt_len)

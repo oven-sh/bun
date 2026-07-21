@@ -55,9 +55,12 @@ jobs:
 
       - name: Update version if needed
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        env:
+          PACKAGE: ${{ matrix.package }}
+          LATEST_TAG: ${{ steps.check-version.outputs.latest }}
         run: |
           set -euo pipefail
-          bun -e 'await Bun.write("test/vendor.json", JSON.stringify((await Bun.file("test/vendor.json").json()).map(v=>{if(v.package===process.argv[1])v.tag=process.argv[2];return v;}), null, 2) + "\n")' ${{ matrix.package }} ${{ steps.check-version.outputs.latest }}
+          bun -e 'await Bun.write("test/vendor.json", JSON.stringify((await Bun.file("test/vendor.json").json()).map(v=>{if(v.package===process.argv[1])v.tag=process.argv[2];return v;}), null, 2) + "\n")' "$PACKAGE" "$LATEST_TAG"
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest

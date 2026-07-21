@@ -772,8 +772,16 @@ impl String {
         // encoding-aware `to_utf8_without_ref`.
         self.to_utf8_without_ref().slice() == other
     }
+    /// Equality against an ASCII literal. Dispatches on encoding so only
+    /// `lit.len()` units are touched; never scans or transcodes `self`.
     pub fn eql_comptime<S: ?Sized + AsRef<[u8]>>(&self, lit: &S) -> bool {
-        self.eql_utf8(lit.as_ref())
+        let lit = lit.as_ref();
+        debug_assert!(lit.is_ascii(), "eql_comptime expects an ASCII literal");
+        if self.is_utf16() {
+            return strings::eql_comptime_utf16(self.utf16(), lit);
+        }
+        let bytes = self.latin1();
+        bytes.len() == lit.len() && strings::eql_comptime_ignore_len(bytes, lit)
     }
 
     /// `bun.String.githubAction` — returns a `Display`
@@ -785,15 +793,15 @@ impl String {
         StringGithubActionFormatter { text: self }
     }
 
-    /// `bun.String.hasPrefixComptime` — ASCII-only prefix
-    /// check that avoids materialising the whole UTF-8 view when the
-    /// underlying encoding is 8-bit; falls back to `to_utf8_without_ref` for
-    /// 16-bit / WTF-backed strings.
+    /// `bun.String.hasPrefixComptime` — ASCII prefix check. Dispatches on
+    /// encoding so only `prefix.len()` units are touched; never scans or
+    /// transcodes `self`.
     pub fn has_prefix_comptime(&self, prefix: &'static [u8]) -> bool {
-        if let Some(bytes) = self.as_utf8() {
-            return strings::has_prefix_comptime(bytes, prefix);
+        debug_assert!(prefix.is_ascii(), "has_prefix_comptime expects ASCII");
+        if self.is_utf16() {
+            return strings::has_prefix_comptime_utf16(self.utf16(), prefix);
         }
-        strings::has_prefix_comptime(self.to_utf8_without_ref().slice(), prefix)
+        strings::has_prefix_comptime(self.latin1(), prefix)
     }
 
     #[inline]
@@ -905,7 +913,7 @@ impl String {
             // the UTF-8 byte view.
             return w::utf8(self.as_zig().slice());
         }
-        w::latin1(self.latin1())
+        w::latin1(self.latin1(), ambiguous_as_wide)
     }
 
     /// `bun.String.isGlobal` — true iff this is a `ZigString`
@@ -948,6 +956,37 @@ impl String {
         } else {
             strings::EncodingNonAscii::Latin1
         }
+    }
+
+    /// Encode `self` into `buf` as NUL-terminated UTF-16, returning the unit
+    /// count (excluding the NUL), or `None` when `self`'s UTF-16 form plus the
+    /// NUL would not fit. Bounds-checked for all three backing encodings; the
+    /// caller owns mapping `None` to an error (e.g. `ENAMETOOLONG`).
+    pub fn encode_into_utf16_buf_z(&self, buf: &mut [u16]) -> Option<usize> {
+        let cap = buf.len().checked_sub(1)?;
+        let len = match self.encoding() {
+            strings::EncodingNonAscii::Utf8 => {
+                strings::try_convert_utf8_to_utf16_in_buffer(&mut buf[..cap], self.utf8())?.len()
+            }
+            strings::EncodingNonAscii::Utf16 => {
+                let src = self.utf16();
+                if src.len() > cap {
+                    return None;
+                }
+                buf[..src.len()].copy_from_slice(src);
+                src.len()
+            }
+            strings::EncodingNonAscii::Latin1 => {
+                let src = self.latin1();
+                if src.len() > cap {
+                    return None;
+                }
+                strings::copy_latin1_into_utf16(&mut buf[..src.len()], src);
+                src.len()
+            }
+        };
+        buf[len] = 0;
+        Some(len)
     }
 
     /// `bun.String.canBeUTF8` — true iff `self`'s 8-bit bytes
@@ -1813,18 +1852,15 @@ impl ZigString {
     /// `ZigString.sliceZBuf` — `Display`-format into `buf`, NUL-terminate, and
     /// return the borrowed `[:0]u8`. Errors if the formatted output (plus NUL)
     /// would not fit.
-    pub fn slice_z_buf<'a>(
-        &self,
-        buf: &'a mut crate::PathBuffer,
-    ) -> Result<&'a ZStr, crate::Error> {
+    pub fn slice_z_buf<'a>(&self, buf: &'a mut crate::PathBuffer) -> crate::CrateResult<&'a ZStr> {
         use std::io::Write as _;
         let buf_slice: &mut [u8] = &mut buf[..];
         let start_len = buf_slice.len();
         let mut cursor: &mut [u8] = buf_slice;
-        write!(cursor, "{}", self).map_err(|_| crate::err!("NoSpaceLeft"))?;
+        write!(cursor, "{}", self).map_err(|_| crate::CrateError::NoSpaceLeft)?;
         let written = start_len - cursor.len();
         if written >= buf.len() {
-            return Err(crate::err!("NoSpaceLeft"));
+            return Err(crate::CrateError::NoSpaceLeft);
         }
         buf[written] = 0;
         Ok(ZStr::from_buf(&buf[..], written))
@@ -2465,7 +2501,7 @@ pub mod printer {
         ascii_only: bool,
         json: bool,
         encoding: StrEncoding,
-    ) -> Result<(), crate::Error> {
+    ) -> crate::CrateResult<()> {
         debug_assert!(!json || quote_char == b'"');
         // utf16 view over the same bytes (only used when encoding == Utf16).
         // Callers pass 2-byte-aligned even-length input for Utf16; `cast_slice`
@@ -2607,7 +2643,7 @@ pub mod printer {
         text: &[u8],
         bytes: &mut MutableString,
         ascii_only: bool,
-    ) -> Result<(), crate::Error> {
+    ) -> crate::CrateResult<()> {
         // PERF: consider pre-growing via an estimated UTF-8 length — profile if it shows up on a hot path.
         bytes.append_char(b'"')?;
         write_pre_quoted_string(text, bytes, b'"', ascii_only, true, StrEncoding::Utf8)?;

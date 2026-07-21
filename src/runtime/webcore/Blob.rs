@@ -104,7 +104,9 @@ pub trait ReadBytesHandler {
 // This crate layers behaviour via the `BlobExt` extension trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::{Blob, Blob__deref, Blob__ref, ClosingState, MAX_SIZE, SizeType};
+pub use bun_jsc::webcore_types::{
+    Blob, Blob__deref, Blob__ref, BlobContentType, ClosingState, MAX_SIZE, SizeType,
+};
 
 pub type Ref = bun_ptr::ExternalShared<Blob>;
 
@@ -112,7 +114,9 @@ pub type Ref = bun_ptr::ExternalShared<Blob>;
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
 ///    and f64 for `last_modified`.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-const SERIALIZATION_VERSION: u8 = 3;
+/// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
+///    keeps its window's end across structuredClone/postMessage
+const SERIALIZATION_VERSION: u8 = 4;
 
 pub use bun_jsc::generated::JSBlob as js;
 
@@ -160,10 +164,8 @@ pub trait BlobExt {
         global: &JSGlobalObject,
     );
     fn get_content_type(&self) -> Option<ZigStringSlice>;
-    fn _on_structured_clone_serialize<W: bun_io::Write>(
-        &self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error>;
+    fn _on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W)
+    -> crate::Result<()>;
     fn on_structured_clone_serialize(
         &self,
         _global_this: &JSGlobalObject,
@@ -250,8 +252,7 @@ pub trait BlobExt {
         global_this: &JSGlobalObject,
         relative_start: i64,
         relative_end: i64,
-        content_type: &[u8],
-        content_type_was_allocated: bool,
+        content_type: BlobContentType,
     ) -> JSValue;
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_mime_type(&self) -> Option<MimeType>;
@@ -727,7 +728,7 @@ impl BlobExt for Blob {
     fn _on_structured_clone_serialize<W: bun_io::Write>(
         &self,
         writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let is_memory_backed = if let Some(store) = self.store.get() {
             matches!(store.data, store::Data::Bytes(_))
         } else {
@@ -768,6 +769,10 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
+                // Version 4: a file-backed slice's window end. Written before
+                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
+                // on the wire and the receiver stats it locally, like v3.
+                writer.write_int_le::<u64>(self.size.get())?;
                 self.resolve_size();
                 store.serialize(writer)?;
             }
@@ -832,19 +837,14 @@ impl BlobExt for Blob {
 
         let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
-            Err(e)
-                if e == bun_core::err!("EndOfStream")
-                    || e == bun_core::err!("TooSmall")
-                    || e == bun_core::err!("InvalidValue") =>
-            {
+            Err(e) if e.name() == "OutOfMemory" => {
+                return Err(global_this.throw_out_of_memory());
+            }
+            Err(_) => {
                 return Err(
                     global_this.throw(format_args!("Blob.onStructuredCloneDeserialize failed"))
                 );
             }
-            Err(e) if e == bun_core::err!("OutOfMemory") => {
-                return Err(global_this.throw_out_of_memory());
-            }
-            Err(_) => unreachable!(),
         };
 
         // Advance the caller's cursor by the number of bytes consumed.
@@ -871,10 +871,10 @@ impl BlobExt for Blob {
             )
             .to_mime_type();
         }
-        let content_type_ptr = std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref());
+        let content_type = BlobContentType::from_mime(&store.mime_type);
 
         let blob = Blob::init_with_store(store, global_this);
-        blob.content_type.set(content_type_ptr);
+        blob.content_type.set(content_type);
         blob.content_type_was_set.set(true);
         blob
     }
@@ -981,15 +981,12 @@ impl BlobExt for Blob {
                 .unwrap_or_else(|_| bun_core::out_of_memory()),
         );
         let blob = Blob::init_with_store(store, global_this);
-        // Always allocate content_type with the default allocator so deinit() can
-        // free it unconditionally.
         const CONTENT_TYPE_PREFIX: &[u8] = b"multipart/form-data; boundary=";
         let mut ct = Vec::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
         ct.extend_from_slice(CONTENT_TYPE_PREFIX);
         ct.extend_from_slice(boundary);
         blob.content_type
-            .set(bun_core::heap::into_raw(ct.into_boxed_slice()));
-        blob.content_type_allocated.set(true);
+            .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
         blob.content_type_was_set.set(true);
 
         blob
@@ -1372,20 +1369,13 @@ impl BlobExt for Blob {
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
                     if is_valid_blob_type(slice) {
-                        self.free_content_type();
                         self.content_type_was_set.set(true);
-
-                        // SAFETY: bun_vm() never returns null for a Bun-owned global.
-                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                            self.content_type
-                                .set(std::ptr::from_ref::<[u8]>(mime.value.as_ref()));
-                        } else {
-                            let mut buf = vec![0u8; slice.len()];
-                            strings::copy_lowercase(slice, &mut buf);
-                            self.content_type
-                                .set(bun_core::heap::into_raw(buf.into_boxed_slice()));
-                            self.content_type_allocated.set(true);
-                        }
+                        self.content_type.set(
+                            match global_this.bun_vm().as_mut().mime_type(slice) {
+                                Some(mime) => BlobContentType::from(mime),
+                                None => BlobContentType::from_lowercased(slice),
+                            },
+                        );
                     }
                 }
             } else if !options_object.is_empty_or_undefined_or_null() {
@@ -1799,19 +1789,13 @@ impl BlobExt for Blob {
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
                     if is_valid_blob_type(slice) {
-                        self.free_content_type();
                         self.content_type_was_set.set(true);
-                        // SAFETY: see other `mime_type` call sites.
-                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                            self.content_type
-                                .set(std::ptr::from_ref::<[u8]>(mime.value.as_ref()));
-                        } else {
-                            let mut buf = vec![0u8; slice.len()];
-                            strings::copy_lowercase(slice, &mut buf);
-                            self.content_type
-                                .set(bun_core::heap::into_raw(buf.into_boxed_slice()));
-                            self.content_type_allocated.set(true);
-                        }
+                        self.content_type.set(
+                            match global_this.bun_vm().as_mut().mime_type(slice) {
+                                Some(mime) => BlobContentType::from(mime),
+                                None => BlobContentType::from_lowercased(slice),
+                            },
+                        );
                     }
                 }
 
@@ -2017,8 +2001,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         relative_start: i64,
         relative_end: i64,
-        content_type: &[u8],
-        content_type_was_allocated: bool,
+        content_type: BlobContentType,
     ) -> JSValue {
         let offset = self
             .offset
@@ -2032,21 +2015,15 @@ impl BlobExt for Blob {
         blob.offset.set(offset);
         blob.size.set(len);
 
-        // dupe() deep-copies an allocated content_type; we're about to replace it,
-        // so release that copy first to avoid leaking it.
-        blob.free_content_type();
-
+        let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
         if content_type.is_empty()
-            && !self.content_type_slice().is_empty()
-            && !self.content_type_allocated.get()
+            && matches!(self.content_type.get(), BlobContentType::Static(s) if !s.is_empty())
         {
-            blob.content_type.set(self.content_type.get());
+            blob.content_type.set(self.content_type.get().clone());
         } else {
-            blob.content_type
-                .set(std::ptr::from_ref::<[u8]>(content_type));
+            blob.content_type.set(content_type);
         }
-        blob.content_type_allocated.set(content_type_was_allocated);
         blob.content_type_was_set
             .set(self.content_type_was_set.get() || content_type_was_allocated);
 
@@ -2113,8 +2090,7 @@ impl BlobExt for Blob {
             }
         }
 
-        let mut content_type: *const [u8] = std::ptr::from_ref::<[u8]>(b"" as &'static [u8]);
-        let mut content_type_was_allocated = false;
+        let mut content_type = BlobContentType::default();
         if let Some(content_type_) = args_iter.next_eat() {
             'inner: {
                 if content_type_.is_string() {
@@ -2124,35 +2100,15 @@ impl BlobExt for Blob {
                     if !is_valid_blob_type(slice) {
                         break 'inner;
                     }
-
-                    if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                        content_type = match mime.value {
-                            ::std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-                            ::std::borrow::Cow::Owned(v) => {
-                                content_type_was_allocated = true;
-                                bun_core::heap::into_raw(v.into_boxed_slice())
-                            }
-                        };
-                        break 'inner;
-                    }
-
-                    content_type_was_allocated = !slice.is_empty();
-                    let mut buf = vec![0u8; slice.len()];
-                    strings::copy_lowercase(slice, &mut buf);
-                    content_type = bun_core::heap::into_raw(buf.into_boxed_slice());
+                    content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
+                        Some(mime) => BlobContentType::from(mime),
+                        None => BlobContentType::from_lowercased(slice),
+                    };
                 }
             }
         }
 
-        // SAFETY: content_type points to either a static literal, a 'static mime value,
-        // or a freshly-leaked Box<[u8]> (when content_type_was_allocated).
-        Ok(self.get_slice_from(
-            global_this,
-            relative_start,
-            relative_end,
-            unsafe { &*content_type },
-            content_type_was_allocated,
-        ))
+        Ok(self.get_slice_from(global_this, relative_start, relative_end, content_type))
     }
 
     fn get_mime_type(&self) -> Option<MimeType> {
@@ -2388,15 +2344,7 @@ impl BlobExt for Blob {
                 if store_size != MAX_SIZE {
                     self.offset.set(store_size.min(offset));
                     let available = store_size - self.offset.get();
-                    // Only resolve an unknown size. A slice already has a concrete
-                    // `size`; overwriting it with `store_size - offset` would widen
-                    // the view to the end of the backing store. Clamp a known size
-                    // to `available` so a bogus size can't report past the store end.
-                    if self.size.get() == MAX_SIZE {
-                        self.size.set(available);
-                    } else {
-                        self.size.set(self.size.get().min(available));
-                    }
+                    self.size.set(window_size(self.size.get(), available));
                 }
             }
             store::DataTag::File => {
@@ -2410,7 +2358,8 @@ impl BlobExt for Blob {
                     let store_size = file.max_size;
                     let offset = self.offset.get();
                     self.offset.set(store_size.min(offset));
-                    self.size.set(store_size.saturating_sub(offset));
+                    let available = store_size - self.offset.get();
+                    self.size.set(window_size(self.size.get(), available));
                     return;
                 }
 
@@ -2444,16 +2393,7 @@ impl BlobExt for Blob {
                 if store_size != MAX_SIZE {
                     let offset = store_size.min(offset);
                     let available = store_size - offset;
-                    // Matches `resolve_size`: a known size (e.g. a slice) is
-                    // authoritative; only an unknown size falls back to the
-                    // remainder of the backing store. Clamp to `available` so a
-                    // bogus size can't report past the store end.
-                    let size = if self.size.get() == MAX_SIZE {
-                        available
-                    } else {
-                        self.size.get().min(available)
-                    };
-                    return (offset, size);
+                    return (offset, window_size(self.size.get(), available));
                 }
                 (self.offset.get(), self.size.get())
             }
@@ -2465,8 +2405,9 @@ impl BlobExt for Blob {
                 let file = store.data_mut().as_file();
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
-                    let offset = self.offset.get();
-                    return (store_size.min(offset), store_size.saturating_sub(offset));
+                    let offset = store_size.min(self.offset.get());
+                    let available = store_size - offset;
+                    return (offset, window_size(self.size.get(), available));
                 }
                 if file.seekable == Some(false) {
                     return (self.offset.get(), self.size.get());
@@ -2500,26 +2441,12 @@ impl BlobExt for Blob {
                                         break 'inner;
                                     }
                                     blob.content_type_was_set.set(true);
-
-                                    if let Some(mime) =
-                                        global_this.bun_vm().as_mut().mime_type(slice)
-                                    {
-                                        blob.content_type.set(match mime.value {
-                                            ::std::borrow::Cow::Borrowed(s) => {
-                                                std::ptr::from_ref::<[u8]>(s)
-                                            }
-                                            ::std::borrow::Cow::Owned(v) => {
-                                                blob.content_type_allocated.set(true);
-                                                bun_core::heap::into_raw(v.into_boxed_slice())
-                                            }
-                                        });
-                                        break 'inner;
-                                    }
-                                    let mut buf = vec![0u8; slice.len()];
-                                    strings::copy_lowercase(slice, &mut buf);
-                                    blob.content_type
-                                        .set(bun_core::heap::into_raw(buf.into_boxed_slice()));
-                                    blob.content_type_allocated.set(true);
+                                    blob.content_type.set(
+                                        match global_this.bun_vm().as_mut().mime_type(slice) {
+                                            Some(mime) => BlobContentType::from(mime),
+                                            None => BlobContentType::from_lowercased(slice),
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -2527,8 +2454,7 @@ impl BlobExt for Blob {
                 }
 
                 if blob.content_type_slice().is_empty() {
-                    blob.content_type
-                        .set(std::ptr::from_ref::<[u8]>(b"" as &'static [u8]));
+                    blob.content_type.set(BlobContentType::default());
                     blob.content_type_was_set.set(false);
                 }
             }
@@ -2578,9 +2504,8 @@ impl BlobExt for Blob {
             None
         });
         if was_string {
-            blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                bun_http_types::MimeType::TEXT.value.as_ref(),
-            ));
+            blob.content_type
+                .set(BlobContentType::from_mime(&bun_http_types::MimeType::TEXT));
         }
         blob.global_this.set(global_this);
         blob
@@ -2607,9 +2532,8 @@ impl BlobExt for Blob {
                     }));
                     let blob = Blob::init_with_store(store, global_this);
                     if was_string && blob.content_type_slice().is_empty() {
-                        blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                            bun_http_types::MimeType::TEXT.value.as_ref(),
-                        ));
+                        blob.content_type
+                            .set(BlobContentType::from_mime(&bun_http_types::MimeType::TEXT));
                     }
                     return Ok(blob);
                 }
@@ -3188,6 +3112,16 @@ impl BlobExt for Blob {
                 }
             }
             Lifetime::Transfer => {
+                if self.store().is_some_and(|s| !s.has_one_ref()) {
+                    // SAFETY: same `buf` contract as the caller; the `Clone` arm only reads it.
+                    let copied = unsafe {
+                        self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(
+                            global, buf,
+                        )
+                    };
+                    self.detach();
+                    return copied;
+                }
                 if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
                     && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
                 {
@@ -3435,14 +3369,6 @@ impl BlobExt for Blob {
                                 // (no clone, no into_raw leak) and field-copy the
                                 // rest, deep-owning `name`/`content_type` — net 0 on
                                 // the store refcount.
-                                let content_type = if blob.content_type_allocated.get() {
-                                    bun_core::heap::into_raw(
-                                        blob.content_type_slice().to_vec().into_boxed_slice(),
-                                    )
-                                    .cast_const()
-                                } else {
-                                    blob.content_type.get()
-                                };
                                 let _blob = Blob {
                                     reported_estimated_size: Cell::new(
                                         blob.reported_estimated_size.get(),
@@ -3450,10 +3376,7 @@ impl BlobExt for Blob {
                                     size: Cell::new(blob.size.get()),
                                     offset: Cell::new(blob.offset.get()),
                                     store: JsCell::new(blob.take_store()), // ← the move
-                                    content_type: Cell::new(content_type),
-                                    content_type_allocated: Cell::new(
-                                        blob.content_type_allocated.get(),
-                                    ),
+                                    content_type: JsCell::new(blob.content_type.get().clone()),
                                     content_type_was_set: Cell::new(
                                         blob.content_type_was_set.get(),
                                     ),
@@ -3750,8 +3673,9 @@ impl BlobExt for Blob {
             }
         }
 
+        let ct = self.content_type.get();
         self.reported_estimated_size.set(
-            size + (self.content_type_slice().len() * (self.content_type_allocated.get() as usize))
+            size + (ct.as_slice().len() * (ct.is_owned() as usize))
                 + self.name.get().byte_slice().len(),
         );
     }
@@ -4211,7 +4135,7 @@ impl StructuredCloneWriter {
 
 // Implement `bun_io::Write` so `write_int_le` / `write_all` work directly.
 impl bun_io::Write for StructuredCloneWriter {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         StructuredCloneWriter::write(self, bytes);
         Ok(())
     }
@@ -4220,13 +4144,11 @@ impl bun_io::Write for StructuredCloneWriter {
 // Only ever called with f64 (Blob.last_modified). A concrete impl
 // because Rust forbids `[u8; size_of::<F>()]`
 // without `generic_const_exprs`. Bit-cast → native-endian bytes.
-fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> Result<(), bun_core::Error> {
-    writer.write_all(&value.to_ne_bytes())
+fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> crate::Result<()> {
+    Ok(writer.write_all(&value.to_ne_bytes())?)
 }
 
-fn read_float<B: AsRef<[u8]>>(
-    reader: &mut bun_io::FixedBufferStream<B>,
-) -> Result<f64, bun_core::Error> {
+fn read_float<B: AsRef<[u8]>>(reader: &mut bun_io::FixedBufferStream<B>) -> crate::Result<f64> {
     let mut bytes_buf = [0u8; core::mem::size_of::<f64>()];
     reader.read_exact(&mut bytes_buf)?;
     Ok(f64::from_ne_bytes(bytes_buf))
@@ -4235,34 +4157,35 @@ fn read_float<B: AsRef<[u8]>>(
 fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
-) -> Result<Vec<u8>, bun_core::Error> {
+) -> crate::Result<Vec<u8>> {
     if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
-        return Err(bun_core::err!("TooSmall"));
+        return Err(crate::Error::TooSmall);
     }
     let mut slice = vec![0u8; len];
     reader
         .read_exact(&mut slice)
-        .map_err(|_| bun_core::err!("TooSmall"))?;
+        .map_err(|_| crate::Error::TooSmall)?;
     Ok(slice)
 }
 
 fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
-) -> Result<JSValue, bun_core::Error> {
+) -> crate::Result<JSValue> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
 
     let content_type_len = reader.read_int_le::<u32>()?;
-    let mut content_type = read_slice(reader, content_type_len as usize)?;
-    // Ownership transfers to `blob.content_type` at the end of the success
-    // path below; until then `content_type`'s Drop is responsible for it.
-    // (error cleanup is automatic Drop on `?`.)
+    let content_type = read_slice(reader, content_type_len as usize)?;
 
     let content_type_was_set: bool = reader.read_int_le::<u8>()? != 0;
 
     let store_tag = store::SerializeTag::from_raw(reader.read_int_le::<u8>()?)
-        .ok_or_else(|| bun_core::err!("InvalidValue"))?;
+        .ok_or(crate::Error::InvalidValue)?;
+
+    // Version 4: file-backed records carry the blob's own size so a sliced
+    // Bun.file() keeps its window's end. MAX_SIZE means unknown.
+    let mut file_size: Option<u64> = None;
 
     let blob: *mut Blob = match store_tag {
         store::SerializeTag::Bytes => 'bytes: {
@@ -4303,13 +4226,23 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
+            if version >= 4 {
+                file_size = Some(reader.read_int_le::<u64>()?);
+            }
             let pathlike_tag =
                 PathOrFileDescriptorSerializeTag::from_raw(reader.read_int_le::<u8>()?)
-                    .ok_or_else(|| bun_core::err!("InvalidValue"))?;
+                    .ok_or(crate::Error::InvalidValue)?;
 
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {
                     let fd: Fd = reader.read_struct()?;
+                    // Wire bytes are untrusted: enforce the same range as `FdJsc::from_js_validated`
+                    // so a crafted record cannot materialize an fd no JS could construct (fd == -1
+                    // hits `Fd::as_borrowed_fd`'s `raw != -1` assert on posix and aborts).
+                    #[cfg(not(windows))]
+                    if fd.0 < 0 {
+                        return Err(crate::Error::InvalidValue);
+                    }
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut path_or_fd,
@@ -4320,6 +4253,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
                     let path = read_slice(reader, path_len as usize)?;
+                    // Same constraint the JS entry (`Valid::path_null_bytes`)
+                    // enforces: a NUL-embedded path cannot be handed to the
+                    // syscall layer (`ZStr::as_cstr` would truncate / panic).
+                    if strings::index_of_char(&path, 0).is_some() {
+                        return Err(crate::Error::InvalidValue);
+                    }
                     // The owned `CowSlice`
                     // adopts the `Box<[u8]>` so the store frees it in
                     // `PathLike::drop`; borrowing here would drop `path` at scope
@@ -4378,6 +4317,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
     // make shared_view() slice past the end of the backing store (OOB heap read).
     blob.offset.set(offset as SizeType); // intentional truncate
+    if let Some(size) = file_size {
+        // resolve_size() clamps this to the actual file size on first use.
+        if size != MAX_SIZE {
+            blob.size.set(size as SizeType);
+        }
+    }
     if let Some(store) = blob.store.get() {
         let store_size = store.size();
         if store_size != MAX_SIZE {
@@ -4390,14 +4335,10 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     }
 
     if !content_type.is_empty() {
-        let leaked = content_type.into_boxed_slice();
-        blob.content_type.set(bun_core::heap::into_raw(leaked));
-        blob.content_type_allocated.set(true);
+        blob.content_type
+            .set(BlobContentType::Owned(std::sync::Arc::from(content_type)));
         blob.content_type_was_set.set(content_type_was_set);
-        // Ownership handed to `blob`; disarm the implicit drop by replacing local.
-        content_type = Vec::new();
     }
-    let _ = content_type;
 
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
     // SAFETY: blob_ptr is valid; toJS is infallible. Explicit `&mut *` forces
@@ -4520,7 +4461,7 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
                     return Retry::Continue;
                 }
                 bun_sys::Result::Err(err2) => {
-                    this.set_errno_if_present(bun_core::errno_to_zig_err(err2.errno as i32));
+                    this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
                     this.set_system_error(err.with_path(err_path).to_system_error());
                     this.set_opened_fd_if_present(Fd::INVALID);
                     return Retry::Fail;
@@ -4552,7 +4493,7 @@ pub trait MkdirpTarget {
     fn mkdirp_if_not_exists(&self) -> bool;
     fn set_mkdirp_if_not_exists(&mut self, v: bool);
     fn set_system_error(&mut self, e: bun_sys::SystemError);
-    fn set_errno_if_present(&mut self, _e: bun_core::Error) {}
+    fn set_errno_if_present(&mut self, _e: crate::Error) {}
     fn set_opened_fd_if_present(&mut self, _fd: Fd) {}
 }
 
@@ -4791,12 +4732,10 @@ pub fn write_file_with_source_destination(
     let destination_type = destination_store.data.tag();
 
     // TODO: make sure this invariant isn't being broken elsewhere, then upgrade to allow_assert
-    if cfg!(debug_assertions) {
-        debug_assert!(
-            destination_type != store::DataTag::Bytes,
-            "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
-        );
-    }
+    debug_assert!(
+        destination_type != store::DataTag::Bytes,
+        "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
+    );
 
     let Some(source_store) = source_blob.store.get().clone() else {
         return write_file_with_empty_source_to_destination(ctx, destination_blob, options);
@@ -4930,7 +4869,7 @@ pub fn write_file_with_source_destination(
     } else if destination_type == store::DataTag::Bytes
         && (source_type == store::DataTag::File || source_type == store::DataTag::S3)
     {
-        let blob_value = source_blob.get_slice_from(ctx, 0, 0, b"", false);
+        let blob_value = source_blob.get_slice_from(ctx, 0, 0, BlobContentType::default());
         return Ok(JSPromise::resolved_promise_value(ctx, blob_value));
     } else if destination_type == store::DataTag::S3 {
         let s3 = destination_store.data.as_s3();
@@ -5747,32 +5686,23 @@ pub fn jsdom_file_construct_(
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
-
-                        // SAFETY: bun_vm() returns the live VM pointer for this global.
-                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                            blob.content_type.set(match mime.value {
-                                ::std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-                                ::std::borrow::Cow::Owned(v) => {
-                                    blob.content_type_allocated.set(true);
-                                    bun_core::heap::into_raw(v.into_boxed_slice())
-                                }
-                            });
-                            break 'inner;
-                        }
-                        let mut content_type_buf = vec![0u8; slice.len()];
-                        strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type.set(bun_core::heap::into_raw(
-                            content_type_buf.into_boxed_slice(),
-                        ));
-                        blob.content_type_allocated.set(true);
+                        blob.content_type.set(
+                            match global_this.bun_vm().as_mut().mime_type(slice) {
+                                Some(mime) => BlobContentType::from(mime),
+                                None => BlobContentType::from_lowercased(slice),
+                            },
+                        );
                     }
                 }
             }
 
-            if let Some(last_modified) = options.get_truthy(global_this, "lastModified")? {
+            // WebIDL dictionary member: only `undefined` / not-present falls
+            // through to the Date.now() default. Any present value (including
+            // `null`) goes through ToNumber, with NaN normalized to 0.
+            if let Some(last_modified) = options.get(global_this, "lastModified")? {
                 set_last_modified = true;
-                blob.last_modified
-                    .set(last_modified.to_number(global_this)?);
+                let n = last_modified.to_number(global_this)?;
+                blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
             }
         }
     }
@@ -5784,8 +5714,7 @@ pub fn jsdom_file_construct_(
     }
 
     if blob.content_type_slice().is_empty() {
-        blob.content_type
-            .set(std::ptr::from_ref::<[u8]>(b"" as &'static [u8]));
+        blob.content_type.set(BlobContentType::default());
         blob.content_type_was_set.set(false);
     }
 
@@ -5847,25 +5776,18 @@ pub fn construct_bun_file(
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
-                        // SAFETY: bun_vm() never returns null for a Bun-owned global.
-                        if let Some(entry) = global_object.bun_vm().as_mut().mime_type(str.slice())
-                        {
-                            blob.content_type
-                                .set(std::ptr::from_ref::<[u8]>(entry.value.as_ref()));
-                            break 'inner;
-                        }
-                        let mut content_type_buf = vec![0u8; slice.len()];
-                        strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type.set(bun_core::heap::into_raw(
-                            content_type_buf.into_boxed_slice(),
-                        ));
-                        blob.content_type_allocated.set(true);
+                        blob.content_type.set(
+                            match global_object.bun_vm().as_mut().mime_type(slice) {
+                                Some(mime) => BlobContentType::from(mime),
+                                None => BlobContentType::from_lowercased(slice),
+                            },
+                        );
                     }
                 }
             }
-            if let Some(last_modified) = opts.get_truthy(global_object, "lastModified")? {
-                blob.last_modified
-                    .set(last_modified.to_number(global_object)?);
+            if let Some(last_modified) = opts.get(global_object, "lastModified")? {
+                let n = last_modified.to_number(global_object)?;
+                blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
             }
         }
     }
@@ -6243,10 +6165,8 @@ pub unsafe extern "C" fn Blob__fromBytesWithType(
         unsafe {
             (*blob)
                 .content_type
-                .set(std::ptr::from_ref::<[u8]>(mime_slice));
+                .set(BlobContentType::Owned(mime_slice.into()));
             (*blob).content_type_was_set.set(true);
-            // content_type_allocated stays false — caller guarantees the string
-            // outlives the Blob (it's a C string literal in the caller's .rodata).
         }
     }
     blob
@@ -6286,7 +6206,7 @@ pub unsafe extern "C" fn Blob__fromMmapWithType(
             unsafe {
                 (*blob)
                     .content_type
-                    .set(std::ptr::from_ref::<[u8]>(mime_slice));
+                    .set(BlobContentType::Owned(mime_slice.into()));
                 (*blob).content_type_was_set.set(true);
             }
         }
@@ -6306,6 +6226,18 @@ fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
     #[cfg(windows)]
     {
         jsc::to_js_time(stat.mtim.sec as isize, stat.mtim.nsec as isize)
+    }
+}
+
+/// Window clamp shared by the `resolve_size`/`resolved_size` arms: only an
+/// unknown (`MAX_SIZE`) size resolves to the store's remainder; a concrete
+/// size (a slice's window) is authoritative, clamped so a bogus or stale
+/// value can't report past the end of the backing store.
+fn window_size(current: SizeType, available: SizeType) -> SizeType {
+    if current == MAX_SIZE {
+        available
+    } else {
+        current.min(available)
     }
 }
 
@@ -6598,7 +6530,6 @@ impl Any {
                     // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
                     let internal = s.data_mut().as_bytes_mut().to_internal_blob();
                     // StoreRef::drop on the replace below releases the store ref.
-                    blob.free_content_type();
                     *self = Any::InternalBlob(internal);
                     return;
                 }
@@ -6893,7 +6824,6 @@ impl Any {
     pub fn detach(&mut self) {
         match self {
             Any::Blob(b) => {
-                b.free_content_type();
                 b.detach();
                 *self = Any::Blob(Blob::default());
             }
@@ -7155,7 +7085,7 @@ pub trait FileOpener: Sized {
 
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
-    fn set_errno(&mut self, e: bun_core::Error);
+    fn set_errno(&mut self, e: crate::Error);
     fn set_system_error(&mut self, e: jsc::SystemError);
     /// Either `self.file_store.pathlike` or `self.file_blob.store.data.file.pathlike`.
     fn pathlike(&self) -> &PathOrFileDescriptor;
@@ -7211,7 +7141,7 @@ pub trait FileOpener: Sized {
                             PathOrFileDescriptor::Path(p) => p.clone(),
                             PathOrFileDescriptor::Fd(_) => unreachable!(),
                         };
-                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as i32));
+                        self_.set_errno(bun_errno::from_errno(err_enum as i32).into());
                         self_.set_system_error(
                             bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
                                 .with_path(path_string_2.slice())
@@ -7256,7 +7186,7 @@ pub trait FileOpener: Sized {
                 )
             };
             if let Some(errno) = rc.err_enum_e() {
-                self.set_errno(bun_core::errno_to_zig_err(errno as i32));
+                self.set_errno(bun_errno::from_errno(errno as i32).into());
                 self.set_system_error(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::open)
                         .with_path(path_string.slice())
@@ -7297,7 +7227,7 @@ pub trait FileOpener: Sized {
                                 Retry::No => {}
                             }
                         }
-                        self.set_errno(bun_core::errno_to_zig_err(err.errno as i32));
+                        self.set_errno(bun_errno::from_errno(err.errno as i32).into());
                         self.set_system_error(jsc::SysErrorJsc::to_system_error(
                             &err.with_path(path_string.slice()),
                         ));

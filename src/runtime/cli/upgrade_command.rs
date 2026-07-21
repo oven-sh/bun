@@ -10,6 +10,7 @@ use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
+use bun_install::integrity::{Integrity, Tag as IntegrityTag};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
 use bun_paths::{self, PathBuffer, SEP_STR};
@@ -46,10 +47,10 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
 // the un-exported `fs_full` module. Shim it locally — open
 // `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
 pub(crate) trait FileSystemTmpdirExt {
-    fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error>;
+    fn tmpdir(&mut self) -> crate::Result<sys::Dir>;
 }
 impl FileSystemTmpdirExt for fs::FileSystem {
-    fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error> {
+    fn tmpdir(&mut self) -> crate::Result<sys::Dir> {
         sys::Dir::open(fs::RealFS::tmpdir_path()).map_err(Into::into)
     }
 }
@@ -69,6 +70,7 @@ pub struct Version {
     pub tag: Box<[u8]>,
     pub buf: MutableString,
     pub size: u32,
+    pub digest: Integrity,
 }
 
 impl Version {
@@ -148,6 +150,27 @@ impl Version {
         &*self.tag == Self::CURRENT_VERSION.as_bytes()
     }
 
+    pub fn parse_asset_digest(buf: &[u8]) -> Integrity {
+        const PREFIX: &[u8] = b"sha256:";
+        const HEX_LEN: usize = 64;
+        if buf.len() != PREFIX.len() + HEX_LEN || !strings::starts_with(buf, PREFIX) {
+            return Integrity::default();
+        }
+
+        let mut digest = Integrity {
+            tag: IntegrityTag::SHA256,
+            ..Default::default()
+        };
+        for (i, pair) in buf[PREFIX.len()..].chunks_exact(2).enumerate() {
+            match bun_fmt::hex_pair_value(pair[0], pair[1]) {
+                Some(byte) => digest.value[i] = byte,
+                None => return Integrity::default(),
+            }
+        }
+
+        digest
+    }
+
     pub fn export() {
         // force-reference — drop in Rust (linker keeps #[no_mangle])
     }
@@ -185,7 +208,7 @@ impl UpgradeCommand {
         refresher: Option<&mut Progress::Progress>,
         mut progress: Option<&mut Progress::Node>,
         use_profile: bool,
-    ) -> Result<Option<Version>, bun_core::Error> {
+    ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
 
         let mut header_entries: headers::EntryList = headers::EntryList::default();
@@ -284,12 +307,12 @@ impl UpgradeCommand {
         let response = async_http.send_sync()?;
 
         match response.status_code {
-            404 => return Err(bun_core::err!("HTTP404")),
-            403 => return Err(bun_core::err!("HTTPForbidden")),
-            429 => return Err(bun_core::err!("HTTPTooManyRequests")),
-            499..=599 => return Err(bun_core::err!("GitHubIsDown")),
+            404 => return Err(crate::Error::HTTP404),
+            403 => return Err(crate::Error::HTTPForbidden),
+            429 => return Err(crate::Error::HTTPTooManyRequests),
+            499..=599 => return Err(crate::Error::GitHubIsDown),
             200 => {}
-            _ => return Err(bun_core::err!("HTTPError")),
+            _ => return Err(crate::Error::HTTPError),
         }
 
         let mut log = bun_ast::Log::init();
@@ -339,6 +362,7 @@ impl UpgradeCommand {
             tag: Box::default(),
             buf: MutableString::init_empty(),
             size: 0,
+            digest: Integrity::default(),
         };
 
         if !expr.is_object() {
@@ -439,6 +463,12 @@ impl UpgradeCommand {
                             Output::flush();
                         }
 
+                        if let Some(digest_) = asset.as_property(b"digest") {
+                            if let Some(digest) = digest_.expr.as_utf8_string_literal() {
+                                version.digest = Version::parse_asset_digest(digest);
+                            }
+                        }
+
                         if let Some(size_) = asset.as_property(b"size") {
                             if let bun_ast::ExprData::ENumber(n) = &size_.expr.data {
                                 version.size =
@@ -505,7 +535,7 @@ impl UpgradeCommand {
     };
 
     #[cold]
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub fn exec(ctx: Command::Context) -> crate::Result<()> {
         let args = bun_core::argv();
         if args.len() > 2 {
             for arg in args.iter().skip(2) {
@@ -533,7 +563,7 @@ impl UpgradeCommand {
         Ok(())
     }
 
-    fn _exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    fn _exec(ctx: Command::Context) -> crate::Result<()> {
         HTTP::http_thread::init(&Default::default());
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
@@ -631,6 +661,7 @@ impl UpgradeCommand {
                 .into(),
                 size: 0,
                 buf: MutableString::init_empty(),
+                digest: Integrity::default(),
             }
         };
 
@@ -681,13 +712,13 @@ impl UpgradeCommand {
                         Global::exit(1);
                     }
 
-                    return Err(bun_core::err!("HTTP404"));
+                    return Err(crate::Error::HTTP404);
                 }
-                403 => return Err(bun_core::err!("HTTPForbidden")),
-                429 => return Err(bun_core::err!("HTTPTooManyRequests")),
-                499..=599 => return Err(bun_core::err!("GitHubIsDown")),
+                403 => return Err(crate::Error::HTTPForbidden),
+                429 => return Err(crate::Error::HTTPTooManyRequests),
+                499..=599 => return Err(crate::Error::GitHubIsDown),
                 200 => {}
-                _ => return Err(bun_core::err!("HTTPError")),
+                _ => return Err(crate::Error::HTTPError),
             }
 
             let bytes = zip_file_buffer.slice();
@@ -700,6 +731,14 @@ impl UpgradeCommand {
             if bytes.is_empty() {
                 bun_core::pretty_errorln!(
                     "<r><red>error:<r> Failed to download the latest version of Bun. Received empty content"
+                );
+                Global::exit(1);
+            }
+
+            if version.digest.tag.is_supported() && !version.digest.verify(bytes) {
+                bun_core::pretty_errorln!(
+                    "<r><red>error:<r> The file downloaded from {} did not match the checksum reported by the GitHub API for this release.\n<r>note: run <b>bun upgrade<r> again to retry the download",
+                    bstr::BStr::new(&zip_url_bytes)
                 );
                 Global::exit(1);
             }
@@ -991,7 +1030,7 @@ impl UpgradeCommand {
                         ..Default::default()
                     });
                     // Any spawn-time failure (allocator/OOM surfaces as
-                    // `bun_core::Error`, posix_spawn surfaces as
+                    // `crate::Error`, posix_spawn surfaces as
                     // `bun_sys::Error`) → same diagnostic + cleanup.
                     let err_name: &'static [u8] = match spawned {
                         Ok(Ok(r)) => break 'spawn r,
@@ -1075,7 +1114,7 @@ impl UpgradeCommand {
             // used everywhere else.
             #[cfg_attr(not(windows), allow(unused_variables))]
             let destination_executable_z: &ZStr = bun_core::self_exe_path()
-                .map_err(|_| bun_core::err!("UpgradeFailedMissingExecutable"))?;
+                .map_err(|_| crate::Error::UpgradeFailedMissingExecutable)?;
             let destination_executable: &[u8] = destination_executable_z.as_bytes();
             // Reshaped for borrowck — use stack-local buffer.
             // Stacked Borrows: take ONE `*mut u8` over the buffer up front and
@@ -1108,7 +1147,7 @@ impl UpgradeCommand {
                 )
             };
             let target_dir_ = bun_core::dirname(destination_executable)
-                .ok_or_else(|| bun_core::err!("UpgradeFailedBecauseOfMissingExecutableDir"))?;
+                .ok_or(crate::Error::UpgradeFailedBecauseOfMissingExecutableDir)?;
             // safe because the slash will no longer be in use
             let target_dir_len = target_dir_.len();
             // SAFETY: in-bounds; write is at the separator byte between dirname

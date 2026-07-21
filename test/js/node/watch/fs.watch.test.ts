@@ -904,6 +904,35 @@ describe("fs.promises.watch", () => {
     })();
     expect(promise).resolves.toBe("change");
   });
+
+  test("yields events with a null prototype", async () => {
+    const root = path.join(testDir, "null-proto-dir");
+    fs.mkdirSync(root, { recursive: true });
+    const ac = new AbortController();
+    const watcher = fs.promises.watch(root, { signal: ac.signal });
+
+    const interval = repeat(() => {
+      fs.writeFileSync(path.join(root, "null-proto.txt"), "hello");
+    });
+
+    let event;
+    try {
+      for await (const e of watcher) {
+        event = e;
+        break;
+      }
+    } finally {
+      clearInterval(interval);
+      ac.abort();
+    }
+
+    expect(event).toBeDefined();
+    expect(Object.getPrototypeOf(event)).toBe(null);
+    // @ts-expect-error
+    expect(event.hasOwnProperty).toBeUndefined();
+    expect(() => String(event)).toThrow(TypeError);
+    expect(Object.keys(event!).sort()).toEqual(["eventType", "filename"]);
+  });
 });
 
 describe("immediately closing", () => {

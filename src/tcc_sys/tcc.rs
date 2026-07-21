@@ -12,9 +12,8 @@ pub type TCCErrorFunc = Option<unsafe extern "C" fn(opaque: *mut c_void, msg: *c
 pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char);
 
 // `libtcc.a` is only built where `cfg.tinycc` is true (`scripts/build/config.ts`):
-// not Windows/aarch64 (TinyCC has no aarch64-pe-coff backend), not Android, not
-// FreeBSD (the vendored fork doesn't support those targets). On those platforms
-// these `extern "C"` decls would be undefined at link:
+// not Android, not FreeBSD (the vendored fork doesn't support those targets).
+// On those platforms these `extern "C"` decls would be undefined at link:
 // `bun_runtime::ffi::ffi_body::{Source::add,
 // CompileC::compile}` are reachable from `extern "C"` JS bindings and the
 // monomorphized refs land in `libbun_rust.a` regardless of any
@@ -24,15 +23,16 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 // in this build"), and the `unreachable!()` makes any future gate regression
 // loud rather than silently UB.
 //
-// Keep this predicate in sync with `cfg.tinycc` in `scripts/build/config.ts`.
+// Keep this predicate in sync with `cfg.tinycc` in `scripts/build/config.ts`
+// and `ENABLE_TINYCC` in `scripts/build/buildOptionsRs.ts`.
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
-        #[cfg(not(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64"))))]
+        #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
         unsafe extern "C" {
             $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
         }
         $(
-            #[cfg(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64")))]
+            #[cfg(any(target_os = "android", target_os = "freebsd"))]
             #[allow(unused_variables, clippy::missing_safety_doc)]
             unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
                 unreachable!(concat!(
@@ -108,9 +108,9 @@ pub enum Error {
     // Returned by `output_file`.
     #[error("OutputError")]
     OutputError,
+    #[error(transparent)]
+    Alloc(#[from] bun_alloc::AllocError),
 }
-
-bun_core::named_error_set!(Error);
 
 #[repr(i32)] // c_int == i32 on all Bun targets
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -178,7 +178,7 @@ impl State {
     /// Create and initialize a new TCC compilation context
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
         config: &Config<ErrCtx>,
-    ) -> Result<NonNull<State>, bun_core::Error> {
+    ) -> Result<NonNull<State>, Error> {
         let state_ptr = State::new()?;
         // errdefer state.destroy() — State is an FFI handle without Drop, so use scopeguard.
         let guard = scopeguard::guard(state_ptr, |p| {

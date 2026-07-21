@@ -41,7 +41,6 @@ use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 
-use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
@@ -117,7 +116,7 @@ pub(crate) fn create_and_schedule_completion_task(
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,
     event_loop: *mut EventLoop,
-) -> Result<*mut JSBundleCompletionTask, bun_core::Error> {
+) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
     let env = global_this.bun_vm().transpiler.env;
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
@@ -171,7 +170,7 @@ pub fn generate_from_javascript(
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,
     event_loop: *mut EventLoop,
-) -> Result<JSValue, bun_core::Error> {
+) -> crate::Result<JSValue> {
     let completion = create_and_schedule_completion_task(config, plugins, global_this, event_loop)?;
     // SAFETY: `completion` is the freshly-boxed allocation; sole owner on the JS
     // thread until the enqueued task runs.
@@ -598,7 +597,7 @@ impl JSBundleCompletionTask {
                 // `this.result.value.deinit()` — owned fields drop with the
                 // overwrite below; `output_files` (moved out above) drops here.
                 drop(output_files);
-                this.result = BundleV2Result::Err(bun_core::err!("CompilationFailed"));
+                this.result = BundleV2Result::Err(bun_bundler::Error::CompilationFailed);
             } else {
                 // Put the compacted output_files back.
                 match &mut this.result {
@@ -668,12 +667,6 @@ impl JSBundleCompletionTask {
                             global_this,
                             result,
                         );
-                        if let Some(artifact) = to_assign_on_sourcemap.as_::<BuildArtifact>() {
-                            // SAFETY: `as_` returned a live `*mut BuildArtifact`
-                            // owned by the JS wrapper; the borrow lasts only for
-                            // this `set` call (no other Rust alias exists).
-                            unsafe { (*artifact).sourcemap.set(global_this, result) };
-                        }
                         to_assign_on_sourcemap = JSValue::ZERO;
                     }
 
@@ -815,7 +808,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         &mut self,
         transpiler: &mut Transpiler<'a>,
         _bump: &'a Arena,
-    ) -> Result<(), bun_core::Error> {
+    ) -> bun_bundler::Result<()> {
         let config = &mut self.config;
 
         transpiler.options.env.behavior = config.env_behavior;
@@ -1040,7 +1033,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
-    ) -> Result<&'a mut Transpiler<'a>, bun_core::Error> {
+    ) -> bun_bundler::Result<&'a mut Transpiler<'a>> {
         let config = &self.config;
         let opts = api::TransformOptions {
             define: if config.define.count() > 0 {
@@ -1097,7 +1090,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler: &'a mut Transpiler<'a>,
         bump: &'a Arena,
         thread_pool: *mut bun_threading::ThreadPool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> bun_bundler::Result<()> {
         // `jsc.AnyEventLoop.init(allocator)` — Mini loop. Stack-owned (not
         // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at
         // scope exit; the bump bulk-free skips Drop. Declared before `bv2` so

@@ -60,45 +60,11 @@ declare var $sloppy;
 /** Place this directly above a function declaration (like a decorator) to always inline the function */
 declare var $alwaysInline;
 
-declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
 /**
  * Overrides **
  */
 
-class ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
-  constructor(
-    stream: unknown,
-    underlyingSource: unknown,
-    size: unknown,
-    highWaterMark: unknown,
-    $isReadableStream: typeof $isReadableStream,
-  );
-
-  $controlledReadableStream: ReadableStream<R>;
-  $underlyingSource: UnderlyingSource;
-  $queue: any;
-  $started: number;
-  $closeRequested: boolean;
-  $pullAgain: boolean;
-  $pulling: boolean;
-  $strategy: any;
-
-  $pullAlgorithm(): void;
-  $pull: typeof ReadableStreamDefaultController.prototype.pull;
-  $cancel: typeof ReadableStreamDefaultController.prototype.cancel;
-  $cancelAlgorithm: (reason?: any) => void;
-  $close: typeof ReadableStreamDefaultController.prototype.close;
-  $enqueue: typeof ReadableStreamDefaultController.prototype.enqueue;
-  $error: typeof ReadableStreamDefaultController.prototype.error;
-}
-
-interface ReadableStream<R = any> extends _ReadableStream<R> {
-  $highWaterMark: number;
-  $bunNativePtr: undefined | TODO;
-  $asyncContext?: {};
-  $disturbed: boolean;
-  $state: $streamClosed | $streamErrored | $streamReadable | $streamWritable | $streamClosedAndErrored;
-}
+interface ReadableStream<R = any> extends _ReadableStream<R> {}
 
 declare var ReadableStream: {
   prototype: ReadableStream;
@@ -143,6 +109,17 @@ declare function $peekPromiseSettledValue<V>(promise: Promise<V>): V | undefined
  * tracker. Equivalent to JSC's `JSPromise::markAsHandled()`.
  */
 declare function $pokePromiseAsHandled(promise: Promise<any>): void;
+/**
+ * A promise that settles when a WHATWG ReadableStream/WritableStream reaches a terminal state.
+ * Does not lock the stream. Throws when given anything else.
+ */
+declare function $webStreamClosedPromise(stream: ReadableStream | WritableStream): Promise<void>;
+
+/**
+ * Error a WHATWG ReadableStream/WritableStream as `controller.error(e)` would, including its
+ * no-op once the stream is no longer readable/writable. Throws for any other value.
+ */
+declare function $webStreamControllerError(stream: ReadableStream | WritableStream, error: unknown): void;
 declare function $getInternalField<Fields extends any[], N extends keyof Fields>(
   base: InternalFieldObject<Fields>,
   number: N,
@@ -346,38 +323,20 @@ declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
 
 declare var $_events: TODO;
-declare function $abortAlgorithm(): TODO;
-declare function $abortSteps(): TODO;
 declare function $addAbortAlgorithmToSignal(signal: AbortSignal, algorithm: () => void): TODO;
-declare function $assignToStream(): TODO;
-declare function $assignStreamIntoResumableSink(): TODO;
-declare function $associatedReadableByteStreamController(): TODO;
 declare function $autoAllocateChunkSize(): TODO;
-declare function $backpressure(): TODO;
-declare function $backpressureChangePromise(): TODO;
 declare function $basename(): TODO;
 declare function $body(): TODO;
 declare function $bunNativePtr(): TODO;
 declare function $bunNativeType(): TODO;
 declare function $byobRequest(): TODO;
 declare function $cancel(): TODO;
-declare function $cancelAlgorithm(): TODO;
 declare function $cloneArrayBuffer(a, b, c): TODO;
 declare function $close(): TODO;
-declare function $closeAlgorithm(): TODO;
-declare function $closeRequest(): TODO;
-declare function $closeRequested(): TODO;
-declare function $closedPromise(): TODO;
-declare function $closedPromiseCapability(): TODO;
 declare function $code(): TODO;
-declare function $controlledReadableStream(): TODO;
 declare function $controller(): TODO;
-declare function $createEmptyReadableStream(): TODO;
-declare function $createErroredReadableStream(reason: unknown): TODO;
 declare function $createFIFO(): TODO;
-declare function $createNativeReadableStream(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
-declare function $createWritableStreamFromInternal(...args: any[]): TODO;
 declare function $data(): TODO;
 declare function $dataView(): TODO;
 declare function $decode(): TODO;
@@ -386,12 +345,10 @@ declare function $disturbed(): TODO;
 declare function $encoding(): TODO;
 declare function $end(): TODO;
 declare function $errno(): TODO;
-declare function $errorSteps(): TODO;
 declare function $extname(): TODO;
 declare function $fatal(): TODO;
 declare function $filePath(): TODO;
 declare function $filter(): TODO;
-declare function $flushAlgorithm(): TODO;
 declare function $format(): TODO;
 declare function $fulfillModuleSync(key: string): void;
 declare function $esmNamespaceForCjs(key: string): any | undefined;
@@ -399,7 +356,6 @@ declare function $esmRegistryDelete(key: string): boolean;
 declare function $esmRegistryEvaluatedKeys(): string[];
 declare function $esmLoadSync(key: string): any;
 declare function $get(): TODO;
-declare function $getInternalWritableStream(writable: WritableStream): TODO;
 declare function $handleEvent(): TODO;
 declare function $headers(): TODO;
 declare function $highWaterMark(): TODO;
@@ -407,14 +363,10 @@ declare function $host(): TODO;
 declare function $hostname(): TODO;
 declare function $ignoreBOM(): TODO;
 declare function $importer(): TODO;
-declare function $inFlightCloseRequest(): TODO;
-declare function $inFlightWriteRequest(): TODO;
 declare function $internalRequire(id: string, parent: JSCommonJSModule): TODO;
-declare function $internalWritable(): TODO;
 declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $join(): TODO;
-declare const $lazyStreamPrototypeMap: Map<string, typeof import("node:stream/web").ReadableStreamDefaultController>;
 declare function $loadModule(): TODO;
 declare function $main(): TODO;
 declare function $makeDOMException(): TODO;
@@ -422,26 +374,13 @@ declare function $makeGetterTypeError(className: string, prop: string): Error;
 declare function $map(): TODO;
 declare function $method(): TODO;
 declare function $normalize(): TODO;
-declare function $ownerReadableStream(): TODO;
 declare function $parse(): TODO;
 declare function $path(): TODO;
-declare function $pendingAbortRequest(): TODO;
-declare function $pendingPullIntos(): TODO;
 declare function $port(): TODO;
 declare function $post(): TODO;
 declare function $pull(): TODO;
-declare function $pullAgain(): TODO;
-declare function $pullAlgorithm(): TODO;
-declare function $pulling(): TODO;
-declare function $queue(): TODO;
 declare function $read(): TODO;
-declare function $readIntoRequests(): TODO;
-declare function $readRequests(): TODO;
 declare function $readable(): TODO;
-declare function $readableByteStreamControllerGetDesiredSize(...args: any): TODO;
-declare function $readableStreamController(): TODO;
-declare function $reader(): TODO;
-declare function $readyPromise(): TODO;
 declare function $removeAbortAlgorithmFromSignal(signal: AbortSignal, algorithmIdentifier: number): TODO;
 declare function $redirect(): TODO;
 declare function $relative(): TODO;
@@ -461,43 +400,26 @@ declare function $resume(): TODO;
 declare function $search(): TODO;
 declare function $searchParams(): TODO;
 declare function $self(): TODO;
-declare function $sink(): TODO;
 declare function $size(): TODO;
 declare function $start(): TODO;
-declare function $startAlgorithm(): TODO;
-declare function $startDirectStream(): TODO;
 declare function $started(): TODO;
 declare function $state(): TODO;
 declare function $status(): TODO;
-declare function $storedError(): TODO;
-declare function $strategy(): TODO;
-declare function $strategyHWM(): TODO;
-declare function $strategySizeAlgorithm(): TODO;
 declare function $stream(): TODO;
 declare function $streamClosed(): TODO;
-declare function $streamClosing(): TODO;
 declare function $streamErrored(): TODO;
 declare function $streamReadable(): TODO;
-declare function $streamWaiting(): TODO;
 declare function $streamWritable(): TODO;
 declare function $structuredCloneForStream(): TODO;
 declare function $syscall(): TODO;
 declare function $textDecoderStreamDecoder(): TODO;
-declare function $textDecoderStreamTransform(): TODO;
 declare function $textEncoderStreamEncoder(): TODO;
-declare function $textEncoderStreamTransform(): TODO;
 declare function $toNamespacedPath(): TODO;
-declare function $transformAlgorithm(): TODO;
-declare function $underlyingByteSource(): TODO;
-declare function $underlyingSink(): TODO;
-declare function $underlyingSource(): TODO;
 declare function $url(): TODO;
 declare function $view(): TODO;
 declare function $whenSignalAborted(signal: AbortSignal, cb: (reason: any) => void): TODO;
 declare function $writable(): TODO;
 declare function $write(): TODO;
-declare function $writeAlgorithm(): TODO;
-declare function $writeRequests(): TODO;
 declare function $writer(): TODO;
 declare function $written(): TODO;
 
@@ -550,19 +472,15 @@ declare class OutOfMemoryError {
   constructor();
 }
 
+// Provided by the C++ Web Streams implementation.
 declare class ReadableByteStreamController {
-  constructor(
-    stream: unknown,
-    underlyingSource: unknown,
-    strategy: unknown,
-    $isReadableStream: typeof $isReadableStream,
-  );
+  private constructor();
 }
 declare class ReadableStreamBYOBRequest {
-  constructor(stream: unknown, view: unknown, $isReadableStream: typeof $isReadableStream);
+  private constructor();
 }
 declare class ReadableStreamBYOBReader {
-  constructor(stream: unknown);
+  constructor(stream: ReadableStream);
 }
 
 // Inlining our enum types
@@ -695,6 +613,7 @@ declare function $ERR_STREAM_CANNOT_PIPE(): Error;
 declare function $ERR_STREAM_WRITE_AFTER_END(): Error;
 declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
 declare function $ERR_STREAM_PUSH_AFTER_EOF(): Error;
+declare function $ERR_TRAILING_JUNK_AFTER_STREAM_END(): TypeError;
 declare function $ERR_STREAM_UNABLE_TO_PIPE(): Error;
 declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
 declare function $ERR_SERVER_ALREADY_LISTEN(): Error;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { gc as gcTrace, isASAN, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc as gcTrace, isASAN, normalizeBunSnapshot, tempDir, withoutAggressiveGC } from "harness";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -770,6 +770,78 @@ it("sees writes made by the options.stream getter", () => {
     },
   });
   expect(result).toBe("BBBB");
+});
+
+it("decodes a stable snapshot of a Uint8Array over a SharedArrayBuffer while another thread writes to it", async () => {
+  using dir = tempDir("text-decoder-shared", {
+    "index.js": `
+      const N = 4096;
+      const dataSab = new SharedArrayBuffer(N);
+      const flagSab = new SharedArrayBuffer(4);
+      const data = new Uint8Array(dataSab);
+      const flag = new Int32Array(flagSab);
+      data.fill(0x61);
+      const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+      const ready = new Promise((resolve, reject) => {
+        worker.onmessage = resolve;
+        worker.onerror = reject;
+      });
+      worker.postMessage({ dataSab, flagSab });
+      await ready;
+      const decoder = new TextDecoder();
+      const allowed = new Set([0x61, 0x3042, 0xfffd]);
+      let bad = -1;
+      for (let i = 0; i < 10000 && bad < 0; i++) {
+        const out = decoder.decode(data);
+        const limit = Math.min(4, out.length);
+        for (let j = 0; j < limit; j++) {
+          const code = out.charCodeAt(j);
+          if (!allowed.has(code)) {
+            bad = code;
+            break;
+          }
+        }
+      }
+      Atomics.store(flag, 0, 1);
+      worker.terminate();
+      console.log(bad < 0 ? "consistent" : "unexpected code unit 0x" + bad.toString(16));
+      if (bad >= 0) process.exitCode = 1;
+    `,
+    "worker.js": `
+      self.onmessage = function (event) {
+        const data = new Uint8Array(event.data.dataSab);
+        const flag = new Int32Array(event.data.flagSab);
+        postMessage("ready");
+        let phase = 0;
+        while (Atomics.load(flag, 0) === 0) {
+          if (phase === 0) {
+            data[0] = 0xe3;
+            data[1] = 0x81;
+            data[2] = 0x82;
+            phase = 1;
+          } else {
+            data[0] = 0x61;
+            data[1] = 0x61;
+            data[2] = 0x61;
+            phase = 0;
+          }
+        }
+      };
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout)).toBe("consistent");
+  expect(exitCode).toBe(0);
 });
 
 it.each(["utf-16le", "utf-16be"])(

@@ -1,5 +1,15 @@
-import { zstdCompress, zstdCompressSync, zstdDecompress, zstdDecompressSync } from "bun";
+import {
+  deflateSync,
+  gunzipSync,
+  gzipSync,
+  inflateSync,
+  zstdCompress,
+  zstdCompressSync,
+  zstdDecompress,
+  zstdDecompressSync,
+} from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 
 describe("Zstandard compression", async () => {
@@ -240,6 +250,120 @@ describe("Zstandard compression", async () => {
       }
     });
   }
+});
+
+describe("sync compression argument handling", () => {
+  it("zstdCompressSync evaluates the options object before capturing the input", () => {
+    const input = new Uint8Array(64).fill(97);
+    const compressed = zstdCompressSync(input, {
+      get level() {
+        input.buffer.transfer();
+        return 3;
+      },
+    });
+    expect(zstdDecompressSync(compressed).byteLength).toBe(0);
+  });
+
+  it("zstdCompressSync evaluates the options object before validating the input", () => {
+    expect(() =>
+      zstdCompressSync(42 as any, {
+        get level() {
+          throw new Error("level option was read");
+        },
+      }),
+    ).toThrow("level option was read");
+  });
+
+  it("gzipSync evaluates the options object before capturing the input", () => {
+    const input = new Uint8Array(64).fill(97);
+    const compressed = gzipSync(input, {
+      get level() {
+        input.buffer.transfer();
+        return 6;
+      },
+    });
+    expect(gunzipSync(compressed).byteLength).toBe(0);
+  });
+
+  it("deflateSync evaluates the options object before capturing the input", () => {
+    const input = new Uint8Array(64).fill(97);
+    const compressed = deflateSync(input, {
+      get level() {
+        input.buffer.transfer();
+        return 6;
+      },
+    });
+    expect(inflateSync(compressed).byteLength).toBe(0);
+  });
+
+  it("gunzipSync evaluates the options object before validating the input", () => {
+    expect(() =>
+      gunzipSync(42 as any, {
+        get windowBits() {
+          throw new Error("windowBits option was read");
+        },
+      }),
+    ).toThrow("windowBits option was read");
+  });
+
+  it("inflateSync evaluates the options object before validating the input", () => {
+    expect(() =>
+      inflateSync(42 as any, {
+        get windowBits() {
+          throw new Error("windowBits option was read");
+        },
+      }),
+    ).toThrow("windowBits option was read");
+  });
+
+  // An empty result must not register a GC-time deallocator: the backing Vec is
+  // empty, so its pointer is dangling and freeing it at collection is an invalid
+  // free (aborts under ASAN/debug allocators).
+  it("collecting empty decompression results does not free a dangling pointer", () => {
+    const empty = new Uint8Array(0);
+    for (let i = 0; i < 10; i++) {
+      expect(gunzipSync(gzipSync(empty)).byteLength).toBe(0);
+      expect(inflateSync(deflateSync(empty)).byteLength).toBe(0);
+      expect(zstdDecompressSync(zstdCompressSync(empty)).byteLength).toBe(0);
+      Bun.gc(true);
+    }
+  });
+
+  // libdeflate is one-shot, so Bun retries with a doubling output buffer; the
+  // retry cap must not be tighter than the zlib backend's (ArrayBuffer max).
+  // Spawned so the multi-GB buffer is released with the child.
+  it("gunzipSync({library:'libdeflate'}) decompresses output larger than 1 GiB", async () => {
+    const MiB = 1024 * 1024;
+    const expected = 17 * 64 * MiB; // 1088 MiB
+    const script = `
+      import * as zlib from "node:zlib";
+      const chunk = Buffer.alloc(64 * ${MiB});
+      const bomb = await new Promise((resolve, reject) => {
+        const g = zlib.createGzip({ level: 9 });
+        const out = [];
+        g.on("data", c => out.push(c));
+        g.on("end", () => resolve(Buffer.concat(out)));
+        g.on("error", reject);
+        let left = 17;
+        const w = () => { if (!left--) return g.end(); g.write(chunk) ? w() : g.once("drain", w); };
+        w();
+      });
+      const out = Bun.gunzipSync(bomb, { library: "libdeflate" });
+      console.log(JSON.stringify({ libdeflate: out.length, head: out[0], tail: out[out.length - 1] }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ libdeflate: expected, head: 0, tail: 0 }),
+      stderr: expect.not.stringContaining("Out of memory"),
+    });
+    expect(exitCode).toBe(0);
+  }, 60_000);
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

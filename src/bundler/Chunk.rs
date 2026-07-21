@@ -284,12 +284,16 @@ impl Chunk {
     }
 
     pub fn get_js_chunk_for_html<'a>(&self, chunks: &'a mut [Chunk]) -> Option<&'a mut Chunk> {
+        // Non-entry chunks created under code splitting carry a default
+        // entry_point_id of 0, so the id alone is ambiguous; require
+        // is_entry_point to find the actual entry chunk.
         let entry_point_id = self.entry_point.entry_point_id();
         for other in chunks.iter_mut() {
-            if matches!(other.content, Content::Javascript(_)) {
-                if other.entry_point.entry_point_id() == entry_point_id {
-                    return Some(other);
-                }
+            if matches!(other.content, Content::Javascript(_))
+                && other.entry_point.is_entry_point()
+                && other.entry_point.entry_point_id() == entry_point_id
+            {
+                return Some(other);
             }
         }
         None
@@ -305,7 +309,9 @@ impl Chunk {
         let css_idx: Option<usize> = 'find: {
             for other in chunks.iter() {
                 if let Content::Javascript(js) = &other.content {
-                    if other.entry_point.entry_point_id() == entry_point_id {
+                    if other.entry_point.is_entry_point()
+                        && other.entry_point.entry_point_id() == entry_point_id
+                    {
                         let css_chunk_indices = &js.css_chunks[..];
                         if !css_chunk_indices.is_empty() {
                             break 'find Some(css_chunk_indices[0] as usize);
@@ -321,10 +327,11 @@ impl Chunk {
         }
         // Fallback: match by entry_point_id for cases without a JS chunk.
         for other in chunks.iter_mut() {
-            if matches!(other.content, Content::Css(_)) {
-                if other.entry_point.entry_point_id() == entry_point_id {
-                    return Some(other);
-                }
+            if matches!(other.content, Content::Css(_))
+                && other.entry_point.is_entry_point()
+                && other.entry_point.entry_point_id() == entry_point_id
+            {
+                return Some(other);
             }
         }
         None
@@ -682,6 +689,12 @@ impl IntermediateOutput {
                     from_chunk_dir = b"";
                 }
 
+                // esbuild's `pathBetweenChunks`: with a public path configured, every
+                // reference is `publicPath + outdir-relative path`. Importer-relative
+                // paths would escape the prefix from chunks in subdirectories.
+                let use_outdir_relative_path =
+                    from_chunk_dir.is_empty() || force_absolute_path || !import_prefix.is_empty();
+
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
                 } else {
@@ -763,7 +776,7 @@ impl IntermediateOutput {
 
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
-                                if from_chunk_dir.is_empty() || force_absolute_path {
+                                if use_outdir_relative_path {
                                     file_path
                                 } else {
                                     bun_paths::resolve_path::relative_platform_buf::<
@@ -944,7 +957,7 @@ impl IntermediateOutput {
                             };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
-                                if from_chunk_dir.is_empty() || force_absolute_path {
+                                if use_outdir_relative_path {
                                     file_path
                                 } else {
                                     bun_paths::resolve_path::relative_platform_buf::<
@@ -1534,7 +1547,7 @@ impl CrossChunkImport {
         list: &mut Vec<CrossChunkImport>,
         chunks: &mut [Chunk],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         list.clear();
         list.reserve(imports_from_other_chunks.count());
 

@@ -412,11 +412,14 @@ impl Cmd {
                 }
                 CmdState::ExpandingRedirect { ref mut idx } => {
                     *idx += 1;
-                    // NUL-terminate a
-                    // non-empty result; leave an empty expansion empty so the
-                    // ambiguous-redirect check in `Builtin::init_redirections`
-                    // still fires.
-                    let mut buf = out.buf;
+                    // Zero words or >1 word (glob/brace split) leave the buffer
+                    // empty so the ambiguous-redirect check in
+                    // `Builtin::init_redirections` / `init_subproc_redirections` fires.
+                    let mut buf = if out.bounds.is_empty() {
+                        out.buf
+                    } else {
+                        Vec::new()
+                    };
                     if !buf.is_empty() && buf.last() != Some(&0) {
                         buf.push(0);
                     }
@@ -740,9 +743,14 @@ impl Cmd {
                         })
                     };
                     if flags.stdin() {
-                        stdio[STDIN_NO] = Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(
-                            buf.byte_slice().to_vec(),
-                        ));
+                        let bytes = buf.byte_slice();
+                        // An empty buffer delivers EOF immediately; `Stdio::Ignore`
+                        // matches what `Stdio::extract`/`extract_blob` already do.
+                        stdio[STDIN_NO] = if bytes.is_empty() {
+                            Stdio::Ignore
+                        } else {
+                            Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
+                        };
                     }
                     if flags.duplicate_out() {
                         stdio[STDOUT_NO] = mk_out();

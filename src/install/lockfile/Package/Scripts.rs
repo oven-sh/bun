@@ -292,7 +292,7 @@ impl Scripts {
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution: &Resolution,
-    ) -> Result<Option<List>, bun_core::Error> {
+    ) -> Result<Option<List>, crate::Error> {
         if self.has_any() {
             let add_node_gyp_rebuild_script =
                 if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
@@ -335,7 +335,7 @@ impl Scripts {
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let json_buf;
         let parsed;
         let json: Expr = {
@@ -366,7 +366,7 @@ impl Scripts {
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
-    ) -> Result<Option<List>, bun_core::Error> {
+    ) -> Result<Option<List>, crate::Error> {
         let mut tmp = RealLockfile::init_empty_value();
         // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
         // auto-drop suffices; Lockfile has no `impl Drop`.
@@ -468,9 +468,7 @@ impl List {
     }
 
     pub fn first(&self) -> &[u8] {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.items[self.first_index as usize].is_some());
-        }
+        debug_assert!(self.items[self.first_index as usize].is_some());
         self.items[self.first_index as usize].as_ref().unwrap()
     }
 

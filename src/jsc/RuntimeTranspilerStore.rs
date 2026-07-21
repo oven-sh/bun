@@ -82,7 +82,7 @@ pub(crate) fn dump_source_string_failiable(
     vm: NonNull<VirtualMachine>,
     specifier: &[u8],
     written: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::CrateResult<()> {
     if !cfg!(debug_assertions) {
         return Ok(());
     }
@@ -128,7 +128,7 @@ pub(crate) fn dump_source_string_failiable(
         if let Err(e) = File::write_file(parent.fd, base_z, written) {
             bun_core::debug_warn!(
                 "Failed to dump source string: writeFile {}",
-                bun_core::Error::from(e).name()
+                crate::CrateError::from(e).name()
             );
             return Ok(());
         }
@@ -173,7 +173,7 @@ pub(crate) fn dump_source_string_failiable(
                 json(&source_file),
                 mappings.format_vlqs(),
             )
-            .map_err(|_| bun_core::err!("WriteError"))?;
+            .map_err(|_| crate::CrateError::WriteError)?;
             file.write_all(out.as_bytes())?;
         }
     } else {
@@ -411,7 +411,7 @@ pub struct TranspilerJob {
     pub poll_ref: KeepAlive,
     pub generation_number: u32,
     pub log: bun_ast::Log,
-    pub parse_error: Option<bun_core::Error>,
+    pub parse_error: Option<crate::CrateError>,
     /// RAII-owned: holds +1 on `source_code`/`source_url`/`specifier`/
     /// `bytecode_origin_path` until `run_from_js_thread` `take()`s and
     /// `into_ffi()`s to C++. Dropped (via `HiveArray::put` → `drop_in_place`)
@@ -645,7 +645,7 @@ impl TranspilerJob {
                 .load(Ordering::Relaxed)
         };
         if self.generation_number != store_generation {
-            self.parse_error = Some(bun_core::err!("TranspilerJobGenerationMismatch"));
+            self.parse_error = Some(crate::CrateError::TranspilerJobGenerationMismatch);
             return;
         }
 
@@ -934,7 +934,7 @@ impl TranspilerJob {
                 }
             }
 
-            self.parse_error = Some(bun_core::err!("ParseError"));
+            self.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
 
@@ -1020,17 +1020,25 @@ impl TranspilerJob {
         }
 
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
-            let bytecode_slice = parse_result.already_bundled.bytecode_slice();
+            let already_bundled = core::mem::take(&mut parse_result.already_bundled);
+            let is_commonjs_module = already_bundled.is_common_js();
+            let (bytecode_cache, bytecode_cache_size) = match already_bundled {
+                AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => {
+                    let len = bytes.len();
+                    if len == 0 {
+                        (ptr::null_mut(), 0)
+                    } else {
+                        (bun_core::heap::into_raw(bytes).cast::<u8>(), len)
+                    }
+                }
+                _ => (ptr::null_mut(), 0),
+            };
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
-                bytecode_cache: if !bytecode_slice.is_empty() {
-                    bytecode_slice.as_ptr().cast_mut()
-                } else {
-                    ptr::null_mut()
-                },
-                bytecode_cache_size: bytecode_slice.len(),
-                is_commonjs_module: parse_result.already_bundled.is_common_js(),
+                bytecode_cache,
+                bytecode_cache_size,
+                is_commonjs_module,
                 tag: this_tag,
                 ..Default::default()
             });
@@ -1156,7 +1164,7 @@ impl TranspilerJob {
             if let Some(mi) = module_info {
                 mi.destroy();
             }
-            self.parse_error = Some(err);
+            self.parse_error = Some(err.into());
             return;
         }
 

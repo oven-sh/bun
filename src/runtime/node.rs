@@ -20,9 +20,9 @@ pub mod assert {
 #[path = "node/types.rs"]
 pub mod types;
 pub use types::{
-    BlobOrStringOrBuffer, CallbackTask, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob,
-    PathOrBuffer, PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer,
-    js_assert_encoding_valid, mode_from_js,
+    BlobOrStringOrBuffer, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob, PathOrBuffer,
+    PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer, js_assert_encoding_valid,
+    mode_from_js,
 };
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;
@@ -93,6 +93,7 @@ pub mod fs;
 // fs.watch() / fs.watchFile() backends — declared here so `fs::watch` /
 // `fs::watch_file` can reach the real `Arguments` / `FSWatcher` /
 // `StatWatcher` types instead of opaque local stand-ins.
+#[cfg(not(windows))]
 #[path = "node/path_watcher.rs"]
 pub mod path_watcher;
 #[cfg(windows)]

@@ -1,5 +1,8 @@
 // This is close to WHATWG URL, but we don't want the validation errors
 #![warn(unused_must_use)]
+pub mod error;
+pub use error::{Error, Result};
+
 use core::cell::RefCell;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
@@ -356,10 +359,10 @@ impl<'a> URL<'a> {
 
     // Ownership: returns an `OwnedURL` that owns the buffer; callers borrow
     // via `.url()` and Drop frees it.
-    pub fn from_string(input: &BunString) -> Result<OwnedURL, bun_core::Error> {
+    pub fn from_string(input: &BunString) -> crate::Result<OwnedURL> {
         let href = whatwg::href_from_string(input);
         if href.tag() == BunStringTag::Dead {
-            return Err(bun_core::err!("InvalidURL"));
+            return Err(crate::Error::InvalidURL);
         }
         // `to_owned_slice` is infallible so explicit
         // ordering suffices (no error path between alloc and deref).
@@ -368,7 +371,7 @@ impl<'a> URL<'a> {
         Ok(OwnedURL { href: owned })
     }
 
-    pub fn from_utf8(input: &[u8]) -> Result<OwnedURL, bun_core::Error> {
+    pub fn from_utf8(input: &[u8]) -> crate::Result<OwnedURL> {
         Self::from_string(&BunString::borrow_utf8(input))
     }
 
@@ -559,7 +562,7 @@ impl<'a> URL<'a> {
         dirname: &[u8],
         basename: &[u8],
         extname: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let mut out = Self::join_buf_uninit();
         let normalized_path = Self::join_normalize(&mut out, prefix, dirname, basename, extname);
 
@@ -576,7 +579,7 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
         absolute_path: &[u8],
-    ) -> Result<Box<[u8]>, bun_core::Error> {
+    ) -> crate::Result<Box<[u8]>> {
         let has_uplevels = strings::index_of(dirname, b"../").is_some();
 
         if has_uplevels {
@@ -782,13 +785,11 @@ impl<'a> URL<'a> {
                 b'@' => {
                     // we found a password, everything before this point in the slice is a password
                     self.password = &str[0..i];
-                    if cfg!(debug_assertions) {
-                        debug_assert!(
-                            str[i..].len() < 2
-                                || u16::from_le_bytes([str[i], str[i + 1]])
-                                    != u16::from_le_bytes(*b"//")
-                        );
-                    }
+                    debug_assert!(
+                        str[i..].len() < 2
+                            || u16::from_le_bytes([str[i], str[i + 1]])
+                                != u16::from_le_bytes(*b"//")
+                    );
                     return Some(u32::try_from(i + 1).expect("int cast"));
                 }
                 // if we reach a slash or "?", there's no password
@@ -1062,14 +1063,10 @@ impl QueryStringMap {
 
             let name_hash: u64 = wyhash(name_slice);
 
-            value.length = match PercentEncoding::decode(
-                &mut buf,
-                result.raw_value(scanner.pathname.pathname),
-            ) {
-                Ok(n) => n,
-                Err(_) => continue,
-            };
+            let value_slice = result.raw_value(scanner.pathname.pathname);
+            value.length = u32::try_from(value_slice.len()).unwrap();
             value.offset = buf_writer_pos;
+            buf.extend_from_slice(value_slice);
             buf_writer_pos += value.length;
 
             list.push(Param {
@@ -1270,9 +1267,8 @@ impl QueryStringMap {
     }
 }
 
-// Browsers typically limit URL lengths to around 64k
-// bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
-// pick ArrayBitSet directly. 2048 / 64 == 32 masks.
+// Browsers typically limit URL lengths to around 64k.
+// IntegerBitSet caps at ≤64 bits, so pick ArrayBitSet directly. 2048 / 64 == 32 masks.
 /// Hard cap on parsed query-string parameters, enforced in `init` /
 /// `init_with_scanner` so the fixed-size `VisitedMap` bitset is never indexed
 /// out of bounds.
@@ -1332,9 +1328,7 @@ impl<'a> Iterator<'a> {
             .position(|p| p.name_hash == hash)
         {
             let real_i = current_i + next_index + self.i;
-            if cfg!(debug_assertions) {
-                debug_assert!(!self.visited.is_set(real_i));
-            }
+            debug_assert!(!self.visited.is_set(real_i));
 
             self.visited.set(real_i);
             target[target_i] = self.map.str(remainder[current_i + next_index].value);
@@ -1378,11 +1372,11 @@ impl From<bun_core::Error> for DecodeError {
         DecodeError::Write(e)
     }
 }
-impl From<DecodeError> for bun_core::Error {
+impl From<DecodeError> for crate::Error {
     fn from(e: DecodeError) -> Self {
         match e {
-            DecodeError::DecodingError => bun_core::err!("DecodingError"),
-            DecodeError::Write(inner) => inner,
+            DecodeError::DecodingError => crate::Error::DecodingError,
+            DecodeError::Write(inner) => crate::Error::Core(inner),
         }
     }
 }
@@ -1610,7 +1604,7 @@ impl<'a> PathnameScanner<'a> {
             name_needs_decoding: false,
             // TODO: fix this technical debt
             value: string_pointer_from_strings(self.pathname, param.value),
-            value_needs_decoding: strings::index_of_char(param.value, b'%').is_some(),
+            value_needs_decoding: false,
         })
     }
 }
@@ -1685,13 +1679,12 @@ impl<'a> Scanner<'a> {
                             relative_i += 1;
                         }
                         value.length = u32::try_from(relative_i - offset).unwrap();
+                        self.i += relative_i;
                         // If the name is empty and it's just a value, skip it.
                         // This is kind of an opinion. But, it's hard to see where that might be intentional.
                         if name.length == 0 {
-                            self.i += relative_i;
-                            return None;
+                            continue 'outer;
                         }
-                        self.i += relative_i;
                         return Some(ScannerResult {
                             name,
                             value,

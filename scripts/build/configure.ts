@@ -6,7 +6,7 @@
  * can configure once then run specific targets.
  */
 
-import { globSync, mkdirSync } from "node:fs";
+import { existsSync, globSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
@@ -21,6 +21,7 @@ import {
   resolveConfig,
 } from "./config.ts";
 import { BuildError } from "./error.ts";
+import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";
@@ -342,6 +343,18 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // the orchestrator already knows every .o path.
   mkdirAll(output.objects.map(dirname));
   mark("mkdirAll");
+
+  // Seed an empty symbol ordering file so the link flag always points at
+  // something. lld treats an empty file as a no-op, which is exactly the
+  // unordered pass-1 link; a later `generateOrderFile()` overwrites it and
+  // ninja relinks (linkDepends lists it). Never clobber an existing one —
+  // that would throw away the file a release relink or a canary download
+  // just put there.
+  if (usesOrderFile(cfg) && !existsSync(orderFilePath(cfg))) {
+    writeIfChanged(orderFilePath(cfg), "# no order file yet — an empty file is a no-op for lld\n");
+  }
+  mark("orderFile");
+
   const ninjaFile = resolve(cfg.buildDir, "build.ninja");
 
   const elapsed = Math.round(performance.now() - start);

@@ -114,7 +114,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
 
       // BLPOP with timeout
       const listKey = testKey("empty-list");
-      const timeoutResult = await ctx.redis.send("BLPOP", [listKey, "1"]);
+      const timeoutResult = await ctx.redis.send("BLPOP", [listKey, "0.1"]);
       expect(timeoutResult).toBeNull();
     });
 

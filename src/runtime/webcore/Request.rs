@@ -261,17 +261,18 @@ impl Request {
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
-            // Snapshot the pointer first; `Blob.content_type` is a raw
-            // `*const [u8]` that stays valid across the field borrow.
+            // Snapshot the pointer first; it stays valid across the field borrow.
             let content_type: Option<*const [u8]> = match self.body_value() {
-                BodyValue::Blob(blob) => Some(blob.content_type.get()),
+                BodyValue::Blob(blob) => {
+                    Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
+                }
                 BodyValue::Locked(locked) => match locked.readable.get(global_this) {
                     Some(readable) => match readable.ptr {
                         crate::webcore::readable_stream::Source::Blob(blob) => {
                             // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
                             // for as long as the readable stream exists; we only read
                             // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { &(*blob).content_type };
+                            let ct: &[u8] = unsafe { (*blob).content_type.as_slice() };
                             Some(std::ptr::from_ref::<[u8]>(ct))
                         }
                         _ => None,
@@ -282,8 +283,8 @@ impl Request {
             };
 
             if let Some(content_type_) = content_type {
-                // SAFETY: Blob.content_type is always a valid (possibly empty)
-                // slice pointer (see Blob field contract).
+                // SAFETY: the sources above are live for the duration of this
+                // call; the bytes are copied into the header map below.
                 let content_type_ = unsafe { &*content_type_ };
                 if !content_type_.is_empty() {
                     self.headers_mut().as_mut().unwrap().put(
@@ -418,6 +419,27 @@ impl Request {
     pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
         self.throw_if_body_unusable(global_this).ok()?;
         self.clone(global_this).ok()
+    }
+
+    /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a
+    /// `routes:` handler that observed `.body` before cloning gets a fresh tee
+    /// branch from the next `.body` read instead of the locked tee source.
+    #[bun_uws::uws_callback(export = "Request__syncClonedBodyStreamCaches")]
+    pub fn ffi_sync_cloned_body_stream_caches(
+        &self,
+        global_this: &JSGlobalObject,
+        this_value: JSValue,
+        cloned: &Request,
+        js_wrapper: JSValue,
+    ) {
+        // `JSBunRequest::create` bypasses `to_js`, so seed the still-empty
+        // `js_ref` for `check_body_stream_ref`; guarded so a pre-populated
+        // Strong is never downgraded.
+        if cloned.js_ref.get().is_empty() {
+            cloned.js_ref.set(JsRef::init_weak(js_wrapper));
+        }
+        cloned.check_body_stream_ref(global_this);
+        self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
     }
 }
 
@@ -854,7 +876,10 @@ impl Request {
             let req = bun_opaque::opaque_deref(req);
             let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req.header(b"host") {
+                if let Some(host) = req
+                    .header(b"host")
+                    .filter(|host| Self::is_valid_host_header(host))
+                {
                     // With `port: None`, HostFormatter always emits exactly `host`, so the
                     // formatted byte-count is just `host.len()`. Avoid the `core::fmt::write`
                     // vtable dispatch that `bun_fmt::count(format_args!(...))` incurs — this
@@ -902,6 +927,37 @@ impl Request {
         }
     }
 
+    /// RFC 3986 3.2.2 `uri-host [ ":" port ]` byte set. A Host value outside it, or an empty
+    /// one, cannot form a URL authority, so `request.url` synthesis falls back to the
+    /// configured host instead of pasting the client bytes into the URL.
+    fn is_valid_host_header(host: &[u8]) -> bool {
+        !host.is_empty()
+            && host.iter().all(|&c| {
+                c.is_ascii_alphanumeric()
+                    || matches!(
+                        c,
+                        b'-' | b'.'
+                            | b'_'
+                            | b'~'
+                            | b'%'
+                            | b'!'
+                            | b'$'
+                            | b'&'
+                            | b'\''
+                            | b'('
+                            | b')'
+                            | b'*'
+                            | b'+'
+                            | b','
+                            | b';'
+                            | b'='
+                            | b':'
+                            | b'['
+                            | b']'
+                    )
+            })
+    }
+
     pub fn ensure_url(&self) -> Result<(), AllocError> {
         if !self.url.get().is_empty() {
             return Ok(());
@@ -912,7 +968,10 @@ impl Request {
             let req = bun_opaque::opaque_deref(req);
             let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req.header(b"host") {
+                if let Some(host) = req
+                    .header(b"host")
+                    .filter(|host| Self::is_valid_host_header(host))
+                {
                     // With `port: None`, HostFormatter always emits exactly `host`. Compute the
                     // length and assemble the URL with straight slice copies instead of going
                     // through `core::fmt::write` (which is not monomorphized and shows up in
@@ -920,7 +979,6 @@ impl Request {
                     let protocol = self.get_protocol();
                     let url_bytelength = protocol.len() + host.len() + req_url.len();
 
-                    #[cfg(debug_assertions)]
                     debug_assert!(self.size_of_url() == url_bytelength);
 
                     if url_bytelength < 128 {
@@ -936,7 +994,6 @@ impl Request {
                             &buffer[..at]
                         };
 
-                        #[cfg(debug_assertions)]
                         debug_assert!(self.size_of_url() == url.len());
 
                         let href = bun_url::href_from_string(&BunString::from_bytes(url));
@@ -985,7 +1042,6 @@ impl Request {
                 }
             }
 
-            #[cfg(debug_assertions)]
             debug_assert!(self.size_of_url() == req_url.len());
             self.url.set(BunString::clone_utf8(&req_url));
         }
@@ -1186,7 +1242,7 @@ impl Request {
                         match request.body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match request.body_value_mut().clone(global_this) {
+                                match request.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
@@ -1235,11 +1291,10 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
-                        let body_value = response.get_body_value();
-                        match body_value {
+                        match response.get_body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match body_value.clone(global_this) {
+                                match response.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
@@ -1260,6 +1315,19 @@ impl Request {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
                     Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
+                        // fetch spec Request(init): `keepalive: true` with a ReadableStream
+                        // body throws before body extraction (Node's message is "keepalive").
+                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
+                            match value.get(global_this, "keepalive") {
+                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
+                                    bail!(Err(
+                                        global_this.throw_type_error(format_args!("keepalive"))
+                                    ));
+                                }
+                                Ok(_) => {}
+                                Err(e) => bail!(Err(e)),
+                            }
+                        }
                         match BodyValue::from_js(global_this, body_) {
                             Ok(v) => {
                                 *req.body_value_mut() = v;
@@ -1322,17 +1390,22 @@ impl Request {
             }
 
             if !fields.contains(Fields::Signal) {
-                match value.fast_get_truthy(global_this, bun_jsc::BuiltinName::signal) {
+                // WebIDL `AbortSignal?`: present iff the member is not undefined.
+                // `fast_get` maps absent/undefined → None; `null` is Some(null) and
+                // means "present, detach" (no fallback to the input Request's signal).
+                match value.fast_get(global_this, bun_jsc::BuiltinName::signal) {
                     Ok(Some(signal_)) => {
                         fields.insert(Fields::Signal);
-                        if let Some(signal) = AbortSignal::ref_from_js(signal_) {
+                        if signal_.is_null() {
+                            // explicit detach; leave `req.signal` as None
+                        } else if let Some(signal) = AbortSignal::ref_from_js(signal_) {
                             // Keep it alive
                             signal_.ensure_still_alive();
                             // `ref_from_js` already ref'd.
                             req.signal.set(Some(signal));
                         } else {
                             if !global_this.has_exception() {
-                                bail!(Err(global_this.throw(format_args!(
+                                bail!(Err(global_this.throw_type_error(format_args!(
                                     "Failed to construct 'Request': signal is not of type AbortSignal."
                                 ))));
                             }

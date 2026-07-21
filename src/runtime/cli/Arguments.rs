@@ -36,9 +36,8 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
-pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Error> {
-    let option_loader =
-        bun_ast::Loader::from_string(input).ok_or_else(|| bun_core::err!("InvalidLoader"))?;
+pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
+    let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
 }
 
@@ -47,7 +46,7 @@ pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Err
 ///
 /// Built on `bun_paths::resolve_path` + `bun_sys::File::read_from`, which is
 /// the cross-platform path the rest of the runtime uses.
-pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
+pub fn read_file(cwd: &[u8], filename: &[u8]) -> crate::Result<Vec<u8>> {
     let mut buf = PathBuffer::uninit();
     let outpath = resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut *buf, &[filename]);
     let len = outpath.len();
@@ -60,7 +59,7 @@ pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error
     }
 }
 
-pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core::Error> {
+pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
     if s == b"automatic" {
         Ok(api::JsxRuntime::Automatic)
     } else if s == b"fallback" || s == b"classic" {
@@ -68,7 +67,7 @@ pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core:
     } else if s == b"solid" {
         Ok(api::JsxRuntime::Solid)
     } else {
-        Err(bun_core::err!("InvalidJSXRuntime"))
+        Err(crate::Error::InvalidJSXRuntime)
     }
 }
 
@@ -303,6 +302,21 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!("--cron-title <STR>               Title for cron execution mode"),
     parse_param!("--cron-period <STR>              Cron period for cron execution mode"),
+    // Node.js trace/diagnostics flags. Intentionally no help text: params with
+    // an empty description are hidden from `--help` (see `simple_help`).
+    // Declaring them (vs. relying on unknown-flag skipping) matters for the
+    // value-taking ones — otherwise the value argument is parsed as the
+    // entrypoint — and for `process.execArgv`'s re-parser, which derives its
+    // value-consuming set from `AUTO_PARAMS`.
+    parse_param!("--trace-events-enabled"),
+    parse_param!("--trace-event-categories <STR>"),
+    parse_param!("--trace-event-file-pattern <STR>"),
+    parse_param!("--trace-env"),
+    parse_param!("--trace-env-js-stack"),
+    parse_param!("--trace-env-native-stack"),
+    parse_param!("--trace-exit"),
+    parse_param!("--expose-internals"),
+    parse_param!("--stack-trace-limit <STR>"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -313,7 +327,7 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
     ),
     parse_param!(
-        "--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                      Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'"
@@ -538,7 +552,7 @@ pub(crate) const BUILD_PARAMS: &[ParamType] =
 // TODO: update test completions
 pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
-        "--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                     Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000."
@@ -708,7 +722,7 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
 /// param table, and the per-`cmd` blocks below are guarded by
 /// `if matches!(cmd, …)`.
-pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
+pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 
@@ -1091,6 +1105,14 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
+        if args.flag(b"--expose-internals") {
+            // Same gate the env var `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`
+            // sets (VirtualMachine::configure_from_env): allows resolving
+            // `bun:internal-for-testing` / `internal/test/binding` in release
+            // builds. Debug builds always allow them.
+            bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+                .store(true, core::sync::atomic::Ordering::Relaxed);
+        }
 
         if let Some(depth_str) = args.option(b"--console-depth") {
             let depth = match strings::parse_int::<u16>(depth_str, 10) {

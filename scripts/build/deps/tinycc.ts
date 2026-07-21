@@ -2,7 +2,7 @@
  * TinyCC — small embeddable C compiler. Powers bun:ffi's JIT-compile path,
  * where user-provided C gets compiled and linked at runtime.
  *
- * Disabled on windows-arm64 (tinycc doesn't have an arm64-coff backend).
+ * Disabled on Android and FreeBSD — see cfg.tinycc in config.ts.
  *
  * Built via DirectBuild — no cmake sub-process. The old overlay
  * CMakeLists.txt had two recurring ASAN workarounds for the c2str host
@@ -12,14 +12,13 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const TINYCC_COMMIT = "12882eee073cfe5c7621bcfadf679e1372d4537b";
+const TINYCC_COMMIT = "05f0fafaa3be31e31d7b4b5c17dc60f62c991171";
 
 export const tinycc: Dependency = {
   name: "tinycc",
   versionMacro: "TINYCC",
 
-  // The cfg.tinycc flag already encodes the windows-arm64 exclusion
-  // (see config.ts: `tinycc ?? !(windows && arm64)`).
+  // cfg.tinycc encodes the platform exclusions (config.ts).
   enabled: cfg => cfg.tinycc,
 
   source: () => ({

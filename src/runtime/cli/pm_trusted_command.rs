@@ -28,7 +28,7 @@ type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
 pub(crate) struct DefaultTrustedCommand;
 
 impl DefaultTrustedCommand {
-    pub(crate) fn exec() -> Result<(), bun_core::Error> {
+    pub(crate) fn exec() -> crate::Result<()> {
         Output::print(format_args!(
             "Default trusted dependencies ({}):\n",
             DEFAULT_TRUSTED_DEPENDENCIES_LIST.len()
@@ -48,7 +48,7 @@ impl UntrustedCommand {
         ctx: Command::Context,
         pm: &mut PackageManager,
         args: &[&[u8]],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let _ = args;
         bun_core::pretty_error!(
             "<r><b>bun pm untrusted <r><d>v{}<r>\n\n",
@@ -153,8 +153,8 @@ impl UntrustedCommand {
 
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
-                    Err(e) if e == bun_core::err!(ENOENT) => continue,
-                    Err(e) => return Err(e),
+                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                    Err(e) => return Err(e.into()),
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {
@@ -245,7 +245,7 @@ impl TrustCommand {
         ctx: Command::Context,
         pm: &mut PackageManager,
         args: &[&[u8]],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         bun_core::pretty_error!(
             "<r><b>bun pm trust <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
@@ -350,10 +350,10 @@ impl TrustCommand {
 
             let _node_modules_dir = match bun_sys::Dir::cwd()
                 .open_at(node_modules.relative_path.as_bytes())
-                .map_err(bun_core::Error::from)
+                .map_err(crate::Error::from)
             {
                 Ok(d) => d,
-                Err(e) if e == bun_core::err!(ENOENT) => {
+                Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => {
                     node_modules_path.set_length(nm_saved);
                     continue;
                 }
@@ -390,8 +390,8 @@ impl TrustCommand {
 
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
-                    Err(e) if e == bun_core::err!(ENOENT) => continue,
-                    Err(e) => return Err(e),
+                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                    Err(e) => return Err(e.into()),
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {
@@ -544,7 +544,7 @@ impl TrustCommand {
             (*pm_raw).root_package_json_file.handle = bun_core::Fd::INVALID;
             bun_sys::File::from_fd(fd)
         };
-        let package_json_contents = root_file.read_to_end().map_err(bun_core::Error::from)?;
+        let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
@@ -577,7 +577,6 @@ impl TrustCommand {
         };
 
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
-        #[cfg(debug_assertions)]
         debug_assert!(!package_names_to_add.keys().is_empty());
 
         // could be null if these are the first packages to be trusted
@@ -675,11 +674,10 @@ impl TrustCommand {
 
         root_file
             .pwrite_all(new_package_json_contents, 0)
-            .map_err(bun_core::Error::from)?;
+            .map_err(crate::Error::from)?;
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
         let _ = root_file.close();
 
-        #[cfg(debug_assertions)]
         debug_assert!(total_scripts_ran > 0);
 
         bun_core::pretty!(

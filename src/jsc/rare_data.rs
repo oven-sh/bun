@@ -133,7 +133,7 @@ impl EntropyCache {
         self.fill();
     }
     pub fn fill(&mut self) {
-        bun_core::csprng(&mut self.cache);
+        bun_boringssl::rand_bytes(&mut self.cache);
         self.index = 0;
     }
     pub fn get(&mut self) -> [u8; 16] {
@@ -342,7 +342,6 @@ impl Default for RareData {
 
 /// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
 /// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
-/// The buffer is used via a FixedBufferAllocator as the backing for a stackFallback.
 #[derive(Default)]
 pub struct PathBuf {
     pub small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
@@ -682,7 +681,7 @@ impl RareData {
     pub fn default_csrf_secret(&mut self) -> &[u8] {
         if self.default_csrf_secret.is_empty() {
             let mut secret = vec![0u8; 16].into_boxed_slice();
-            bun_core::csprng(&mut secret);
+            bun_boringssl::rand_bytes(&mut secret);
             self.default_csrf_secret = secret;
         }
         &self.default_csrf_secret

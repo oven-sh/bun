@@ -173,6 +173,101 @@ test.skipIf(isWindows)(
   60_000,
 );
 
+// Asserts the on_reader_done lifetime invariant: the source must stay
+// Strong-protected across the user JS its p.run() drains, because the rest
+// of the function still reads `self` after that JS returns.
+// protectedBefore >= 1 proves the handler ran inside that window (the
+// across-read ref, released only at on_reader_done's tail, is still held);
+// protectedAfter / aliveAfter >= 1 is the invariant. POSIX-only (libuv).
+test.skipIf(isWindows)(
+  "resolving the pending read from FileReader::on_reader_done keeps the source pinned through its own tail",
+  async () => {
+    const script = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const prot = () =>
+        heapStats().protectedObjectTypeCounts.FileInternalReadableStreamSource ?? 0;
+      const alive = () =>
+        heapStats().objectTypeCounts.FileInternalReadableStreamSource ?? 0;
+
+      globalThis.__done = Promise.withResolvers();
+
+      // cat keeps fd 1 open until its stdin reaches EOF, so the FileReader
+      // (fromPipe) exists and the read() below is Pending before the pipe can
+      // close. Wire every failure into __done so nothing hangs.
+      globalThis.__p = Bun.spawn({
+        cmd: ["/bin/cat"],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      globalThis.__r = globalThis.__p.stdout.getReader();
+
+      globalThis.__r.read().then(
+        ({ done, value }) => {
+          try {
+            const protectedBefore = prot();
+            globalThis.__r.cancel().catch(() => {});
+            delete globalThis.__r;
+            delete globalThis.__p;
+            Bun.gc(true);
+            Bun.gc(true);
+            const protectedAfter = prot();
+            const aliveAfter = alive();
+            globalThis.__done.resolve({
+              done,
+              len: value?.byteLength ?? 0,
+              protectedBefore,
+              protectedAfter,
+              aliveAfter,
+            });
+          } catch (err) {
+            globalThis.__done.reject(err);
+          }
+        },
+        err => globalThis.__done.reject(err),
+      );
+
+      // EOF cat's stdin; cat exits, its stdout EOFs, and the armed poll
+      // dispatches into FileReader::on_reader_done with the pull Pending.
+      globalThis.__p.stdin.end();
+
+      console.log(JSON.stringify(await globalThis.__done.promise));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    let result: {
+      done: boolean;
+      len: number;
+      protectedBefore: number;
+      protectedAfter: number;
+      aliveAfter: number;
+    };
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {
+      throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+    }
+    // Precondition: the pull was resolved by on_reader_done ({done: true}, no
+    // bytes), not by on_read_chunk delivering data.
+    expect({ done: result.done, len: result.len }).toEqual({ done: true, len: 0 });
+    // Precondition: the handler ran inside on_reader_done, before its tail
+    // released the across-read ref; the wrapper is still Strong there.
+    expect(result.protectedBefore).toBeGreaterThanOrEqual(1);
+    // Invariant: nothing reachable from that JS may downgrade or free the
+    // source while on_reader_done still has reads of `self` ahead of it.
+    expect(result.protectedAfter).toBeGreaterThanOrEqual(1);
+    expect(result.aliveAfter).toBeGreaterThanOrEqual(1);
+    expect(exitCode).toBe(0);
+  },
+);
+
 // Asserts the lifetime invariant rather than racing for the crash: the actual
 // free needs a GC to land inside the microtask drain, which conservative stack
 // scanning makes non-deterministic. Instead, the source wrapper must still be

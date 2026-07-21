@@ -201,16 +201,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// ScopeError
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ScopeError {
-    #[error("no_value")]
-    NoValue,
-}
-
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
     load_npmrc_config,
@@ -246,7 +236,7 @@ mod draft {
     /// consumed by `E::Object::get_or_put_object`, which recurses once per
     /// `rope.next` link, so an unbounded header overflows the stack. Past the
     /// cap the remainder of the header (dots included) becomes the final
-    /// segment. Mirrors `MAX_DOTTED_KEY_SEGMENTS` in the TOML parser.
+    /// segment.
     const MAX_SECTION_ROPE_SEGMENTS: usize = 512;
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1278,7 +1268,7 @@ mod draft {
         for &npmrc_path in npmrc_paths {
             let source = match bun_ast::source_from_file(
                 npmrc_path,
-                bun_ast::ToSourceOpts { convert_bom: true },
+                bun_ast::ToSourceOptions { convert_bom: true },
             ) {
                 Ok(s) => s,
                 Err(err) => {
@@ -1657,15 +1647,20 @@ mod draft {
                     let conf_item: &ConfigItem = &conf_item_;
                     match conf_item.optname {
                         ConfigOpt::Certfile | ConfigOpt::Keyfile => {
-                            iter.log.add_warning_fmt(
-                            Some(source),
-                            iter.config.properties.at(iter.prop_idx - 1).key.as_ref().unwrap().loc,
-                            format_args!(
+                            bun_ast::add_warning_pretty!(
+                                iter.log,
+                                Some(source),
+                                iter.config
+                                    .properties
+                                    .at(iter.prop_idx - 1)
+                                    .key
+                                    .as_ref()
+                                    .unwrap()
+                                    .loc,
                                 "The following .npmrc registry option was not applied:\n\n  <b>{}<r>\n\nBecause we currently don't support the <b>{}<r> option.",
                                 conf_item,
                                 <&'static str>::from(conf_item.optname),
-                            ),
-                        );
+                            );
                             continue;
                         }
                         _ => {}

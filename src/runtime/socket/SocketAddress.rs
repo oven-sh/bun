@@ -443,7 +443,6 @@ pub enum AddressError {
     #[error("InvalidLength")]
     InvalidLength,
 }
-bun_core::named_error_set!(AddressError);
 
 impl SocketAddress {
     /// Create a new IP socket address. `addr` is assumed to be a valid ipv4 or ipv6
@@ -550,9 +549,7 @@ impl SocketAddress {
         port_: u16,
         is_ipv6: bool,
     ) -> JsResult<JSValue> {
-        if cfg!(debug_assertions) {
-            debug_assert!(!addr_.is_empty());
-        }
+        debug_assert!(!addr_.is_empty());
 
         Ok(JSSocketAddressDTO__create(
             global_object,
@@ -977,9 +974,7 @@ impl sockaddr {
                 .len();
         // SAFETY: buf[len] == 0 written by ares_inet_ntop above
         let formatted = ZStr::from_buf(&buf[..], len);
-        if cfg!(debug_assertions) {
-            debug_assert!(bun_core::is_all_ascii(formatted.as_bytes()));
-        }
+        debug_assert!(bun_core::is_all_ascii(formatted.as_bytes()));
         formatted
     }
 

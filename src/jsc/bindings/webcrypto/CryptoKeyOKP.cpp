@@ -145,9 +145,16 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwkInternal(CryptoAlgorithmIdentifier i
             return nullptr;
         break;
     case NamedCurve::X25519:
+        if (keyData.kty != "OKP"_s)
+            return nullptr;
         if (keyData.crv != "X25519"_s)
             return nullptr;
-        // FIXME: Add further checks.
+        if (usages && !keyData.use.isEmpty() && keyData.use != "enc"_s)
+            return nullptr;
+        if (keyData.key_ops && ((keyData.usages & usages) != usages))
+            return nullptr;
+        if (keyData.ext && !keyData.ext.value() && extractable)
+            return nullptr;
         break;
     }
 
@@ -200,6 +207,8 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
         break;
     case NamedCurve::Ed25519:
         result.crv = Ed25519;
+        // RFC 8037 gives the Edwards curves a JWS "alg"; the montgomery ones have none.
+        result.alg = Ed25519;
         break;
     }
 

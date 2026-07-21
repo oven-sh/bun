@@ -176,7 +176,7 @@ impl NodeModulesFolder {
         &self,
         root_node_modules_dir: &Dir,
         file_path: &ZStr,
-    ) -> Result<bun_sys::file::ReadToEndResult, bun_core::Error> {
+    ) -> crate::Result<bun_sys::file::ReadToEndResult> {
         let file = self.open_file(root_node_modules_dir, file_path)?;
         let res = file.read_to_end_small();
         let _ = file.close(); // close error is non-actionable
@@ -193,7 +193,7 @@ impl NodeModulesFolder {
         &self,
         root_node_modules_dir: &Dir,
         file_path: &ZStr,
-    ) -> Result<bun_sys::File, bun_core::Error> {
+    ) -> crate::Result<bun_sys::File> {
         if self.path.len() + file_path.len() * 2 < MAX_PATH_BYTES {
             // If we do not run the risk of ENAMETOOLONG, then let's just avoid opening the extra directories altogether.
             match self.open_file_without_opening_directories(root_node_modules_dir, file_path) {
@@ -205,7 +205,7 @@ impl NodeModulesFolder {
                     | bun_sys::Errno::ENAMETOOLONG => {
                         // Use fallback
                     }
-                    _ => return Err(e.to_zig_err()),
+                    _ => return Err(e.to_zig_err().into()),
                 },
                 Ok(file) => return Ok(file),
             }
@@ -213,10 +213,10 @@ impl NodeModulesFolder {
 
         let dir = self.open_dir(root_node_modules_dir)?;
         let res = dir.open_file(file_path, bun_sys::O::RDONLY, 0);
-        res.map_err(|e| e.to_zig_err())
+        res.map_err(|e| e.to_zig_err().into())
     }
 
-    pub(crate) fn open_dir(&self, root: &Dir) -> Result<Dir, bun_core::Error> {
+    pub(crate) fn open_dir(&self, root: &Dir) -> crate::Result<Dir> {
         #[cfg(unix)]
         {
             // Copy into a NUL-terminated PathBuffer.
@@ -224,7 +224,7 @@ impl NodeModulesFolder {
             let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
             return root
                 .open_at_with(path_z.as_bytes(), 0)
-                .map_err(|e| e.to_zig_err());
+                .map_err(|e| e.to_zig_err().into());
         }
 
         #[cfg(not(unix))]
@@ -235,7 +235,6 @@ impl NodeModulesFolder {
                     self.path.as_slice(),
                     bun_sys::WindowsOpenDirOptions {
                         can_rename_or_delete: false,
-                        read_only: false,
                         ..Default::default()
                     },
                 )
@@ -244,7 +243,7 @@ impl NodeModulesFolder {
         }
     }
 
-    pub(crate) fn make_and_open_dir(&mut self, root: &Dir) -> Result<Dir, bun_core::Error> {
+    pub(crate) fn make_and_open_dir(&mut self, root: &Dir) -> crate::Result<Dir> {
         let out = 'brk: {
             #[cfg(unix)]
             {
@@ -266,7 +265,6 @@ impl NodeModulesFolder {
                         bun_sys::WindowsOpenDirOptions {
                             can_rename_or_delete: false,
                             op: bun_sys::WindowsOpenDirOp::OpenOrCreate,
-                            read_only: false,
                             ..Default::default()
                         },
                     )
@@ -315,7 +313,7 @@ pub(crate) enum LazyPackageDestinationDir<'a> {
 
 impl<'a> LazyPackageDestinationDir<'a> {
     #[allow(dead_code)]
-    pub(crate) fn get_dir(&mut self) -> Result<Fd, bun_core::Error> {
+    pub(crate) fn get_dir(&mut self) -> crate::Result<Fd> {
         match self {
             LazyPackageDestinationDir::Dir(fd) => Ok(*fd),
             LazyPackageDestinationDir::Owned(dir) => Ok(dir.fd()),
@@ -346,7 +344,7 @@ impl<'a> LazyPackageDestinationDir<'a> {
 /// anything that could escape `node_modules`: empty names, `.`/`..`
 /// components, absolute paths, drive letters, backslashes, NUL bytes, and any
 /// separator other than the single `/` in a scoped name (`@scope/name`).
-fn alias_is_safe_install_target(alias: &[u8]) -> bool {
+pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     if alias.is_empty()
         || alias.len() >= MAX_PATH_BYTES
         || alias.contains(&b'\\')
@@ -433,9 +431,7 @@ impl<'a> PackageInstaller<'a> {
         tree_id: lockfile::tree::Id,
         log_level: Options::LogLevel,
     ) {
-        if cfg!(debug_assertions) {
-            debug_assert!(tree_id != lockfile::tree::INVALID_ID);
-        }
+        debug_assert!(tree_id != lockfile::tree::INVALID_ID);
 
         let tree = &mut self.trees[tree_id as usize];
         let current_count = tree.install_count;
@@ -645,13 +641,13 @@ impl<'a> PackageInstaller<'a> {
 
                 if let Some(err) = bin_linker.err {
                     if log_level != Options::LogLevel::Silent {
-                        manager.log_mut().add_error_fmt_opts(
-                            format_args!(
-                                "Failed to link <b>{}<r>: {}",
-                                bstr::BStr::new(alias),
-                                err.name(),
-                            ),
-                            Default::default(),
+                        bun_ast::add_error_pretty!(
+                            manager.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "Failed to link <b>{}<r>: {}",
+                            bstr::BStr::new(alias),
+                            err.name(),
                         );
                     }
 
@@ -1090,11 +1086,9 @@ impl<'a> PackageInstaller<'a> {
         folder_path: &mut bun_paths::AutoAbsPath,
         log_level: Options::LogLevel,
     ) -> usize {
-        if cfg!(debug_assertions) {
-            debug_assert!(resolution_tag != resolution::Tag::Root);
-            debug_assert!(resolution_tag != resolution::Tag::Workspace);
-            debug_assert!(package_id != 0);
-        }
+        debug_assert!(resolution_tag != resolution::Tag::Root);
+        debug_assert!(resolution_tag != resolution::Tag::Workspace);
+        debug_assert!(package_id != 0);
         let mut count: usize = 0;
         let scripts = 'brk: {
             let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
@@ -1125,9 +1119,7 @@ impl<'a> PackageInstaller<'a> {
             break 'brk temp;
         };
 
-        if cfg!(debug_assertions) {
-            debug_assert!(scripts.filled);
-        }
+        debug_assert!(scripts.filled);
 
         match resolution_tag {
             resolution::Tag::Git | resolution::Tag::Github | resolution::Tag::Root => {
@@ -1507,9 +1499,7 @@ impl<'a> PackageInstaller<'a> {
                     resolution.tag,
                 )
             {
-                if cfg!(debug_assertions) {
-                    debug_assert!(resolution.can_enqueue_install_task());
-                }
+                debug_assert!(resolution.can_enqueue_install_task());
 
                 let context =
                     TaskCallbackContext::DependencyInstallContext(DependencyInstallContext {
@@ -1553,6 +1543,12 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     resolution::Tag::LocalTarball => {
@@ -1579,6 +1575,12 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     resolution::Tag::Npm => {
@@ -1611,6 +1613,12 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     _ => {
@@ -1754,7 +1762,7 @@ impl<'a> PackageInstaller<'a> {
                             Ok(d) => d,
                             Err(err) => {
                                 break 'result package_install::InstallResult::fail(
-                                    err,
+                                    err.into(),
                                     package_install::Step::OpeningCacheDir,
                                     None,
                                 );
@@ -1776,9 +1784,11 @@ impl<'a> PackageInstaller<'a> {
                         // npm packages can declare `file:` paths missing from the published
                         // tarball (e.g. excluded by `files`); nothing to link is not a failure.
                         if let package_install::InstallResult::Failure(f) = &result {
-                            if f.err == bun_core::err!("ENOENT")
-                                || f.err == bun_core::err!("FileNotFound")
-                            {
+                            if matches!(
+                                f.err,
+                                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                                    | crate::Error::FileNotFound
+                            ) {
                                 break 'result package_install::InstallResult::Success;
                             }
                         }
@@ -1960,13 +1970,11 @@ impl<'a> PackageInstaller<'a> {
                     );
                 }
                 package_install::InstallResult::Failure(cause) => {
-                    if cfg!(debug_assertions) {
-                        debug_assert!(
-                            !cause.is_package_missing_from_cache()
-                                || (resolution.tag != resolution::Tag::Symlink
-                                    && resolution.tag != resolution::Tag::Workspace)
-                        );
-                    }
+                    debug_assert!(
+                        !cause.is_package_missing_from_cache()
+                            || (resolution.tag != resolution::Tag::Symlink
+                                && resolution.tag != resolution::Tag::Workspace)
+                    );
 
                     // even if the package failed to install, we still need to increment the install
                     // counter for this tree
@@ -1976,7 +1984,7 @@ impl<'a> PackageInstaller<'a> {
                         log_level,
                     );
 
-                    if cause.err == bun_core::err!("DanglingSymlink") {
+                    if cause.err == crate::Error::DanglingSymlink {
                         bun_core::pretty_errorln!(
                             "<r><red>error<r>: <b>{}<r> \"link:{}\" not found (try running 'bun link' in the intended package's folder)<r>",
                             cause.err.name(),
@@ -1992,7 +2000,11 @@ impl<'a> PackageInstaller<'a> {
                             bstr::BStr::new(alias.slice(string_buf!())),
                         );
                         self.summary.fail += 1;
-                    } else if cause.err == bun_core::err!("AccessDenied") {
+                    } else if matches!(
+                        cause.err,
+                        crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                            | crate::Error::AccessDenied
+                    ) {
                         // there are two states this can happen
                         // - Access Denied because node_modules/ is unwritable
                         // - Access Denied because this specific package is unwritable
@@ -2007,19 +2019,14 @@ impl<'a> PackageInstaller<'a> {
                                 let dir = match lazy_package_dir.get_dir() {
                                     Ok(d) => d,
                                     Err(err) => {
-                                        Output::err_tag(
+                                        Output::err(
                                             "EACCES",
-                                            format_args!(
-                                                "Permission denied while installing <b>{}<r>",
-                                                bstr::BStr::new(
-                                                    self.names[package_id as usize].slice(
-                                                        self.lockfile()
-                                                            .buffers
-                                                            .string_bytes
-                                                            .as_slice()
-                                                    )
+                                            "Permission denied while installing <b>{}<r>",
+                                            (bstr::BStr::new(
+                                                self.names[package_id as usize].slice(
+                                                    self.lockfile().buffers.string_bytes.as_slice(),
                                                 ),
-                                            ),
+                                            ),),
                                         );
                                         if cfg!(debug_assertions) {
                                             Output::err(err, "Failed to stat node_modules", ());
@@ -2030,19 +2037,14 @@ impl<'a> PackageInstaller<'a> {
                                 let stat = match bun_sys::fstat(dir) {
                                     Ok(s) => s,
                                     Err(err) => {
-                                        Output::err_tag(
+                                        Output::err(
                                             "EACCES",
-                                            format_args!(
-                                                "Permission denied while installing <b>{}<r>",
-                                                bstr::BStr::new(
-                                                    self.names[package_id as usize].slice(
-                                                        self.lockfile()
-                                                            .buffers
-                                                            .string_bytes
-                                                            .as_slice()
-                                                    )
+                                            "Permission denied while installing <b>{}<r>",
+                                            (bstr::BStr::new(
+                                                self.names[package_id as usize].slice(
+                                                    self.lockfile().buffers.string_bytes.as_slice(),
                                                 ),
-                                            ),
+                                            ),),
                                         );
                                         if cfg!(debug_assertions) {
                                             Output::err(err, "Failed to stat node_modules", ());
@@ -2077,14 +2079,12 @@ impl<'a> PackageInstaller<'a> {
                             NODE_MODULES_IS_OK.store(true, Ordering::Relaxed);
                         }
 
-                        Output::err_tag(
+                        Output::err(
                             "EACCES",
-                            format_args!(
-                                "Permission denied while installing <b>{}<r>",
-                                bstr::BStr::new(
-                                    self.names[package_id as usize].slice(string_buf!())
-                                ),
-                            ),
+                            "Permission denied while installing <b>{}<r>",
+                            (bstr::BStr::new(
+                                self.names[package_id as usize].slice(string_buf!()),
+                            ),),
                         );
 
                         self.summary.fail += 1;

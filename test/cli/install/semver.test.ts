@@ -241,6 +241,77 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfiesExact("5.0.0-beta.1", "5.0.0", false);
   });
 
+  test("long version components are not treated as wildcards", () => {
+    // A component >20 bytes must parse to its numeric value (or clamp on overflow),
+    // not fall through to a wildcard. node-semver loose mode agrees with all of these.
+    const twenty = Buffer.alloc(20, "9").toString();
+    const twentyOne = Buffer.alloc(21, "9").toString();
+    for (const big of [twenty, twentyOne]) {
+      testSatisfies("^" + big, "1.0.0", false);
+      testSatisfies("^" + big, "5.0.0", false);
+      testSatisfies("~" + big, "1.0.0", false);
+      testSatisfies("~" + big, "5.0.0", false);
+      testSatisfies("~1." + big, "2.0.0", false);
+    }
+    // 31 bytes but value 5: must be Some(5), not wildcard and not Some(0).
+    const padded = Buffer.alloc(30, "0").toString() + "5";
+    testSatisfies("^" + padded, "5.2.0", true);
+    testSatisfies("^" + padded, "0.5.0", false);
+    testSatisfies("^" + padded, "6.0.0", false);
+  });
+
+  test("u64::MAX component does not collapse ^/~/x/hyphen ranges to empty", () => {
+    // Desugaring these range forms builds an exclusive `< {component+1}` upper bound.
+    // At u64::MAX that +1 must not saturate back to MAX (which yields `>=X <X`, an empty range).
+    const M = "18446744073709551615";
+    const M1 = "18446744073709551614";
+
+    // sanity: version is valid and exactly matchable
+    testSatisfies("*", `${M}.0.0`, true);
+    testSatisfies(`=${M}.0.0`, `${M}.0.0`, true);
+    testSatisfies(`>=${M}.0.0`, `${M}.0.0`, true);
+
+    // caret: major / minor (major==0) / patch (major==0,minor==0)
+    testSatisfies(`^${M}`, `${M}.0.0`, true);
+    testSatisfies(`^${M}.2.3`, `${M}.5.0`, true);
+    testSatisfies(`^0.${M}`, `0.${M}.7`, true);
+    testSatisfies(`^0.${M}.3`, `0.${M}.7`, true);
+    testSatisfies(`^0.0.${M}`, `0.0.${M}`, true);
+
+    // tilde: major / minor
+    testSatisfies(`~${M}`, `${M}.0.0`, true);
+    testSatisfies(`~${M}`, `${M}.9.9`, true);
+    testSatisfies(`~1.${M}`, `1.${M}.0`, true);
+    testSatisfies(`~1.${M}.3`, `1.${M}.3`, true);
+    testSatisfies(`~1.${M}.3`, `1.${M}.9`, true);
+
+    // bare partial and x-range (init_wildcard)
+    testSatisfies(M, `${M}.0.0`, true);
+    testSatisfies(`${M}.x`, `${M}.0.0`, true);
+    testSatisfies(`${M}.x`, `${M}.5.0`, true);
+    testSatisfies(`1.${M}`, `1.${M}.0`, true);
+    testSatisfies(`1.${M}.x`, `1.${M}.5`, true);
+
+    // hyphen range right endpoint (partial)
+    testSatisfies(`1.0.0 - ${M}`, `${M}.5.0`, true);
+    testSatisfies(`1.0.0 - ${M}.x`, `${M}.5.0`, true);
+    testSatisfies(`1.0.0 - 1.${M}`, `1.${M}.5`, true);
+    testSatisfies(`1.0.0 - 1.${M}.x`, `1.${M}.5`, true);
+
+    // upper bound is still enforced: the clamped range doesn't leak past its ceiling
+    testSatisfies(`^0.${M}`, `1.0.0`, false);
+    testSatisfies(`^0.0.${M}`, `0.1.0`, false);
+    testSatisfies(`~1.${M}.3`, `2.0.0`, false);
+    testSatisfies(`1.${M}.x`, `2.0.0`, false);
+    testSatisfies(`1.0.0 - 1.${M}`, `2.0.0`, false);
+
+    // control at MAX-1: every shape already worked and still works
+    testSatisfies(`^${M1}`, `${M1}.0.0`, true);
+    testSatisfies(`~${M1}`, `${M1}.0.0`, true);
+    testSatisfies(M1, `${M1}.0.0`, true);
+    testSatisfies(`^${M1}`, `${M}.0.0`, false);
+  });
+
   test("ranges", () => {
     testSatisfies("~1.2.3", "1.2.3", true);
     testSatisfies("~1.2", "1.2.0", true);
@@ -784,6 +855,33 @@ test("a range with a dangling '-' after a skipped tag does not crash the parser"
   expect(JSON.parse(stdout)).toEqual([true, true, false, true, false, true, true]);
   expect(exitCode).toBe(0);
 });
+
+test("a version range made of hundreds of thousands of 'v' or '= ' prefix characters evaluates promptly", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const n = 1000000;
+        const vRun = Buffer.alloc(n, "v").toString();
+        const eqRun = Buffer.alloc(n, "= ").toString();
+        process.stdout.write(
+          JSON.stringify([
+            Bun.semver.satisfies("1.0.0", vRun),
+            Bun.semver.satisfies("1.0.0", eqRun),
+          ]),
+        );
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([true, true]);
+  expect(exitCode).toBe(0);
+}, 30_000);
 
 test("a version range with hundreds of thousands of '||' or AND-ed comparators evaluates without crashing", async () => {
   // Ranges are stored as linked lists: one node per "||" alternative and one

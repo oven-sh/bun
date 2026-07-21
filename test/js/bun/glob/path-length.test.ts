@@ -136,7 +136,7 @@ describe.skipIf(isWindows)("Glob path length", () => {
     expect(scanCode).toBe(0);
   });
 
-  test("self-referential symlink does not overflow path buffer", async () => {
+  test("self-referential symlink terminates without overflowing the path buffer", async () => {
     const root = tmpdirSync("bun-glob-overflow-symlink-");
     const segName = "S".repeat(255);
     try {
@@ -161,11 +161,11 @@ describe.skipIf(isWindows)("Glob path length", () => {
     expect(scanStderr).not.toContain("panic");
     expect(scanStderr).not.toContain("Segmentation fault");
     expect(scanCode).toBe(0);
-    // Each hop through the self-loop appends a 256-byte segment, so after a
-    // few iterations work_item.path exceeds MAX_PATH_BYTES. The walker must
-    // terminate the loop with ENAMETOOLONG instead of copying the oversized
-    // path into its fixed-size PathBuffer.
-    expect(scanStdout.trim()).toBe("ERR:ENAMETOOLONG");
+    // The walker descends a directory symlink that resolves to a directory it
+    // is already inside exactly once, so the scan completes with the symlink
+    // entry and its single nested visit instead of growing work_item.path
+    // toward MAX_PATH_BYTES.
+    expect(scanStdout.trim()).toBe("OK:2");
   });
 
   for (const component of ["..", "."] as const) {

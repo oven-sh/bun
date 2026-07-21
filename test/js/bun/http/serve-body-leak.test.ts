@@ -194,6 +194,70 @@ for (const test_info of [
         process.kill?.();
       }
     },
-    isDebug ? 60_000 : 40_000,
+    // release-asan runs streaming-echo at ~31s median (27-39s over 35 CI runs),
+    // so 40s leaves no margin on a slow runner; give ASAN the same 60s as debug.
+    isDebug || isASAN ? 60_000 : 40_000,
   );
 }
+
+// A client disconnecting while a direct response stream is suspended inside pull() must not
+// leak the native response sink (nothing else can ever free it once the request context is
+// recycled). On ASAN builds LeakSanitizer reports it as a direct leak at exit; the assertion
+// compares leaked bytes between a small and a large run so unrelated one-time at-exit
+// allocations cannot mask or fake the signal. https://github.com/oven-sh/bun/pull/33193
+it("aborting direct-stream responses parked in pull() does not leak the native sink", async () => {
+  const runAborts = async (count: number) => {
+    const script = `
+      const parked = [];
+      const server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        async fetch() {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(c) {
+                c.write("part1");
+                await c.flush();
+                await new Promise(resolve => parked.push(resolve));
+              },
+            }),
+            { headers: { "Content-Length": "100000" } },
+          );
+        },
+      });
+      for (let i = 0; i < ${count}; i++) {
+        const ac = new AbortController();
+        const res = await fetch(server.url, { signal: ac.signal });
+        const reader = res.body.getReader();
+        await reader.read();
+        ac.abort();
+        await reader.closed.catch(() => {});
+      }
+      // The aborted requests' pull() calls stay suspended: nothing may rely on them resuming.
+      server.stop(true);
+      Bun.gc(true);
+      await Bun.sleep(20);
+      Bun.gc(true);
+      console.log("done");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        // On ASAN builds, make the subprocess report leaks at exit (inert elsewhere).
+        ASAN_OPTIONS: "detect_leaks=1",
+        LSAN_OPTIONS: `suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("done");
+    const leaked = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
+    return leaked ? Number(leaked[1]) : 0;
+  };
+  const [small, large] = [await runAborts(2), await runAborts(22)];
+  // 20 extra aborted requests leaked ~176 bytes each before the fix.
+  expect(large - small).toBeLessThan(1000);
+});

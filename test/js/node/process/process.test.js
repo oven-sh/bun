@@ -137,6 +137,64 @@ it("process.hrtime.bigint()", () => {
   expect(end > start).toBe(true);
 });
 
+// Runs in a subprocess because passing a non-numeric element used to trip an
+// assertion in the int64 conversion, which aborts assert-enabled builds.
+it("process.hrtime() coerces tuple elements with ToNumber like node", async () => {
+  const fixture = /* js */ `
+    const classify = v => {
+      if (typeof v !== "number") return typeof v;
+      if (Number.isNaN(v)) return "NaN";
+      if (!Number.isFinite(v)) return String(v);
+      if (!Number.isInteger(v)) return "fraction:" + Math.abs(v % 1);
+      return v < 0 ? "negative" : "integer";
+    };
+    const probe = time => {
+      try {
+        return process.hrtime(time).map(classify);
+      } catch (e) {
+        return e.name;
+      }
+    };
+    console.log(
+      JSON.stringify({
+        strings: probe(["a", "b"]),
+        objects: probe([{}, {}]),
+        sparse: probe(new Array(2)),
+        undefineds: probe([undefined, undefined]),
+        nulls: probe([null, null]),
+        numericStrings: probe(["0", "0"]),
+        fractions: probe([-1, 0.5]),
+        bigints: probe([1n, 2n]),
+        symbols: probe([Symbol("x"), 0]),
+      }),
+    );
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim() || stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      strings: ["NaN", "NaN"],
+      objects: ["NaN", "NaN"],
+      sparse: ["NaN", "NaN"],
+      undefineds: ["NaN", "NaN"],
+      nulls: ["integer", "integer"],
+      numericStrings: ["integer", "integer"],
+      fractions: ["integer", "fraction:0.5"],
+      bigints: "TypeError",
+      symbols: "TypeError",
+    }),
+    exitCode: 0,
+  });
+});
+
 it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;
@@ -222,7 +280,7 @@ it("process.version is set", () => {
   expect(process.version).not.toInclude("unset");
 });
 
-it.todo("process.argv0", () => {
+it("process.argv0", () => {
   expect(basename(process.argv0)).toBe(basename(process.argv[0]));
 });
 
@@ -275,10 +333,10 @@ it("process.versions", () => {
   const expectedVersions = {
     boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "afb41757285694f832e7a2f164d35f5717457f96",
+    mimalloc: "acd9924a0af3ba7c341910b48815106f2944ffa0",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
-    tinycc: "12882eee073cfe5c7621bcfadf679e1372d4537b",
+    tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
     lolhtml: "77127cd2b8545998756e8d64e36ee2313c4bb312",
     ares: "3ac47ee46edd8ea40370222f91613fc16c434853",
     libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
@@ -294,6 +352,10 @@ it("process.versions", () => {
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");
   expect(process.versions.usockets).toBe(process.versions.uwebsockets);
+
+  // Node.js exposes the bundled SQLite version here; Bun should too.
+  expect(process.versions).toHaveProperty("sqlite");
+  expect(process.versions.sqlite).toMatch(/^3\.\d+\.\d+$/);
 });
 
 it("process.config", () => {
@@ -490,6 +552,163 @@ describe.concurrent(() => {
       expect(stderr).toInclude("error: boom");
       expect(stdout).toBeEmpty();
     });
+
+    it("throwing inside runs uncaughtExceptionMonitor and uncaughtException", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtExceptionMonitor", (e, origin) => console.log("monitor", e.message, origin));
+           process.on("uncaughtException", e => console.log("uncaughtException", e.message));
+           let thrown = false;
+           process.on("beforeExit", () => { if (!thrown) { thrown = true; throw new Error("boom"); } });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("monitor boom uncaughtException\nuncaughtException boom\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
+    });
+
+    it("throwing inside runs the uncaughtException capture callback", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.setUncaughtExceptionCaptureCallback(e => console.log("captured", e.message));
+           let thrown = false;
+           process.on("beforeExit", () => { if (!thrown) { thrown = true; throw new Error("boom"); } });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("captured boom\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a throw from work scheduled inside beforeExit still reaches uncaughtException", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtException", e => console.log("uncaughtException", e.message));
+           let scheduled = false;
+           process.on("beforeExit", () => {
+             if (scheduled) return;
+             scheduled = true;
+             setImmediate(() => { throw new Error("late"); });
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("uncaughtException late\n");
+      expect(stderr).not.toInclude("error: late");
+      expect(exitCode).toBe(0);
+    });
+
+    it("throwing inside a worker runs that worker's uncaughtException handler", async () => {
+      using dir = tempDir("process-beforeexit-worker", {
+        "worker.js": `process.on("uncaughtException", e => console.log("worker uncaughtException", e.message));
+                      let thrown = false;
+                      process.on("beforeExit", () => { if (!thrown) { thrown = true; throw new Error("boom"); } });`,
+        "index.js": `const { Worker } = require("node:worker_threads");
+                     const worker = new Worker(require("path").join(__dirname, "worker.js"));
+                     worker.on("exit", code => console.log("worker exit", code));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "index.js")],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("worker uncaughtException boom\nworker exit 0\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("is skipped after a fatal uncaught exception", async () => {
+      // Node's fatal-exception path is effectively process.exit(1); 'beforeExit'
+      // is only emitted on a natural drain, never for conditions causing
+      // explicit termination.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => console.log("beforeExit"));
+           process.on("exit", c => console.log("exit", c));
+           setTimeout(() => { throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("exit 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("still fires when an uncaughtException listener handled the throw", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtException", e => console.log("caught", e.message));
+           process.on("beforeExit", c => console.log("beforeExit", c));
+           process.on("exit", c => console.log("exit", c));
+           setTimeout(() => { throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("caught boom\nbeforeExit 0\nexit 0\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a throw from an exit listener after a fatal throw still stops subsequent exit listeners", async () => {
+      // Skipping the beforeExit dispatch also skips the call that arms
+      // exit_on_uncaught_exception; on_before_exit() arms it itself so a throw
+      // from 'exit' still short-circuits the remaining listeners like Node.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("exit", c => { console.log("first", c); throw new Error("b"); });
+           process.on("exit", c => console.log("second", c));
+           setTimeout(() => { throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("first 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("exits 1, not 7, when an exit listener also throws and nothing handles it", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => { throw new Error("a"); });
+           process.on("exit", () => { throw new Error("b"); });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stderr).toInclude("error: a");
+      expect(stdout).toBeEmpty();
+      // 7 is node's "the uncaughtException handler itself threw"; there is no handler here.
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("process.onExit", () => {
@@ -503,6 +722,24 @@ describe.concurrent(() => {
       expect(exitCode).toBe(1);
       expect(stderr).toInclude("error: boom");
       expect(stdout).toBeEmpty();
+    });
+
+    it("throwing inside runs uncaughtExceptionMonitor and uncaughtException", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtExceptionMonitor", (e, origin) => console.log("monitor", e.message, origin));
+           process.on("uncaughtException", e => console.log("uncaughtException", e.message));
+           process.on("exit", () => { throw new Error("boom"); });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("monitor boom uncaughtException\nuncaughtException boom\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -607,6 +844,70 @@ describe.concurrent(() => {
     it("process.getuid", () => {
       expect(typeof process.getuid()).toBe("number");
     });
+
+    // Regression: on Linux, glibc/musl implement the set*id() family by broadcasting a
+    // realtime signal to every thread and blocking on a barrier. If JSC's GC (or the
+    // bmalloc scavenger) had signal-suspended a thread, it could never ack the barrier
+    // and the whole process wedged at 0% CPU. The race is probabilistic, so hammer
+    // seteuid under GC pressure from many processes at once and require each to exit.
+    it.skipIf(process.platform !== "linux" || process.getuid() !== 0)(
+      "seteuid under GC pressure does not deadlock",
+      async () => {
+        using dir = tempDir("seteuid-deadlock", {
+          "hammer.js": `
+            const dec = new TextDecoder();
+            const buf = new Uint8Array(60000).fill(65);
+            let n = 0;
+            const t0 = Date.now();
+            const runMs = Number(process.env.HAMMER_MS);
+            function chunk() {
+              for (let j = 0; j < 400; j++) {
+                process.seteuid(65534);
+                let s = "";
+                for (let i = 0; i < 20; i++) s += dec.decode(buf).slice(0, 1000 + (n % 7));
+                process.seteuid(0);
+                if (s.length < 0) console.log(s.length);
+                n++;
+              }
+              if (Date.now() - t0 < runMs) setImmediate(chunk);
+              else process.exit(0);
+            }
+            chunk();
+          `,
+        });
+        const hammerPath = join(String(dir), "hammer.js");
+        const CONCURRENCY = 12;
+        const ROUNDS = 3;
+        const HAMMER_MS = 8_000;
+        const DEADLINE_MS = 30_000;
+
+        const runOne = async () => {
+          const proc = Bun.spawn({
+            cmd: [bunExe(), hammerPath],
+            env: { ...bunEnv, HAMMER_MS: String(HAMMER_MS) },
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          const { promise, resolve } = Promise.withResolvers();
+          const timer = setTimeout(() => resolve("deadlocked"), DEADLINE_MS);
+          const outcome = await Promise.race([proc.exited.then(() => "exited"), promise]);
+          clearTimeout(timer);
+          // A wedged process sits at 0% CPU forever; a healthy one exits on its own.
+          if (outcome === "deadlocked") {
+            proc.kill("SIGKILL");
+            return { deadlocked: true, exitCode: null };
+          }
+          return { deadlocked: false, exitCode: proc.exitCode };
+        };
+
+        const expected = Array.from({ length: CONCURRENCY }, () => ({ deadlocked: false, exitCode: 0 }));
+        for (let round = 0; round < ROUNDS; round++) {
+          const results = await Promise.all(Array.from({ length: CONCURRENCY }, runOne));
+          expect(results).toEqual(expected);
+        }
+      },
+      120_000,
+    );
   } else {
     it("process.getegid, process.geteuid, process.getgid, process.getgroups, process.getuid, process.getuid are not implemented on Windows", () => {
       expect(process.getegid).toBeUndefined();
@@ -744,6 +1045,34 @@ describe.concurrent(() => {
     expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
   });
 
+  it("dlopen rejects over-length paths with ERR_DLOPEN_FAILED", async () => {
+    // Spawn so an unfixed build crashing doesn't take the whole suite down.
+    // On Windows the path is widened into a 32767-unit WPathBuffer; an
+    // over-length path must come back as an error, not a Rust panic across
+    // the extern "C" boundary. POSIX already surfaces dlerror() here.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+          process.dlopen({ exports: {} }, Buffer.alloc(40000, "x").toString());
+          console.log("FAIL: did not throw");
+        } catch (e) {
+          console.log("CODE:" + e.code);
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "CODE:ERR_DLOPEN_FAILED",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("dlopen accepts file: URLs", () => {
     const mod = { exports: {} };
     try {
@@ -783,6 +1112,43 @@ describe.concurrent(() => {
     it("ownKeys trap windows process.env", () => {
       expect(() => Object.keys(process.env)).not.toThrow();
       expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
+    });
+
+    // The get trap used to uppercase every string key, so inherited
+    // Object.prototype methods and own as-is props came back undefined —
+    // node's process-env trace fixture crashed on
+    // `process.env.hasOwnProperty('BAZ')`.
+    it("windows process.env exposes prototype methods and own props alongside case-insensitive vars", () => {
+      process.env.BUN_TEST_ENV_PROXY = "value";
+      try {
+        // Case-insensitive env-var access still wins.
+        expect(process.env.bun_test_env_proxy).toBe("value");
+        expect(process.env.Bun_Test_Env_Proxy).toBe("value");
+        // Inherited Object.prototype methods are callable, like node.
+        expect(typeof process.env.hasOwnProperty).toBe("function");
+        expect(process.env.hasOwnProperty("BUN_TEST_ENV_PROXY")).toBe(true);
+        expect(process.env.hasOwnProperty("BUN_TEST_ENV_PROXY_MISSING")).toBe(false);
+        expect(typeof process.env.toString).toBe("function");
+        expect("hasOwnProperty" in process.env).toBe(true);
+        // Own as-is properties (toJSON powers JSON.stringify(process.env)).
+        expect(typeof process.env.toJSON).toBe("function");
+        expect(JSON.parse(JSON.stringify(process.env)).BUN_TEST_ENV_PROXY).toBe("value");
+        // toJSON must keep the original-case key names, not the canonical
+        // UPPERCASE storage keys (children echoing their env over IPC or
+        // JSON.stringify must see the same casing the parent saw).
+        process.env.Bun_Test_Env_Proxy_Mixed = "mixed";
+        try {
+          const json = JSON.parse(JSON.stringify(process.env));
+          expect(json.Bun_Test_Env_Proxy_Mixed).toBe("mixed");
+          expect(json.BUN_TEST_ENV_PROXY_MIXED).toBeUndefined();
+        } finally {
+          delete process.env.Bun_Test_Env_Proxy_Mixed;
+        }
+        // Enumeration still works and sees the var.
+        expect(Object.keys(process.env)).toContain("BUN_TEST_ENV_PROXY");
+      } finally {
+        delete process.env.BUN_TEST_ENV_PROXY;
+      }
     });
   }
 
@@ -1175,7 +1541,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todo("exitWithUndefinedFatalException", async () => {
+  it("exitWithUndefinedFatalException", async () => {
     await runInlineFixture(
       `
       process._fatalException = undefined;
@@ -1298,4 +1664,35 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   const child = spawnSync({ cmd, env });
   const got = JSON.parse(child.stdout.toString().trim());
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
+});
+
+describe("NODE_NO_WARNINGS", () => {
+  // Node suppresses only on the exact string "1" (test-env-var-no-warnings.js).
+  // Bun's generic boolean env parse used to accept "true", "01", etc.
+  async function warn(value) {
+    const env = { ...bunEnv };
+    delete env.NODE_NO_WARNINGS;
+    if (value !== undefined) env.NODE_NO_WARNINGS = value;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'process.emitWarning("foo")'],
+      env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
+    expect(exitCode).toBe(0);
+    return stderr;
+  }
+
+  it.concurrent.each(["true", "0", "01", "2", "foo", undefined])(
+    'does not suppress warnings for NODE_NO_WARNINGS="%s"',
+    async value => {
+      expect(await warn(value)).toMatch(/Warning: foo/);
+    },
+  );
+
+  it.concurrent('suppresses warnings for NODE_NO_WARNINGS="1"', async () => {
+    expect(await warn("1")).not.toMatch(/Warning: foo/);
+  });
 });

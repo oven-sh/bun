@@ -261,6 +261,12 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
  * handshake/secureConnection event. openssl.c re-enters here once that
  * graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
+#ifdef LIBUS_USE_LIBUV
+    if (s->fin_deferred) {
+        s->fin_deferred = 0;
+        s->group->loop->data.fin_deferred_count--;
+    }
+#endif
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
      * keylog, ...) destroyed this socket. Closing now frees the SSL and
@@ -396,6 +402,15 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
 #endif
 }
 
+/* Re-arm writable for a backpressured write without resuming the read side of
+ * a paused socket: us_poll_change sets absolute flags, so including READABLE
+ * unconditionally would silently undo us_socket_pause mid-backpressure and
+ * deliver data the caller asked to defer. */
+static void us_internal_rearm_writable(struct us_socket_t *s) {
+    us_poll_change(&s->p, s->group->loop,
+                   LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
+}
+
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;
@@ -403,7 +418,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        us_internal_rearm_writable(s);
     }
 
     return written < 0 ? 0 : written;
@@ -433,6 +448,8 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.is_ipc = ipc;
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
+    s->flags.last_write_failed = 0;
+    s->unclassified_send_failures = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -475,11 +492,41 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
         s->flags.last_write_failed = 1;
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        us_internal_rearm_writable(s);
     }
 
     return written < 0 ? 0 : written;
 }
+
+#ifndef _WIN32
+/* send() errnos that mean the peer or the path to it is gone: no retry can
+ * ever succeed, so they are reported to the caller immediately (libuv fails
+ * the write request for these in uv__try_write, unix/stream.c; only the
+ * EAGAIN/ENOBUFS class waits for another writable event). Mirrored by the
+ * blanket `result < -1` fatal handling in h2_frame_parser's
+ * is_transport_fatal_write_result - classification lives here only. */
+static int us_internal_send_errno_is_peer_gone(int e) {
+    switch (e) {
+    case EPIPE:
+    case ECONNRESET:
+    case ECONNABORTED:
+    case ENOTCONN:
+    case ETIMEDOUT:
+    case ENETDOWN:
+    case ENETUNREACH:
+    case EHOSTUNREACH:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* One retry runs per writable dispatch (one event-loop iteration), so 32
+ * consecutive failures is far beyond any observed transient race window
+ * (the macOS EPROTOTYPE race resolves within a dispatch or two) while still
+ * surfacing a genuinely wedged transport within microseconds. */
+#define US_UNCLASSIFIED_SEND_RETRY_LIMIT 32
+#endif
 
 int us_socket_write_check_error(struct us_socket_t *s, const char *data, int length, int *fatal_write_error) {
     if (fatal_write_error) *fatal_write_error = 0;
@@ -494,21 +541,62 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written < 0) {
         /* bsd_send already retries EINTR; bsd_would_block() reads errno on
-         * POSIX and WSAGetLastError() on Windows. */
-        if (bsd_would_block()) {
+         * POSIX and WSAGetLastError() on Windows. ENOBUFS/ENOMEM are
+         * transient kernel resource exhaustion on a healthy connection -
+         * classifying them as fatal made the node:net drain path drop the
+         * buffered bytes on a socket that kept flowing. */
+        if (bsd_would_block() || bsd_send_is_transient_error()) {
             s->flags.last_write_failed = 1;
-            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            us_internal_rearm_writable(s);
             return 0;
         }
-        /* Fatal send error (EPIPE/ECONNRESET after the peer vanished): report
-         * it to callers that opt in instead of masking it as would-block, and
-         * do not keep polling writable - retrying can never succeed. */
-        if (fatal_write_error) *fatal_write_error = 1;
+#ifndef _WIN32
+        /* Anything else that is not a known peer-gone errno gets a BOUNDED
+         * retry through the same rearm/writable machinery as would-block.
+         * Kernels return racy, non-terminal errnos from send() on sockets
+         * that are still perfectly usable - macOS EPROTOTYPE while the
+         * connection is concurrently mutating is the canonical case, and
+         * libuv retries it (RETRY_ON_WRITE_ERROR,
+         * https://github.com/libuv/libuv/blob/v1.x/src/unix/stream.c) -
+         * so failing the write on first sight killed live connections.
+         * But the retry must not be unbounded: an errno that persists across
+         * many consecutive writable dispatches with no successful send in
+         * between means the transport is dead in a way the kernel will not
+         * name on the write side, and silently re-arming forever jams the
+         * connection (buffered bytes never drain and no error ever
+         * surfaces). After the limit, report the errno like the peer-gone
+         * class so the caller can fail the write. */
+        if (!us_internal_send_errno_is_peer_gone(errno) &&
+            s->unclassified_send_failures < US_UNCLASSIFIED_SEND_RETRY_LIMIT) {
+            s->unclassified_send_failures++;
+            s->flags.last_write_failed = 1;
+            us_internal_rearm_writable(s);
+            return 0;
+        }
+        /* Fatal send error: report the errno to callers that opt in and stop
+         * polling writable - retrying can never succeed. */
+        if (fatal_write_error) *fatal_write_error = errno;
+#else
+        /* Windows: report the raw (positive) WSA code. The JS layer already
+         * traffics in raw negative WSA values on this platform (see
+         * SocketEmitEndNT / failWrite, which shape unnameable ones as
+         * ECONNRESET), and a real code keeps fatal sends distinguishable from
+         * the legacy -1 closed/shutdown sentinel so the h2 parser can latch
+         * them (flood tests hung on Windows because a fatal send looked like
+         * backpressure). Keep 1 as the floor for a zero/garbage WSA value.
+         * See a5e7ba5905 before widening what counts as fatal
+         * (drain-into-RST on test-http-no-content-length). */
+        if (fatal_write_error) {
+            int wsa_send_error = WSAGetLastError();
+            *fatal_write_error = wsa_send_error > 1 ? wsa_send_error : 1;
+        }
+#endif
         return 0;
     }
+    s->unclassified_send_failures = 0;
     if (written != length) {
         s->flags.last_write_failed = 1;
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        us_internal_rearm_writable(s);
     }
     return written;
 }
@@ -525,7 +613,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
     if (written != (ssize_t)total) {
         s->flags.last_write_failed = 1;
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        us_internal_rearm_writable(s);
     }
 
     return written < 0 ? 0 : (int)written;
@@ -544,7 +632,7 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
         s->flags.last_write_failed = 1;
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        us_internal_rearm_writable(s);
     }
 
     return written < 0 ? 0 : written;
@@ -581,7 +669,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 
     if (sent != length) {
         s->flags.last_write_failed = 1;
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        us_internal_rearm_writable(s);
     }
 
     return sent < 0 ? 0 : sent;
@@ -751,6 +839,14 @@ void us_socket_pause(struct us_socket_t *s) {
 }
 
 void us_socket_resume(struct us_socket_t *s) {
+#ifdef LIBUS_USE_LIBUV
+    /* Reads flow again: normal delivery discovers the deferred FIN (and any
+     * reset behind it), so the sweep no longer owns this socket. */
+    if (s->fin_deferred) {
+        s->fin_deferred = 0;
+        s->group->loop->data.fin_deferred_count--;
+    }
+#endif
     if (!s->flags.is_paused) return;
     s->flags.is_paused = 0;
     // closed cannot be resumed

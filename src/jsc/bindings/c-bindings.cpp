@@ -233,25 +233,21 @@ extern "C" size_t Bun__memoryFootprint()
 #define NS_PER_HNS (100ULL) // NS = nanoseconds
 #define NS_PER_SEC (MS_PER_SEC * US_PER_MS * NS_PER_US)
 
-extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
+extern "C" void clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 {
-    static LARGE_INTEGER ticksPerSec;
+    // C++11 thread-safe static init: Timespec::now() runs on multiple threads.
+    // QueryPerformanceFrequency is documented to always succeed on Windows XP+.
+    static const LARGE_INTEGER ticksPerSec = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f;
+    }();
+
     LARGE_INTEGER ticks;
-
-    if (!ticksPerSec.QuadPart) {
-        QueryPerformanceFrequency(&ticksPerSec);
-        if (!ticksPerSec.QuadPart) {
-            errno = ENOTSUP;
-            return -1;
-        }
-    }
-
     QueryPerformanceCounter(&ticks);
 
     *tv_sec = (int64_t)(ticks.QuadPart / ticksPerSec.QuadPart);
     *tv_nsec = (int64_t)(((ticks.QuadPart % ticksPerSec.QuadPart) * NS_PER_SEC) / ticksPerSec.QuadPart);
-
-    return 0;
 }
 
 extern "C" void windows_enable_stdio_inheritance()
@@ -340,16 +336,27 @@ extern "C" void on_before_reload_process_linux()
 // Lazily heap-allocated so it doesn't land in the .tls section on Windows
 // (PE has no TLS BSS; a static thread_local char[65536] ships as 64 KB of
 // zeros in bun.exe and is copied into every thread's TLS block at creation).
-// unique_ptr so the allocation is released when a Worker thread exits —
-// thread_local destructors run via __cxa_thread_atexit and are unaffected
-// by -fno-c++-static-destructors.
-static char* shared_header_buffer_get()
+static std::unique_ptr<char[]>& shared_header_buffer_slot()
 {
     static thread_local std::unique_ptr<char[]> buffer;
+    return buffer;
+}
+
+static char* shared_header_buffer_get()
+{
+    auto& buffer = shared_header_buffer_slot();
     if (!buffer) [[unlikely]] {
         buffer.reset(new char[LSHPACK_MAX_HEADER_SIZE]);
     }
     return buffer.get();
+}
+
+// A Worker returns out of shutdown() instead of calling pthread_exit, and the process can exit
+// before its TLS destructors run, so the worker releases this explicitly at teardown. The getter
+// re-allocates on demand.
+extern "C" void Bun__freeSharedHeaderBufferForThreadExit()
+{
+    shared_header_buffer_slot().reset();
 }
 
 extern "C" {

@@ -60,22 +60,27 @@ pub enum Mode {
 }
 
 struct Sendfile {
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     socket_fd: Fd,
     remain: u64,
     offset: u64,
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     has_set_on_writable: bool,
 }
 
+#[allow(
+    clippy::derivable_impls,
+    reason = "only derivable where the linux/android-gated fields are absent; `Fd` has no \
+              `Default` impl, so `#[derive(Default)]` would not compile on linux/android"
+)]
 impl Default for Sendfile {
     fn default() -> Self {
         Self {
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             socket_fd: Fd::INVALID,
             remain: 0,
             offset: 0,
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             has_set_on_writable: false,
         }
     }
@@ -165,11 +170,11 @@ impl FileResponseStream {
 
         if use_sendfile {
             this.sendfile = Sendfile {
-                #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 socket_fd: opts.resp.get_native_handle(),
                 offset: opts.offset,
                 remain: opts.length.expect("can_sendfile gates None"),
-                #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 has_set_on_writable: false,
             };
             this.resp.prepare_for_sendfile();
@@ -402,55 +407,13 @@ impl FileResponseStream {
                 }
             }
         }
-        #[cfg(target_os = "macos")]
-        loop {
-            let mut sbytes: libc::off_t =
-                i64::try_from(self.sendfile.remain.min(i32::MAX as u64)).expect("int cast");
-            // SAFETY: both fds are valid open file descriptors owned by `self`;
-            // `sbytes` is a stack local; hdtr is null per spec.
-            let errno = sys::get_errno(unsafe {
-                sys::c::sendfile(
-                    self.fd.native(),
-                    self.sendfile.socket_fd.native(),
-                    i64::try_from(self.sendfile.offset).expect("int cast"),
-                    &raw mut sbytes,
-                    core::ptr::null_mut(),
-                    0,
-                )
-            });
-            let sent: u64 = u64::try_from(sbytes).expect("int cast");
-            self.sendfile.offset += sent;
-            self.sendfile.remain = self.sendfile.remain.saturating_sub(sent);
-
-            match errno {
-                sys::E::SUCCESS => {
-                    if self.sendfile.remain == 0 || sent == 0 {
-                        self.end_sendfile();
-                        return false;
-                    }
-                    return self.arm_sendfile_writable();
-                }
-                sys::E::EINTR => continue,
-                sys::E::EAGAIN => return self.arm_sendfile_writable(),
-                sys::E::EPIPE | sys::E::ENOTCONN => {
-                    self.end_sendfile();
-                    return false;
-                }
-                _ => {
-                    self.fail_with(
-                        sys::Error::from_code(errno, sys::Tag::sendfile).with_fd(self.fd),
-                    );
-                    return false;
-                }
-            }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             unreachable!() // can_sendfile gates this
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn arm_sendfile_writable(&mut self) -> bool {
         bun_output::scoped_log!(FileResponseStream, "armSendfileWritable");
         if !self.sendfile.has_set_on_writable {
@@ -467,7 +430,7 @@ impl FileResponseStream {
         true
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn end_sendfile(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "endSendfile");
         if self.state.contains(State::RESPONSE_DONE) {
@@ -594,12 +557,15 @@ impl Drop for FileResponseStream {
 }
 
 fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> bool {
-    #[cfg(windows)]
+    // Matches the cfg on `on_sendfile`. macOS is excluded: XNU's sendfile can
+    // sleep uninterruptibly under mbuf pressure, leaving the process unkillable;
+    // the BufferedReader path stays non-blocking.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = (resp, file_type, length);
         return false;
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // sendfile() needs a real socket fd; SSL writes go through BIO and H3
         // through lsquic stream frames — neither has one.

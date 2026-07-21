@@ -660,7 +660,7 @@ test("new Request(request) with a locked stream body throws a catchable TypeErro
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-    stdout: ["caught TypeError: ReadableStream is locked", "done"],
+    stdout: ["caught TypeError: Invalid state: ReadableStream is locked", "done"],
     stderr: "",
     exitCode: 0,
   });
@@ -859,6 +859,197 @@ describe("clone() throws when the body is disturbed or locked", () => {
     expect(response.body!.locked).toBe(false);
     const cloned = response.clone();
     expect(await Promise.all([response.text(), cloned.text()])).toEqual(["hello world", "hello world"]);
+  });
+});
+
+// https://fetch.spec.whatwg.org/#concept-body-clone: clone() tees the body
+// stream and *replaces* this's body stream with one tee branch. If `.body`
+// was observed before the clone, the original's `.body` must become a fresh
+// branch carrying every byte; the pre-clone stream object becomes the (now
+// locked) tee source. The `if (res.body) { cache.put(res.clone()); use
+// res.body }` middleware shape depends on this.
+describe.concurrent("clone() after `.body` was observed returns a fresh tee branch for both sides", () => {
+  async function drain(stream: ReadableStream<Uint8Array>): Promise<number> {
+    let n = 0;
+    for await (const chunk of stream) n += chunk.byteLength;
+    return n;
+  }
+
+  type Observed = { before: ReadableStream; after: ReadableStream; cloned: Request | Response };
+
+  function observeThenClone(target: Request | Response): Observed {
+    const before = target.body!;
+    expect(before.locked).toBe(false);
+    expect(target.bodyUsed).toBe(false);
+
+    const cloned = target.clone();
+    const after = target.body!;
+
+    // Spec: .body is a new tee branch; the pre-clone stream is the tee
+    // source and is now locked.
+    expect(after).not.toBe(before);
+    expect(before.locked).toBe(true);
+    expect(target.bodyUsed).toBe(false);
+    return { before, after, cloned };
+  }
+
+  async function checkBytes({ after, cloned }: Observed, n: number) {
+    const [origBytes, cloneBytes] = await Promise.all([drain(after), drain(cloned.body!)]);
+    expect({ origBytes, cloneBytes }).toEqual({ origBytes: n, cloneBytes: n });
+  }
+
+  // Each body type hits a different internal representation at clone() time:
+  //   - fetch() with the full body buffered → InternalBlob, then .body
+  //     materializes a Blob-backed stream (the reported bug)
+  //   - new Response(string) → WTFStringImpl, then .body materializes a
+  //     Blob-backed stream
+  //   - new Response(Uint8Array) → Blob, then .body materializes a
+  //     Blob-backed stream
+  //   - new Response(ReadableStream) → Locked with a user stream already
+  //     rooted in the JS-side stream slot
+  const N = 8192;
+  const payload = Buffer.alloc(N, "a");
+  const cases: Array<[string, () => Promise<Request | Response>]> = [
+    [
+      "fetch() Response with a buffered body",
+      async () => {
+        // `using` on the outer server closes it after fetch() returns; the
+        // whole body has been received by then.
+        await using server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(payload, { headers: { "content-length": String(N) } }),
+        });
+        return await fetch(server.url);
+      },
+    ],
+    ["Response with a string body", async () => new Response(payload.toString("latin1"))],
+    ["Response with a Uint8Array body", async () => new Response(payload)],
+    [
+      "Response with a user ReadableStream body",
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(Uint8Array.from(payload));
+              controller.close();
+            },
+          }),
+        ),
+    ],
+    [
+      "Request with a string body",
+      async () =>
+        new Request("http://example.com/", {
+          method: "POST",
+          body: payload.toString("latin1"),
+        }),
+    ],
+    [
+      "Request with a user ReadableStream body",
+      async () =>
+        new Request("http://example.com/", {
+          method: "POST",
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(Uint8Array.from(payload));
+              controller.close();
+            },
+          }),
+          // @ts-expect-error duplex
+          duplex: "half",
+        }),
+    ],
+  ];
+
+  for (const [label, make] of cases) {
+    test(`${label}: reading .body after observe+clone yields the full payload on both sides`, async () => {
+      await checkBytes(observeThenClone(await make()), N);
+    });
+
+    test(`${label}: .text() after observe+clone yields the full payload on both sides`, async () => {
+      const target = await make();
+      void target.body; // observe only; no reader, no lock
+      const cloned = target.clone();
+      const [origText, cloneText] = await Promise.all([target.text(), cloned.text()]);
+      expect(origText.length).toBe(N);
+      expect(cloneText.length).toBe(N);
+    });
+  }
+
+  // `routes:` handlers receive a BunRequest subclass whose own `clone` is a
+  // separate native entry point (JSBunRequest::clone -> Request__clone); it
+  // must repoint the source's cached `.body` the same way.
+  test("Bun.serve routes: BunRequest observe+clone yields a fresh tee branch carrying the full payload", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/p/:id": async (req: Request) => {
+          try {
+            await checkBytes(observeThenClone(req), N);
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+          return new Response("ok");
+        },
+      },
+    });
+    await fetch(new URL("/p/1", server.url), { method: "POST", body: payload });
+    await promise;
+  });
+
+  test("fetch() Response: second clone after observe still yields full payload", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(payload),
+    });
+    const response = await fetch(server.url);
+    void response.body;
+    const c1 = response.clone();
+    void response.body;
+    const c2 = response.clone();
+    const [orig, b1, b2] = await Promise.all([drain(response.body!), drain(c1.body!), drain(c2.body!)]);
+    expect({ orig, b1, b2 }).toEqual({ orig: N, b1: N, b2: N });
+  });
+});
+
+// The two-arg `new Request(src, init)` constructor tees the source body via a
+// separate path from single-arg / .clone(); with a user ReadableStream body
+// (migrated into the source wrapper's stream cache at construction) it must
+// consult that cache instead of teeing the now-empty native slot, or the
+// derived request's body is a branch of a disconnected stream and reads hang.
+// After the tee, the source's cached stream must also be repointed to its own
+// branch so reading the source still works.
+test("new Request(src, init) with a user ReadableStream body: both derived and source read the bytes", async () => {
+  const stream = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
+    });
+  // @ts-expect-error duplex
+  const make = () => new Request("http://example.com/", { method: "POST", body: stream(), duplex: "half" });
+  const bytes = async (r: Request | Response) => [...new Uint8Array(await r.arrayBuffer())];
+
+  const twoArgSrc = make();
+  const twoArg = new Request(twoArgSrc, { headers: { "x-a": "1" } });
+  const oneArgSrc = make();
+  const oneArg = new Request(oneArgSrc);
+  // Bun extension: a Response as the second argument contributes its body via
+  // the sibling Response-source branch in construct_into.
+  const responseSrc = new Response(stream());
+  // @ts-expect-error Bun accepts a Response as init
+  const fromResponse = new Request("http://example.com/", responseSrc);
+  expect({
+    twoArg: { derived: await bytes(twoArg), src: await bytes(twoArgSrc) },
+    oneArg: { derived: await bytes(oneArg), src: await bytes(oneArgSrc) },
+    fromResponse: { derived: await bytes(fromResponse), src: await bytes(responseSrc) },
+  }).toEqual({
+    twoArg: { derived: [1, 2, 3], src: [1, 2, 3] },
+    oneArg: { derived: [1, 2, 3], src: [1, 2, 3] },
+    fromResponse: { derived: [1, 2, 3], src: [1, 2, 3] },
   });
 });
 

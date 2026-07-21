@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 use core::ffi::c_int;
 
 use crate::BoundedArray;
-use crate::Error;
+use crate::CrateError as Error;
 use bun_alloc::AllocError;
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
@@ -233,7 +233,7 @@ pub mod unicode {
 /// (invalid lead byte → 1). Stops early at EOF or a truncated trailing sequence,
 /// returning the slice up to the last complete codepoint boundary.
 ///
-/// Shared body of `js_parser::Lexer::peek` / `toml::Lexer::peek`.
+/// Shared body of `js_parser::Lexer::peek`.
 #[inline]
 pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     let mut end = at;
@@ -250,9 +250,9 @@ pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     &bytes[at..end]
 }
 
-/// WTF-8 codepoint stepper shared by the JS / JSON / TOML lexers.
+/// WTF-8 codepoint stepper shared by the JS and JSON lexers.
 ///
-/// The JS, JSON, and TOML lexers all call the same
+/// The JS and JSON lexers call the same
 /// `wtf8_byte_sequence_length_with_invalid` / `decode_wtf8_rune_t_multibyte`
 /// pair defined alongside this module, so the stepper belongs here.
 ///
@@ -377,31 +377,10 @@ pub use crate::strings_impl::{
     to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
 
-/// memmem — libc on posix, scalar fallback on windows.
-#[cfg(not(windows))]
+/// memmem — `highway_memmem` (HWY_DYNAMIC_DISPATCH MemMemImpl), same on all platforms.
+#[inline]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    // SAFETY: `&[u8]` guarantees both (ptr,len) pairs are valid for reads;
-    // libc memmem only reads within those bounds.
-    let p = unsafe {
-        libc::memmem(
-            haystack.as_ptr().cast(),
-            haystack.len(),
-            needle.as_ptr().cast(),
-            needle.len(),
-        )
-    };
-    if p.is_null() {
-        None
-    } else {
-        Some(p as usize - haystack.as_ptr() as usize)
-    }
-}
-#[cfg(windows)]
-pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    bstr::ByteSlice::find(haystack, needle)
+    highway::memmem(haystack, needle)
 }
 
 /// `bun.reinterpretSlice` — `&[T]` → `&[u8]` view (T must be u8/u16 in practice).
@@ -1475,7 +1454,7 @@ pub fn concat_buf_t<'a, T: Copy>(out: &'a mut [T], strs: &[&[T]]) -> Result<&'a 
     let mut off: usize = 0;
     for s in strs {
         if s.len() > out.len() - off {
-            return Err(crate::err!("NoSpaceLeft"));
+            return Err(crate::CrateError::NoSpaceLeft);
         }
         out[off..off + s.len()].copy_from_slice(s);
         off += s.len();
@@ -1847,10 +1826,8 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
 }
 
 pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
-    if cfg!(debug_assertions) {
-        debug_assert!(!destination.is_empty());
-        debug_assert!(!source.is_empty());
-    }
+    debug_assert!(!destination.is_empty());
+    debug_assert!(!source.is_empty());
     let to_write = if destination.len() < source.len() * 2 {
         destination.len() - destination.len() % 2
     } else {
@@ -2309,22 +2286,18 @@ pub fn move_all_slices<'a, T: MoveSlices<'a> + ?Sized>(
 }
 
 pub fn move_slice<'a>(slice: &[u8], from: &[u8], to: &'a [u8]) -> &'a [u8] {
-    if cfg!(debug_assertions) {
-        debug_assert!(from.len() <= to.len() && from.len() >= slice.len());
-        // assert we are in bounds
-        debug_assert!(
-            (from.as_ptr() as usize + from.len()) >= slice.as_ptr() as usize + slice.len()
-                && (from.as_ptr() as usize <= slice.as_ptr() as usize)
-        );
-        debug_assert!(eql_long(from, &to[0..from.len()], false)); // data should be identical
-    }
+    debug_assert!(from.len() <= to.len() && from.len() >= slice.len());
+    // assert we are in bounds
+    debug_assert!(
+        (from.as_ptr() as usize + from.len()) >= slice.as_ptr() as usize + slice.len()
+            && (from.as_ptr() as usize <= slice.as_ptr() as usize)
+    );
+    debug_assert!(eql_long(from, &to[0..from.len()], false)); // data should be identical
 
     let ptr_offset = slice.as_ptr() as usize - from.as_ptr() as usize;
     let result = &to[ptr_offset..][0..slice.len()];
 
-    if cfg!(debug_assertions) {
-        debug_assert!(eql_long(slice, result, false)); // data should be identical
-    }
+    debug_assert!(eql_long(slice, result, false)); // data should be identical
 
     result
 }
@@ -3055,11 +3028,11 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
 /// (defined there) and `to_utf16_alloc` (defined here) share a single error
 /// type — callers like `TextDecoder` match on `strings::ToUTF16Error` for both.
 pub use unicode_draft::ToUTF16Error;
-impl From<ToUTF16Error> for crate::Error {
+impl From<ToUTF16Error> for crate::CrateError {
     fn from(e: ToUTF16Error) -> Self {
         match e {
-            ToUTF16Error::InvalidByteSequence => crate::err!("InvalidByteSequence"),
-            ToUTF16Error::OutOfMemory => crate::err!("OutOfMemory"),
+            ToUTF16Error::InvalidByteSequence => crate::CrateError::InvalidByteSequence,
+            ToUTF16Error::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
         }
     }
 }

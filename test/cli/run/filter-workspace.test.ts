@@ -1,6 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { symlinkSync } from "node:fs";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {
@@ -589,6 +590,46 @@ describe("bun", () => {
     expect(stdoutval).not.toMatch(/lines elided/);
     expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(exitCode).toBe(0);
+  });
+
+  test("self-referential directory symlink in a workspace does not loop", () => {
+    const dir = tempDirWithFiles("filter-symlink-loop", {
+      packages: {
+        pkga: {
+          "package.json": JSON.stringify({ name: "pkga", scripts: { present: "echo scripta" } }),
+        },
+        cyc: {
+          "package.json": JSON.stringify({ name: "cyc", scripts: { present: "echo scriptcyc" } }),
+        },
+      },
+      // `packages/**` makes workspace discovery recurse into every package.
+      "package.json": JSON.stringify({
+        name: "ws",
+        scripts: { present: "echo rootscript" },
+        workspaces: ["packages/**"],
+      }),
+    });
+    // "junction" so the link is creatable on unprivileged Windows; the type is
+    // ignored on POSIX.
+    symlinkSync(join(dir, "packages", "cyc"), join(dir, "packages", "cyc", "loop"), "junction");
+
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "*", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutval = stdout.toString();
+    const count = (needle: string) => stdoutval.split(needle).length - 1;
+    // `pkga` is matched once. `cyc` is matched at `packages/cyc` and once more
+    // through its own `loop` alias, where the cycle is detected and descent
+    // stops instead of recursing until the path length limit.
+    expect({ scripta: count("scripta"), scriptcyc: count("scriptcyc"), exitCode }).toEqual({
+      scripta: 1,
+      scriptcyc: 2,
+      exitCode: 0,
+    });
   });
 
   test("warning names which package.json failed to parse", async () => {

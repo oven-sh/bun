@@ -317,6 +317,34 @@ it("console callback receives (type, ...args)", async () => {
   expect(calls[1]).toEqual(["warn", "w"]);
 });
 
+it("console callback ignores script messages with unexpected field shapes", async () => {
+  const calls: [string, ...unknown[]][] = [];
+  await using view = new Bun.WebView({
+    width: 200,
+    height: 200,
+    console: (type: string, ...args: unknown[]) => calls.push([type, ...args]),
+  });
+  await view.navigate(html("<body></body>"));
+  await view.evaluate(`(() => {
+    const post = b => webkit.messageHandlers.bunConsole.postMessage(b);
+    post(5);
+    post("just a string");
+    post(null);
+    post([1, 2, 3]);
+    post({});
+    post({ type: 1, args: 1 });
+    post({ type: "log", args: 42 });
+    post({ type: ["log"], args: [] });
+    post({ type: "log", args: [JSON.stringify("kept"), 7] });
+    return 0;
+  })()`);
+  expect(await view.evaluate("console.log('still alive'), 1 + 1")).toBe(2);
+  expect(calls).toEqual([
+    ["log", "kept", undefined],
+    ["log", "still alive"],
+  ]);
+});
+
 it("onNavigationFailed callback fires", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   let failed = false;

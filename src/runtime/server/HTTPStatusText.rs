@@ -4,6 +4,13 @@ pub const fn is_null_body(code: u16) -> bool {
     matches!(code, 101 | 103 | 204 | 205 | 304)
 }
 
+/// RFC 9112 §4: the status line carries exactly three digits, so anything else
+/// has no serialization. `Response.error()` is status 0, and `fetch` accepts a
+/// malformed `HTTP/1.1 0xx` status line from an upstream server.
+pub const fn is_sendable(code: u16) -> bool {
+    matches!(code, 100..=999)
+}
+
 pub fn get(code: u16) -> Option<&'static [u8]> {
     match code {
         100 => Some(b"100 Continue"),

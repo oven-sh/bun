@@ -41,7 +41,9 @@ bun_core::declare_scope!(cache, visible);
 /// Version 22: Serialize `has_tla` in the cached ESM record flags byte. Entries
 /// written before #30888 carried `has_tla=false` for every module; the cache-HIT
 /// path reinstates the bug for any previously-cached TLA module (#30887).
-const EXPECTED_VERSION: u32 = 22;
+/// Version 23: `jsx.runtime`/`jsx.development` participate in the features hash,
+/// and tsconfig `"jsx": "react-jsx"` now emits the production runtime (#4227).
+const EXPECTED_VERSION: u32 = 23;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -133,7 +135,7 @@ impl Metadata {
     // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
     pub const SIZE: usize = 4 + 1 + 1 + 12 * 8;
 
-    pub fn encode<W: bun_io::Write>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+    pub fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
         writer.write_int_le::<u32>(self.cache_version)?;
         writer.write_int_le::<u8>(self.module_type as u8)?;
         writer.write_int_le::<u8>(self.output_encoding.0)?;
@@ -163,10 +165,10 @@ impl Metadata {
     pub fn decode(
         &mut self,
         reader: &mut bun_io::FixedBufferStream<&[u8]>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         self.cache_version = reader.read_int_le::<u32>()?;
         if self.cache_version != EXPECTED_VERSION {
-            return Err(bun_core::err!(StaleCache));
+            return Err(crate::CrateError::StaleCache);
         }
 
         // Validate the raw discriminants immediately so `ModuleType` never
@@ -195,14 +197,14 @@ impl Metadata {
             1 => ModuleType::Esm,
             2 => ModuleType::Cjs,
             // Invalid module type
-            _ => return Err(bun_core::err!(InvalidModuleType)),
+            _ => return Err(crate::CrateError::InvalidModuleType),
         };
 
         self.output_encoding = Encoding(output_encoding_raw);
         match self.output_encoding {
             Encoding::UTF8 | Encoding::UTF16 | Encoding::LATIN1 => {}
             // Invalid encoding
-            _ => return Err(bun_core::err!(UnknownEncoding)),
+            _ => return Err(crate::CrateError::UnknownEncoding),
         }
 
         Ok(())
@@ -265,7 +267,7 @@ impl Entry {
         esm_record: &[u8],
         output_code: &OutputCode,
         exports_kind: ExportsKind,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
 
         // atomically write to a tmpfile and then move it to the final destination
@@ -401,7 +403,7 @@ impl Entry {
             while (position as usize) < end_position {
                 let written = sys::pwritev(tmpfile.fd, vecs, position)?;
                 if written == 0 {
-                    return Err(bun_core::err!(WriteFailed));
+                    return Err(crate::CrateError::WriteFailed);
                 }
 
                 position += i64::try_from(written).expect("int cast");
@@ -422,14 +424,14 @@ impl Entry {
         Ok(())
     }
 
-    pub fn load(&mut self, file: &sys::File) -> Result<(), bun_core::Error> {
+    pub fn load(&mut self, file: &sys::File) -> crate::CrateResult<()> {
         let stat_size = file.get_end_pos()? as u64;
         if stat_size
             < (Metadata::SIZE as u64)
                 + self.metadata.output_byte_length
                 + self.metadata.sourcemap_byte_length
         {
-            return Err(bun_core::err!(MissingData));
+            return Err(crate::CrateError::MissingData);
         }
 
         debug_assert!(
@@ -465,17 +467,17 @@ impl Entry {
                     // `(dead, &mut [])` on WTF allocation failure; `len > 0`
                     // (handled above), so an empty slice means OOM.
                     if bytes.is_empty() {
-                        return Err(bun_core::err!(OutOfMemory));
+                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
                     // errdefer scratch.deref() — BunString is `Copy`, so guard explicitly.
                     let errdefer = scopeguard::guard(scratch, |s| s.deref());
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
                     if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(bun_core::err!(MissingData));
+                        return Err(crate::CrateError::MissingData);
                     }
 
                     if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
-                        return Err(bun_core::err!(InvalidHash));
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     if bun_core::strings::is_all_ascii(bytes) {
@@ -498,7 +500,7 @@ impl Entry {
                     // WTF allocation failure; `len > 0` here (handled above), so
                     // an empty slice means OOM.
                     if bytes.is_empty() {
-                        return Err(bun_core::err!(OutOfMemory));
+                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
                     // errdefer latin1.deref() — BunString is `Copy`, so guard explicitly.
                     let errdefer = scopeguard::guard(latin1, |s| s.deref());
@@ -506,12 +508,12 @@ impl Entry {
 
                     if self.metadata.output_hash != 0 {
                         if hash(latin1.latin1()) != self.metadata.output_hash {
-                            return Err(bun_core::err!(InvalidHash));
+                            return Err(crate::CrateError::InvalidHash);
                         }
                     }
 
                     if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(bun_core::err!(MissingData));
+                        return Err(crate::CrateError::MissingData);
                     }
 
                     scopeguard::ScopeGuard::into_inner(errdefer);
@@ -523,7 +525,7 @@ impl Entry {
                     // See LATIN1 branch above — empty slice for nonzero `char_len`
                     // signals WTF allocation failure.
                     if chars.is_empty() {
-                        return Err(bun_core::err!(OutOfMemory));
+                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
                     let errdefer = scopeguard::guard(string, |s| s.deref());
 
@@ -534,13 +536,13 @@ impl Entry {
                     let read_bytes =
                         file.pread_all(chars_bytes, self.metadata.output_byte_offset)?;
                     if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(bun_core::err!(MissingData));
+                        return Err(crate::CrateError::MissingData);
                     }
 
                     if self.metadata.output_hash != 0 {
                         let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
                         if hash(utf16_bytes) != self.metadata.output_hash {
-                            return Err(bun_core::err!(InvalidHash));
+                            return Err(crate::CrateError::InvalidHash);
                         }
                     }
 
@@ -573,7 +575,7 @@ impl Entry {
 
             if self.metadata.esm_record_hash != 0 {
                 if hash(&esm_record) != self.metadata.esm_record_hash {
-                    return Err(bun_core::err!(InvalidHash));
+                    return Err(crate::CrateError::InvalidHash);
                 }
             }
 
@@ -621,7 +623,7 @@ pub fn hash(bytes: &[u8]) -> u64 {
 /// Uses `Box::new_uninit_slice` instead of `vec![0u8; len]` so the cache hot
 /// path (lint/create-next benches) skips the redundant zero-memset — the kernel
 /// is about to overwrite every byte anyway.
-fn pread_box(file: &sys::File, len: usize, offset: u64) -> Result<Box<[u8]>, bun_core::Error> {
+fn pread_box(file: &sys::File, len: usize, offset: u64) -> crate::CrateResult<Box<[u8]>> {
     let mut buf = Box::<[u8]>::new_uninit_slice(len);
     // SAFETY: `MaybeUninit<u8>` and `u8` have identical size/align, and
     // `pread_all` only ever *writes* into the slice (the syscall fills it) —
@@ -631,7 +633,7 @@ fn pread_box(file: &sys::File, len: usize, offset: u64) -> Result<Box<[u8]>, bun
         unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), len) };
     let read = file.pread_all(dst, offset)?;
     if read != len {
-        return Err(bun_core::err!(MissingData));
+        return Err(crate::CrateError::MissingData);
     }
     // SAFETY: `pread_all` reported `len` bytes written, so every element is
     // initialized.
@@ -639,7 +641,7 @@ fn pread_box(file: &sys::File, len: usize, offset: u64) -> Result<Box<[u8]>, bun
 }
 
 impl RuntimeTranspilerCache {
-    pub fn write_cache_filename(buf: &mut [u8], input_hash: u64) -> Result<usize, bun_core::Error> {
+    pub fn write_cache_filename(buf: &mut [u8], input_hash: u64) -> crate::CrateResult<usize> {
         // Hex-encode the 8 native-endian bytes of `input_hash`.
         let bytes = input_hash.to_ne_bytes();
         let suffix: &[u8] = if bun_core::env::IS_DEBUG {
@@ -649,17 +651,14 @@ impl RuntimeTranspilerCache {
         };
         let needed = bytes.len() * 2 + suffix.len();
         if buf.len() < needed {
-            return Err(bun_core::err!(NoSpaceLeft));
+            return Err(crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC));
         }
         let i = bun_core::fmt::bytes_to_hex_lower(&bytes, &mut buf[..bytes.len() * 2]);
         buf[i..i + suffix.len()].copy_from_slice(suffix);
         Ok(needed)
     }
 
-    pub fn get_cache_file_path(
-        buf: &mut PathBuffer,
-        input_hash: u64,
-    ) -> Result<&ZStr, bun_core::Error> {
+    pub fn get_cache_file_path(buf: &mut PathBuffer, input_hash: u64) -> crate::CrateResult<&ZStr> {
         let cache_dir_len = Self::get_cache_dir(buf)?;
         buf[cache_dir_len] = SEP;
         let cache_filename_len =
@@ -752,9 +751,9 @@ impl RuntimeTranspilerCache {
     /// Copies the (cached) cache-dir path into `buf`, NUL-terminates it, and
     /// returns its length, so the caller can keep mutably borrowing `buf` to
     /// append the filename.
-    fn get_cache_dir(buf: &mut PathBuffer) -> Result<usize, bun_core::Error> {
+    fn get_cache_dir(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
         if IS_DISABLED.load(Ordering::Relaxed) {
-            return Err(bun_core::err!(CacheDisabled));
+            return Err(crate::CrateError::CacheDisabled);
         }
         let path_len = match Self::RUNTIME_TRANSPILER_CACHE.with(|c| c.get()) {
             Some(len) => len,
@@ -763,7 +762,7 @@ impl RuntimeTranspilerCache {
                     .with_borrow_mut(|tl_buf| Self::really_get_cache_dir(tl_buf));
                 if len == 0 {
                     IS_DISABLED.store(true, Ordering::Relaxed);
-                    return Err(bun_core::err!(CacheDisabled));
+                    return Err(crate::CrateError::CacheDisabled);
                 }
                 Self::RUNTIME_TRANSPILER_CACHE.with(|c| c.set(Some(len)));
                 len
@@ -780,7 +779,7 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
-    ) -> Result<Entry, bun_core::Error> {
+    ) -> crate::CrateResult<Entry> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
         let mut cache_file_path_buf = PathBuffer::uninit();
@@ -799,7 +798,7 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
-    ) -> Result<Entry, bun_core::Error> {
+    ) -> crate::CrateResult<Entry> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
         let cache_fd = sys::open(cache_file_path, sys::O::RDONLY, 0)?;
         let file = sys::File::from_fd(cache_fd);
@@ -825,12 +824,12 @@ impl RuntimeTranspilerCache {
             || entry.metadata.input_byte_length != input_stat_size
         {
             // delete the cache in this case
-            return Err(bun_core::err!(InvalidInputHash));
+            return Err(crate::CrateError::InvalidInputHash);
         }
 
         if entry.metadata.features_hash != feature_hash {
             // delete the cache in this case
-            return Err(bun_core::err!(MismatchedFeatureHash));
+            return Err(crate::CrateError::MismatchedFeatureHash);
         }
 
         entry.load(&file)?;
@@ -851,7 +850,7 @@ impl RuntimeTranspilerCache {
         esm_record: &[u8],
         source_code: &BunString,
         exports_kind: ExportsKind,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
         let mut cache_file_path_buf = PathBuffer::uninit();

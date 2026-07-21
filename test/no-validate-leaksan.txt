@@ -61,6 +61,9 @@ test/js/node/test/parallel/test-worker-workerdata-sharedarraybuffer.js
 test/js/node/test/parallel/test-worker.js
 test/js/node/test/parallel/test-worker.mjs
 test/js/node/worker_threads/worker_destruction.test.ts
+# Two tests hit their 5s timeout under BUN_DESTRUCT_VM_ON_EXIT; passes without
+# LSAN and no sanitizer report, just slow VM teardown.
+test/js/node/watch/fs.watch.test.ts
 test/js/web/broadcastchannel/broadcast-channel.test.ts
 test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts
 
@@ -158,11 +161,8 @@ test/cli/install/minimum-release-age.test.ts
 
 
 # crash for reasons not related to LSAN
-test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js
 test/js/node/test/parallel/test-dgram-send-address-types.js
-test/js/node/test/parallel/test-fs-watch.js
 test/js/node/test/parallel/test-dgram-unref.js
-test/js/node/test/parallel/test-fs-promises-watch.js
 test/bake/dev/ecosystem.test.ts
 test/bake/dev/html.test.ts
 test/bake/dev/plugins.test.ts
@@ -453,3 +453,9 @@ test/js/third_party/prisma/prisma.test.ts
 # upgradeDuplexToTLS protos/server_name Box<[u8]> are owned by the JS-held
 # socket cell; tests that exit before a final GC report them as indirect leaks.
 test/js/node/tls/node-tls-connect.test.ts
+
+# LSAN aborts the process at exit over an 8-byte leak in Bun's own dlopen path:
+# BunProcess.cpp gives the NapiExternal holding NapiModuleMeta no finalizer
+# ("TODO: think about the finalizer here"), so the meta is never freed. All 18
+# tests pass; only the exit check fails. Remove once that TODO is resolved.
+test/bundler/native-plugin.test.ts

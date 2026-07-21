@@ -152,11 +152,13 @@ pub enum ParserError {
 
 bun_core::oom_from_alloc!(ParserError);
 
-impl From<ParserError> for bun_core::Error {
-    fn from(e: ParserError) -> Self {
-        bun_core::err!(from e)
+impl core::fmt::Display for ParserError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(*self))
     }
 }
+
+impl core::error::Error for ParserError {}
 
 /// The longest `OFF`-typed fixed lookahead the parser performs from an
 /// in-bounds offset: the `<![CDATA[` probe in `is_html_block_start_condition`
@@ -266,6 +268,20 @@ impl<'a> Parser<'a> {
         Ok(aligned)
     }
 
+    /// Charge one resolved reference link/image against the reference-definition
+    /// output budget (`max_ref_def_output`). On exhaustion the budget is zeroed, so
+    /// this and every later reference degrade to literal text (md4c, mity/md4c#238).
+    pub(crate) fn charge_ref_def_output(&mut self, dest_len: usize, title_len: usize) -> bool {
+        let n = dest_len as u64 + title_len as u64;
+        if n < self.max_ref_def_output {
+            self.max_ref_def_output -= n;
+            true
+        } else {
+            self.max_ref_def_output = 0;
+            false
+        }
+    }
+
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
         let size = input_size(text)?;
         let mut p = Parser {
@@ -306,7 +322,7 @@ impl<'a> Parser<'a> {
             ref_def_labels: bun_collections::StringSet::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
-            max_ref_def_output: (16 * (size as u64)).min(1024 * 1024).min(u32::MAX as u64),
+            max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
             stack_check: StackCheck::init(),
         };
         p.build_mark_char_map();

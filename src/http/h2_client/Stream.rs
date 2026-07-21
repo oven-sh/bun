@@ -6,7 +6,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_core::Error;
+use crate::Error;
 use bun_picohttp as picohttp;
 
 // `live_streams` lives in the parent module of `h2_client/`.
@@ -20,6 +20,11 @@ use crate::HTTPClient;
 pub struct Stream {
     // HTTP/2 stream IDs are 31-bit; the top bit must stay clear.
     pub id: u32,
+    /// Snapshot of `client.async_http_id` at attach time. Stored so the
+    /// session's `by_http_id` index can be maintained after `client` has been
+    /// cleared (terminal delivery nulls `client` before `remove_stream`).
+    /// `None` for clients without an abort-signal store (not indexed).
+    pub async_http_id: Option<u32>,
     // BACKREF: this Stream is owned by `session.streams`; raw ptr per LIFETIMES class BACKREF.
     pub session: *mut ClientSession,
     // BACKREF: weak back-pointer, cleared before terminal callbacks.
@@ -118,16 +123,16 @@ impl Drop for Stream {
 }
 
 impl Stream {
-    /// Callers pass `id`, `session`, `client`, `send_window`; the rest of the
-    /// fields get their defaults.
     pub fn new(
         id: u32,
+        async_http_id: Option<u32>,
         session: *mut ClientSession,
         client: Option<NonNull<HTTPClient<'static>>>,
         send_window: i32,
     ) -> Box<Self> {
         Box::new(Self {
             id,
+            async_http_id,
             session,
             client,
             header_block: Vec::new(),

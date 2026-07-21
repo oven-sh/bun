@@ -134,8 +134,12 @@ void HkdfJob::createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, 
 KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue key)
 {
     if (JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(key)) {
-        // Node doesn't check for CryptoKeyType::Secret, so we don't either
-        return keyObject->handle();
+        auto& handle = keyObject->handle();
+        if (handle.type() != CryptoKeyType::Secret) {
+            ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "secret"_s);
+            return {};
+        }
+        return handle;
     }
 
     // Handle string or buffer

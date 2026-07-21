@@ -1,7 +1,13 @@
 import { describe, expect } from "bun:test";
 import { isBroken, isWindows } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { itBundled } from "./expectBundled";
+import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
+
+// A public path composes with the referenced file's path relative to the output
+// directory, never relative to the importing chunk (esbuild's semantics).
+const CDN_PUBLIC_PATH = "https://cdn.example/app/";
+const cdnUrls = (source: string) => [...source.matchAll(/"(https:\/\/cdn\.example\/[^"]+)"/g)].map(match => match[1]);
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -861,6 +867,94 @@ describe("bundler", () => {
     publicPath: "/www",
     run: {},
   });
+  itBundled("edgecase/PublicPathNestedChunkReferences", {
+    files: {
+      "/src/pages/a/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        import logo from "../../logo.svg";
+        console.log(shared(), logo);
+      `,
+      "/src/pages/b/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        console.log(shared());
+      `,
+      "/src/shared.ts": /* ts */ `
+        import icon from "./icon.svg";
+        export const shared = () => icon;
+      `,
+      "/src/icon.svg": `<svg id="icon" />`,
+      "/src/logo.svg": `<svg id="logo" />`,
+    },
+    entryPoints: ["/src/pages/a/entry.ts", "/src/pages/b/entry.ts"],
+    outputPaths: ["/out/pages/a/entry.js", "/out/pages/b/entry.js"],
+    root: "/src",
+    outdir: "/out",
+    splitting: true,
+    publicPath: CDN_PUBLIC_PATH,
+    chunkNaming: "chunk-[hash].[ext]",
+    loader: { ".svg": "file" },
+    onAfterBundle(api) {
+      // The nested entry references the shared chunk and its own asset. Both
+      // must resolve under the public path, not above it.
+      const nested = cdnUrls(api.readFile("out/pages/a/entry.js")).map(url => url.slice(CDN_PUBLIC_PATH.length));
+      expect(nested.sort()).toEqual([
+        expect.stringMatching(/^chunk-[a-z0-9]+\.js$/),
+        expect.stringMatching(/^logo-[a-z0-9]+\.svg$/),
+      ]);
+      for (const rel of nested) {
+        api.assertFileExists(join("out", rel));
+      }
+
+      // The root-level chunk emits the same form in the same build.
+      const chunks = readdirSync(api.outdir).filter(file => file.endsWith(".js"));
+      expect(chunks).toHaveLength(1);
+      const rootLevel = cdnUrls(api.readFile(join("out", chunks[0]))).map(url => url.slice(CDN_PUBLIC_PATH.length));
+      expect(rootLevel).toEqual([expect.stringMatching(/^icon-[a-z0-9]+\.svg$/)]);
+      api.assertFileExists(join("out", rootLevel[0]));
+    },
+  });
+  itBundled("edgecase/PublicPathNestedEntryAsset", {
+    files: {
+      "/src/pages/a/entry.ts": /* ts */ `
+        import logo from "../../logo.svg";
+        console.log(logo);
+      `,
+      "/src/logo.svg": `<svg id="logo" />`,
+    },
+    entryPoints: ["/src/pages/a/entry.ts"],
+    outputPaths: ["/out/pages/a/entry.js"],
+    root: "/src",
+    outdir: "/out",
+    publicPath: CDN_PUBLIC_PATH,
+    loader: { ".svg": "file" },
+    onAfterBundle(api) {
+      const urls = cdnUrls(api.readFile("out/pages/a/entry.js")).map(url => url.slice(CDN_PUBLIC_PATH.length));
+      expect(urls).toEqual([expect.stringMatching(/^logo-[a-z0-9]+\.svg$/)]);
+      api.assertFileExists(join("out", urls[0]));
+    },
+  });
+  itBundled("edgecase/NoPublicPathNestedChunkStaysRelative", {
+    files: {
+      "/src/pages/a/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        console.log(shared());
+      `,
+      "/src/pages/b/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        console.log(shared());
+      `,
+      "/src/shared.ts": `export const shared = () => "shared";`,
+    },
+    entryPoints: ["/src/pages/a/entry.ts", "/src/pages/b/entry.ts"],
+    outputPaths: ["/out/pages/a/entry.js", "/out/pages/b/entry.js"],
+    root: "/src",
+    outdir: "/out",
+    splitting: true,
+    chunkNaming: "chunk-[hash].[ext]",
+    onAfterBundle(api) {
+      api.expectFile("out/pages/a/entry.js").toMatch(/from "\.\.\/\.\.\/chunk-[a-z0-9]+\.js"/);
+    },
+  });
   itBundled("edgecase/ImportDefaultInDirectory", {
     files: {
       "/a/file.js": `
@@ -1194,6 +1288,48 @@ describe("bundler", () => {
         mappingsExactMatch:
           "AACQ,QAAQ,IAAI,MAAM,EAOlB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM",
       },
+    },
+  });
+  // SourceMapPieces.finalize advanced the shift cursor at most once per
+  // mapping, so a mapping crossing >=2 placeholder substitutions on one
+  // minified line was re-encoded against a stale shift and landed out of order.
+  itBundled("edgecase/EmitInvalidSourceMapMultipleShifts", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import a from "./a.bin";
+        import b from "./b.bin";
+        import c from "./c.bin";
+        const keep: string[] = [a, b, c];
+        console.log(keep);
+      `,
+      "/a.bin": "AAAA",
+      "/b.bin": "BBBB",
+      "/c.bin": "CCCC",
+    },
+    outdir: "/out",
+    loader: { ".bin": "file" },
+    sourceMap: "external",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      const map = JSON.parse(api.readFile("/out/entry.js.map"));
+      expect(map.sources).toEqual(["../entry.ts"]);
+      const line1 = decodeSourceMappingsLine(map.mappings.split(";")[0]);
+      for (let i = 1; i < line1.length; i++) {
+        if (line1[i].gen < line1[i - 1].gen) {
+          throw new Error(
+            `out-of-order mappings on line 1: generated column ` +
+              `${line1[i - 1].gen} -> ${line1[i].gen}\n` +
+              line1.map(s => `  col ${s.gen} -> entry.ts:${s.ol + 1}:${s.oc}`).join("\n"),
+          );
+        }
+      }
+      // The first mapping after all three substituted asset paths is for
+      // `keep` in `const keep`. It must point at the `keep` identifier in
+      // the generated output, not at a stale pre-shift column.
+      const keepCol = js.split("\n")[0].indexOf("keep=[");
+      expect(keepCol).toBeGreaterThan(0);
+      expect(line1).toContainEqual({ gen: keepCol, src: 0, ol: 3, oc: 6 });
     },
   });
   itBundled("edgecase/NoUselessConstructorTS", {
@@ -2496,6 +2632,27 @@ describe("bundler", () => {
       stdout: "",
     },
   });
+  itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { getData } from "./macro.ts" with { type: "macro" };
+        const data = getData();
+        console.write(JSON.stringify([
+          Object.getPrototypeOf(data) === Object.prototype,
+          Object.hasOwn(data, "__proto__"),
+          data.x,
+          JSON.stringify(data),
+        ]));
+      `,
+      "/macro.ts": /* js */ `
+        export function getData() {
+          return JSON.parse('{"__proto__": {"x": 1}, "a": 2}');
+        }
+      `,
+    },
+    target: "bun",
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
   itBundled("edgecase/NodeBuiltinWithoutPrefix", {
     files: {
       "/entry.ts": `
@@ -2539,6 +2696,118 @@ describe("bundler", () => {
         +[hello, world, etc];
         "
       `);
+    },
+  });
+  itBundled("edgecase/NonAsciiIdentifierPreserved", {
+    files: {
+      "/entry.js": /* js */ `
+        class Café {}
+        function naïve(x) { return x }
+        class Cafá {}
+        class 模块 {}
+        const aπ = 1;
+        const a𝒜 = 2;
+        const élan = 3;
+        console.log(JSON.stringify([Café.name, naïve.name, Cafá.name, 模块.name, aπ, a𝒜, élan]));
+      `,
+    },
+    target: "node",
+    run: { stdout: '["Café","naïve","Cafá","模块",1,2,3]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("class Café");
+      expect(out).toContain("function naïve");
+      expect(out).toContain("class Cafá");
+      expect(out).toContain("class 模块");
+      expect(out).toContain("var aπ");
+      expect(out).toContain("var a𝒜");
+      expect(out).toContain("var élan");
+      expect(out).not.toContain("Caf_");
+      expect(out).not.toContain("na_ve");
+      expect(out).not.toContain("模_");
+      expect(out).not.toContain("var a_");
+    },
+  });
+  itBundled("edgecase/NonAsciiIdentifierPreservedBunTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        class Café {}
+        function naïve(x) { return x }
+        console.log(JSON.stringify([Café.name, naïve.name]));
+      `,
+    },
+    target: "bun",
+    run: { stdout: '["Café","naïve"]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("Caf_");
+      expect(out).not.toContain("na_ve");
+    },
+  });
+  // The bundler's per-edge graph walks (reachable files, tree-shaking /
+  // code-splitting liveness, chunk part ordering, CSS discovery, TLA
+  // validation, async propagation, dependency wrapping) used to recurse once
+  // per import-graph edge, overflowing the stack on long linear chains. 7000
+  // reliably crashed the old recursive form under debug+ASAN.
+  const deepChainDepth = 7000;
+  const deepChainFiles = {
+    ...Object.fromEntries(
+      Array.from({ length: deepChainDepth - 1 }, (_, i) => [
+        `/m${i}.js`,
+        `import { v${i + 1} } from "./m${i + 1}.js"; export const v${i} = v${i + 1} + 1;`,
+      ]),
+    ),
+    [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
+  };
+  itBundled("edgecase/DeepImportChain", {
+    files: {
+      "/entry.js": `import { v0 } from "./m0.js"; console.log(v0);`,
+      ...deepChainFiles,
+    },
+    backend: "cli",
+    run: { stdout: String(deepChainDepth) },
+  });
+  // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
+  // the chain; `await import()` of an ESM head without splitting wraps the
+  // whole chain, driving `DependencyWrapper::wrap` through it. The wrapped
+  // output initializes module N by calling module N+1's init, so running it
+  // would recurse at runtime; checking for the deepest wrapper is enough.
+  itBundled("edgecase/DeepImportChainWrappedTLA", {
+    files: {
+      "/entry.js": `await 0; const { v0 } = await import("./m0.js"); console.log(v0);`,
+      ...deepChainFiles,
+    },
+    backend: "cli",
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).toContain(`init_m${deepChainDepth - 2}`);
+    },
+  });
+  itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
+    files: {
+      "/entry.ts": /* js */ `
+        const a = require("./模块.cjs");
+        const b = require("./foo\u2014bar.cjs");
+        console.log(a.x, b.y);
+      `,
+      "/模块.cjs": /* js */ `
+        module.exports = { x: 42 };
+      `,
+      "/foo\u2014bar.cjs": /* js */ `
+        module.exports = { y: 7 };
+      `,
+    },
+    target: "node",
+    run: { stdout: "42 7" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // ID_Continue code points in the path basename are preserved.
+      expect(out).toContain("require_模块");
+      expect(out).not.toContain("require_模_");
+      expect(out).not.toContain("require___");
+      // Non-ID_Continue code points (U+2014 em dash) are still replaced with _.
+      expect(out).toContain("require_foo_bar");
+      expect(out).not.toContain("require_foo\u2014bar");
     },
   });
 });

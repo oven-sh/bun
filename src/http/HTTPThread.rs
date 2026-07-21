@@ -249,9 +249,7 @@ impl RequestBodyBuffer {
         // A `Vec` cannot adopt a foreign allocator+buffer, so this
         // allocates a fresh Vec of the same capacity.
         // Callers that can should write into allocated_slice() directly instead.
-        let mut arraylist = Vec::with_capacity(self.allocated_slice().len());
-        arraylist.clear();
-        arraylist
+        Vec::with_capacity(self.allocated_slice().len())
     }
 }
 
@@ -470,7 +468,7 @@ impl HttpThread {
     pub fn connect<const IS_SSL: bool>(
         &mut self,
         client: &mut HttpClient,
-    ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error> {
+    ) -> crate::Result<Option<crate::HTTPSocket<IS_SSL>>> {
         if IS_SSL {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
             // socket group now (deferred from `on_start`). Runs once; every
@@ -546,7 +544,7 @@ impl HttpThread {
                         InitError::FailedToOpenSocket
                         | InitError::InvalidCA
                         | InitError::InvalidCAFile
-                        | InitError::LoadCAFile => bun_core::err!("FailedToOpenSocket"),
+                        | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
                     });
                 }
 
@@ -576,7 +574,7 @@ impl HttpThread {
                     {
                         custom_context.connect(client, url.hostname, url.get_port_auto())
                     } else {
-                        return Err(bun_core::err!("UnsupportedProxyProtocol"));
+                        return Err(crate::Error::UnsupportedProxyProtocol);
                     }
                 } else {
                     let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
@@ -596,7 +594,7 @@ impl HttpThread {
                         url.get_port_auto(),
                     );
                 }
-                return Err(bun_core::err!("UnsupportedProxyProtocol"));
+                return Err(crate::Error::UnsupportedProxyProtocol);
             }
         }
         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
@@ -1048,6 +1046,7 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.redirect));
                 drop(core::mem::take(&mut client.prev_redirect));
                 drop(core::mem::take(&mut client.compressed_request_body));
+                drop(core::mem::take(&mut client.proxy_authorization));
                 if let Some(tunnel) = client.proxy_tunnel.take() {
                     (*tunnel.as_ptr()).detach_socket();
                     tunnel.deref();
@@ -1155,8 +1154,16 @@ fn start_queued_task(
     // Note: AsyncHttp is byte-copied here
     // since the original stays valid (real owner is `http`, copy is the
     // HTTP-thread working set).
-    let cloned = bun_core::heap::release(cloned);
-    in_flight.push(NonNull::from(&*cloned).cast::<crate::ThreadlocalAsyncHttp<'static>>());
+    //
+    // `in_flight` keeps the allocation's own pointer, not a `&*cloned`
+    // reborrow of it: the writes below go through `cloned`, and a shared
+    // reborrow would be frozen by the first of them.
+    let cloned_ptr = bun_core::heap::into_raw(cloned);
+    let cloned_nn = NonNull::new(cloned_ptr).expect("freshly leaked Box is non-null");
+    in_flight.push(cloned_nn.cast::<crate::ThreadlocalAsyncHttp<'static>>());
+    // SAFETY: freshly leaked; this thread is its sole owner until the request
+    // completes and `in_flight` gives the pointer back.
+    let cloned = unsafe { &mut *cloned_ptr };
     cloned.async_http.real = NonNull::new(http);
     // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
     // which may point to other AsyncHTTP structs that could be freed before the callback
@@ -1249,25 +1256,16 @@ mod _event_loop_draft {
     pub(super) fn on_start(opts: InitOpts) {
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
 
-        // uSockets' long-timeout counter is `% 240` minutes (see
-        // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
-        // values above 239 min wrap around and fire early. Clamp here — it's the
-        // only assignment — so the underlying timer can't wrap, and round values
-        // above 240s up to a whole minute so `socket.set_timeout`'s floor-to-
-        // minute long-timer path never yields a timeout *shorter* than requested.
-        // Normalising once here keeps the h1 (`HTTPClient::set_timeout`) and h2
-        // (`ClientSession::rearm_timeout`) paths identical without duplicating the
-        // math at each call site.
-        let raw: u64 = bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
-            .get()
-            .unwrap_or(300)
-            .min(239 * 60);
+        // Normalising once here (see `normalize_idle_timeout_seconds`) keeps
+        // the h1 (`HTTPClient::set_timeout`) and h2
+        // (`ClientSession::rearm_timeout`) paths identical without duplicating
+        // the math at each call site.
         crate::IDLE_TIMEOUT_SECONDS.store(
-            (if raw > 240 {
-                raw.div_ceil(60) * 60
-            } else {
-                raw
-            }) as core::ffi::c_uint,
+            crate::normalize_idle_timeout_seconds(
+                bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
+                    .get()
+                    .unwrap_or(300),
+            ),
             core::sync::atomic::Ordering::Relaxed,
         );
 
@@ -1370,6 +1368,15 @@ mod _event_loop_draft {
                 uws_loop.inc();
                 uws_loop.tick();
                 uws_loop.dec();
+                // Run the deferred-free thunk (`Store::process_deferred_frees`)
+                // like `MiniEventLoop::tick_once` does after its raw tick; the
+                // FilePoll hive slots freed during this tick are reclaimed here.
+                // SAFETY: `loop_` was born `*mut` (`init_global`), so `cast_mut`
+                // keeps its provenance; it is HTTP-thread-only and disjoint from
+                // the C `us_loop_t` behind `uws_loop`, and no other `&`/`&mut`
+                // to this `MiniEventLoop` is live here (`uws_loop` re-derived
+                // per iteration, last used above).
+                unsafe { (*self.loop_.cast_mut()).on_after_event_loop() };
                 assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {

@@ -18,6 +18,7 @@ use super::properties_impl;
 
 // Leaf property modules.
 use super::align;
+use super::animation;
 use super::background;
 use super::border;
 use super::border_image;
@@ -245,6 +246,8 @@ pub enum PropertyIdTag {
     TransitionDelay,
     TransitionTimingFunction,
     Transition,
+    Animation,
+    AnimationName,
     Transform,
     TransformOrigin,
     TransformStyle,
@@ -342,6 +345,8 @@ impl PropertyIdTag {
                 | PropertyIdTag::TransitionDelay
                 | PropertyIdTag::TransitionTimingFunction
                 | PropertyIdTag::Transition
+                | PropertyIdTag::Animation
+                | PropertyIdTag::AnimationName
                 | PropertyIdTag::Transform
                 | PropertyIdTag::TransformOrigin
                 | PropertyIdTag::TransformStyle
@@ -401,6 +406,8 @@ impl PropertyIdTag {
             T::TransitionDelay => PrefixFeature::TransitionDelay,
             T::TransitionTimingFunction => PrefixFeature::TransitionTimingFunction,
             T::Transition => PrefixFeature::Transition,
+            T::Animation => PrefixFeature::Animation,
+            T::AnimationName => PrefixFeature::AnimationName,
             T::Transform => PrefixFeature::Transform,
             T::TransformOrigin => PrefixFeature::TransformOrigin,
             T::TransformStyle => PrefixFeature::TransformStyle,
@@ -626,6 +633,8 @@ impl PropertyIdTag {
             PropertyIdTag::TransitionDelay => b"transition-delay",
             PropertyIdTag::TransitionTimingFunction => b"transition-timing-function",
             PropertyIdTag::Transition => b"transition",
+            PropertyIdTag::Animation => b"animation",
+            PropertyIdTag::AnimationName => b"animation-name",
             PropertyIdTag::Transform => b"transform",
             PropertyIdTag::TransformOrigin => b"transform-origin",
             PropertyIdTag::TransformStyle => b"transform-style",
@@ -889,6 +898,8 @@ pub enum PropertyId {
     TransitionDelay(VendorPrefix),
     TransitionTimingFunction(VendorPrefix),
     Transition(VendorPrefix),
+    Animation(VendorPrefix),
+    AnimationName(VendorPrefix),
     Transform(VendorPrefix),
     TransformOrigin(VendorPrefix),
     TransformStyle(VendorPrefix),
@@ -1169,6 +1180,8 @@ impl PropertyId {
             PropertyId::TransitionDelay(..) => PropertyIdTag::TransitionDelay,
             PropertyId::TransitionTimingFunction(..) => PropertyIdTag::TransitionTimingFunction,
             PropertyId::Transition(..) => PropertyIdTag::Transition,
+            PropertyId::Animation(..) => PropertyIdTag::Animation,
+            PropertyId::AnimationName(..) => PropertyIdTag::AnimationName,
             PropertyId::Transform(..) => PropertyIdTag::Transform,
             PropertyId::TransformOrigin(..) => PropertyIdTag::TransformOrigin,
             PropertyId::TransformStyle(..) => PropertyIdTag::TransformStyle,
@@ -1276,6 +1289,8 @@ impl PropertyId {
             | PropertyId::TransitionDelay(p)
             | PropertyId::TransitionTimingFunction(p)
             | PropertyId::Transition(p)
+            | PropertyId::Animation(p)
+            | PropertyId::AnimationName(p)
             | PropertyId::Transform(p)
             | PropertyId::TransformOrigin(p)
             | PropertyId::TransformStyle(p)
@@ -2788,6 +2803,28 @@ impl PropertyId {
             }
             return None;
         }
+        if strings::eql_case_insensitive_ascii_check_length(name, b"animation-name") {
+            let allowed: VendorPrefix = VendorPrefix::NONE
+                | VendorPrefix::WEBKIT
+                | VendorPrefix::MOZ
+                | VendorPrefix::O
+                | VendorPrefix::MS;
+            if allowed.intersects(pre) {
+                return Some(PropertyId::AnimationName(pre));
+            }
+            return None;
+        }
+        if strings::eql_case_insensitive_ascii_check_length(name, b"animation") {
+            let allowed: VendorPrefix = VendorPrefix::NONE
+                | VendorPrefix::WEBKIT
+                | VendorPrefix::MOZ
+                | VendorPrefix::O
+                | VendorPrefix::MS;
+            if allowed.intersects(pre) {
+                return Some(PropertyId::Animation(pre));
+            }
+            return None;
+        }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transform") {
             let allowed: VendorPrefix = VendorPrefix::NONE
                 | VendorPrefix::WEBKIT
@@ -3370,6 +3407,8 @@ pub enum Property {
         ),
     ),
     Transition((SmallList<transition::Transition, 1>, VendorPrefix)),
+    Animation((SmallList<animation::Animation, 1>, VendorPrefix)),
+    AnimationName((SmallList<animation::AnimationName, 1>, VendorPrefix)),
     Transform((transform::TransformList, VendorPrefix)),
     TransformOrigin((position::Position, VendorPrefix)),
     TransformStyle((transform::TransformStyle, VendorPrefix)),
@@ -3635,6 +3674,8 @@ impl Property {
             Property::TransitionDelay(v) => PropertyId::TransitionDelay(v.1),
             Property::TransitionTimingFunction(v) => PropertyId::TransitionTimingFunction(v.1),
             Property::Transition(v) => PropertyId::Transition(v.1),
+            Property::Animation(v) => PropertyId::Animation(v.1),
+            Property::AnimationName(v) => PropertyId::AnimationName(v.1),
             Property::Transform(v) => PropertyId::Transform(v.1),
             Property::TransformOrigin(v) => PropertyId::TransformOrigin(v.1),
             Property::TransformStyle(v) => PropertyId::TransformStyle(v.1),
@@ -3902,6 +3943,8 @@ impl Property {
             Property::TransitionDelay(v) => css::generic::to_css(&v.0, dest),
             Property::TransitionTimingFunction(v) => css::generic::to_css(&v.0, dest),
             Property::Transition(v) => css::generic::to_css(&v.0, dest),
+            Property::Animation(v) => css::generic::to_css(&v.0, dest),
+            Property::AnimationName(v) => css::generic::to_css(&v.0, dest),
             Property::Transform(v) => css::generic::to_css(&v.0, dest),
             Property::TransformOrigin(v) => css::generic::to_css(&v.0, dest),
             Property::TransformStyle(v) => css::generic::to_css(&v.0, dest),
@@ -5779,6 +5822,25 @@ impl Property {
                     }
                 }
             }
+            PropertyId::Animation(pre) => {
+                if let Ok(c) = css::generic::parse_with_options::<SmallList<animation::Animation, 1>>(
+                    input, options,
+                ) {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Animation((c, pre)));
+                    }
+                }
+            }
+            PropertyId::AnimationName(pre) => {
+                if let Ok(c) = css::generic::parse_with_options::<
+                    SmallList<animation::AnimationName, 1>,
+                >(input, options)
+                {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::AnimationName((c, pre)));
+                    }
+                }
+            }
             PropertyId::Transform(pre) => {
                 if let Ok(c) =
                     css::generic::parse_with_options::<transform::TransformList>(input, options)
@@ -6752,6 +6814,12 @@ impl Property {
             Property::Transition(v) => {
                 Property::Transition((css::generic::deep_clone(&v.0, arena), v.1))
             }
+            Property::Animation(v) => {
+                Property::Animation((css::generic::deep_clone(&v.0, arena), v.1))
+            }
+            Property::AnimationName(v) => {
+                Property::AnimationName((css::generic::deep_clone(&v.0, arena), v.1))
+            }
             Property::Transform(v) => {
                 Property::Transform((css::generic::deep_clone(&v.0, arena), v.1))
             }
@@ -7280,6 +7348,12 @@ impl Property {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
             (Property::Transition(a), Property::Transition(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::Animation(a), Property::Animation(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::AnimationName(a), Property::AnimationName(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
             (Property::Transform(a), Property::Transform(b)) => {

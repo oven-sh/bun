@@ -398,31 +398,11 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
-                        // SAFETY: bun_vm() returns the live VM raw ptr.
-                        if let Some(entry) = global.bun_vm().as_mut().mime_type(str.slice()) {
-                            // `MimeType.value` is `Cow<'static, [u8]>`; the
-                            // canonical-table hit (via `Compact::to_mime_type`) is always
-                            // `Borrowed(&'static)`. If a future table source ever yields
-                            // `Owned`, hand the buffer to the blob's allocated-content-type
-                            // path so `Blob::deinit` reclaims it.
-                            match entry.value {
-                                std::borrow::Cow::Borrowed(s) => {
-                                    blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
-                                }
-                                std::borrow::Cow::Owned(v) => {
-                                    blob.content_type
-                                        .set(bun_core::heap::into_raw(v.into_boxed_slice()));
-                                    blob.content_type_allocated.set(true);
-                                }
-                            }
-                            break 'inner;
-                        }
-                        let mut content_type_buf = vec![0u8; slice.len()];
-                        strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type.set(bun_core::heap::into_raw(
-                            content_type_buf.into_boxed_slice(),
-                        ));
-                        blob.content_type_allocated.set(true);
+                        blob.content_type
+                            .set(match global.bun_vm().as_mut().mime_type(slice) {
+                                Some(mime) => blob::BlobContentType::from(mime),
+                                None => blob::BlobContentType::from_lowercased(slice),
+                            });
                     }
                 }
             }
@@ -465,31 +445,11 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
-                        // SAFETY: bun_vm() returns the live VM raw ptr.
-                        if let Some(entry) = global.bun_vm().as_mut().mime_type(str.slice()) {
-                            // `MimeType.value` is `Cow<'static, [u8]>`; the
-                            // canonical-table hit (via `Compact::to_mime_type`) is always
-                            // `Borrowed(&'static)`. If a future table source ever yields
-                            // `Owned`, hand the buffer to the blob's allocated-content-type
-                            // path so `Blob::deinit` reclaims it.
-                            match entry.value {
-                                std::borrow::Cow::Borrowed(s) => {
-                                    blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
-                                }
-                                std::borrow::Cow::Owned(v) => {
-                                    blob.content_type
-                                        .set(bun_core::heap::into_raw(v.into_boxed_slice()));
-                                    blob.content_type_allocated.set(true);
-                                }
-                            }
-                            break 'inner;
-                        }
-                        let mut content_type_buf = vec![0u8; slice.len()];
-                        strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type.set(bun_core::heap::into_raw(
-                            content_type_buf.into_boxed_slice(),
-                        ));
-                        blob.content_type_allocated.set(true);
+                        blob.content_type
+                            .set(match global.bun_vm().as_mut().mime_type(slice) {
+                                Some(mime) => blob::BlobContentType::from(mime),
+                                None => blob::BlobContentType::from_lowercased(slice),
+                            });
                     }
                 }
             }
@@ -751,7 +711,7 @@ pub(crate) fn get_presign_url_from(
                     }
                 };
             }
-            if let Some(expires_) = options.get_optional_int::<i32>(global, "expiresIn")? {
+            if let Some(expires_) = options.get_optional::<i32>(global, "expiresIn")? {
                 if expires_ <= 0 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "expiresIn must be greather than 0"

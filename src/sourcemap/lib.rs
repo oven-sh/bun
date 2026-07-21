@@ -7,6 +7,9 @@
 //! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`.
 
 // ── sibling modules ───────────────────────────────────────────────────────
+pub mod error;
+pub use error::{Error, Result};
+
 #[path = "Chunk.rs"]
 pub mod chunk;
 #[path = "InternalSourceMap.rs"]
@@ -123,7 +126,7 @@ pub enum ParseResult {
 
 pub struct ParseResultFail {
     pub loc: bun_ast::Loc,
-    pub err: bun_core::Error,
+    pub err: crate::Error,
     pub value: i32,
     pub msg: &'static [u8],
 }
@@ -132,7 +135,7 @@ impl Default for ParseResultFail {
     fn default() -> Self {
         Self {
             loc: bun_ast::Loc::default(),
-            err: bun_core::err!("Unknown"),
+            err: crate::Error::Unknown,
             value: 0,
             msg: b"",
         }
@@ -244,11 +247,9 @@ impl LineColumnOffset {
 
         let remain = &input[offset as usize..];
 
-        if cfg!(debug_assertions) {
-            debug_assert!(strings::is_all_ascii(remain));
-            debug_assert!(strings::index_of_char(remain, b'\n').is_none());
-            debug_assert!(strings::index_of_char(remain, b'\r').is_none());
-        }
+        debug_assert!(strings::is_all_ascii(remain));
+        debug_assert!(strings::index_of_char(remain, b'\n').is_none());
+        debug_assert!(strings::index_of_char(remain, b'\r').is_none());
 
         this.columns = this
             .columns
@@ -428,7 +429,7 @@ pub trait SourceProvider {
     /// Phrases the user-facing warning emitted when [`Self::get_source_map_json`]
     /// returned bytes that fail to parse; the host suppresses the
     /// `--sourcemap=external` hint and aborts the lookup after calling this.
-    fn warn_invalid_source_map_json(&self, source_filename: &[u8], err: bun_core::Error) {
+    fn warn_invalid_source_map_json(&self, source_filename: &[u8], err: crate::Error) {
         bun_core::warn!(
             "Could not decode sourcemap in '{}': {}",
             ::bstr::BStr::new(source_filename),
@@ -468,7 +469,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
     let arena = bun_alloc::Arena::new();
 
     let (new_load_hint, mut parsed): (SourceMapLoadHint, ParseUrl) = 'parsed: {
-        let mut inline_err: Option<bun_core::Error> = None;
+        let mut inline_err: Option<crate::Error> = None;
 
         // try to get an inline source map
         if load_hint != SourceMapLoadHint::IsExternalMap {
@@ -727,36 +728,31 @@ pub mod SerializedSourceMap {
         /// Only decompress source code once! Once a file is decompressed,
         /// it is stored here. Decompression failure is recorded as an empty
         /// `Vec`, which `source_file_contents` treats as "no contents".
-        pub decompressed_files: Box<[Option<Vec<u8>>]>,
+        pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
     }
 
     impl Loaded {
-        pub(crate) fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
-            // Populate first if
-            // empty, then take a single borrow at the end (borrowck-friendly).
-            if self.decompressed_files[index].is_none() {
+        pub(crate) fn source_file_contents(&self, index: usize) -> Option<&[u8]> {
+            let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
                 let compressed_file = sp.slice(self.map.bytes);
                 let size = bun_zstd::get_decompressed_size(compressed_file);
 
                 let mut bytes = vec![0u8; size];
-                self.decompressed_files[index] =
-                    Some(match bun_zstd::decompress(&mut bytes, compressed_file) {
-                        bun_zstd::Result::Err(err) => {
-                            bun_core::warn!(
-                                "Source map decompression error: {}",
-                                ::bstr::BStr::new(err.as_bytes()),
-                            );
-                            Vec::new()
-                        }
-                        bun_zstd::Result::Success(n) => {
-                            bytes.truncate(n);
-                            bytes
-                        }
-                    });
-            }
-
-            let decompressed = self.decompressed_files[index].as_deref().unwrap();
+                match bun_zstd::decompress(&mut bytes, compressed_file) {
+                    bun_zstd::Result::Err(err) => {
+                        bun_core::warn!(
+                            "Source map decompression error: {}",
+                            ::bstr::BStr::new(err.as_bytes()),
+                        );
+                        Vec::new()
+                    }
+                    bun_zstd::Result::Success(n) => {
+                        bytes.truncate(n);
+                        bytes
+                    }
+                }
+            });
             if decompressed.is_empty() {
                 None
             } else {
@@ -834,8 +830,11 @@ impl SourceMapPieces {
                 current += 1;
             }
 
+            // A single mapping can cross multiple shift boundaries when two
+            // placeholder substitutions have no mapping between them, so
+            // advance to the latest applicable shift before re-encoding.
             let mut did_cross_boundary = false;
-            if shifts.len() > 1 && LineColumnOffset::comes_before(shifts[1].before, generated) {
+            while shifts.len() > 1 && LineColumnOffset::comes_before(shifts[1].before, generated) {
                 shifts = &shifts[1..];
                 did_cross_boundary = true;
             }
@@ -884,7 +883,7 @@ pub fn parse_url(
     arena: &bun_alloc::Arena,
     source: &[u8],
     hint: ParseUrlResultHint,
-) -> Result<ParseUrl, bun_core::Error> {
+) -> crate::Result<ParseUrl> {
     let json_bytes: &[u8] = 'json_bytes: {
         const DATA_PREFIX: &[u8] = b"data:application/json";
 
@@ -909,7 +908,7 @@ pub fn parse_url(
                         let bytes = arena.alloc_slice_fill_default::<u8>(len);
                         let decoded = bun_base64::decode(bytes, base64_data);
                         if !decoded.is_successful() {
-                            return Err(bun_core::err!("InvalidBase64"));
+                            return Err(crate::Error::InvalidBase64);
                         }
                         break 'json_bytes &bytes[..decoded.count];
                     }
@@ -919,7 +918,7 @@ pub fn parse_url(
             }
         }
 
-        return Err(bun_core::err!("UnsupportedFormat"));
+        return Err(crate::Error::UnsupportedFormat);
     };
 
     parse_json(json_bytes, hint)
@@ -929,7 +928,7 @@ pub fn parse_url(
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
-pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> Result<ParseUrl, bun_core::Error> {
+pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
     use crate::mapping::SourceMap as SourceMapLog;
     use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
@@ -945,47 +944,47 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> Result<ParseUrl, b
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
     let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
         Ok(p) => p,
-        Err(_) => return Err(bun_core::err!("InvalidJSON")),
+        Err(_) => return Err(crate::Error::InvalidJSON),
     };
     let json = parsed.root;
 
     if let Some(version) = json.get(b"version") {
         match version.data.as_e_number() {
             Some(n) if n.value() == 3.0 => {}
-            _ => return Err(bun_core::err!("UnsupportedVersion")),
+            _ => return Err(crate::Error::UnsupportedVersion),
         }
     }
 
     let Some(mappings_str) = json.get(b"mappings") else {
-        return Err(bun_core::err!("UnsupportedVersion"));
+        return Err(crate::Error::UnsupportedVersion);
     };
 
     let Some(mappings_vlq) = mappings_str.as_utf8_string_literal() else {
-        return Err(bun_core::err!("InvalidSourceMap"));
+        return Err(crate::Error::InvalidSourceMap);
     };
 
     let sources_content = match json
         .get(b"sourcesContent")
-        .ok_or_else(|| bun_core::err!("InvalidSourceMap"))?
+        .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
         bun_ast::ExprData::EArrayJSON(arr) => arr,
-        _ => return Err(bun_core::err!("InvalidSourceMap")),
+        _ => return Err(crate::Error::InvalidSourceMap),
     };
     let sources_content = sources_content.get();
 
     let sources_paths = match json
         .get(b"sources")
-        .ok_or_else(|| bun_core::err!("InvalidSourceMap"))?
+        .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
         bun_ast::ExprData::EArrayJSON(arr) => arr,
-        _ => return Err(bun_core::err!("InvalidSourceMap")),
+        _ => return Err(crate::Error::InvalidSourceMap),
     };
     let sources_paths = sources_paths.get();
 
     if sources_content.items().len() != sources_paths.items().len() {
-        return Err(bun_core::err!("InvalidSourceMap"));
+        return Err(crate::Error::InvalidSourceMap);
     }
 
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
@@ -995,7 +994,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> Result<ParseUrl, b
         let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items().len());
         for item in sources_paths.items() {
             let Some(s) = item.as_str() else {
-                return Err(bun_core::err!("InvalidSourceMap"));
+                return Err(crate::Error::InvalidSourceMap);
             };
             v.push(Box::<[u8]>::from(s));
         }
@@ -1040,7 +1039,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> Result<ParseUrl, b
 
                         for item in arr.items() {
                             let Some(str) = item.as_str() else {
-                                return Err(bun_core::err!("InvalidSourceMap"));
+                                return Err(crate::Error::InvalidSourceMap);
                             };
 
                             names_list.push(bun_semver::String::init_append_if_needed(
@@ -1123,7 +1122,7 @@ pub fn append_source_map_chunk<'a>(
     prev_end_state_: SourceMapState,
     start_state_: SourceMapState,
     source_map_: &'a [u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let mut prev_end_state = prev_end_state_;
     let mut start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one

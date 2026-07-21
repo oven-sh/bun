@@ -1786,11 +1786,11 @@ mod spawn_process_body {
         options: &SpawnOptions,
         argv: Argv, // [*:null]?[*:0]const u8
         envp: Envp,
-    ) -> Result<bun_sys::Result<SpawnProcessResult>, bun_core::Error> {
+    ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
         #[cfg(unix)]
         {
             // SAFETY: forwarded from this function's safety contract.
-            unsafe { spawn_process_posix(options, argv, envp) }
+            unsafe { spawn_process_posix(options, argv, envp) }.map_err(Into::into)
         }
         #[cfg(not(unix))]
         {
@@ -1803,7 +1803,7 @@ mod spawn_process_body {
         options: &WindowsSpawnOptions,
         argv: *const *const c_char,
         envp: *const *const c_char,
-    ) -> Result<bun_sys::Result<WindowsSpawnResult>, bun_core::Error> {
+    ) -> Result<bun_sys::Result<WindowsSpawnResult>, crate::Error> {
         bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: all-zero is a valid uv_process_options_t
@@ -1945,7 +1945,7 @@ mod spawn_process_body {
                             Ok(p) => p,
                             Err(e) => {
                                 cleanup_uv_files(&uv_files_to_close, loop_);
-                                return Err(e);
+                                return Err(crate::Error::Sys(e));
                             }
                         };
                         // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv
@@ -2029,7 +2029,7 @@ mod spawn_process_body {
                         Ok(p) => p,
                         Err(e) => {
                             cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Err(e);
+                            return Err(crate::Error::Sys(e));
                         }
                     };
                     // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
@@ -2121,9 +2121,7 @@ mod spawn_process_body {
         // defer dup_fds cleanup — handled below at each exit
         let cleanup_dup = |failed: bool| {
             if dup_src.is_some() {
-                if cfg!(debug_assertions) {
-                    debug_assert!(dup_src.is_some() && dup_tgt.is_some());
-                }
+                debug_assert!(dup_src.is_some() && dup_tgt.is_some());
             }
             if failed && dup_fds[0] != -1 {
                 Fd::from_uv(dup_fds[0]).close();
@@ -2648,7 +2646,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_ = options.windows.loop_.platform_event_loop();
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
@@ -2692,7 +2690,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_: EventLoopHandle = options.windows.loop_;
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
@@ -2800,7 +2798,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<Maybe<Result>, crate::Error> {
             #[cfg(windows)]
             {
                 if options.stdin != SyncStdio::Buffer
@@ -2816,7 +2814,7 @@ mod spawn_process_body {
             spawn_posix(options, argv, envp)
         }
 
-        pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, crate::Error> {
             // SAFETY: `bun_sys::environ_ptr` returns the live, NULL-terminated C
             // `environ` array when no envp override is provided.
             let envp: *const *const c_char = options.envp.unwrap_or_else(bun_sys::environ_ptr);
@@ -3007,7 +3005,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<Maybe<Result>, crate::Error> {
             // --no-orphans: put the script in its own process group so we can
             // `kill(-pgid, SIGKILL)` on every exit path. Pgroup membership is
             // inherited recursively and survives reparenting to launchd/init, so

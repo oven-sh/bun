@@ -98,6 +98,7 @@ unsafe extern "C" {
         possible_readable_stream: &mut JSValue,
         ptr: &mut *mut c_void,
     ) -> Tag;
+    safe fn ReadableStream__is(value: JSValue) -> bool;
     safe fn ReadableStream__isDisturbed(
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
@@ -263,6 +264,11 @@ impl ReadableStream {
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
+    }
+
+    /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
+    pub fn is_readable_stream(value: JSValue) -> bool {
+        ReadableStream__is(value)
     }
 
     pub fn from_js(
@@ -1115,17 +1121,7 @@ impl<C: SourceContext> NewSource<C> {
             streams::Result::TemporaryAndDone(_)
             | streams::Result::OwnedAndDone(_)
             | streams::Result::IntoArrayAndDone(_) => {
-                let value = JSValue::TRUE;
-                // SAFETY: flags is a JS object passed from builtin JS; index 0 is writable.
-                unsafe {
-                    jsc::c_api::JSObjectSetPropertyAtIndex(
-                        std::ptr::from_ref::<JSGlobalObject>(global_this).cast_mut(),
-                        flags.as_object_ref(),
-                        0,
-                        value.as_object_ref(),
-                        core::ptr::null_mut(),
-                    );
-                }
+                flags.put_index(global_this, 0, JSValue::TRUE)?;
                 result.to_js(global_this)
             }
             _ => result.to_js(global_this),

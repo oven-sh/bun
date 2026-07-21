@@ -545,6 +545,9 @@ impl Parser<'_> {
                     {
                         return Ok(None);
                     }
+                    if !self.charge_ref_def_output(dest.len(), title.len()) {
+                        return Ok(None);
+                    }
                     let leave = self.enter_label_span(&dest, &title, is_image)?;
                     return Ok(Some(LabelParse {
                         label_start: start + 1,
@@ -575,6 +578,9 @@ impl Parser<'_> {
                     && has_inner_bracket
                     && self.label_contains_link(label, brackets, base + start + 1)
                 {
+                    return Ok(None);
+                }
+                if !self.charge_ref_def_output(dest.len(), title.len()) {
                     return Ok(None);
                 }
                 let leave = self.enter_label_span(&dest, &title, is_image)?;

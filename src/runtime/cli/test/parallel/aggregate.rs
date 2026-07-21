@@ -8,7 +8,7 @@ use bstr::BStr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::strings;
-use bun_core::{self, Output, ZBox, err};
+use bun_core::{self, Output, ZBox};
 use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
 use bun_paths::{self, PathBuffer};
 use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
@@ -111,13 +111,13 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
     let out_z = ZBox::from_bytes(outfile);
     match File::openat(Fd::cwd(), &out_z, O::WRONLY | O::CREAT | O::TRUNC, 0o664) {
         bun_sys::Result::Err(e) => Output::err(
-            err!("JUnitReportFailed"),
+            crate::Error::JUnitReportFailed,
             "Failed to write JUnit report to {}\n{}",
             (BStr::new(outfile), e),
         ),
         bun_sys::Result::Ok(fd) => match File::write_all(&fd, &contents) {
             bun_sys::Result::Err(e) => Output::err(
-                err!("JUnitReportFailed"),
+                crate::Error::JUnitReportFailed,
                 "Failed to write JUnit report to {}\n{}",
                 (BStr::new(outfile), e),
             ),
@@ -244,7 +244,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             0o644,
         ) {
             bun_sys::Result::Err(e) => Output::err(
-                err!("lcovCoverageError"),
+                crate::Error::lcovCoverageError,
                 "Failed to write merged lcov.info\n{}",
                 (e,),
             ),

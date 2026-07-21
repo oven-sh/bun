@@ -77,6 +77,8 @@ pub enum HardcodedModule {
     NodeReadline,
     #[strum(serialize = "node:readline/promises")]
     NodeReadlinePromises,
+    #[strum(serialize = "node:sqlite")]
+    NodeSqlite,
     #[strum(serialize = "node:stream")]
     NodeStream,
     #[strum(serialize = "node:stream/consumers")]
@@ -176,6 +178,10 @@ pub enum HardcodedModule {
     /// This is gated behind '--expose-internals'
     #[strum(serialize = "bun:internal-for-testing")]
     BunInternalForTesting,
+    /// Node.js-internal testing shim (`require('internal/test/binding')`),
+    /// gated behind '--expose-internals' like `bun:internal-for-testing`.
+    #[strum(serialize = "internal/test/binding")]
+    InternalTestBinding,
 }
 
 bun_core::comptime_string_map! {
@@ -193,6 +199,7 @@ bun_core::comptime_string_map! {
         b"bun:sqlite" => HardcodedModule::BunSqlite,
         b"bun:wrap" => HardcodedModule::BunWrap,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
+        b"internal/test/binding" => HardcodedModule::InternalTestBinding,
         // Node.js
         b"node:assert" => HardcodedModule::NodeAssert,
         b"node:assert/strict" => HardcodedModule::NodeAssertStrict,
@@ -230,6 +237,7 @@ bun_core::comptime_string_map! {
         b"node:querystring" => HardcodedModule::NodeQuerystring,
         b"node:readline/promises" => HardcodedModule::NodeReadlinePromises,
         b"node:repl" => HardcodedModule::NodeRepl,
+        b"node:sqlite" => HardcodedModule::NodeSqlite,
         b"node:stream" => HardcodedModule::NodeStream,
         b"node:stream/consumers" => HardcodedModule::NodeStreamConsumers,
         b"node:stream/iter" => HardcodedModule::NodeStreamIter,
@@ -437,6 +445,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("node:worker_threads"),
     node_entry!("node:zlib"),
     // New Node.js builtins only resolve from the prefixed one.
+    node_entry_only_prefix!("node:sqlite"),
     node_entry_only_prefix!("node:test"),
     //
     node_entry!("assert"),
@@ -695,6 +704,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
     entry!("bun:internal-for-testing"),
+    entry!("internal/test/binding"),
     (
         b"ffi",
         Alias {

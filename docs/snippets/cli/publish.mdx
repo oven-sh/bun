@@ -44,7 +44,7 @@ bun publish --tag alpha
 
 </ParamField>
 
-<ParamField path="--dry-run=<val>" type="string">
+<ParamField path="--dry-run" type="boolean">
 Simulate the publish process without publishing the package, to verify its contents first.
 
 ```sh
@@ -72,7 +72,7 @@ Enter OTP: 123456
 
 </ParamField>
 
-<ParamField path="--otp" type="string" default="web">
+<ParamField path="--otp" type="string">
 
 Provide a one-time password directly to the CLI. A valid password skips the extra one-time password prompt before publishing.
 
@@ -175,8 +175,8 @@ bun publish --cafile ./ca-cert.pem
   Maximum concurrent network requests
 </ParamField>
 
-<ParamField path="--concurrent-scripts" type="number" default="5">
-  Maximum concurrent lifecycle scripts
+<ParamField path="--concurrent-scripts" type="number">
+  Maximum concurrent lifecycle scripts (default: 2x CPU cores)
 </ParamField>
 
 #### Output Control

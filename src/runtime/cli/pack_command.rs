@@ -22,8 +22,7 @@ use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
 use bun_paths::{self as path, PathBuffer, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
-// borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`
-// alias re-exported at `bun_ptr::CowString`).
+// borrow_subslice/length live on `cow_slice::CowSliceZ`).
 use bun_ptr::cow_slice::CowSlice;
 type CowString = CowSlice<u8>;
 use crate::cli::run_command::RunCommand;
@@ -42,12 +41,8 @@ use bun_sys::{
 // ───────────────────────────────────────────────────────────────────────────
 
 #[inline]
-fn dir_open_dir_z(
-    dir: &Dir,
-    path: &ZStr,
-    opts: bun_sys::OpenDirOptions,
-) -> Result<Dir, bun_core::Error> {
-    dir.open_dir(path.as_bytes(), opts)
+fn dir_open_dir_z(dir: &Dir, path: &ZStr, opts: bun_sys::OpenDirOptions) -> crate::Result<Dir> {
+    Ok(dir.open_dir(path.as_bytes(), opts)?)
 }
 
 /// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data
@@ -209,7 +204,7 @@ impl PackCommand {
     pub fn exec_with_manager(
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         use bun_install::lockfile::{LoadResult, LoadStep};
 
         if manager.options.log_level != LogLevel::Silent
@@ -237,7 +232,7 @@ impl PackCommand {
             LoadResult::Err(cause) => 'err: {
                 match cause.step {
                     LoadStep::OpenFile => {
-                        if cause.value == bun_core::err!("ENOENT") {
+                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             break 'err None;
                         }
                         Output::err_generic(
@@ -317,7 +312,7 @@ impl PackCommand {
         Ok(())
     }
 
-    pub fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
+    pub fn exec(ctx: Command::Context<'_>) -> crate::Result<()> {
         let cli =
             bun_install::package_manager::command_line_arguments::CommandLineArguments::parse(
                 bun_install::Subcommand::Pack,
@@ -329,7 +324,7 @@ impl PackCommand {
                 Ok(v) => v,
                 Err(err) => {
                     if !silent {
-                        if err == bun_core::err!("MissingPackageJSON") {
+                        if err == bun_install::Error::MissingPackageJSON {
                             let mut cwd_buf = PathBuffer::uninit();
                             match bun_sys::getcwd_z(&mut cwd_buf) {
                                 Ok(cwd) => {
@@ -408,14 +403,16 @@ const ROOT_DEFAULT_IGNORE_PATTERNS: &[&[u8]] = &[
     b"bun.lock",
 ];
 
-// (pattern, can_override)
+// (pattern, can_override). `can_override == false` mirrors npm-packlist's
+// strict rules (only `.git` and `.npmrc` here; lockfiles live in
+// ROOT_DEFAULT_IGNORE_PATTERNS); everything else `"files"` can re-include.
 const DEFAULT_IGNORE_PATTERNS: &[(&[u8], bool)] = &[
     (b".*.swp", true),
     (b"._*", true),
     (b".DS_Store", true),
     (b".git", false),
     (b".gitignore", true),
-    (b".hg", false),
+    (b".hg", true),
     (b".npmignore", true),
     (b".npmrc", false),
     (b".lock-wscript", true),
@@ -515,9 +512,6 @@ fn iterate_included_project_tree(
         }
     }
 
-    let mut ignores: Vec<IgnorePatterns> = Vec::new();
-    let _ = &mut ignores; // unused in this fn body (declared but not read)
-
     let mut dirs: Vec<DirInfo> = Vec::new();
     dirs.push(DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1));
 
@@ -566,6 +560,24 @@ fn iterate_included_project_tree(
                     included = true;
                     is_unconditionally_included = true;
                 }
+            }
+
+            if let Some((pattern, kind)) = is_unconditionally_excluded(entry_name, dir_depth) {
+                if log_level.is_verbose() {
+                    bun_core::prettyln!(
+                        "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
+                        <&str>::from(kind),
+                        bstr::BStr::new(pattern),
+                        bstr::BStr::new(entry_subpath.as_bytes()),
+                        if entry.kind == bun_sys::FileKind::Directory {
+                            "/"
+                        } else {
+                            ""
+                        },
+                    );
+                    Output::flush();
+                }
+                continue;
             }
 
             if !included {
@@ -906,7 +918,10 @@ fn iterate_bundled_deps(
         Ok(d) => d,
         Err(err) => {
             // ignore node_modules if it isn't a directory, or doesn't exist
-            if err == bun_core::err!("ENOTDIR") || err == bun_core::err!("ENOENT") {
+            if matches!(
+                err,
+                crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::ENOENT)
+            ) {
                 return Ok(bundled_pack_queue);
             }
             Output::err(
@@ -1602,6 +1617,42 @@ fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     false
 }
 
+/// Default ignores that nothing (including an explicit `"files"` entry) can
+/// re-include: the root lockfiles and the `can_override == false` patterns.
+fn is_unconditionally_excluded(
+    entry_name: &[u8],
+    dir_depth: usize,
+) -> Option<(&'static [u8], IgnorePatternsKind)> {
+    if dir_depth == 1 {
+        // check default ignores that only apply to the root project directory
+        for &pattern in ROOT_DEFAULT_IGNORE_PATTERNS {
+            match glob::r#match(pattern, entry_name) {
+                GlobMatchResult::Match => {
+                    // cannot be reversed
+                    return Some((pattern, IgnorePatternsKind::Default));
+                }
+                GlobMatchResult::NoMatch => {}
+                // default patterns don't use `!`
+                GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+            }
+        }
+    }
+
+    for &(pattern, can_override) in DEFAULT_IGNORE_PATTERNS {
+        if can_override {
+            continue;
+        }
+        match glob::r#match(pattern, entry_name) {
+            GlobMatchResult::Match => return Some((pattern, IgnorePatternsKind::Default)),
+            GlobMatchResult::NoMatch => {}
+            // default patterns don't use `!`
+            GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+        }
+    }
+
+    None
+}
+
 fn is_excluded<'a>(
     entry: &DirIterator::IteratorResult,
     entry_subpath: &'a ZStr,
@@ -1618,19 +1669,10 @@ fn is_excluded<'a>(
         {
             return None;
         }
+    }
 
-        // check default ignores that only apply to the root project directory
-        for &pattern in ROOT_DEFAULT_IGNORE_PATTERNS {
-            match glob::r#match(pattern, entry_name) {
-                GlobMatchResult::Match => {
-                    // cannot be reversed
-                    return Some((pattern, IgnorePatternsKind::Default));
-                }
-                GlobMatchResult::NoMatch => {}
-                // default patterns don't use `!`
-                GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
-            }
-        }
+    if let Some(excluded) = is_unconditionally_excluded(entry_name, dir_depth) {
+        return Some(excluded);
     }
 
     let mut ignore_pattern: &[u8] = &[];
@@ -1641,19 +1683,18 @@ fn is_excluded<'a>(
     let mut ignored = false;
 
     for &(pattern, can_override) in DEFAULT_IGNORE_PATTERNS {
+        if !can_override {
+            continue;
+        }
         match glob::r#match(pattern, entry_name) {
             GlobMatchResult::Match => {
-                if can_override {
-                    ignored = true;
-                    ignore_pattern = pattern;
-                    ignore_kind = IgnorePatternsKind::Default;
+                ignored = true;
+                ignore_pattern = pattern;
+                ignore_kind = IgnorePatternsKind::Default;
 
-                    // break. doesn't matter if more default patterns
-                    // match this path
-                    break;
-                }
-
-                return Some((pattern, IgnorePatternsKind::Default));
+                // break. doesn't matter if more default patterns
+                // match this path
+                break;
             }
             GlobMatchResult::NoMatch => {}
             // default patterns don't use `!`
@@ -2051,7 +2092,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         manager.options.log_level != LogLevel::Silent,
         false,
     ) {
-        if err == bun_core::err!("OutOfMemory") {
+        if matches!(err, crate::Error::Alloc(_)) {
             return Err(PackError::OutOfMemory);
         }
         Output::err_generic(
@@ -3008,14 +3049,14 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     ) {
         Ok(_) => Ok(()),
         Err(err) => {
-            if err == bun_core::err!("MissingShell") {
+            if matches!(err, crate::Error::MissingShell) {
                 Output::err_generic(
                     "failed to find shell executable to run {} script",
                     format_args!("{}", bstr::BStr::new(name)),
                 );
                 Global::crash();
             }
-            if err == bun_core::err!("OutOfMemory") {
+            if matches!(err, crate::Error::Alloc(_)) {
                 return Err(PackError::OutOfMemory);
             }
             unreachable!()
@@ -3196,7 +3237,7 @@ fn archive_package_json(
         Ok(s) => s,
         Err(err) => {
             Output::err(
-                bun_core::Error::from(err),
+                crate::Error::from(err),
                 "failed to stat package.json",
                 format_args!(""),
             );
@@ -3299,7 +3340,7 @@ fn add_archive_entry(
         Ok(n) => n,
         Err(err) => {
             Output::err(
-                bun_core::Error::from(err),
+                crate::Error::from(err),
                 "failed to read file: \"{}\"",
                 format_args!("{}", bstr::BStr::new(filename.as_bytes())),
             );
@@ -3313,7 +3354,7 @@ fn add_archive_entry(
             Ok(n) => n,
             Err(err) => {
                 Output::err(
-                    bun_core::Error::from(err),
+                    crate::Error::from(err),
                     "failed to read file: \"{}\"",
                     format_args!("{}", bstr::BStr::new(filename.as_bytes())),
                 );
@@ -3549,7 +3590,7 @@ fn edit_root_package_json(
     ) {
         Ok(w) => w,
         Err(err) => {
-            if err == bun_core::err!("OutOfMemory") {
+            if err == bun_js_printer::Error::Alloc(bun_alloc::AllocError) {
                 return Err(AllocError);
             }
             Output::err_generic(
@@ -3730,7 +3771,7 @@ impl IgnorePatterns {
         dir: &Dir,
         ignore_kind: IgnorePatternsKind,
         reason: IgnoreFileFailReason,
-        err: bun_core::Error,
+        err: crate::Error,
     ) -> ! {
         let mut buf = PathBuffer::uninit();
         let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
@@ -3880,7 +3921,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
             Ok(s) => s,
             Err(err) => {
                 Output::err(
-                    bun_core::Error::from(err),
+                    crate::Error::from(err),
                     "failed to stat package.json",
                     format_args!(""),
                 );
@@ -3910,7 +3951,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                         continue;
                     }
                     Output::err(
-                        bun_core::Error::from(err),
+                        crate::Error::from(err),
                         "failed to stat file: \"{}\"",
                         format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
                     );
@@ -4053,7 +4094,7 @@ pub mod bindings {
                 return Err(global.throw(format_args!(
                     "failed to open tarball file \"{}\": {}",
                     bstr::BStr::new(tarball_path.slice()),
-                    bun_core::Error::from(err).name(),
+                    crate::Error::from(err).name(),
                 )));
             }
         };
@@ -4065,7 +4106,7 @@ pub mod bindings {
                 return Err(global.throw(format_args!(
                     "failed to read tarball contents \"{}\": {}",
                     bstr::BStr::new(tarball_path.slice()),
-                    bun_core::Error::from(err).name(),
+                    crate::Error::from(err).name(),
                 )));
             }
         };

@@ -40,6 +40,8 @@ public:
 
     const Vector<uint8_t>& key() const { return m_key; }
 
+    static bool isValidRawAlgorithm(CryptoAlgorithmIdentifier);
+
 private:
     CryptoKeyRaw(CryptoAlgorithmIdentifier, Vector<uint8_t>&& keyData, CryptoKeyUsageBitmap);
 

@@ -2,8 +2,8 @@ use core::cell::Cell;
 use core::ptr::{NonNull, addr_of, addr_of_mut};
 use core::sync::atomic::Ordering;
 
+use crate::Error;
 use bun_core::scoped_log;
-use bun_core::{Error, err};
 use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
@@ -69,7 +69,7 @@ impl Default for ProxyTunnel {
     fn default() -> Self {
         Self {
             wrapper: None,
-            shutdown_err: Cell::new(err!(ConnectionClosed)),
+            shutdown_err: Cell::new(crate::Error::ConnectionClosed),
             socket: Socket::None,
             write_buffer: bun_io::StreamBuffer::default(),
             did_have_handshaking_error: false,
@@ -292,7 +292,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onData while parked");
         this.state.pending_response = None;
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        ProxyTunnel::close_from_callback(proxy_nn, err!(UnexpectedData));
+        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::UnexpectedData);
         return;
     }
     match this.state.response_stage {
@@ -356,7 +356,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData unexpected data");
             this.state.pending_response = None;
             // SAFETY: `this` dead (NLL); reenter via raw ptr.
-            ProxyTunnel::close_from_callback(proxy_nn, err!(UnexpectedData));
+            ProxyTunnel::close_from_callback(proxy_nn, crate::Error::UnexpectedData);
         }
     }
 }
@@ -463,7 +463,7 @@ fn on_handshake(
         }
         // if handshake_success it self is false, this means that the connection was rejected
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        ProxyTunnel::close_from_callback(proxy_nn, err!(ConnectionRefused));
+        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::ConnectionRefused);
         return;
     }
 }
@@ -640,7 +640,7 @@ impl ProxyTunnel {
 
                 // invalid TLS Options
                 proxy_tunnel_ref.detach_and_deref();
-                this.close_and_fail::<IS_SSL>(err!(ConnectionRefused), socket);
+                this.close_and_fail::<IS_SSL>(crate::Error::ConnectionRefused, socket);
                 return;
             }
         }
@@ -761,12 +761,12 @@ impl ProxyTunnel {
     pub fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         if let Some(wrapper) = &mut self.wrapper {
             return wrapper.write_data(buf).map_err(|e| match e {
-                WriteDataError::ConnectionClosed => err!(ConnectionClosed),
-                WriteDataError::WantRead => err!(WantRead),
-                WriteDataError::WantWrite => err!(WantWrite),
+                WriteDataError::ConnectionClosed => crate::Error::ConnectionClosed,
+                WriteDataError::WantRead => crate::Error::WantRead,
+                WriteDataError::WantWrite => crate::Error::WantWrite,
             });
         }
-        Err(err!(ConnectionClosed))
+        Err(crate::Error::ConnectionClosed)
     }
 
     #[inline]

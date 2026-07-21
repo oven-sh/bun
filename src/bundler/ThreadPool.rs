@@ -17,7 +17,7 @@ use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
 use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
 
-use crate::cache::{Contents, Entry as CacheEntry, ExternalFreeFunction};
+use crate::cache::{Contents, Entry as CacheEntry};
 use crate::linker_context_mod::StmtList;
 // `crate::options::Target` is the lower-tier `bun_options_types`
 // enum (re-exported for downstream crates); `BundleOptions.target` is the
@@ -80,21 +80,6 @@ unsafe impl Send for ThreadPool {}
 // `workers_assignments` (through its `bun_threading::Guarded` lock), and the
 // raw-pointer targets (`ThreadPoolLib::ThreadPool`, `BundleV2`) are `Sync`.
 unsafe impl Sync for ThreadPool {}
-
-impl Default for ThreadPool {
-    /// Placeholder so `bundle_v2` can `arena().alloc(ThreadPool::default())`
-    /// before overwriting with [`ThreadPool::init`].
-    fn default() -> Self {
-        Self {
-            io_pool: None,
-            worker_pool: ptr::null_mut(),
-            worker_pool_is_owned: false,
-            workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
-            generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
-            v2: ptr::null(),
-        }
-    }
-}
 
 mod io_thread_pool {
     use super::*;
@@ -354,7 +339,6 @@ impl ThreadPool {
                     }
                 },
                 fd: Fd::INVALID,
-                external_free_function: ExternalFreeFunction::NONE,
             });
         }
 

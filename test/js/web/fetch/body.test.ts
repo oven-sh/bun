@@ -36,6 +36,18 @@ const bufferTypes = [
   Float64Array,
 ];
 
+// getRandomValues takes integer-typed views only, so fill through a Uint8Array
+// view to cover the ArrayBuffer/SharedArrayBuffer/Float* cases too.
+function randomFilled(bufferType: (typeof bufferTypes)[number], length: number) {
+  const buffer = new (bufferType as any)(length);
+  const bytes =
+    buffer instanceof ArrayBuffer || buffer instanceof SharedArrayBuffer
+      ? new Uint8Array(buffer)
+      : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  crypto.getRandomValues(bytes);
+  return buffer;
+}
+
 const utf8 = [
   {
     string: "",
@@ -82,11 +94,11 @@ for (const { body, fn } of bodyTypes) {
           },
           {
             label: "small buffer",
-            buffer: () => crypto.getRandomValues(new bufferType(1_000)),
+            buffer: () => randomFilled(bufferType, 1_000),
           },
           {
             label: "large buffer",
-            buffer: () => crypto.getRandomValues(new bufferType(1_000_000)),
+            buffer: () => randomFilled(bufferType, 1_000_000),
           },
         ];
         describe(bufferType.name, () => {
@@ -735,4 +747,27 @@ describe.concurrent("string body consumption does not leak", () => {
       expect(exitCode).toBe(0);
     });
   }
+});
+
+// https://github.com/oven-sh/bun/issues/6860
+describe("constructing a body from an unusable ReadableStream", () => {
+  const bytes = () =>
+    new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("x"));
+        c.close();
+      },
+    });
+  test("a disturbed stream throws a TypeError", async () => {
+    const rs = bytes();
+    await new Response(rs).text();
+    expect(() => new Response(rs)).toThrow(TypeError);
+    expect(() => new Request("http://example.com/", { method: "POST", body: rs, duplex: "half" })).toThrow(TypeError);
+  });
+  test("a locked stream throws a TypeError", () => {
+    const rs = bytes();
+    rs.getReader();
+    expect(() => new Response(rs)).toThrow(TypeError);
+    expect(() => new Request("http://example.com/", { method: "POST", body: rs, duplex: "half" })).toThrow(TypeError);
+  });
 });

@@ -1068,4 +1068,55 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // https://github.com/oven-sh/bun/issues/30711 — nested `--bun` used to rewrite
+  // the BUN_NODE_DIR/{bun,node} shim to point at ITSELF. After the OUTER `--bun`
+  // prepends BUN_NODE_DIR to PATH, the INNER bun's argv[0] (PATH-resolved) is
+  // `<BUN_NODE_DIR>/bun` — exactly the shim it was about to rewrite. The symlink
+  // becomes self-referencing and `/usr/bin/env node` fails with ELOOP
+  // ("Too many levels of symbolic links").
+  it.skipIf(isWindows)("nested --bun does not create a self-referencing node/bun shim", async () => {
+    // Reproduce the reporter's exact invocation: `bun run --bun bun run --bun <binScript>`
+    // where:
+    // - the literal "bun" must be resolved via PATH so the inner process's
+    //   argv[0] ends up being the shim path (this is what feeds the self-loop
+    //   into the symlink target)
+    // - the final script must be a `node_modules/.bin/<name>` shim script
+    //   that shebang's `/usr/bin/env node` — that's where ELOOP actually
+    //   surfaces when the shim is broken
+    using dir = tempDir("bun-run-nested-bun-shim", {
+      "package.json": JSON.stringify({ name: "nested-bun-shim" }),
+      "node_modules/fake-pkg/bin.js": "#!/usr/bin/env node\nconsole.log('nested --bun ok');\n",
+    });
+
+    const dirStr = String(dir);
+    chmodSync(join(dirStr, "node_modules/fake-pkg/bin.js"), 0o755);
+
+    // node_modules/.bin/fake-pkg → ../fake-pkg/bin.js
+    const binDir = join(dirStr, "node_modules/.bin");
+    await $`mkdir -p ${binDir} && ln -sf ../fake-pkg/bin.js ${binDir}/fake-pkg`.quiet();
+
+    // Plant a `bun` symlink on PATH so the outer `--bun bun` resolves via
+    // PATH-lookup (not as an absolute argv[0]).
+    const pathBinDir = join(dirStr, "path-bin");
+    await $`mkdir -p ${pathBinDir} && ln -sf ${bunExe()} ${pathBinDir}/bun`.quiet();
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--bun", "bun", "run", "--bun", "fake-pkg"],
+      cwd: dirStr,
+      env: { ...bunEnv, PATH: `${pathBinDir}:${bunEnv.PATH ?? process.env.PATH}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Buggy versions emit "env: 'node': Too many levels of symbolic links"
+    // and exit 126; the fixed version runs the script cleanly.
+    expect({ stderr, stdout, exitCode }).toEqual({
+      stderr: expect.not.stringContaining("Too many levels of symbolic links"),
+      stdout: expect.stringContaining("nested --bun ok"),
+      exitCode: 0,
+    });
+  });
 });

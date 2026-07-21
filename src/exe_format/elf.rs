@@ -34,8 +34,6 @@ pub enum ElfError {
     NewVaddrCollides,
 }
 
-bun_core::named_error_set!(ElfError);
-
 pub struct ElfFile {
     pub data: Vec<u8>,
 }
@@ -428,7 +426,7 @@ impl ElfFile {
         Ok(())
     }
 
-    pub fn write(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+    pub fn write(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         writer.write_all(&self.data)?;
         Ok(())
     }

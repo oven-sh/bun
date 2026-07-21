@@ -22,6 +22,7 @@ bitflags.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_dotenv.workspace = true
+bun_errno.workspace = true
 bun_install_types.workspace = true
 bun_libarchive.workspace = true
 bun_ast.workspace = true

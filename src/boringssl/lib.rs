@@ -50,6 +50,7 @@ use x509 as X509;
 
 /// BoringSSL's translated C API
 pub use boring as c;
+pub use boring::rand_bytes;
 
 pub fn load() {
     // Callers are expected to invoke this on a single thread during startup
@@ -269,19 +270,19 @@ pub fn canonicalize_ip<'a>(
     unsafe { c_ares::ntop(af, ip_std_text.as_ptr().cast(), &mut out_ip[..]) }
 }
 
-/// converts ASN1_OCTET_STRING to canonicalized IP string
-/// return null when the IP is invalid
-pub fn ip2_string<'a>(
-    ip: &boring::ASN1_OCTET_STRING,
+/// Canonical text form of raw IP address octets (4 or 16 bytes), e.g. `::1`.
+fn canonical_ip_octets<'a>(
+    octets: &[u8],
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
-    let af: c_int = match ip.length {
+    let af: c_int = match octets.len() {
         4 => AF_INET,
         16 => AF_INET6,
         _ => return None,
     };
-    // SAFETY: ip.data points to ip.length bytes (4 or 16); out_ip is INET6_ADDRSTRLEN+1 bytes.
-    unsafe { c_ares::ntop(af, ip.data.cast(), &mut out_ip[..]) }
+    // SAFETY: `octets` is readable for its checked 4/16-byte length and
+    // `out_ip` is INET6_ADDRSTRLEN + 1 bytes — `ntop`'s requirements.
+    unsafe { c_ares::ntop(af, octets.as_ptr().cast(), &mut out_ip[..]) }
 }
 
 /// Matches a DNS name pattern (possibly with a leading `*.` wildcard) against
@@ -325,133 +326,196 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
     let host_is_ip = strings::is_ip_address(hostname);
-    // Node.js: CN is consulted only when the certificate carries no
-    // DNS / IP / URI subjectAltName entries. Track whether any were seen.
     let mut has_identifier_san = false;
 
-    // we check with native code if the cert is valid
-    // SAFETY: x509 is a valid &mut so non-null/aligned; all boring:: fns are
-    // null-safe where documented.
-    unsafe {
-        let x509: *mut boring::X509 = x509;
-        let index = boring::X509_get_ext_by_NID(x509, boring::NID_subject_alt_name, -1);
-        if index >= 0 {
-            // we can check hostname
-            if let Some(ext) = boring::X509_get_ext(x509, index).as_mut() {
-                let method = boring::X509V3_EXT_get(ext);
-                if method != boring::X509V3_EXT_get_nid(boring::NID_subject_alt_name) {
-                    return false;
-                }
-
-                // we safely ensure buffer size with max len + 1
-                let mut canonical_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
-                let mut cert_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
-                // we try to canonicalize the IP before comparing (only when host is an IP literal)
-                let host_ip: Option<&[u8]> = if host_is_ip {
-                    Some(canonicalize_ip(hostname, &mut canonical_ip_buf).unwrap_or(hostname))
-                } else {
-                    None
-                };
-
-                let names_ = boring::X509V3_EXT_d2i(ext);
-                if !names_.is_null() {
-                    let names = names_.cast::<boring::struct_stack_st_GENERAL_NAME>();
-                    let _guard = scopeguard::guard(names, |n| {
-                        boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free)
-                    });
-                    for i in 0..boring::sk_GENERAL_NAME_num(names) {
-                        let r#gen = boring::sk_GENERAL_NAME_value(names, i);
-                        if let Some(name) = r#gen.as_ref() {
-                            match name.name_type {
-                                boring::GEN_URI => {
-                                    has_identifier_san = true;
-                                }
-                                boring::GEN_DNS => {
-                                    has_identifier_san = true;
-                                    if !host_is_ip {
-                                        let dns_name = &*name.d.dNSName;
-                                        let dns_name_slice = core::slice::from_raw_parts(
-                                            dns_name.data,
-                                            usize::try_from(dns_name.length).expect("int cast"),
-                                        );
-                                        if match_dns_name(dns_name_slice, hostname) {
-                                            return true;
-                                        }
-                                    }
-                                }
-                                boring::GEN_IPADD => {
-                                    has_identifier_san = true;
-                                    if let Some(hip) = host_ip {
-                                        if let Some(cert_ip) =
-                                            ip2_string(&*name.d.ip, &mut cert_ip_buf)
-                                        {
-                                            if hip == cert_ip {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {}
+    match x509.subject_alt_names() {
+        boring::SanLookup::Invalid => return false,
+        boring::SanLookup::Absent => {}
+        boring::SanLookup::Names(names) => {
+            let mut host_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
+            let host_ip: Option<&[u8]> = if host_is_ip {
+                Some(canonicalize_ip(hostname, &mut host_ip_buf).unwrap_or(hostname))
+            } else {
+                None
+            };
+            let mut cert_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
+            for entry in names.subject_alt_names() {
+                has_identifier_san = true;
+                match entry {
+                    boring::SubjectAltName::Dns(name) => {
+                        if !host_is_ip && match_dns_name(name, hostname) {
+                            return true;
+                        }
+                    }
+                    boring::SubjectAltName::Ip(octets) => {
+                        if let (Some(host_ip), Some(cert_ip)) =
+                            (host_ip, canonical_ip_octets(octets, &mut cert_ip_buf))
+                        {
+                            if host_ip == cert_ip {
+                                return true;
                             }
                         }
                     }
-                }
-            }
-        }
-
-        // Node.js tls.checkServerIdentity: when the certificate has no
-        // DNS/IP/URI subjectAltName entries, fall back to the Subject
-        // Common Name. Never for IP-literal hosts (RFC 2818 §3.1).
-        if !host_is_ip && !has_identifier_san {
-            let subject = boring::X509_get_subject_name(x509);
-            if !subject.is_null() {
-                let mut last: c_int = -1;
-                loop {
-                    let entry_idx =
-                        boring::X509_NAME_get_index_by_NID(subject, boring::NID_commonName, last);
-                    if entry_idx < 0 {
-                        break;
-                    }
-                    last = entry_idx;
-                    let entry = boring::X509_NAME_get_entry(subject, entry_idx);
-                    if entry.is_null() {
-                        continue;
-                    }
-                    let data = boring::X509_NAME_ENTRY_get_data(entry);
-                    if data.is_null() {
-                        continue;
-                    }
-                    let cn_ptr = boring::ASN1_STRING_get0_data(data);
-                    let cn_len = boring::ASN1_STRING_length(data);
-                    if cn_ptr.is_null() || cn_len <= 0 {
-                        continue;
-                    }
-                    let cn = core::slice::from_raw_parts(
-                        cn_ptr,
-                        usize::try_from(cn_len).expect("int cast"),
-                    );
-                    if match_dns_name(cn, hostname) {
-                        return true;
-                    }
+                    boring::SubjectAltName::Uri(_) => {}
                 }
             }
         }
     }
 
+    // Node.js: the Subject CN is consulted only when the certificate carries
+    // no DNS / IP / URI subjectAltName entries, and never for IP hosts.
+    if !host_is_ip && !has_identifier_san {
+        return x509.common_names().any(|cn| match_dns_name(cn, hostname));
+    }
     false
 }
 
-pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool {
-    // SAFETY: ssl_ptr is a valid &mut so non-null/aligned; sk_X509_value returns
-    // a borrowed cert pointer valid for the lifetime of the chain.
-    unsafe {
-        let cert_chain = boring::SSL_get_peer_cert_chain(std::ptr::from_mut(ssl_ptr));
-        if !cert_chain.is_null() {
-            let x509 = boring::sk_X509_value(cert_chain, 0);
-            if let Some(x509) = x509.as_mut() {
-                return check_x509_server_identity(x509, hostname);
+/// Certificate name bytes (IA5 / Latin-1) for error messages.
+struct NameBytes<'a>(&'a [u8]);
+
+impl core::fmt::Display for NameBytes<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use core::fmt::Write;
+        for &byte in self.0 {
+            f.write_char(char::from(byte))?;
+        }
+        Ok(())
+    }
+}
+
+/// Node's `subjectaltname` rendering of an IP entry: dotted IPv4, or IPv6 as
+/// uncompressed lowercase-hex groups (`0:0:0:0:0:0:0:1`).
+struct AltNameIp<'a>(&'a [u8]);
+
+impl core::fmt::Display for AltNameIp<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            [a, b, c, d] => write!(f, "{a}.{b}.{c}.{d}"),
+            octets if octets.len() == 16 => {
+                for (i, pair) in octets.chunks_exact(2).enumerate() {
+                    let group = u16::from_be_bytes([pair[0], pair[1]]);
+                    if i > 0 {
+                        f.write_str(":")?;
+                    }
+                    write!(f, "{group:x}")?;
+                }
+                Ok(())
             }
+            _ => Ok(()),
         }
     }
-    false
+}
+
+/// Node's `subjectaltname` string: `DNS:a, IP Address:b, URI:c`.
+struct AltNameList<'a>(&'a boring::GeneralNames);
+
+impl core::fmt::Display for AltNameList<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut first = true;
+        let mut sep = |f: &mut core::fmt::Formatter<'_>| {
+            if core::mem::take(&mut first) {
+                Ok(())
+            } else {
+                f.write_str(", ")
+            }
+        };
+        for entry in self.0.subject_alt_names() {
+            match entry {
+                boring::SubjectAltName::Dns(name) => {
+                    sep(f)?;
+                    write!(f, "DNS:{}", NameBytes(name))?;
+                }
+                boring::SubjectAltName::Ip(octets) if matches!(octets.len(), 4 | 16) => {
+                    sep(f)?;
+                    write!(f, "IP Address:{}", AltNameIp(octets))?;
+                }
+                boring::SubjectAltName::Uri(uri) => {
+                    sep(f)?;
+                    write!(f, "URI:{}", NameBytes(uri))?;
+                }
+                boring::SubjectAltName::Ip(_) => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Canonical (compressed) IP entries for Node's `IP: x is not in the cert's
+/// list:` reason.
+struct CanonicalIpList<'a>(Option<&'a boring::GeneralNames>);
+
+impl core::fmt::Display for CanonicalIpList<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Some(names) = self.0 else { return Ok(()) };
+        let mut buf = [0u8; INET6_ADDRSTRLEN + 1];
+        let mut first = true;
+        for entry in names.subject_alt_names() {
+            if let boring::SubjectAltName::Ip(octets) = entry {
+                if let Some(ip) = canonical_ip_octets(octets, &mut buf) {
+                    if !core::mem::take(&mut first) {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", NameBytes(ip))?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Writes Node's `checkServerIdentity` failure reason (lib/tls.js) for the
+/// peer's leaf certificate, e.g. `Host: x. is not in the cert's altnames: …`.
+pub fn write_server_identity_mismatch_reason(
+    ssl_ptr: &mut boring::SSL,
+    hostname: &[u8],
+    out: &mut dyn core::fmt::Write,
+) -> core::fmt::Result {
+    const NO_DNS: &str = "Cert does not contain a DNS name";
+    let host = NameBytes(hostname);
+    let host_is_ip = strings::is_ip_address(hostname);
+
+    let Some(x509) = ssl_ptr.peer_leaf_certificate() else {
+        return out.write_str(NO_DNS);
+    };
+    let names = match x509.subject_alt_names() {
+        boring::SanLookup::Names(names) => Some(names),
+        boring::SanLookup::Absent | boring::SanLookup::Invalid => None,
+    };
+
+    if host_is_ip {
+        return write!(
+            out,
+            "IP: {host} is not in the cert's list: {}",
+            CanonicalIpList(names.as_ref())
+        );
+    }
+    if let Some(names) = &names {
+        let mut has_dns = false;
+        let mut has_identifier = false;
+        for entry in names.subject_alt_names() {
+            has_identifier = true;
+            has_dns |= matches!(entry, boring::SubjectAltName::Dns(_));
+        }
+        if has_identifier {
+            return if has_dns {
+                write!(
+                    out,
+                    "Host: {host}. is not in the cert's altnames: {}",
+                    AltNameList(names)
+                )
+            } else {
+                out.write_str(NO_DNS)
+            };
+        }
+    }
+    match x509.common_names().next() {
+        Some(cn) => write!(out, "Host: {host}. is not cert's CN: {}", NameBytes(cn)),
+        None => out.write_str(NO_DNS),
+    }
+}
+
+pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool {
+    ssl_ptr
+        .peer_leaf_certificate()
+        .is_some_and(|x509| check_x509_server_identity(x509, hostname))
 }

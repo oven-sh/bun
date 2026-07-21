@@ -232,7 +232,7 @@ pub trait EntryKindResolver {
         base: &[u8],
         existing_fd: Fd,
         store_fd: bool,
-    ) -> core::result::Result<EntryCache, bun_core::Error>;
+    ) -> crate::CrateResult<EntryCache>;
 }
 
 #[repr(u8)]
@@ -533,8 +533,8 @@ pub mod dir_entry {
     /// canonicalized path.
     #[derive(Clone, Copy)]
     pub struct Err {
-        pub original_err: bun_core::Error,
-        pub canonical_error: bun_core::Error,
+        pub original_err: crate::Error,
+        pub canonical_error: crate::Error,
     }
 }
 
@@ -589,7 +589,7 @@ impl DirEntry {
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
         iterator: I,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         self.add_entry_with_store(prev_map, entry, &mut FilenameStoreAppender::new(), iterator)
     }
 
@@ -599,7 +599,7 @@ impl DirEntry {
         entry: &bun_sys::dir_iterator::IteratorResult,
         filename_store: &mut FilenameStoreAppender,
         iterator: I,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
@@ -1078,7 +1078,7 @@ impl RealFS {
         env_var::BUN_TMPDIR::get_not_empty().unwrap_or_else(Self::platform_temp_dir)
     }
 
-    pub fn open_tmp_dir(&self) -> Result<bun_sys::Dir, bun_core::Error> {
+    pub fn open_tmp_dir(&self) -> crate::CrateResult<bun_sys::Dir> {
         #[cfg(windows)]
         {
             // The generic `open_dir_absolute` path goes through `open_a(.., O::DIRECTORY, 0)`
@@ -1092,7 +1092,6 @@ impl RealFS {
                 bun_sys::WindowsOpenDirOptions {
                     iterable: true,
                     can_rename_or_delete: false,
-                    read_only: true,
                     ..Default::default()
                 },
             )
@@ -1244,7 +1243,7 @@ impl RealFS {
     }
 
     // Always try to max out how many files we can keep open
-    pub fn adjust_ulimit() -> Result<usize, bun_core::Error> {
+    pub fn adjust_ulimit() -> crate::CrateResult<usize> {
         #[cfg(not(unix))]
         {
             return Ok(usize::MAX);
@@ -1321,7 +1320,7 @@ impl ModKey {
         &self,
         basename: &[u8],
         out: &'out mut [u8],
-    ) -> Result<&'out [u8], bun_core::Error> {
+    ) -> crate::CrateResult<&'out [u8]> {
         let hex_int = self.hash();
 
         let len = out.len();
@@ -1331,11 +1330,12 @@ impl ModKey {
         // the basename verbatim via raw `io::Write`.
         cursor
             .write_all(basename)
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
         cursor
             .write_all(b"-")
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
-        write!(&mut cursor, "{:x}", hex_int).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+        write!(&mut cursor, "{:x}", hex_int)
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
         let written = len - cursor.len();
         Ok(&out[..written])
     }
@@ -1354,11 +1354,7 @@ impl ModKey {
         bun_wyhash::hash(&hash_bytes)
     }
 
-    pub fn generate(
-        _: &mut RealFS,
-        _: &[u8],
-        file: &bun_sys::File,
-    ) -> Result<ModKey, bun_core::Error> {
+    pub fn generate(_: &mut RealFS, _: &[u8], file: &bun_sys::File) -> crate::CrateResult<ModKey> {
         let stat = file.stat()?;
 
         const NS_PER_S: i128 = 1_000_000_000;
@@ -1374,7 +1370,7 @@ impl ModKey {
 
         // We can't detect changes if the file system zeros out the modification time
         if seconds == 0 && NS_PER_S == 0 {
-            return Err(bun_core::err!("Unusable"));
+            return Err(crate::Error::Unusable);
         }
 
         // Don't generate a modification key if the file is too new
@@ -1383,7 +1379,7 @@ impl ModKey {
         // NOTE: `seconds > seconds` is always false; kept to preserve existing behavior
         #[allow(clippy::eq_op)]
         if seconds > seconds || (seconds == now_seconds && mtime > now) {
-            return Err(bun_core::err!("Unusable"));
+            return Err(crate::Error::Unusable);
         }
 
         Ok(ModKey {
@@ -1401,11 +1397,11 @@ impl RealFS {
         &mut self,
         path: &[u8],
         file: &bun_sys::File,
-    ) -> Result<ModKey, bun_core::Error> {
+    ) -> crate::CrateResult<ModKey> {
         ModKey::generate(self, path, file)
     }
 
-    pub fn mod_key(&mut self, path: &[u8]) -> Result<ModKey, bun_core::Error> {
+    pub fn mod_key(&mut self, path: &[u8]) -> crate::CrateResult<ModKey> {
         let file = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)?;
         self.mod_key_with_file(path, &file)
     }
@@ -1432,7 +1428,7 @@ unsafe impl Sync for Entry {}
 unsafe impl Send for Entry {}
 
 impl RealFS {
-    pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> Result<bun_sys::Dir, bun_core::Error> {
+    pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> crate::CrateResult<bun_sys::Dir> {
         // On Windows this must go through `open_dir_at_windows_a` with
         // iterable + read_only so the resulting handle has FILE_LIST_DIRECTORY +
         // FILE_DIRECTORY_FILE and can be iterated by `readdir`. The generic
@@ -1447,7 +1443,6 @@ impl RealFS {
             bun_sys::WindowsOpenDirOptions {
                 iterable: true,
                 no_follow: false,
-                read_only: true,
                 ..Default::default()
             },
         );
@@ -1469,7 +1464,7 @@ impl RealFS {
         generation: Generation,
         handle: &bun_sys::Dir,
         iterator: I,
-    ) -> Result<DirEntry, bun_core::Error> {
+    ) -> crate::CrateResult<DirEntry> {
         let handle_fd = handle.fd();
         let mut iter = bun_sys::iterate_dir(handle_fd);
         let mut dir = DirEntry::init(dir_, generation);
@@ -1530,7 +1525,7 @@ impl RealFS {
         &mut self,
         entries: Option<&EntriesGuard>,
         dir: &[u8],
-        err: bun_core::Error,
+        err: crate::Error,
     ) -> Result<*mut EntriesOption, AllocError> {
         if FeatureFlags::ENABLE_ENTRY_CACHE {
             // Caller holds `entries_mutex` exactly when `ENABLE_ENTRY_CACHE` is true
@@ -1538,7 +1533,7 @@ impl RealFS {
             // always `Some` here.
             let entries = entries.expect("caller holds entries_mutex when ENABLE_ENTRY_CACHE");
             let mut get_or_put_result = entries.get_or_put(dir)?;
-            if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
+            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 entries.mark_not_found(get_or_put_result);
                 return Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
                     slot.write(EntriesOption::Err(dir_entry::Err {
@@ -1578,7 +1573,7 @@ impl RealFS {
         handle_: Option<&bun_sys::Dir>,
         generation: Generation,
         store_fd: bool,
-    ) -> Result<*mut EntriesOption, bun_core::Error> {
+    ) -> crate::CrateResult<*mut EntriesOption> {
         self.read_directory_with_iterator(dir_, handle_, generation, store_fd, ())
     }
 
@@ -1605,7 +1600,7 @@ impl RealFS {
         generation: Generation,
         store_fd: bool,
         iterator: I,
-    ) -> Result<*mut EntriesOption, bun_core::Error> {
+    ) -> crate::CrateResult<*mut EntriesOption> {
         let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
         crate::Resolver::assert_valid_cache_key(dir);
@@ -1642,8 +1637,8 @@ impl RealFS {
                 } else if cr.status == allocators::ItemStatus::NotFound && generation == 0 {
                     return Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
                         slot.write(EntriesOption::Err(dir_entry::Err {
-                            original_err: bun_core::err!("ENOENT"),
-                            canonical_error: bun_core::err!("ENOENT"),
+                            original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                            canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                         }));
                         // threadlocal storage outlives caller; return raw `*mut`.
                         slot.as_mut_ptr()
@@ -1758,7 +1753,7 @@ impl RealFS {
         size_: Option<usize>,
         file: &bun_sys::File,
         shared_buffer: &'buf mut MutableString,
-    ) -> Result<PathContentsPair<'p, 'buf>, bun_core::Error> {
+    ) -> crate::CrateResult<PathContentsPair<'p, 'buf>> {
         read_file_with_handle_impl::<USE_SHARED_BUFFER, STREAM>(path, size_, file, shared_buffer)
     }
 
@@ -1774,7 +1769,7 @@ impl RealFS {
         size_hint: Option<usize>,
         file: &bun_sys::File,
         shared_buffer: &'buf mut MutableString,
-    ) -> Result<PathContentsPair<'p, 'buf>, bun_core::Error> {
+    ) -> crate::CrateResult<PathContentsPair<'p, 'buf>> {
         read_file_with_handle_impl::<USE_SHARED_BUFFER, STREAM>(
             path,
             size_hint,
@@ -1808,7 +1803,7 @@ pub fn read_file_contents<'buf>(
     use_shared_buffer: bool,
     shared: &'buf mut MutableString,
     stream: bool,
-) -> Result<Cow<'buf, [u8]>, bun_core::Error> {
+) -> crate::CrateResult<Cow<'buf, [u8]>> {
     match (use_shared_buffer, stream) {
         (true, true) => read_file_with_handle_impl::<true, true>(path, None, file, shared),
         (true, false) => read_file_with_handle_impl::<true, false>(path, None, file, shared),
@@ -1831,7 +1826,7 @@ pub fn read_file_contents_in_arena(
     file: &bun_sys::File,
     path: &[u8],
     arena: &bun_alloc::Arena,
-) -> Result<(core::ptr::NonNull<u8>, usize), bun_core::Error> {
+) -> crate::CrateResult<(core::ptr::NonNull<u8>, usize)> {
     let _ = path;
     FileSystem::set_max_fd(file.handle().native());
 
@@ -1947,7 +1942,7 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
     size_hint: Option<usize>,
     file: &bun_sys::File,
     shared_buffer: &'buf mut MutableString,
-) -> Result<PathContentsPair<'p, 'buf>, bun_core::Error> {
+) -> crate::CrateResult<PathContentsPair<'p, 'buf>> {
     // allocator param dropped (global mimalloc)
     FileSystem::set_max_fd(file.handle().native());
 
@@ -2160,7 +2155,7 @@ impl RealFS {
         base: &[u8],
         existing_fd: Fd,
         store_fd: bool,
-    ) -> Result<EntryCache, bun_core::Error> {
+    ) -> crate::CrateResult<EntryCache> {
         #[cfg(windows)]
         let _ = (existing_fd, store_fd);
         let mut cache = EntryCache {
@@ -2184,7 +2179,7 @@ impl RealFS {
         #[cfg(windows)]
         {
             let file = bun_sys::get_file_attributes(absolute_path_c)
-                .ok_or(bun_core::err!("FileNotFound"))?;
+                .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
             // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
             // the link is a directory link (junctions always do; symlinks
             // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
@@ -2348,7 +2343,7 @@ impl EntryKindResolver for RealFS {
         base: &[u8],
         existing_fd: Fd,
         store_fd: bool,
-    ) -> core::result::Result<EntryCache, bun_core::Error> {
+    ) -> crate::CrateResult<EntryCache> {
         self.kind(dir, base, existing_fd, store_fd)
     }
 }

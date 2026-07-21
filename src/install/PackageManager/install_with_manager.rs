@@ -47,7 +47,7 @@ pub fn install_with_manager(
     ctx: Command::Context,
     root_package_json_path: &ZStr,
     original_cwd: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let log_level = manager.options.log_level;
 
     // Start resolving DNS for the default registry immediately.
@@ -630,7 +630,7 @@ pub fn install_with_manager(
         for request in &manager.update_requests {
             // prevent redundant errors
             if request.failed {
-                return Err(bun_core::err!("InstallFailed"));
+                return Err(crate::Error::InstallFailed);
             }
         }
 
@@ -682,9 +682,7 @@ pub fn install_with_manager(
             let (first_index, _, entries) =
                 scripts.get_script_entries(string_bytes, ResolutionTag::Workspace, add_node_gyp);
 
-            if cfg!(debug_assertions) {
-                debug_assert!(first_index != -1);
-            }
+            debug_assert!(first_index != -1);
 
             // In the `add_node_gyp` arm the assert already guarantees
             // `first_index != -1`, so a single guarded loop covers
@@ -919,7 +917,7 @@ struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
     // receiver and the callback's reborrow share the same raw provenance root.
     // See `run_and_wait` for the remaining `tick`/`event_loop` overlap note.
     manager: *mut PackageManager,
-    err: Option<bun_core::Error>,
+    err: Option<crate::Error>,
 }
 
 impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
@@ -976,7 +974,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         pending_tasks == 0
     }
 
-    fn run_and_wait(this: &mut PackageManager) -> Result<(), bun_core::Error> {
+    fn run_and_wait(this: &mut PackageManager) -> crate::Result<()> {
         // Derive the raw pointer first and route *every* manager access through it.
         // Previously `closure.manager` was taken from `this`, then `this` was reborrowed
         // into `sleep_until`'s `&mut self` — under Stacked Borrows that reborrow popped
@@ -1003,13 +1001,13 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
     }
 }
 
-fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> Result<(), bun_core::Error> {
+fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<false, true>::run_and_wait(this)
 }
-fn wait_for_everything_except_peers(this: &mut PackageManager) -> Result<(), bun_core::Error> {
+fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<false, false>::run_and_wait(this)
 }
-fn wait_for_peers(this: &mut PackageManager) -> Result<(), bun_core::Error> {
+fn wait_for_peers(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<true, false>::run_and_wait(this)
 }
 
@@ -1029,7 +1027,7 @@ fn print_install_summary(
     install_summary: &PackageInstallSummary,
     did_meta_hash_change: bool,
     log_level: Options::LogLevel,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let _flush_guard = Output::flush_guard();
 
     let mut printed_timestamp = false;
@@ -1105,7 +1103,7 @@ fn print_summary_tree(
     this: &mut PackageManager,
     install_summary: &PackageInstallSummary,
     log_level: Options::LogLevel,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // reshaped for borrowck — `Printer` borrows
     // `this.lockfile` / `this.options` while `this` (the
     // PackageManager) is also passed to `Tree::print`. Route through a single `*mut
@@ -1233,12 +1231,10 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
         scripts_count += *count;
     }
 
-    if cfg!(debug_assertions) {
-        // if packages_count is greater than 0, scripts_count must also be greater than 0.
-        debug_assert!(packages_count == 0 || scripts_count > 0);
-        // if scripts_count is 1, it's only possible for packages_count to be 1.
-        debug_assert!(scripts_count != 1 || packages_count == 1);
-    }
+    // if packages_count is greater than 0, scripts_count must also be greater than 0.
+    debug_assert!(packages_count == 0 || scripts_count > 0);
+    // if scripts_count is 1, it's only possible for packages_count to be 1.
+    debug_assert!(scripts_count != 1 || packages_count == 1);
 
     if packages_count > 0 {
         bun_core::prettyln!(
@@ -1255,7 +1251,7 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
 pub(crate) fn get_workspace_filters(
     manager: &mut PackageManager,
     original_cwd: &[u8],
-) -> Result<(Vec<WorkspaceFilter>, bool), bun_core::Error> {
+) -> crate::Result<(Vec<WorkspaceFilter>, bool)> {
     let mut path_buf = bun_paths::path_buffer_pool::get();
     // RAII: guard puts the buffer back on Drop.
 
@@ -1330,11 +1326,7 @@ pub(crate) fn get_workspace_filters(
 /// manager.log.hasErrors() is checked.
 #[cold]
 #[inline(never)]
-fn add_dependency_error(
-    manager: &mut PackageManager,
-    dependency: &Dependency,
-    err: bun_core::Error,
-) {
+fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, err: crate::Error) {
     // reshaped for borrowck — capture the realname slice before
     // taking `&mut` on `manager.log`.
     let realname = dependency.realname();
@@ -1360,7 +1352,7 @@ fn add_dependency_error(
         );
     } else {
         log.add_zig_error_with_note(
-            err,
+            err.name(),
             format_args!("error occurred while resolving {}", path_fmt),
         );
     }
@@ -1382,7 +1374,7 @@ fn report_lockfile_load_error(
     manager: &mut PackageManager,
     cause: &lockfile::LoadResultErr,
     log_level: Options::LogLevel,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     if log_level != Options::LogLevel::Silent {
         match cause.step {
             lockfile::LoadStep::OpenFile => Output::err(
@@ -1495,7 +1487,7 @@ fn create_new_lockfile_and_enqueue(
     load_result: &lockfile::LoadResult,
     root_package_json_path: &ZStr,
     log_level: Options::LogLevel,
-) -> Result<lockfile::Package, bun_core::Error> {
+) -> crate::Result<lockfile::Package> {
     let mut root = lockfile::Package::default();
 
     // `init_empty()` resets `text_lockfile_version` to the current version. When
@@ -1609,7 +1601,7 @@ fn resolve_pending_tasks(
     manager: &mut PackageManager,
     root: &lockfile::Package,
     log_level: Options::LogLevel,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     if root.dependencies.len > 0 {
         let _ = manager.get_cache_directory();
         let _ = manager.get_temporary_directory();
@@ -1672,37 +1664,37 @@ fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, ori
     match security_scanner::perform_security_scan_after_resolution(manager, ctx, original_cwd) {
         Err(err) => {
             match err {
-                e if e == bun_core::err!("SecurityScannerInWorkspace") => {
+                crate::Error::SecurityScannerInWorkspace => {
                     Output::err_generic(
                         "security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.",
                         (),
                     );
                 }
-                e if e == bun_core::err!("SecurityScannerRetryFailed") => {
+                crate::Error::SecurityScannerRetryFailed => {
                     Output::err_generic(
                         "security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues",
                         (),
                     );
                 }
-                e if e == bun_core::err!("InvalidPackageID") => {
+                crate::Error::InvalidPackageID => {
                     Output::err_generic(
                         "cannot perform partial install: security scanner package ID is invalid",
                         (),
                     );
                 }
-                e if e == bun_core::err!("PartialInstallFailed") => {
+                crate::Error::PartialInstallFailed => {
                     Output::err_generic("failed to install security scanner package", ());
                 }
-                e if e == bun_core::err!("NoPackagesInstalled") => {
+                crate::Error::NoPackagesInstalled => {
                     Output::err_generic(
                         "no packages were installed during security scanner installation",
                         (),
                     );
                 }
-                e if e == bun_core::err!("IPCPipeFailed") => {
+                crate::Error::IPCPipeFailed => {
                     Output::err_generic("failed to create IPC pipe for security scanner", ());
                 }
-                e if e == bun_core::err!("ProcessWatchFailed") => {
+                crate::Error::ProcessWatchFailed => {
                     Output::err_generic("failed to watch security scanner process", ());
                 }
                 e => {
@@ -1746,7 +1738,7 @@ fn save_lockfile_only(
     lockfile_before_install: bun_ptr::ParentRef<Lockfile>,
     packages_len_before_install: usize,
     log_level: Options::LogLevel,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // save the lockfile and exit. make sure metahash is generated for binary lockfile
     manager.lockfile.meta_hash = manager.lockfile.generate_meta_hash(
         PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
@@ -1791,7 +1783,7 @@ fn save_lockfile_only(
 fn write_yarn_lock_with_progress(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // reshaped for borrowck — `Progress::start` returns
     // `&mut self.root`, so re-access it via `manager.progress.root` after the
     // `&mut manager` borrow ends instead of keeping a live `&mut Node`.
@@ -1824,11 +1816,9 @@ fn run_root_lifecycle_scripts(
     manager: &mut PackageManager,
     ctx: Command::Context,
     log_level: Options::LogLevel,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
-        if cfg!(debug_assertions) {
-            debug_assert!(scripts.total > 0);
-        }
+        debug_assert!(scripts.total > 0);
 
         if log_level != Options::LogLevel::Silent {
             Output::print_error(format_args!("\n"));

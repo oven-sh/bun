@@ -78,7 +78,7 @@ pub fn enqueue_dependency_with_main(
     dependency: &Dependency,
     resolution: PackageID,
     install_peer: bool,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     enqueue_dependency_with_main_and_success_fn(
         this,
         id,
@@ -162,7 +162,7 @@ pub fn enqueue_dependency_list(
                 );
             } else {
                 log.add_zig_error_with_note(
-                    err,
+                    err.name(),
                     format_args!("error occurred while resolving {}", path_fmt),
                 );
             }
@@ -185,6 +185,9 @@ pub fn enqueue_tarball_for_download(
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), EnqueueTarballForDownloadError> {
     let task_id = Task::Id::for_tarball(url);
+    if this.network_task_has_failed(task_id) {
+        return Err(EnqueueTarballForDownloadError::AlreadyFailed);
+    }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
@@ -390,6 +393,9 @@ pub fn enqueue_package_for_download(
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), EnqueuePackageForDownloadError> {
     let task_id = Task::Id::for_npm_package(name, version);
+    if this.network_task_has_failed(task_id) {
+        return Err(EnqueuePackageForDownloadError::AlreadyFailed);
+    }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
@@ -434,7 +440,7 @@ pub enum DependencyToEnqueue {
         resolution: Resolution,
     },
     NotFound,
-    Failure(bun_core::Error),
+    Failure(crate::Error),
 }
 
 pub fn enqueue_dependency_to_root(
@@ -480,9 +486,7 @@ pub fn enqueue_dependency_to_root(
         let index = lf.dependencies.len();
         lf.dependencies.push(dep);
         lf.resolutions.push(invalid_package_id);
-        if cfg!(debug_assertions) {
-            debug_assert!(lf.dependencies.len() == lf.resolutions.len());
-        }
+        debug_assert!(lf.dependencies.len() == lf.resolutions.len());
         break 'brk index;
     } as DependencyID;
 
@@ -510,7 +514,7 @@ pub fn enqueue_dependency_to_root(
             this.drain_dependency_list();
 
             struct Closure {
-                err: Option<bun_core::Error>,
+                err: Option<crate::Error>,
                 // raw `*mut` — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.
                 manager: *mut PackageManager,
@@ -662,7 +666,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     // folds them and a runtime fn-pointer address comparison is unsound. Thread
     // an explicit flag instead.
     is_root: bool,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     if dependency.behavior.is_optional_peer() {
         return Ok(());
     }
@@ -798,7 +802,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
-                            if err == bun_core::err!("DistTagNotFound") {
+                            if err == crate::Error::DistTagNotFound {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
@@ -818,7 +822,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 return Ok(());
-                            } else if err == bun_core::err!("NoMatchingVersion") {
+                            } else if err == crate::Error::NoMatchingVersion {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
@@ -834,7 +838,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 return Ok(());
-                            } else if err == bun_core::err!("TooRecentVersion") {
+                            } else if err == crate::Error::TooRecentVersion {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
@@ -869,7 +873,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 return Ok(());
-                            } else if err == bun_core::err!("MissingPackageJSON") {
+                            } else if err == crate::Error::MissingPackageJSON {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
@@ -1005,9 +1009,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();
                         let task_id = Task::Id::for_manifest(&name_str);
 
-                        if cfg!(debug_assertions) {
-                            debug_assert!(task_id.get() != 0);
-                        }
+                        debug_assert!(task_id.get() != 0);
 
                         if cfg!(debug_assertions) {
                             bun_output::scoped_log!(
@@ -1395,7 +1397,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 success_fn,
             ) {
                 Ok(v) => v,
-                Err(err) if err == bun_core::err!("MissingPackageJSON") => None,
+                Err(crate::Error::MissingPackageJSON) => None,
                 Err(err) => return Err(err),
             };
 
@@ -1426,9 +1428,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
 
                 // should not trigger a network call
-                if cfg!(debug_assertions) {
-                    debug_assert!(result.task.is_none());
-                }
+                debug_assert!(result.task.is_none());
 
                 if cfg!(debug_assertions) {
                     bun_output::scoped_log!(
@@ -1443,49 +1443,49 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             } else if dependency.behavior.is_required() {
                 if dependency_tag == dependency::version::Tag::Workspace {
-                    this.log_mut()
-                    .add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
-                                bstr::BStr::new(this.lockfile.str(&name)),
-                                PackageWorkspaceSearchPathFormatter { manager: this, version, quoted: true },
-                            ),
-                        );
+                    bun_ast::add_error_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                        PackageWorkspaceSearchPathFormatter {
+                            manager: this,
+                            version,
+                            quoted: true
+                        },
+                    );
                 } else {
-                    this.log_mut()
-                    .add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
-                                bstr::BStr::new(this.lockfile.str(&name)),
-                            ),
-                        );
+                    bun_ast::add_error_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                    );
                 }
             } else if this.options.log_level.is_verbose() {
                 if dependency_tag == dependency::version::Tag::Workspace {
-                    this.log_mut()
-                    .add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
-                                bstr::BStr::new(this.lockfile.str(&name)),
-                                PackageWorkspaceSearchPathFormatter { manager: this, version, quoted: true },
-                            ),
-                        );
+                    bun_ast::add_warning_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                        PackageWorkspaceSearchPathFormatter {
+                            manager: this,
+                            version,
+                            quoted: true
+                        },
+                    );
                 } else {
-                    this.log_mut()
-                    .add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
-                                bstr::BStr::new(this.lockfile.str(&name)),
-                            ),
-                        );
+                    bun_ast::add_warning_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                    );
                 }
             }
             Ok(())
@@ -1924,6 +1924,7 @@ fn enqueue_local_tarball(
                     )
                     .expect("unreachable"),
                     skip_verify: false,
+                    in_trusted_dependencies: false,
                 },
                 tarball_path: StringOrTinyString::init_append_if_needed(
                     tarball_path,
@@ -1996,7 +1997,7 @@ fn get_or_put_resolved_package_with_find_result(
     find_result: Npm::FindResult,
     install_peer: bool,
     success_fn: SuccessFn,
-) -> Result<Option<ResolvedPackageResult>, bun_core::Error> {
+) -> crate::Result<Option<ResolvedPackageResult>> {
     // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
     // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = {
@@ -2072,9 +2073,7 @@ fn get_or_put_resolved_package_with_find_result(
         Features::NPM,
     )?)?;
 
-    if cfg!(debug_assertions) {
-        debug_assert!(package.meta.id != invalid_package_id);
-    }
+    debug_assert!(package.meta.id != invalid_package_id);
     // Record exact-version pins so `Lockfile::get_package_id`'s
     // order-independence guard can tell them apart from range-resolved
     // entries (which it treats as network-order artefacts).
@@ -2198,7 +2197,7 @@ fn get_or_put_resolved_package(
     resolution: PackageID,
     install_peer: bool,
     success_fn: SuccessFn,
-) -> Result<Option<ResolvedPackageResult>, bun_core::Error> {
+) -> crate::Result<Option<ResolvedPackageResult>> {
     if install_peer && behavior.is_peer() {
         if let Some(index) = this.lockfile.package_index.get(&name_hash) {
             let resolutions = this.lockfile.packages.items_resolution();
@@ -2465,7 +2464,7 @@ fn get_or_put_resolved_package(
                 Npm::FindVersionResult::Err(err_type) => match err_type {
                     Npm::FindVersionError::TooRecent
                     | Npm::FindVersionError::AllVersionsTooRecent => {
-                        return Err(bun_core::err!("TooRecentVersion"));
+                        return Err(crate::Error::TooRecentVersion);
                     }
                     Npm::FindVersionError::NotFound => None, // Handle below with existing logic
                 },
@@ -2523,8 +2522,8 @@ fn get_or_put_resolved_package(
                     }
 
                     return match version.tag {
-                        dependency::version::Tag::Npm => Err(bun_core::err!("NoMatchingVersion")),
-                        dependency::version::Tag::DistTag => Err(bun_core::err!("DistTagNotFound")),
+                        dependency::version::Tag::Npm => Err(crate::Error::NoMatchingVersion),
+                        dependency::version::Tag::DistTag => Err(crate::Error::DistTagNotFound),
                         _ => unreachable!(),
                     };
                 }
@@ -2600,9 +2599,7 @@ fn get_or_put_resolved_package(
                         dependency.name.slice(buf),
                         buf,
                     ) {
-                        break 'res FolderResolutionValue::Err(bun_core::err!(
-                            "MissingPackageJSON"
-                        ));
+                        break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                     }
                 }
 
@@ -2764,23 +2761,7 @@ fn resolution_satisfies_dependency(
     dependency: &dependency::Version,
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    if resolution.tag == ResolutionTag::Npm && dependency.tag == dependency::version::Tag::Npm {
-        return dependency
-            .npm()
-            .version
-            .satisfies(resolution.npm().version, buf, buf);
-    }
-
-    if resolution.tag == ResolutionTag::Git && dependency.tag == dependency::version::Tag::Git {
-        return resolution.git().eql(dependency.git(), buf, buf);
-    }
-
-    if resolution.tag == ResolutionTag::Github && dependency.tag == dependency::version::Tag::Github
-    {
-        return resolution.github().eql(dependency.github(), buf, buf);
-    }
-
-    false
+    resolution.satisfies_dependency_version(dependency, buf, buf)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2799,7 +2780,7 @@ impl PackageManager {
         dependency: &Dependency,
         resolution: PackageID,
         install_peer: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         enqueue_dependency_with_main(self, id, dependency, resolution, install_peer)
     }
 
@@ -2813,7 +2794,7 @@ impl PackageManager {
         success_fn: SuccessFn,
         fail_fn: Option<FailFn>,
         is_root: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         enqueue_dependency_with_main_and_success_fn(
             self,
             id,

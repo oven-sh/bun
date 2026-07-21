@@ -338,6 +338,19 @@ class Debugger {
       });
     }
 
+    const isUnix = this.#url!.protocol.includes("unix");
+    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#url!.hostname)) {
+      return new Response(null, {
+        status: 400, // Bad Request
+      });
+    }
+
+    if (!isOriginAllowed(headers.get("Origin"))) {
+      return new Response(null, {
+        status: 403, // Forbidden
+      });
+    }
+
     switch (pathname) {
       case "/json/version":
         return Response.json(versionInfo());
@@ -346,15 +359,9 @@ class Debugger {
       // TODO?
     }
 
-    if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
+    if (!isUnix && this.#url!.pathname !== pathname) {
       return new Response(null, {
         status: 404, // Not Found
-      });
-    }
-
-    if (!isOriginAllowed(headers.get("Origin"))) {
-      return new Response(null, {
-        status: 403, // Forbidden
       });
     }
 
@@ -627,6 +634,25 @@ function isOriginAllowed(origin: string | null): boolean {
     return true;
   }
   return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
+}
+
+function isHostAllowed(host: string | null, expectedHostname: string): boolean {
+  if (!host) {
+    return true;
+  }
+  let hostname: string;
+  try {
+    ({ hostname } = new URL(`ws://${host}`));
+  } catch {
+    return false;
+  }
+  if (hostname === expectedHostname || hostname === "localhost" || hostname === "localhost6") {
+    return true;
+  }
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return true;
+  }
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
 }
 
 function randomId() {

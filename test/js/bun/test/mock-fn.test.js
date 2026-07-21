@@ -780,6 +780,15 @@ describe("mock()", () => {
     expect(fn).not.toHaveBeenNthCalledWith(5, 1);
   });
 
+  test("toHaveBeenCalledTimes with calls.length > i32 max", () => {
+    const fn = jest.fn();
+    // Array length can be up to 2^32-1; the matcher must not panic on the narrowed count.
+    fn.mock.calls.length = 3_000_000_000;
+    expect(fn).not.toHaveBeenCalledTimes(5);
+    expect(fn).toHaveBeenCalledTimes(3_000_000_000);
+    expect(() => expect(fn).toHaveBeenCalledTimes(5)).toThrow();
+  });
+
   it("no segmentation fault when passing jest.fn into another jest.fn, issue#5900", () => {
     function foo() {
       return true;
@@ -794,6 +803,60 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+});
+
+describe("resetAllMocks", () => {
+  test("removes implementations, not just calls", () => {
+    const fn = jest.fn(() => 42);
+    expect(fn()).toBe(42);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    jest.resetAllMocks();
+
+    expect(fn).toHaveBeenCalledTimes(0);
+    expect(fn.mock.results).toEqual([]);
+    expect(fn.getMockImplementation()).toBeUndefined();
+    expect(fn()).toBeUndefined();
+  });
+
+  test("removes mockReturnValue", () => {
+    const fn = jest.fn();
+    fn.mockReturnValue("stubbed");
+    expect(fn()).toBe("stubbed");
+
+    jest.resetAllMocks();
+
+    expect(fn()).toBeUndefined();
+  });
+
+  test("removes a spy's implementation without restoring the original", () => {
+    const obj = {
+      original() {
+        return "original";
+      },
+    };
+    const spy = spyOn(obj, "original");
+    expect(obj.original()).toBe("original");
+
+    jest.resetAllMocks();
+
+    expect(obj.original()).toBeUndefined();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    spy.mockRestore();
+    expect(obj.original()).toBe("original");
+  });
+
+  if (isBun) {
+    test("vi.resetAllMocks removes implementations too", () => {
+      const fn = vi.fn(() => 42);
+      expect(fn()).toBe(42);
+
+      vi.resetAllMocks();
+
+      expect(fn()).toBeUndefined();
+    });
+  }
 });
 
 describe("spyOn", () => {

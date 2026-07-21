@@ -55,7 +55,7 @@ it("should write plaintext lockfiles", async () => {
   await access(join(packageDir, "bun.lock"));
 
   // Assert that the lockfile has the correct permissions
-  const file = await open(join(packageDir, "bun.lock"), "r");
+  await using file = await open(join(packageDir, "bun.lock"), "r");
   const stat = await file.stat();
 
   // in unix, 0o644 == 33188

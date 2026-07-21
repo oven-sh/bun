@@ -299,6 +299,9 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             s->flags.adopted = 1;
             /* Tell the event loop what is the new socket so we can route subsequent events */
             s->prev = new_s;
+            if (s->ssl) {
+                us_internal_ssl_socket_relocated(loop, s, new_s);
+            }
         }
         if (c) {
             c->connecting_head = new_s;
@@ -343,6 +346,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    s->unclassified_send_failures = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -486,6 +490,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
+    s->unclassified_send_failures = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }
@@ -821,4 +826,11 @@ struct us_bun_verify_error_t us_socket_verify_error(struct us_socket_t *s) {
         return us_internal_ssl_verify_error(s);
     }
     return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };
+}
+
+const char *us_socket_sni_servername(struct us_socket_t *s) {
+    if (s->ssl) {
+        return us_internal_ssl_sni_servername(s);
+    }
+    return NULL;
 }

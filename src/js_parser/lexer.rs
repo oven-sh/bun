@@ -185,7 +185,6 @@ pub enum Error {
 }
 bun_core::impl_tag_error!(Error);
 bun_core::oom_from_alloc!(Error);
-bun_core::named_error_set!(Error);
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum StringLiteralRawFormat {
@@ -836,7 +835,8 @@ lexer_impl_header! {
                                 let mut is_out_of_range = false;
                                 'variable_length: loop {
                                     if !iterator.next(&mut iter) {
-                                        break 'variable_length;
+                                        // Ran out of literal before the closing `}`.
+                                        return self.syntax_error();
                                     }
                                     c3 = iter.c;
 
@@ -849,7 +849,9 @@ lexer_impl_header! {
                                         break 'variable_length;
                                     }
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = (value * 16) | d as i64,
+                                        // Saturate: `is_out_of_range` is sticky, so any
+                                        // digit count still reports the range error.
+                                        Some(d) => value = value.saturating_mul(16) | d as i64,
                                         None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);
@@ -1087,6 +1089,7 @@ lexer_impl_header! {
                                     continue;
                                 }
                                 None => {
+                                    self.current += remainder.len();
                                     self.step_with(contents);
                                     continue;
                                 }
@@ -3689,7 +3692,7 @@ lexer_impl_header! {
 
             // Slow path: do we need to re-scan the input as text?
             if is_big_integer_literal || is_invalid_legacy_octal_literal {
-                let text = self.raw();
+                let mut text = self.raw();
 
                 // Can't use a leading zero for bigint literals;
                 if is_big_integer_literal && self.is_legacy_octal_literal {
@@ -3708,6 +3711,7 @@ lexer_impl_header! {
                             i += 1;
                         }
                     }
+                    text = bytes;
                 }
 
                 // Store bigints as text to avoid precision loss;

@@ -123,12 +123,20 @@ impl<const SSL: bool> App<SSL> {
         unsafe { c::uws_app_destroy(Self::SSL_FLAG, this.cast::<uws_app_t>()) }
     }
 
-    pub fn set_flags(&mut self, require_host_header: bool, use_strict_method_validation: bool) {
+    pub fn set_flags(
+        &mut self,
+        require_host_header: bool,
+        use_strict_method_validation: bool,
+        use_insecure_http_parser: bool,
+        http_allow_half_open: bool,
+    ) {
         c::uws_app_set_flags(
             Self::SSL_FLAG,
             self.as_raw(),
             require_host_header,
             use_strict_method_validation,
+            use_insecure_http_parser,
+            http_allow_half_open,
         )
     }
 
@@ -396,8 +404,15 @@ impl<const SSL: bool> App<SSL> {
         c::uws_missing_server_name(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
-    pub fn filter(&mut self, handler: c::uws_filter_handler, user_data: *mut c_void) {
-        c::uws_filter(Self::SSL_FLAG, self.as_raw(), handler, user_data)
+    /// Register a connection filter: `handler` is invoked with the raw
+    /// `us_socket_t*` and `1` when an HTTP connection is opened (for TLS, when
+    /// its handshake completes) and `-1` when it closes.
+    pub fn filter(
+        &mut self,
+        handler: extern "C" fn(*mut us_socket_t, i32, *mut c_void),
+        user_data: *mut c_void,
+    ) {
+        c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
     }
 
     pub fn ws(
@@ -479,8 +494,6 @@ pub enum AddServerNameError {
 }
 bun_core::impl_tag_error!(AddServerNameError);
 
-bun_core::named_error_set!(AddServerNameError);
-
 bun_opaque::opaque_ffi! { pub struct uws_app_s; }
 pub type uws_app_t = uws_app_s;
 
@@ -491,7 +504,10 @@ pub mod c {
     pub(crate) type uws_listen_handler = Option<extern "C" fn(*mut UwsListenSocket, *mut c_void)>;
     pub(crate) type uws_method_handler =
         Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
-    pub(crate) type uws_filter_handler = Option<extern "C" fn(*mut uws_res, i32, *mut c_void)>;
+    // The C++ shim hands the filter the uws_res_t*, which for HTTP server
+    // sockets is the raw us_socket_t* — typed as such so callers outside this
+    // crate can name the handler signature.
+    pub(crate) type uws_filter_handler = Option<extern "C" fn(*mut us_socket_t, i32, *mut c_void)>;
     pub(crate) type uws_missing_server_handler = Option<extern "C" fn(*const c_char, *mut c_void)>;
 
     unsafe extern "C" {
@@ -513,6 +529,8 @@ pub mod c {
             app: &mut uws_app_t,
             require_host_header: bool,
             use_strict_method_validation: bool,
+            use_insecure_http_parser: bool,
+            http_allow_half_open: bool,
         );
         pub(crate) safe fn uws_app_set_max_http_header_size(
             ssl: i32,

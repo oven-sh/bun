@@ -40,7 +40,7 @@ mod JSPrinter {
         input: &[u8],
         writer: &mut (impl bun_io::Write + ?Sized),
         encoding: Encoding,
-    ) -> Result<(), bun_core::Error> {
+    ) -> bun_js_printer::Result<()> {
         match encoding {
             Encoding::Latin1 => {
                 bun_js_printer::write_json_string::<_, { Encoding::Latin1 }>(input, writer)
@@ -1811,7 +1811,7 @@ pub mod formatter {
                 // SAFETY: `node` was obtained from `Pool::get_node()` and is
                 // exclusively owned by this formatter; `Map::INIT` is `Some`,
                 // so `data` is initialized. Ownership returns to the pool.
-                unsafe { visited::Pool::release(node.as_mut()) };
+                unsafe { visited::Pool::release(node.as_ptr()) };
             }
         }
     }
@@ -2304,13 +2304,7 @@ pub mod formatter {
 
             if js_type == jsc::JSType::GlobalProxy {
                 if !opts.contains(TagOptions::HIDE_GLOBAL) {
-                    // SAFETY: `value` is a cell with `js_type == GlobalProxy`,
-                    // so `as_object_ref()` is a valid `JSObjectRef` for the
-                    // C API call.
-                    let target = JSValue::c(unsafe {
-                        jsc::C::JSObjectGetProxyTarget(value.as_object_ref())
-                    });
-                    return Tag::get(target, global_this);
+                    return Tag::get(value.get_proxy_target(), global_this);
                 }
                 return Ok(TagResult {
                     tag: TagPayload::GlobalObject,
@@ -3955,8 +3949,7 @@ pub mod formatter {
                     C,
                 )
             })?;
-            // Strings are printed directly, otherwise we recurse. It is
-            // possible to end up in an infinite loop.
+            // Strings are printed directly, otherwise we recurse.
             if result.is_string() {
                 if writer_
                     .write_fmt(format_args!("{}", result.fmt_string(self.global_this)))
@@ -3965,12 +3958,15 @@ pub mod formatter {
                     self.failed = true;
                 }
             } else {
-                self.format::<C>(
-                    Tag::get(result, self.global_this)?,
-                    writer_,
-                    result,
-                    self.global_this,
-                )?;
+                // A custom inspector that returns its own `this` would recurse
+                // forever; re-tag without the custom hook so it falls through to
+                // default formatting (mirrors util.inspect's `ret !== context`).
+                let tag = if result == self.custom_formatted_object.this {
+                    Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
+                } else {
+                    Tag::get(result, self.global_this)?
+                };
+                self.format::<C>(tag, writer_, result, self.global_this)?;
             }
             Ok(())
         }
@@ -4242,8 +4238,7 @@ pub mod formatter {
 
             // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
             // centralised non-null deref proof (Tag::Promise ⇒ value is a cell).
-            let promise: &JSPromise =
-                JSPromise::opaque_ref(value.as_object_ref() as *const JSPromise);
+            let promise: &JSPromise = JSPromise::opaque_ref(value.encoded() as *const JSPromise);
             match promise.status() {
                 jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
                 jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),
@@ -5946,7 +5941,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
     PENDING_TIME_LOGS.with_borrow_mut(|map| {
         let result = map.get_or_put(id).expect("unreachable");
         if !result.found_existing || result.value_ptr.is_none() {
-            *result.value_ptr = Some(bun_core::time::Timer::start().expect("unreachable"));
+            *result.value_ptr = Some(bun_core::time::Timer::start());
         }
     });
 }

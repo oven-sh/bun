@@ -642,9 +642,6 @@ pub struct Mutex<T>(std::sync::Mutex<T>);
 /// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
 pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
 
-/// Alias for [`Mutex`].
-pub type Guarded<T> = Mutex<T>;
-
 impl<T> Mutex<T> {
     #[inline]
     pub const fn new(value: T) -> Self {
@@ -1754,19 +1751,19 @@ pub mod io {
     /// is sound (see output.rs `QuietWriterAdapter::new_interface`).
     #[repr(C)]
     pub struct Writer {
-        pub write_all: unsafe fn(*mut Writer, &[u8]) -> Result<(), crate::Error>,
-        pub flush: unsafe fn(*mut Writer) -> Result<(), crate::Error>,
+        pub write_all: unsafe fn(*mut Writer, &[u8]) -> crate::CrateResult<()>,
+        pub flush: unsafe fn(*mut Writer) -> crate::CrateResult<()>,
     }
     impl Writer {
         #[inline]
-        pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
+        pub fn write_all(&mut self, bytes: &[u8]) -> crate::CrateResult<()> {
             // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter
             // (see type doc); `self` was produced by upcasting `&mut Adapter`,
             // so the vtable fn receives the same pointer it was registered with.
             unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
         }
         #[inline]
-        pub fn flush(&mut self) -> Result<(), crate::Error> {
+        pub fn flush(&mut self) -> crate::CrateResult<()> {
             // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter;
             // `self` is the same pointer the adapter registered its vtable with,
             // so the callee's downcast back to the concrete type is sound.
@@ -1774,13 +1771,13 @@ pub mod io {
         }
         /// Alias for `print` so `write!(w, ...)` works.
         #[inline]
-        pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
             self.print(args)
         }
         #[inline]
-        pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
             use core::fmt::Write;
-            struct A<'a>(&'a mut Writer, Result<(), crate::Error>);
+            struct A<'a>(&'a mut Writer, crate::CrateResult<()>);
             impl core::fmt::Write for A<'_> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
                     self.1 = self.0.write_all(s.as_bytes());
@@ -1820,12 +1817,12 @@ pub mod io {
     /// helpers that would break object safety carry `where Self: Sized`.
     pub trait Write {
         /// Write the entire buffer.
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error>;
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()>;
 
         /// Flush any internal buffer to the underlying sink.
         /// Unbuffered sinks leave the default no-op.
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             Ok(())
         }
 
@@ -1841,18 +1838,18 @@ pub mod io {
 
         /// Write a single byte.
         #[inline]
-        fn write_byte(&mut self, byte: u8) -> Result<(), crate::Error> {
+        fn write_byte(&mut self, byte: u8) -> crate::CrateResult<()> {
             self.write_all(core::slice::from_ref(&byte))
         }
 
         /// Convenience for UTF-8 string slices.
         #[inline]
-        fn write_str(&mut self, s: &str) -> Result<(), crate::Error> {
+        fn write_str(&mut self, s: &str) -> crate::CrateResult<()> {
             self.write_all(s.as_bytes())
         }
 
         /// Write `n` copies of `byte`.
-        fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), crate::Error> {
+        fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::CrateResult<()> {
             let chunk = [byte; 256];
             let mut remain = n;
             while remain > 0 {
@@ -1864,10 +1861,10 @@ pub mod io {
         }
 
         /// Formatted write. Enables `write!(w, ...)`.
-        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
             struct Bridge<'a, W: ?Sized> {
                 sink: &'a mut W,
-                err: Option<crate::Error>,
+                err: Option<crate::CrateError>,
             }
             impl<W: Write + ?Sized> fmt::Write for Bridge<'_, W> {
                 #[inline]
@@ -1887,19 +1884,19 @@ pub mod io {
             };
             match fmt::write(&mut bridge, args) {
                 Ok(()) => Ok(()),
-                Err(_) => Err(bridge.err.unwrap_or_else(|| crate::err!("FmtError"))),
+                Err(_) => Err(bridge.err.unwrap_or(crate::CrateError::FmtError)),
             }
         }
 
         /// Alias for [`write_fmt`](Write::write_fmt).
         #[inline]
-        fn print(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        fn print(&mut self, args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
             self.write_fmt(args)
         }
 
         /// Write an integer in little-endian byte order.
         #[inline]
-        fn write_int_le<I: IntLe>(&mut self, val: I) -> Result<(), crate::Error>
+        fn write_int_le<I: IntLe>(&mut self, val: I) -> crate::CrateResult<()>
         where
             Self: Sized,
         {
@@ -1912,23 +1909,23 @@ pub mod io {
     /// Forward through `&mut W` so `&mut dyn Write` / `&mut impl Write` nest.
     impl<W: Write + ?Sized> Write for &mut W {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             (**self).write_all(buf)
         }
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             (**self).flush()
         }
         #[inline]
-        fn write_byte(&mut self, byte: u8) -> Result<(), crate::Error> {
+        fn write_byte(&mut self, byte: u8) -> crate::CrateResult<()> {
             (**self).write_byte(byte)
         }
         #[inline]
-        fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), crate::Error> {
+        fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::CrateResult<()> {
             (**self).splat_byte_all(byte, n)
         }
         #[inline]
-        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
             (**self).write_fmt(args)
         }
         #[inline]
@@ -1939,11 +1936,11 @@ pub mod io {
 
     impl<W: Write + ?Sized> Write for Box<W> {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             (**self).write_all(buf)
         }
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             (**self).flush()
         }
         #[inline]
@@ -1955,7 +1952,7 @@ pub mod io {
     /// In-memory growable sink.
     impl<A: core::alloc::Allocator> Write for Vec<u8, A> {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             self.extend_from_slice(buf);
             Ok(())
         }
@@ -1967,7 +1964,7 @@ pub mod io {
 
     impl<'a> Write for bun_alloc::BabyVec<'a, u8> {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             self.extend_from_slice(buf);
             Ok(())
         }
@@ -1981,13 +1978,13 @@ pub mod io {
     /// printers taking `W: io::Write` accept process stdout/stderr sinks.
     impl Write for Writer {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
             // receives the same pointer it was registered with (see type doc).
             unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
         }
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
             // receives the same pointer it was registered with (see type doc).
             unsafe { (self.flush)(core::ptr::from_mut(self)) }
@@ -2318,6 +2315,10 @@ unsafe extern "C" {
     /// directly.
     #[cfg(unix)]
     safe fn clock_gettime(clk_id: libc::clockid_t, tp: &mut libc::timespec) -> core::ffi::c_int;
+    /// Bun C++ shim over `QueryPerformanceCounter` (c-bindings.cpp). Infallible
+    /// on Windows XP+; out-params are `&mut i64` so pointer validity is typed.
+    #[cfg(windows)]
+    safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64);
 }
 impl Default for StackCheck {
     /// `cached_stack_end` defaults to `0`, so
@@ -2696,8 +2697,6 @@ pub enum Pollable {
     NotReady,
     Hup,
 }
-/// Alias for [`Pollable`].
-pub type PollFlag = Pollable;
 
 impl Pollable {
     /// Lowercase tag name for the `[sys]` debug log.
@@ -2818,14 +2817,14 @@ pub fn is_writable(fd: Fd) -> Pollable {
     }
 }
 
-// ── csprng ────────────────────────────────────────────────────────────────
-// bun_core sits below
-// boringssl_sys in the crate graph, so we go to the OS CSPRNG directly:
-// getrandom(2) on Linux, SecRandomCopyBytes/getentropy on Darwin,
-// RtlGenRandom on Windows. All are the same entropy source BoringSSL seeds
-// from. PERF: if a hot path needs the BoringSSL DRBG, install a
-// vtable hook from bun_runtime at startup.
-pub fn csprng(bytes: &mut [u8]) {
+// ── os_entropy ────────────────────────────────────────────────────────────
+// Raw OS entropy source: getrandom(2) on Linux, getentropy on Darwin/BSD,
+// RtlGenRandom on Windows. bun_core sits below boringssl_sys in the crate
+// graph so it cannot reach `RAND_bytes`; this is used only to seed
+// `fast_random()`'s thread-local PRNG once per thread. Every other caller
+// must use `bun_boringssl_sys::rand_bytes` (userspace DRBG, no syscall per
+// call).
+fn os_entropy(bytes: &mut [u8]) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut filled = 0usize;
@@ -2879,10 +2878,10 @@ pub fn csprng(bytes: &mut [u8]) {
 // ── self_exe_path ─────────────────────────────────────────────────────────
 // Memoized into a process-lifetime
 // static buffer; thread-safe via `Once`. Returns a `&'static ZStr`.
-pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
-    static CELL: Once<Result<ZBox, crate::Error>> = Once::new();
+pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
+    static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
     let r = CELL.get_or_init(|| {
-        let path = std::env::current_exe().map_err(crate::Error::from)?;
+        let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),
         // but on Darwin it returns the raw `_NSGetExecutablePath` result and on
@@ -2984,15 +2983,6 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
-// ── errno_to_zig_err ──────────────────────────────────────────────────────
-// The intern table maps in `Error::from_errno`
-// (errno → tag name → interned code).
-#[inline]
-pub fn errno_to_zig_err(errno: i32) -> crate::Error {
-    debug_assert!(errno != 0);
-    crate::Error::from_errno(errno)
-}
-
 // ── time ──────────────────────────────────────────────────────────────────
 // Time-unit constants plus `{nano,milli,}timestamp()`. Callers `as`-cast at the
 // use-site (`NS_PER_S as i128`, `MS_PER_S as f64`, …). Every value fits in
@@ -3042,6 +3032,12 @@ pub mod time {
     pub fn milli_timestamp() -> i64 {
         (nano_timestamp() / NS_PER_MS as i128) as i64
     }
+    /// Wall-clock milliseconds since the Unix epoch, or the fake-timers mocked
+    /// wall clock when active. See [`super::mock_time`].
+    #[inline]
+    pub fn milli_timestamp_allow_mocked_time() -> f64 {
+        super::mock_time::wall_ms().unwrap_or_else(|| milli_timestamp() as f64)
+    }
     /// Wall-clock seconds since the Unix epoch.
     #[inline]
     pub fn timestamp() -> i64 {
@@ -3055,7 +3051,7 @@ pub mod time {
     }
     impl Timer {
         #[inline]
-        pub fn start() -> Result<Self, crate::Error> {
+        pub fn start() -> crate::CrateResult<Self> {
             Ok(Self {
                 start: std::time::Instant::now(),
             })
@@ -3764,7 +3760,7 @@ pub fn fast_random() -> u64 {
                 return n;
             }
             let mut buf = [0u8; 8];
-            csprng(&mut buf);
+            os_entropy(&mut buf);
             v = u64::from_ne_bytes(buf);
             SEED.store(v, O::Relaxed);
             v = SEED.load(O::Relaxed);
@@ -3785,8 +3781,7 @@ pub fn fast_random() -> u64 {
 }
 
 // ── hash ──────────────────────────────────────────────────────────────────
-// `bun.hash` (Wyhash) lives in deprecated.rs as RapidHash; this module adds
-// the xxhash64 entry point that ETag/bundler need.
+// `bun.hash` one-shot Wyhash / XxHash64 wrappers over `bun_hash`.
 pub mod hash {
     pub use bun_hash::XxHash64;
     /// One-shot seeded XXH64 over `bytes`.
@@ -3797,7 +3792,7 @@ pub mod hash {
     /// Wyhash one-shot (`bun.hash`).
     #[inline]
     pub fn wyhash(bytes: &[u8]) -> u64 {
-        crate::deprecated::RapidHash::hash(0, bytes)
+        bun_hash::RapidHash::hash(0, bytes)
     }
 }
 
@@ -3921,7 +3916,7 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
         *p.add(bytes.len()) = 0;
     }
-    p as *const core::ffi::c_char
+    p.cast_const().cast::<core::ffi::c_char>()
 }
 
 /// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
@@ -4347,7 +4342,7 @@ pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
 // ── getcwd ────────────────────────────────────────────────────────────────
 /// Writes the current working directory into the caller's `PathBuffer` and
 /// returns the NUL-terminated slice on success.
-pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
+pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
     #[cfg(unix)]
     // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
     // success the returned pointer aliases `buf` and is NUL-terminated, so
@@ -4355,7 +4350,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
-            return Err(std::io::Error::last_os_error().into());
+            return Err(crate::CrateError::Unexpected);
         }
         let len = libc::strlen(p);
         Ok(ZStr::from_buf(&buf.0, len))
@@ -4371,10 +4366,10 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
         // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
         let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
         if n == 0 {
-            return Err(std::io::Error::last_os_error().into());
+            return Err(crate::CrateError::Unexpected);
         }
         if n >= wbuf.0.len() {
-            return Err(crate::err!(NameTooLong));
+            return Err(crate::CrateError::NameTooLong);
         }
         // WTF-16 → WTF-8 into the caller's `PathBuffer`. Surrogate pairs are
         // combined; unpaired surrogates are encoded as 3-byte WTF-8.
@@ -4388,7 +4383,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
             let mut tmp = [0u8; 4];
             let nb = crate::strings::encode_wtf8_rune(&mut tmp, cp);
             if bi + nb >= out.len() {
-                return Err(crate::err!(NameTooLong));
+                return Err(crate::CrateError::NameTooLong);
             }
             out[bi..bi + nb].copy_from_slice(&tmp[..nb]);
             bi += nb;
@@ -4399,7 +4394,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
     #[cfg(not(any(unix, windows)))]
     {
         let _ = buf;
-        Err(crate::err!(Unexpected))
+        Err(crate::CrateError::Unexpected)
     }
 }
 
@@ -4852,22 +4847,22 @@ enum StdinBehavior {
 
 /// Spawn argv, inherit stdout/stderr, **ignore stdin** (fd 0 ← /dev/null),
 /// wait.
-pub fn spawn_sync_inherit_no_stdin(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
+pub fn spawn_sync_inherit_no_stdin(argv: &[impl AsRef<[u8]>]) -> crate::CrateResult<SpawnStatus> {
     spawn_sync_inherit_impl(argv, StdinBehavior::Ignore)
 }
 
-pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
+pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> crate::CrateResult<SpawnStatus> {
     spawn_sync_inherit_impl(argv, StdinBehavior::Inherit)
 }
 
 fn spawn_sync_inherit_impl(
     argv: &[impl AsRef<[u8]>],
     stdin: StdinBehavior,
-) -> Result<SpawnStatus, crate::Error> {
+) -> crate::CrateResult<SpawnStatus> {
     // Empty argv: fail like the Windows path below instead of panicking on
     // the `argv[0]` reads in the per-OS unix arms.
     if argv.is_empty() {
-        return Err(crate::err!("FileNotFound"));
+        return Err(crate::CrateError::FileNotFound);
     }
     #[cfg(unix)]
     // SAFETY: argv strings are owned `ZBox`es (NUL-terminated) kept alive in
@@ -4900,7 +4895,7 @@ fn spawn_sync_inherit_impl(
                 let path_env = getenv_z(ZStr::from_static(b"PATH\0")).unwrap_or(b"");
                 match which(&mut pathbuf, path_env, b".", arg0) {
                     Some(z) => z.as_ptr(),
-                    None => return Err(crate::Error::from_errno(libc::ENOENT)),
+                    None => return Err(crate::CrateError::FileNotFound),
                 }
             };
 
@@ -4942,7 +4937,7 @@ fn spawn_sync_inherit_impl(
                 environ,
             );
             if rc != 0 {
-                return Err(crate::Error::from_errno(rc as i32));
+                return Err(crate::CrateError::Unexpected);
             }
             pid as libc::pid_t
         };
@@ -4957,7 +4952,7 @@ fn spawn_sync_inherit_impl(
                 if stdin == StdinBehavior::Ignore {
                     let rc = libc::posix_spawn_file_actions_init(&raw mut actions);
                     if rc != 0 {
-                        return Err(crate::Error::from_errno(rc));
+                        return Err(crate::CrateError::Unexpected);
                     }
                     let rc = libc::posix_spawn_file_actions_addopen(
                         &raw mut actions,
@@ -4968,7 +4963,7 @@ fn spawn_sync_inherit_impl(
                     );
                     if rc != 0 {
                         libc::posix_spawn_file_actions_destroy(&raw mut actions);
-                        return Err(crate::Error::from_errno(rc));
+                        return Err(crate::CrateError::Unexpected);
                     }
                     &raw const actions
                 } else {
@@ -4987,7 +4982,7 @@ fn spawn_sync_inherit_impl(
                 libc::posix_spawn_file_actions_destroy(&raw mut actions);
             }
             if rc != 0 {
-                return Err(crate::Error::from_errno(rc));
+                return Err(crate::CrateError::Unexpected);
             }
             pid
         };
@@ -4999,8 +4994,8 @@ fn spawn_sync_inherit_impl(
             let _ = environ;
             let pid = libc::fork();
             if pid < 0 {
-                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
-                return Err(crate::Error::from_errno(e));
+                let _ = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+                return Err(crate::CrateError::Unexpected);
             }
             if pid == 0 {
                 // Child. execvp inherits stdio + environ, which is exactly the
@@ -5031,7 +5026,7 @@ fn spawn_sync_inherit_impl(
         )))]
         let pid: libc::pid_t = {
             let _ = (&ptrs, environ, stdin);
-            return Err(crate::err!(Unexpected));
+            return Err(crate::CrateError::Unexpected);
         };
 
         let mut status: i32 = 0;
@@ -5042,7 +5037,7 @@ fn spawn_sync_inherit_impl(
                 if e == libc::EINTR {
                     continue;
                 }
-                return Err(crate::Error::from_errno(e));
+                return Err(crate::CrateError::Unexpected);
             }
             break;
         }
@@ -5058,7 +5053,7 @@ fn spawn_sync_inherit_impl(
         // Route through `std::process::Command` (CreateProcessW, no event
         // loop) with inherited stdio — see spawn/lib.rs:307 for the
         // PORTING.md rationale on why off-loop spawns may bypass bun_spawn on
-        // Windows. Do NOT return `err!(Unexpected)` here: that bubbles up as
+        // Windows. Do NOT return `Unexpected` here: that bubbles up as
         // `error: An unknown error occurred (Unexpected)` and fails every
         // `bun init` invocation on Windows (test/cli/init/init.test.ts).
         use std::ffi::OsString;
@@ -5072,7 +5067,7 @@ fn spawn_sync_inherit_impl(
         }
 
         let mut iter = argv.iter();
-        let argv0 = iter.next().ok_or(crate::err!("FileNotFound"))?;
+        let argv0 = iter.next().ok_or(crate::CrateError::FileNotFound)?;
         let mut cmd = std::process::Command::new(to_os(argv0.as_ref()));
         for arg in iter {
             cmd.arg(to_os(arg.as_ref()));
@@ -5083,9 +5078,9 @@ fn spawn_sync_inherit_impl(
             cmd.stdin(std::process::Stdio::null());
         }
         let status = cmd.status().map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => crate::err!("FileNotFound"),
-            std::io::ErrorKind::PermissionDenied => crate::err!("AccessDenied"),
-            _ => crate::Error::from(e),
+            std::io::ErrorKind::NotFound => crate::CrateError::FileNotFound,
+            std::io::ErrorKind::PermissionDenied => crate::CrateError::AccessDenied,
+            _ => crate::CrateError::Unexpected,
         })?;
         let code = status.code().unwrap_or(-1);
         Ok(SpawnStatus { code })
@@ -5093,7 +5088,7 @@ fn spawn_sync_inherit_impl(
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (argv, stdin);
-        Err(crate::err!(Unexpected))
+        Err(crate::CrateError::Unexpected)
     }
 }
 
@@ -5268,10 +5263,9 @@ impl Timespec {
         }
     }
 
-    /// `bun.timespec.now(.allow_mocked_time)` — monotonic-ish "rough tick".
-    /// Real impl routes through `getRoughTickCount` (jsc); tier-0 reads the
-    /// monotonic clock directly. Test-runner fake-timers write the mocked
-    /// nanosecond value via `mock_time::set` / `mock_time::clear`.
+    /// Monotonic clock (`CLOCK_MONOTONIC` / QPC). Boot-relative on every
+    /// platform; never compare against wall-clock epoch. Fake-timers override
+    /// via `mock_time::set` / `mock_time::clear`.
     #[inline]
     pub fn now(mode: TimespecMockMode) -> Timespec {
         if matches!(mode, TimespecMockMode::AllowMockedTime) {
@@ -5300,13 +5294,14 @@ impl Timespec {
                 nsec: ts.tv_nsec,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            let n = crate::time::nano_timestamp();
-            Timespec {
-                sec: (n / 1_000_000_000) as i64,
-                nsec: (n % 1_000_000_000) as i64,
-            }
+            // QPC via the c-bindings.cpp shim: the same monotonic clock libuv
+            // (uv_hrtime), uSockets' sweep and WTF::MonotonicTime::now use.
+            let mut sec: i64 = 0;
+            let mut nsec: i64 = 0;
+            clock_gettime_monotonic(&mut sec, &mut nsec);
+            Timespec { sec, nsec }
         }
     }
 
@@ -5338,11 +5333,13 @@ pub mod timespec_mode {
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
 /// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`
 /// from `bun_runtime::test_runner::timers::FakeTimers::CurrentTime`.
-/// Sentinel `i64::MIN` ⇒ not mocked.
+/// Sentinel `i64::MIN` / `NaN` ⇒ not mocked.
 pub mod mock_time {
-    use core::sync::atomic::{AtomicI64, Ordering};
+    use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
     static MOCKED_TIME_NS: AtomicI64 = AtomicI64::new(i64::MIN);
+    // Mocked wall-clock `Date.now()` in ms, stored as f64 bits; NaN = unset.
+    static MOCKED_WALL_MS: AtomicU64 = AtomicU64::new(f64::NAN.to_bits());
 
     /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
     #[inline]
@@ -5360,6 +5357,24 @@ pub mod mock_time {
     pub fn get() -> Option<i64> {
         let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
         if v == i64::MIN { None } else { Some(v) }
+    }
+    /// Set the mocked wall-clock time (`Date.now()` in ms). Called by
+    /// fake-timers alongside `set` so calendar-based consumers and the
+    /// monotonic timer heap move through the same mock.
+    #[inline]
+    pub fn set_wall_ms(ms: f64) {
+        MOCKED_WALL_MS.store(ms.to_bits(), Ordering::Relaxed);
+    }
+    /// Clear the mocked wall-clock time.
+    #[inline]
+    pub fn clear_wall() {
+        MOCKED_WALL_MS.store(f64::NAN.to_bits(), Ordering::Relaxed);
+    }
+    /// Current mocked wall-clock time in ms, or `None` if not mocked.
+    #[inline]
+    pub fn wall_ms() -> Option<f64> {
+        let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
+        if v.is_nan() { None } else { Some(v) }
     }
 }
 

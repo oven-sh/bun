@@ -1,10 +1,10 @@
 use crate::mal_prelude::*;
 use std::io::Write as _;
 
+use crate::Error;
 use bun_alloc::MaxHeapAllocator;
 use bun_ast::Loc;
 use bun_core::fmt::quote;
-use bun_core::{Error, err};
 use bun_core::{String as BunString, strings};
 use bun_paths::{self as paths, PathBuffer};
 use bun_wyhash::hash;
@@ -41,7 +41,7 @@ pub fn write_output_files_to_disk(
     let root_dir = match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
         Ok(dir) => dir,
         Err(e) => {
-            if e == err!("NotDir") {
+            if bun_errno::SystemErrno::from(e.clone()) == bun_errno::SystemErrno::ENOTDIR {
                 c.log_mut()
                     .add_error_fmt(
                         None,
@@ -58,12 +58,12 @@ pub fn write_output_files_to_disk(
                     Loc::EMPTY,
                     format_args!(
                         "Failed to create output directory {} {}",
-                        e.name(),
+                        bstr::BStr::new(e.name()),
                         quote(root_path),
                     ),
                 );
             }
-            return Err(e);
+            return Err(e.into());
         }
     };
     // Optimization: when writing to disk, we can re-use the memory
@@ -110,12 +110,12 @@ pub fn write_output_files_to_disk(
                             Loc::EMPTY,
                             format_args!(
                                 "{} creating outdir {} while saving sourcemap {}",
-                                e.name(),
+                                bstr::BStr::new(e.name()),
                                 quote(rel_parent),
                                 quote(&*source_map_final_rel_path),
                             ),
                         );
-                        return Err(e);
+                        return Err(e.into());
                     }
                 }
 
@@ -131,7 +131,7 @@ pub fn write_output_files_to_disk(
                             quote(&chunk.final_rel_path)
                         ),
                     );
-                    return Err(err!("WriteFailed"));
+                    return Err(crate::Error::WriteFailed);
                 }
 
                 let input_path: &[u8] = if chunk.entry_point.is_entry_point() {
@@ -210,12 +210,12 @@ pub fn write_output_files_to_disk(
                     Loc::EMPTY,
                     format_args!(
                         "{} creating outdir {} while saving chunk {}",
-                        e.name(),
+                        bstr::BStr::new(e.name()),
                         quote(rel_parent),
                         quote(&chunk.final_rel_path),
                     ),
                 );
-                return Err(e);
+                return Err(e.into());
             }
         }
         let mut display_size: usize = 0;
@@ -337,7 +337,7 @@ pub fn write_output_files_to_disk(
                                 quote(&chunk.final_rel_path)
                             ),
                         );
-                        return Err(err!("WriteFailed"));
+                        return Err(crate::Error::WriteFailed);
                     }
                     Ok(_) => {}
                 }
@@ -456,7 +456,7 @@ pub fn write_output_files_to_disk(
                                         quote(&chunk.final_rel_path),
                                     ),
                                 );
-                                return Err(err!("WriteFailed"));
+                                return Err(crate::Error::WriteFailed);
                             }
                         }
 
@@ -521,7 +521,7 @@ pub fn write_output_files_to_disk(
                     &e,
                     format_args!("writing chunk {}", quote(&chunk.final_rel_path)),
                 );
-                return Err(err!("WriteFailed"));
+                return Err(crate::Error::WriteFailed);
             }
             Ok(_) => {}
         }
@@ -652,12 +652,12 @@ pub fn write_output_files_to_disk(
                         Loc::EMPTY,
                         format_args!(
                             "{} creating outdir {} while saving file {}",
-                            e.name(),
+                            bstr::BStr::new(e.name()),
                             quote(rel_parent),
                             quote(&*src.dest_path),
                         ),
                     );
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
 
@@ -671,7 +671,7 @@ pub fn write_output_files_to_disk(
                         &e,
                         format_args!("writing file {}", quote(src.src_path.text)),
                     );
-                    return Err(err!("WriteFailed"));
+                    return Err(crate::Error::WriteFailed);
                 }
                 Ok(_) => {}
             }

@@ -7,12 +7,13 @@ use core::ffi::c_void;
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::Error as AnyError;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_ast::ImportRecord;
 use bun_ast::{Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_core::{self, Error as AnyError, FeatureFlags, declare_scope, err, scoped_log};
+use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPoolLib;
 
@@ -870,7 +871,7 @@ pub mod parse_worker {
                             Loc::EMPTY,
                             b"Failed to render markdown to HTML",
                         ); // logger OOM-only
-                        return Err(err!("ParserError"));
+                        return Err(crate::Error::ParserError);
                     }
                 };
                 let html: &[u8] = bump.alloc_slice_copy(&html);
@@ -911,7 +912,7 @@ pub mod parse_worker {
                         Loc::EMPTY,
                         b"To use the \"sqlite\" loader, set target to \"bun\"",
                     );
-                    return Err(err!("ParserError"));
+                    return Err(crate::Error::ParserError);
                 }
 
                 let path_to_use: &[u8] = 'brk: {
@@ -1032,7 +1033,7 @@ pub mod parse_worker {
                     Loc::EMPTY,
                     b"Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
                 );
-                    return Err(err!("ParserError"));
+                    return Err(crate::Error::ParserError);
                 }
 
                 let mut buf = bun_alloc::ArenaString::new_in(bump);
@@ -1194,7 +1195,7 @@ pub mod parse_worker {
                         // Surface the actual CSS parse diagnostic.
                         let _ = e.add_to_logger(&mut temp_log, source);
                         let _ = temp_log.append_to_maybe_recycled(log, source);
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
                 };
                 // Make sure the css modules local refs have a valid tag
@@ -1215,7 +1216,7 @@ pub mod parse_worker {
                     // Surface the actual minify diagnostic.
                     let _ = e.add_to_logger(&mut temp_log, source);
                     let _ = temp_log.append_to_maybe_recycled(log, source);
-                    return Err(err!("MinifyError"));
+                    return Err(crate::Error::MinifyError);
                 }
                 if css_ast.local_scope.count() > 0 {
                     let _ = has_any_css_locals.fetch_add(1, Ordering::Relaxed);
@@ -1452,7 +1453,7 @@ pub mod parse_worker {
                             // the BundleV2 — both outlive the log's consumption.
                             file_path.text,
                         );
-                        if e == err!("ENOENT") || e == err!("FileNotFound") {
+                        if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             let _ = log.add_error_fmt(
                                 Some(&source),
                                 Loc::EMPTY,
@@ -1461,7 +1462,7 @@ pub mod parse_worker {
                                     bun_core::fmt::quote(file_path.text)
                                 ),
                             );
-                            return Err(err!("FileNotFound"));
+                            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
                         } else {
                             let _ = log.add_error_fmt(
                                 Some(&source),
@@ -1473,7 +1474,7 @@ pub mod parse_worker {
                                 ),
                             );
                         }
-                        return Err(e);
+                        return Err(e.into());
                     }
                 };
             }
@@ -2091,7 +2092,7 @@ pub mod parse_worker {
                     // is live would be aliased-`&mut` UB.
                     self.log.errors += 1;
                     let _ = self.log.add_msg(msg); // logger OOM-only
-                    return Err(err!("InvalidNativePlugin"));
+                    return Err(crate::Error::InvalidNativePlugin);
                 }
 
                 if self.log.errors > 0 {
@@ -2099,7 +2100,7 @@ pub mod parse_worker {
                         free_user_context(wrapper.result.user_context);
                     }
 
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 if !wrapper.result.source_ptr.is_null() {
@@ -2135,12 +2136,11 @@ pub mod parse_worker {
                                 len: wrapper.result.source_len,
                             }
                         };
+                    // The plugin buffer has exactly one owner:
+                    // `self.task.external_free_function` (set above),
+                    // released via `BundleV2.finalizers`.
                     return Ok(CacheEntry {
                         contents,
-                        external_free_function: ExternalFreeFunction {
-                            ctx: wrapper.result.user_context,
-                            function: free_fn,
-                        },
                         fd: wrapper.original_source_fd,
                     });
                 }
@@ -2455,6 +2455,7 @@ pub mod parse_worker {
         opts.features.standard_decorators = !loader.is_typescript()
             || !(task.experimental_decorators || task.emit_decorator_metadata);
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
+        opts.features.no_macros = topts.no_macros;
         // Modeled as
         // `Option<Box<StringSet>>` on both sides, so we deep-clone (small —
         // CLI-supplied flag set). PERF: retype
@@ -2710,7 +2711,7 @@ pub mod parse_worker {
 
                 if log.has_errors() {
                     break 'value ResultValue::Err(ResultError {
-                        err: err!("SyntaxError"),
+                        err: crate::Error::SyntaxError,
                         step,
                         log,
                         source_index: this.source_index,
@@ -2747,7 +2748,7 @@ pub mod parse_worker {
                     // Not done outside of the dev server out of fear of breaking existing code.
                     if ctx.transpiler().options.has_dev_server() && ast.log.has_errors() {
                         break 'value ResultValue::Err(ResultError {
-                            err: err!("SyntaxError"),
+                            err: crate::Error::SyntaxError,
                             step: Step::Parse,
                             log: ast.log,
                             source_index: this.source_index,
@@ -2758,7 +2759,7 @@ pub mod parse_worker {
                     break 'value ResultValue::Success(ast);
                 }
                 Err(e) => {
-                    if e == err!("EmptyAST") {
+                    if e == crate::Error::EmptyAST {
                         drop(log);
                         break 'value ResultValue::Empty {
                             source_index: this.source_index,

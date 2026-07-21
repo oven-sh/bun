@@ -1,7 +1,8 @@
 use core::ptr::NonNull;
 
+use crate::Error;
 use bun_core::MutableString;
-use bun_core::{Error, Output};
+use bun_core::Output;
 
 use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
 
@@ -166,27 +167,13 @@ impl<'a> InternalState<'a> {
     }
 
     pub fn reset(&mut self) {
-        // allocator param dropped (global mimalloc).
-        self.compressed_body = MutableString::init_empty();
-        self.response_message_buffer = MutableString::init_empty();
-
         let body_msg = self.body_out_str;
         if let Some(body) = body_msg {
             crate::body_out::as_mut(body).reset();
         }
-        // The boxed
-        // Zlib/Brotli/Zstd readers all impl Drop calling end()/destroy_instance
-        // (see the note in Decompressor.rs), so the `*self = ...` assignment below
-        // frees the FFI handle via drop glue — no explicit reset needed.
-
-        // just in case we check and free to avoid leaks
-        // (Option<HTTPResponseMetadata> drops on assignment; allocator param removed)
-        self.cloned_metadata = None;
-
-        // if exists we own this info
-        // (Option<CertificateInfo> drops on assignment; allocator param removed)
-        self.certificate_info = None;
-
+        // `*self = ...` below drops every field via drop glue. Only
+        // `original_request_body` needs an explicit `deinit()` because
+        // `HTTPRequestBody` deliberately has no `Drop` (see HTTPRequestBody.rs).
         self.original_request_body.deinit();
         *self = InternalState {
             body_out_str: body_msg,
@@ -201,22 +188,21 @@ impl<'a> InternalState<'a> {
         };
     }
 
-    /// The caller-owned response body buffer (set in [`Self::init`]).
-    ///
-    /// INVARIANT: `body_out_str` points at a `MutableString` owned by the
-    /// `AsyncHTTP`/`FetchTasklet` that initiated this request and outlives
-    /// this `InternalState`; it is a separate heap allocation, never aliasing
-    /// any field of `self`.
-    #[inline]
-    fn body_out_mut(&mut self) -> &mut MutableString {
-        crate::body_out::as_mut(self.body_out_str.unwrap())
-    }
-
+    /// The buffer response body bytes accumulate into. For compressed
+    /// responses this is the intermediate `compressed_body`; otherwise it is
+    /// the caller-owned `body_out_str`. When `body_out_str` is `None` (the
+    /// request is in a transitional/terminal state where no owner buffer is
+    /// attached) fall back to `compressed_body` so the chunked decoder can
+    /// still run without panicking; those bytes are discarded on the next
+    /// `reset()`.
     pub fn get_body_buffer(&mut self) -> &mut MutableString {
         if self.encoding.is_compressed() {
             return &mut self.compressed_body;
         }
-        self.body_out_mut()
+        match self.body_out_str {
+            Some(p) => crate::body_out::as_mut(p),
+            None => &mut self.compressed_body,
+        }
     }
 
     /// Split-borrow `chunked_decoder` and the body buffer (which is either
@@ -229,13 +215,16 @@ impl<'a> InternalState<'a> {
     pub fn chunked_decoder_and_body_buffer(
         &mut self,
     ) -> (&mut bun_picohttp::phr_chunked_decoder, &mut MutableString) {
-        if self.encoding.is_compressed() {
-            (&mut self.chunked_decoder, &mut self.compressed_body)
-        } else {
+        match self.body_out_str {
+            _ if self.encoding.is_compressed() => {
+                (&mut self.chunked_decoder, &mut self.compressed_body)
+            }
             // body_out_str is a separate heap allocation, never aliasing
             // `chunked_decoder` (a value field of `self`).
-            let body = crate::body_out::as_mut(self.body_out_str.unwrap());
-            (&mut self.chunked_decoder, body)
+            Some(p) => (&mut self.chunked_decoder, crate::body_out::as_mut(p)),
+            // See `get_body_buffer`: fall back to `compressed_body` rather
+            // than panic when no owner buffer is attached.
+            None => (&mut self.chunked_decoder, &mut self.compressed_body),
         }
     }
 
@@ -316,8 +305,15 @@ impl<'a> InternalState<'a> {
                             &mut body_out_str.list,
                             bun_libdeflate::Encoding::Gzip,
                         );
-                        if result.status == bun_libdeflate::Status::Success {
+                        // libdeflate decodes a single gzip member; unconsumed
+                        // input means this is a multi-member stream (RFC 1952
+                        // §2.2). Let the zlib path handle it.
+                        if result.status == bun_libdeflate::Status::Success
+                            && result.read == buffer.len()
+                        {
                             still_needs_to_decompress = false;
+                        } else {
+                            body_out_str.list.clear();
                         }
 
                         break 'libdeflate;
@@ -338,7 +334,9 @@ impl<'a> InternalState<'a> {
                     },
                 );
 
-                if result.status == bun_libdeflate::Status::Success {
+                // libdeflate decodes a single member; unconsumed input means
+                // a multi-member gzip stream. Let the zlib path handle it.
+                if result.status == bun_libdeflate::Status::Success && result.read == buffer.len() {
                     body_out_str
                         .list
                         .reserve_exact(result.written.saturating_sub(body_out_str.list.len()));
@@ -369,7 +367,7 @@ impl<'a> InternalState<'a> {
                 self.decompressor
                     .decompress_chunk(self.encoding, buffer, body_out_str, is_done)
             {
-                if is_done || err != bun_core::err!("ShortRead") {
+                if is_done || err != crate::Error::ShortRead {
                     bun_core::pretty_errorln!(
                         "<r><red>Decompression error: {}<r>",
                         bstr::BStr::new(err.name()),
@@ -410,11 +408,19 @@ impl<'a> InternalState<'a> {
             return Ok(false);
         }
 
-        // not `self.body_out_mut()` — `decompress_bytes` below takes
-        // `&mut self` alongside `body_out_str`; the accessor would tie the
-        // borrow to `self`. The free `body_out::as_mut` yields an unbounded
-        // `&mut` to the disjoint caller-owned allocation.
-        let body_out_str = crate::body_out::as_mut(self.body_out_str.unwrap());
+        // `decompress_bytes` below takes `&mut self` alongside `body_out_str`,
+        // so a `&mut self` accessor would tie the borrow to `self`. The free
+        // `body_out::as_mut` yields an unbounded `&mut` to the disjoint
+        // caller-owned allocation.
+        let Some(body_out_ptr) = self.body_out_str else {
+            // No owner buffer attached (see `get_body_buffer`). There is
+            // nowhere to deliver decoded bytes; put the buffer back so the
+            // caller's take is a no-op and report no progress. The request
+            // is already in a transitional/terminal state.
+            self.get_body_buffer().list = buffer;
+            return Ok(false);
+        };
+        let body_out_str = crate::body_out::as_mut(body_out_ptr);
 
         match self.encoding {
             Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {
@@ -444,7 +450,7 @@ impl<'a> InternalState<'a> {
             }
         }
 
-        Ok(!self.body_out_mut().list.is_empty())
+        Ok(!body_out_str.list.is_empty())
     }
 }
 

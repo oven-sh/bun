@@ -146,12 +146,11 @@ fn apply_barrel_optimization_impl(
     // files parsed before this barrel. scheduleBarrelDeferredImports records
     // requests eagerly as each file is processed, so we don't need to scan
     // the graph.
-    if let Some(existing) = RequestedExports::lookup(&this.requested_exports, source_index) {
-        match existing {
-            RequestedExports::All => return Ok(()), // import * already seen — load everything
-            RequestedExports::Partial(_) => {}
-        }
-    }
+    let requested = match RequestedExports::lookup(&this.requested_exports, source_index) {
+        Some(RequestedExports::All) => return Ok(()), // import * already seen — load everything
+        Some(RequestedExports::Partial(partial)) => Some(partial),
+        None => None,
+    };
 
     // Build the set of needed import_record_indices from already-requested
     // export names. Export * records are always needed.
@@ -161,17 +160,12 @@ fn apply_barrel_optimization_impl(
         needed_records.put(*record_idx, ())?;
     }
 
-    if let Some(existing) = RequestedExports::lookup(&this.requested_exports, source_index) {
-        match existing {
-            RequestedExports::All => unreachable!(), // handled above
-            RequestedExports::Partial(partial) => {
-                for key in partial.keys() {
-                    if let Some(resolution) =
-                        resolve_barrel_export(key, &ast.named_exports, &ast.named_imports)
-                    {
-                        needed_records.put(resolution.import_record_index, ())?;
-                    }
-                }
+    if let Some(partial) = requested {
+        for key in partial.keys() {
+            if let Some(resolution) =
+                resolve_barrel_export(key, &ast.named_exports, &ast.named_imports)
+            {
+                needed_records.put(resolution.import_record_index, ())?;
             }
         }
     }
@@ -540,6 +534,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Build work queue from this file's named_imports, then propagate
     // through chains of barrels. Only runs real work when barrels exist
     // (targets with deferred records).
+    let mut seeded_partial_aliases: Vec<Box<[u8]>> = Vec::new();
     let mut queue: Vec<BarrelWorkItem> = Vec::new();
 
     // Read-only deref — valid through Phase 2 (see the raw-read note above).
@@ -632,18 +627,17 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }),
             RequestedExports::Partial(partial) => {
                 for key in partial.keys() {
-                    // SAFETY: arena-backed key slices live for the bundler
-                    // arena lifetime; raw-ptr round-trip to detach from the
-                    // `&this.requested_exports` borrow before BFS mutates it.
-                    let alias: &[u8] = unsafe { bun_ptr::detach_lifetime_ref(&**key) };
-                    queue.push(BarrelWorkItem {
-                        barrel_source_index: this_source_index,
-                        alias,
-                        is_star: false,
-                    });
+                    seeded_partial_aliases.push(key.to_vec().into_boxed_slice());
                 }
             }
         }
+    }
+    for alias in &seeded_partial_aliases {
+        queue.push(BarrelWorkItem {
+            barrel_source_index: this_source_index,
+            alias: &alias[..],
+            is_star: false,
+        });
     }
 
     if queue.is_empty() {

@@ -1285,6 +1285,14 @@ where
         return T::from(oklch);
     }
 
+    // Per CSS Color 4, if clipping the origin is already within the JND, use
+    // the clip directly. Without this, colors sitting essentially on the gamut
+    // boundary (e.g. sRGB blue) get desaturated by the chroma search below.
+    let clipped = T::from(current).clip();
+    if delta_eok(clipped, current) < JND {
+        return clipped;
+    }
+
     let mut min: f32 = 0.0;
     let mut max = current.c;
 
@@ -2451,6 +2459,13 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     };
 
     // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
+    // The grammar is <percentage [0,100]>; values outside that range are invalid.
+    if first_percent.is_some_and(|p| !(0.0..=1.0).contains(&p))
+        || second_percent.is_some_and(|p| !(0.0..=1.0).contains(&p))
+    {
+        return Err(input.new_custom_error(css::ParserError::invalid_value));
+    }
+
     let (p1, p2): (f32, f32) = if first_percent.is_none() && second_percent.is_none() {
         (0.5, 0.5)
     } else {

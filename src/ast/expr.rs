@@ -115,7 +115,7 @@ impl Expr {
 }
 
 impl Expr {
-    pub fn clone_in(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    pub fn clone_in(&self, bump: &Bump) -> Result<Expr, crate::Error> {
         Ok(Expr {
             loc: self.loc,
             data: Data::clone_in(self.data, bump)?,
@@ -134,7 +134,7 @@ impl Expr {
         })
     }
 
-    pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, crate::Error> {
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(S::Return { value: Some(this) }, this.loc)
         });
@@ -1341,19 +1341,17 @@ impl Tag {
     }
 
     pub fn typeof_(tag: Tag) -> Option<&'static [u8]> {
+        // This must only return `Some` when the operand is guaranteed to have
+        // no side effects. Array/object/class literals are omitted because
+        // their elements, properties, and static initializers can run code.
         Some(match tag {
-            Tag::EArray
-            | Tag::EObject
-            | Tag::EArrayJSON
-            | Tag::EObjectJSON
-            | Tag::ENull
-            | Tag::ERegExp => b"object",
+            Tag::EArrayJSON | Tag::EObjectJSON | Tag::ENull | Tag::ERegExp => b"object",
             Tag::EUndefined => b"undefined",
             Tag::EBoolean | Tag::EBranchBoolean => b"boolean",
             Tag::ENumber => b"number",
             Tag::EBigInt => b"bigint",
             Tag::EString => b"string",
-            Tag::EClass | Tag::EFunction | Tag::EArrow => b"function",
+            Tag::EFunction | Tag::EArrow => b"function",
             _ => return None,
         })
     }
@@ -1462,11 +1460,12 @@ impl Tag {
     }
 }
 
-impl fmt::Display for Tag {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+impl Tag {
+    /// Human-readable variant name for diagnostics (`"string"`, `"boolean"`, …).
+    pub fn type_name(self) -> &'static str {
+        match self {
             Tag::EString => "string",
-            Tag::EArray => "array",
+            Tag::EArray | Tag::EArrayJSON => "array",
             Tag::EUnary => "unary",
             Tag::EBinary => "binary",
             Tag::EBoolean | Tag::EBranchBoolean => "boolean",
@@ -1488,7 +1487,7 @@ impl fmt::Display for Tag {
             Tag::EMissing => "<missing>",
             Tag::ENumber => "number",
             Tag::EBigInt => "BigInt",
-            Tag::EObject => "object",
+            Tag::EObject | Tag::EObjectJSON => "object",
             Tag::ESpread => "...",
             Tag::ETemplate => "template",
             Tag::ERegExp => "regexp",
@@ -1500,8 +1499,14 @@ impl fmt::Display for Tag {
             Tag::EThis => "this",
             Tag::EClass => "class",
             Tag::ERequireString => "require",
-            other => <&'static str>::from(*other),
-        })
+            other => <&'static str>::from(other),
+        }
+    }
+}
+
+impl fmt::Display for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.type_name())
     }
 }
 
@@ -1588,9 +1593,9 @@ impl Expr {
                 }));
             }
             Data::EBigInt(b) => {
-                return Some(expr.at(E::Boolean {
-                    value: b.value == b"0",
-                }));
+                if let Some(equal) = E::BigInt::check_equality(&b.value, b"0") {
+                    return Some(expr.at(E::Boolean { value: equal }));
+                }
             }
             Data::EFunction(_) | Data::EArrow(_) | Data::ERegExp(_) => {
                 return Some(expr.at(E::Boolean { value: false }));
@@ -1660,7 +1665,13 @@ impl Expr {
             Data::EBoolean(data) | Data::EBranchBoolean(data) => {
                 Some(if data.value { b"true" } else { b"false" })
             }
-            Data::EBigInt(bigint) => Some(bigint.value.slice()),
+            Data::EBigInt(bigint) => {
+                if E::BigInt::has_radix(&bigint.value) {
+                    None
+                } else {
+                    Some(bigint.value.slice())
+                }
+            }
             Data::ENumber(num) => num.to_string(bump).map(|s| s.slice()),
             Data::ERegExp(regexp) => Some(regexp.value.slice()),
             Data::EDot(dot) => 'brk: {
@@ -2358,7 +2369,7 @@ impl Data {
     /// Human-readable variant name for diagnostics (`"string"`, `"object"`, …).
     #[inline]
     pub fn tag_name(&self) -> &'static str {
-        self.tag().into()
+        self.tag().type_name()
     }
 
     // Per-variant `as_*` accessors live alongside the enum decl above
@@ -2391,7 +2402,7 @@ impl Data {
     /// which is sound because every
     /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `Vec`
     /// stores a raw pointer + len/cap into the arena).
-    pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
+    pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, crate::Error> {
         macro_rules! shallow {
             ($variant:ident, $el:expr) => {{
                 // SAFETY: `$el` is a `StoreRef<T>` deref to a live arena `T`; `T` is
@@ -3402,13 +3413,16 @@ impl Data {
             },
             Data::EBigInt(l) => {
                 if let Data::EBigInt(r) = right {
-                    if bun_core::strings::eql_long(&l.value, &r.value, true) {
-                        return Equality::TRUE;
-                    }
-                    // 0x0000n == 0n is true
-                    return Equality {
-                        ok: false,
-                        ..Default::default()
+                    return match E::BigInt::check_equality(&l.value, &r.value) {
+                        Some(equal) => Equality {
+                            ok: true,
+                            equal,
+                            ..Default::default()
+                        },
+                        None => Equality {
+                            ok: false,
+                            ..Default::default()
+                        },
                     };
                 } else {
                     return Equality {

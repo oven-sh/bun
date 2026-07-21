@@ -82,8 +82,11 @@ public:
     using VoidCallback = Function<void()>;
     static void generatePair(CryptoAlgorithmIdentifier, CryptoAlgorithmIdentifier hash, bool hasHash, unsigned modulusLength, const Vector<uint8_t>& publicExponent, bool extractable, CryptoKeyUsageBitmap, KeyPairCallback&&, VoidCallback&& failureCallback, ScriptExecutionContext*);
     static RefPtr<CryptoKeyRSA> importJwk(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyRSA> importSpki(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyRSA> importPkcs8(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap);
+    // On failure, `keyTypeMismatch` (when given) reports whether the data parsed into a
+    // well-formed key of some *other* type, which callers surface as "Invalid key type"
+    // rather than "Invalid keyData".
+    static RefPtr<CryptoKeyRSA> importSpki(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch = nullptr);
+    static RefPtr<CryptoKeyRSA> importPkcs8(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch = nullptr);
 
     PlatformRSAKey platformKey() const { return m_platformKey.get(); }
     JsonWebKey exportJwk() const;
@@ -93,6 +96,8 @@ public:
     std::unique_ptr<CryptoKeyRSAComponents> exportData() const;
 
     CryptoAlgorithmIdentifier hashAlgorithmIdentifier() const { return m_hash; }
+
+    static bool isValidRSAAlgorithm(CryptoAlgorithmIdentifier);
 
 private:
     CryptoKeyRSA(CryptoAlgorithmIdentifier, CryptoAlgorithmIdentifier hash, bool hasHash, CryptoKeyType, PlatformRSAKeyContainer&&, bool extractable, CryptoKeyUsageBitmap);

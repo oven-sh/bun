@@ -45,6 +45,12 @@ auto CryptoKeyRaw::algorithm() const -> KeyAlgorithm
     return result;
 }
 
+bool CryptoKeyRaw::isValidRawAlgorithm(CryptoAlgorithmIdentifier algorithm)
+{
+    return algorithm == CryptoAlgorithmIdentifier::HKDF
+        || algorithm == CryptoAlgorithmIdentifier::PBKDF2;
+}
+
 } // namespace WebCore
 
 #endif // ENABLE(WEB_CRYPTO)

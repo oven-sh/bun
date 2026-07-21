@@ -265,12 +265,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buf);
 
-        // Update the digest context with the buffer data
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
         size_t byteLength = view->byteLength();
         if (byteLength > INT_MAX) {
             throwRangeError(globalObject, scope, "data is too long"_s);
@@ -290,37 +284,28 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         return JSValue::encode(wrappedVerify);
     }
 
-    if (!data.isCell() || !JSC::isTypedArrayTypeIncludingDataView(data.asCell()->type())) {
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data);
+    if (!view) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
     }
 
-    // Handle ArrayBufferView input
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
-        size_t byteLength = view->byteLength();
-        if (byteLength > INT_MAX) {
-            throwRangeError(globalObject, scope, "data is too long"_s);
-            return {};
-        }
-
-        auto buffer = ncrypto::Buffer<const void> {
-            .data = view->vector(),
-            .len = byteLength,
-        };
-
-        if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
-            return {};
-        }
-
-        return JSValue::encode(wrappedVerify);
+    size_t byteLength = view->byteLength();
+    if (byteLength > INT_MAX) {
+        throwRangeError(globalObject, scope, "data is too long"_s);
+        return {};
     }
 
-    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
+    auto buffer = ncrypto::Buffer<const void> {
+        .data = view->vector(),
+        .len = byteLength,
+    };
+
+    if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
+        return {};
+    }
+
+    return JSValue::encode(wrappedVerify);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -503,6 +488,8 @@ std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexica
         .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
         .len = keySpan.size(),
     };
+
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     auto publicRes = ncrypto::EVPKeyPointer::TryParsePublicKey(publicConfig, ncryptoBuf);
     if (publicRes) {

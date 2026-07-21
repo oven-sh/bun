@@ -72,6 +72,7 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/webcore/JSDOMPromiseDeferred.cpp",
   "src/jsc/bindings/webcore/JSMessageEventCustom.cpp",
   "src/jsc/bindings/sqlite/JSSQLStatement.cpp",
+  "src/jsc/bindings/sqlite/NodeSqlite.cpp",
 
   // WebKit-derived crypto algorithm impls share file-static helper names
   // (`aesAlgorithm`, `cryptEncrypt`, `ALG128`, `IVSIZE`, ...) — upstream
@@ -148,6 +149,18 @@ const noUnify: readonly string[] = [
 ];
 
 /**
+ * Directories whose every .cpp compiles standalone (repo-root-relative,
+ * posix-style, no trailing slash). Same semantics as `noUnify`, per-directory.
+ * The streams entry exists because its sibling TUs repeat file-local static
+ * helper names; it can be lifted once those are deduplicated.
+ */
+const noUnifyDirs: readonly string[] = [
+  // One WHATWG spec algorithm group per TU, each with file-local static
+  // helpers written assuming TU isolation; a unified bundle collides them.
+  "src/jsc/bindings/webcore/streams",
+];
+
+/**
  * How many .cpp files per bundle. WebKit defaults to 8.
  *
  * Release (incl. release-asan): 32. Measured 701s vs 866s @ 16 vs 1532s @ 8
@@ -211,11 +224,11 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
     }
     // slash(): noUnify keys and the dir tag below are posix-style.
     const rel = slash(relative(cfg.cwd, abs));
-    if (skip.has(rel)) {
+    const dir = dirname(rel);
+    if (skip.has(rel) || noUnifyDirs.includes(dir)) {
       standalone.push(abs);
       continue;
     }
-    const dir = dirname(rel);
     let arr = byDir.get(dir);
     if (arr === undefined) byDir.set(dir, (arr = []));
     arr.push(abs);

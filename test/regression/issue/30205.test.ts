@@ -23,16 +23,19 @@ import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDir } from "harness"
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-const napiAppDir = join(import.meta.dir, "..", "..", "napi", "napi-app");
+// Dedicated single-target fixture (see 30205-napi-app/binding.gyp) so the
+// beforeAll builds one plain-C addon instead of all of test/napi/napi-app.
+const napiAppDir = join(import.meta.dir, "30205-napi-app");
 const addon = join(napiAppDir, "build", "Debug", "isolate_finalizer_addon.node");
 
 describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   beforeAll(() => {
+    // Only the two --isolate/--parallel finalizer tests load the addon, and
+    // both are skipped on Windows; don't pay for node-gyp there.
+    if (isWindows) return;
     if (existsSync(addon)) return;
-    // Same one-shot build pattern as test/napi/napi.test.ts; the addon is
-    // tiny but node-gyp's toolchain detection is the slow part.
     const install = spawnSync({
-      cmd: [bunExe(), "install", "--verbose"],
+      cmd: [bunExe(), "install"],
       cwd: napiAppDir,
       env: bunEnv,
       stderr: "inherit",
@@ -157,8 +160,7 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
       // CI lanes with coredump-upload flag any new core file in coresDir as a
       // test failure — including the one the worker deliberately produces
       // here. ulimit -c 0 on the coordinator is inherited by the workers;
-      // the test is POSIX-only so /bin/sh is available. Same reasoning as
-      // the setrlimit(RLIMIT_CORE, {0,0}) in BunProcess.cpp's execve path.
+      // the test is POSIX-only so /bin/sh is available.
       await using proc = Bun.spawn({
         cmd: ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", bunExe(), "test", "--parallel=2", "."],
         env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },

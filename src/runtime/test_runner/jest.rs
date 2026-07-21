@@ -7,7 +7,7 @@ use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
 };
 use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
@@ -159,6 +159,29 @@ impl<'a> TestRunner<'a> {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
         };
+        // Per-entry deadline, not the (only-advances-sooner) file timer.
+        // `on_stack_entry` pins the caller when still synchronously on stack;
+        // else take the latest running entry so a sibling never terminates early.
+        if let Some(entry) = active_file.execution.on_stack_entry.get() {
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+            return unsafe { entry.as_ref() }.timespec;
+        }
+        if active_file.phase == bun_test::Phase::Execution {
+            if let Some(group) = active_file.execution.active_group_ref() {
+                let mut latest: Option<bun_core::Timespec> = None;
+                for seq in group.sequences_const(&active_file.execution) {
+                    let Some(entry) = seq.active_entry else { continue };
+                    // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+                    let ts = unsafe { entry.as_ref() }.timespec;
+                    if latest.is_none_or(|l| ts.order(&l) == core::cmp::Ordering::Greater) {
+                        latest = Some(ts);
+                    }
+                }
+                if let Some(latest) = latest {
+                    return latest;
+                }
+            }
+        }
         if active_file.timer.state != TimerState::ACTIVE
             || active_file.timer.next == ElTimespec::EPOCH
         {
@@ -416,6 +439,7 @@ pub mod Jest {
         let spy_on = jsc::JSFunction::create(global_object, "spyOn", JSMock__jsSpyOn, 2, Default::default());
         let restore_all_mocks = jsc::JSFunction::create(global_object, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, Default::default());
         let clear_all_mocks = jsc::JSFunction::create(global_object, "clearAllMocks", JSMock__jsClearAllMocks, 2, Default::default());
+        let reset_all_mocks = jsc::JSFunction::create(global_object, "resetAllMocks", JSMock__jsResetAllMocks, 2, Default::default());
         let mock_module_fn = jsc::JSFunction::create(global_object, "module", JSMock__jsModuleMock, 2, Default::default());
         module.put(global_object, b"mock", mock_fn);
         mock_fn.put(global_object, b"module", mock_module_fn);
@@ -428,7 +452,7 @@ pub mod Jest {
         jest.put(global_object, b"spyOn", spy_on);
         jest.put(global_object, b"restoreAllMocks", restore_all_mocks);
         jest.put(global_object, b"clearAllMocks", clear_all_mocks);
-        jest.put(global_object, b"resetAllMocks", clear_all_mocks);
+        jest.put(global_object, b"resetAllMocks", reset_all_mocks);
         jest.put(global_object, b"setSystemTime", set_system_time);
         jest.put(global_object, b"now", jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()));
         jest.put(global_object, b"setTimeout", jsc::JSFunction::create(global_object, "setTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()));
@@ -442,7 +466,7 @@ pub mod Jest {
         vi.put(global_object, b"mock", mock_module_fn);
         vi.put(global_object, b"spyOn", spy_on);
         vi.put(global_object, b"restoreAllMocks", restore_all_mocks);
-        vi.put(global_object, b"resetAllMocks", clear_all_mocks);
+        vi.put(global_object, b"resetAllMocks", reset_all_mocks);
         vi.put(global_object, b"clearAllMocks", clear_all_mocks);
         module.put(global_object, b"vi", vi);
 
@@ -459,6 +483,7 @@ pub mod Jest {
         pub(crate) fn JSMock__jsSetSystemTime(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsRestoreAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsClearAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsResetAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsSpyOn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
     }
 
@@ -509,6 +534,75 @@ pub mod Jest {
 
         Ok(JSValue::UNDEFINED)
     }
+}
+
+/// Reached only from `node:test`, through `$newRustFunction` rather than the
+/// public `bun:test` module object. Returns 0 outside `bun test`.
+pub(crate) fn js_file_generation(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // `runner_ptr()` rather than `runner()`: node:test calls this on every test
+    // registration, and an exclusive `&mut TestRunner` would invalidate the
+    // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
+    // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
+    let generation =
+        Jest::runner_ptr().map_or(0, |p| unsafe { (*p.as_ptr()).bun_test_root.file_generation });
+    Ok(JSValue::from(generation))
+}
+
+/// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
+/// the running sequence's result so bun:test reports skip/todo instead of pass.
+/// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a
+/// late call after the watchdog moved on cannot mark the currently-running one.
+pub(crate) fn js_node_test_mark_result(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use super::execution::Result as ExecResult;
+    let [mode, done] = callframe.arguments_as_array::<2>();
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
+    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done);
+    let Some(dcb) = bun_test::DoneCallback::from_js(wrapper) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
+    // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
+    let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
+    let bound = match dcb_ref {
+        Some(refdata) => refdata.phase.clone(),
+        // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
+        // drain before it stamps the DoneCallback. `get_current_state_data()`
+        // can't name a sequence inside a concurrent group, but
+        // `on_stack_entry_data` holds exactly the `cfg_data` that
+        // `run_test_callback` was invoked with (set/restored around it), so
+        // the mark lands on the right sequence under --concurrent too.
+        None if !dcb_called => match buntest.execution.on_stack_entry_data.get() {
+            Some(entry_data) => bun_test::RefDataValue::Execution {
+                group_index: buntest.execution.group_index,
+                entry_data: Some(entry_data),
+            },
+            None => buntest.get_current_state_data(),
+        },
+        // done() already ran and reported — nothing left to mark.
+        None => return Ok(JSValue::UNDEFINED),
+    };
+    let Some((sequence_ptr, _)) =
+        buntest.execution.get_current_and_valid_execution_sequence(&bound)
+    else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: NonNull into `execution.sequences`; deref at point-of-use only.
+    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+    if sequence.result == ExecResult::Pending {
+        sequence.result = if mode.to_boolean() { ExecResult::Todo } else { ExecResult::Skip };
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 pub mod on_unhandled_rejection {

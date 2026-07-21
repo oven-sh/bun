@@ -136,16 +136,16 @@ impl File {
     /// Write all bytes (best-effort; routes through QuietWriter so errors are
     /// swallowed). Progress.rs uses this.
     #[inline]
-    pub fn write_all(self, bytes: &[u8]) -> Result<(), crate::Error> {
+    pub fn write_all(self, bytes: &[u8]) -> crate::CrateResult<()> {
         let mut qw = self.quiet_writer();
         let _ = output_sink().quiet_writer_write_all(&mut qw, bytes);
         Ok(())
     }
     #[inline]
-    pub fn write(self, bytes: &[u8]) -> Result<usize, crate::Error> {
+    pub fn write(self, bytes: &[u8]) -> crate::CrateResult<usize> {
         self.write_all(bytes).map(|_| bytes.len())
     }
-    pub fn write_fmt(self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+    pub fn write_fmt(self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
         struct Adapter(File);
         impl core::fmt::Write for Adapter {
             fn write_str(&mut self, s: &str) -> core::fmt::Result {
@@ -1407,7 +1407,7 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
 }
 
 #[inline]
-pub fn print_errorable(args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+pub fn print_errorable(args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
     print_to(Destination::Stdout, args);
     Ok(())
 }
@@ -1466,17 +1466,8 @@ pub fn println(args: fmt::Arguments<'_>) {
 // Scoped debug logging
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Debug-only logs which should not appear in release mode.
-///
-/// To enable a specific log at runtime, set the environment variable
-///   `BUN_DEBUG_${TAG}` to 1.
-///
-/// For example, to enable the "foo" log, set the environment variable
-///   BUN_DEBUG_foo=1
-/// To enable all logs, set the environment variable
-///   BUN_DEBUG_ALL=1
-pub type LogFunction = fn(fmt::Arguments<'_>);
-
+/// Default visibility of a [`ScopedLogger`]: whether it emits without
+/// `BUN_DEBUG_${TAG}=1` set.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Visibility {
     /// Hide logs for this scope by default.
@@ -2595,7 +2586,7 @@ impl ErrName for &[u8] {
         self
     }
 }
-impl ErrName for crate::Error {
+impl ErrName for crate::CrateError {
     fn name(&self) -> &[u8] {
         (*self).name().as_bytes()
     }
@@ -2764,7 +2755,7 @@ impl BufferedStdin {
     ///
     /// Matches std `BufferedReader.read` fill-to-completion semantics
     /// (loops on the underlying fd), not POSIX partial-read.
-    pub fn read(&mut self, dest: &mut [u8]) -> Result<usize, crate::Error> {
+    pub fn read(&mut self, dest: &mut [u8]) -> crate::CrateResult<usize> {
         let mut written: usize = 0;
         loop {
             let current = &self.buf[self.start..self.end];
@@ -2799,7 +2790,7 @@ impl BufferedStdin {
     }
 
     /// Read one byte — `Err` on I/O error *or* EOF (`EndOfStream`).
-    pub fn read_byte(&mut self) -> Result<u8, crate::Error> {
+    pub fn read_byte(&mut self) -> crate::CrateResult<u8> {
         if self.start < self.end {
             let b = self.buf[self.start];
             self.start += 1;
@@ -2807,7 +2798,7 @@ impl BufferedStdin {
         }
         let mut one = [0u8; 1];
         match self.read(&mut one)? {
-            0 => Err(crate::err!(EndOfStream)),
+            0 => Err(crate::CrateError::EndOfStream),
             _ => Ok(one[0]),
         }
     }
@@ -2820,11 +2811,11 @@ impl BufferedStdin {
         out: &mut Vec<u8>,
         delimiter: u8,
         max_size: usize,
-    ) -> Result<(), crate::Error> {
+    ) -> crate::CrateResult<()> {
         out.clear();
         loop {
             if out.len() >= max_size {
-                return Err(crate::err!(StreamTooLong));
+                return Err(crate::CrateError::StreamTooLong);
             }
             let b = self.read_byte()?;
             if b == delimiter {
@@ -2844,16 +2835,16 @@ pub struct StdinReader {
 impl StdinReader {
     /// Read one byte — `Err` on I/O error *or* EOF.
     #[inline]
-    pub fn take_byte(&mut self) -> Result<u8, crate::Error> {
+    pub fn take_byte(&mut self) -> crate::CrateResult<u8> {
         let mut one = [0u8; 1];
         match output_sink().read(self.fd, &mut one)? {
-            0 => Err(crate::err!(EndOfStream)),
+            0 => Err(crate::CrateError::EndOfStream),
             _ => Ok(one[0]),
         }
     }
     /// Alias for callers that spell it `read_byte`.
     #[inline]
-    pub fn read_byte(&mut self) -> Result<u8, crate::Error> {
+    pub fn read_byte(&mut self) -> crate::CrateResult<u8> {
         self.take_byte()
     }
 }
@@ -2892,7 +2883,7 @@ pub fn buffered_stdin_read_until_delimiter(
     out: &mut Vec<u8>,
     delimiter: u8,
     max_size: usize,
-) -> Result<(), crate::Error> {
+) -> crate::CrateResult<()> {
     // SAFETY: single-threaded static; only live `&mut` for this call's duration.
     unsafe { (*buffered_stdin()).read_until_delimiter_array_list(out, delimiter, max_size) }
 }

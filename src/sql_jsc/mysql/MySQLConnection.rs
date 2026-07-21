@@ -1,5 +1,5 @@
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
-use bun_collections::{HashMap, IdentityContext, OffsetByteList, VecExt};
+use bun_collections::{OffsetByteList, StringHashMap, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 
 use bun_sql::mysql::Capabilities;
@@ -1559,9 +1559,9 @@ pub enum CachingSha2 {
 pub enum FlushQueueError {
     AuthenticationFailed,
 }
-impl From<FlushQueueError> for bun_core::Error {
+impl From<FlushQueueError> for crate::Error {
     fn from(_: FlushQueueError) -> Self {
-        bun_core::err!("AuthenticationFailed")
+        crate::Error::AuthenticationFailed
     }
 }
 
@@ -1723,10 +1723,9 @@ impl ReaderContext for Reader {
 // `JSMySQLConnection::on_query_result(MySQLQueryResult)` without conversion.
 pub use bun_sql::mysql::MySQLQueryResult as QueryResult;
 
-// Keys are already wyhash values, so identity hash avoids re-hashing.
-pub(crate) type PreparedStatementsMap = HashMap<u64, *mut MySQLStatement, IdentityContext<u64>>;
+pub(crate) type PreparedStatementsMap = StringHashMap<*mut MySQLStatement>;
 /// Result of `PreparedStatementsMap::get_or_put` — surfaced for
-/// `JSMySQLConnection::get_statement_from_signature_hash`.
+/// `JSMySQLConnection::get_statement_from_signature_name`.
 pub(crate) type PreparedStatementsMapGetOrPutResult<'a> =
     bun_collections::hash_map::GetOrPutResult<'a, *mut MySQLStatement>;
 

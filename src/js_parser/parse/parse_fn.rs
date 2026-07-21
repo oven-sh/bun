@@ -12,7 +12,7 @@ use bun_ast as js_ast;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
-type Error = bun_core::Error;
+type Error = crate::Error;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// This assumes the "function" token has already been parsed
@@ -35,13 +35,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         match opts.lexical_decl {
             LexicalDecl::Forbid => {
-                p.forbid_lexical_decl(loc)?;
+                p.forbid_lexical_decl(loc);
             }
 
             // Allow certain function statements in certain single-statement contexts
             LexicalDecl::AllowFnInsideIf | LexicalDecl::AllowFnInsideLabel => {
                 if opts.is_typescript_declare || is_generator || is_async {
-                    p.forbid_lexical_decl(loc)?;
+                    p.forbid_lexical_decl(loc);
                 }
             }
             _ => {}
@@ -56,7 +56,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name_text = p.lexer.identifier;
             p.lexer.expect(T::TIdentifier)?;
             // Difference
-            let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text)?;
+            let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text);
             name = Some(js_ast::LocRef {
                 loc: name_loc,
                 ref_,
@@ -448,7 +448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ref_ = if !text.is_empty() && text != arguments_str {
                 p.declare_symbol(js_ast::symbol::Kind::HoistedFunction, name_loc, text)?
             } else {
-                p.new_symbol(js_ast::symbol::Kind::HoistedFunction, text)?
+                p.new_symbol(js_ast::symbol::Kind::HoistedFunction, text)
             };
             name = Some(js_ast::LocRef {
                 loc: name_loc,
@@ -536,7 +536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.range(),
                 b"Unexpected newline before \"=>\"",
             );
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         p.lexer.expect(T::TEqualsGreaterThan)?;

@@ -145,9 +145,9 @@ impl MutableString {
         Ok(mutable)
     }
 
-    /// Convert it to an ASCII identifier. Note: If you change this to a non-ASCII
-    /// identifier, you're going to potentially cause trouble with non-BMP code
-    /// points in target environments that don't support bracketed Unicode escapes.
+    /// Convert `str` to a valid ES identifier, replacing any run of non
+    /// `ID_Continue` code points with a single `_`. Valid Unicode identifier
+    /// code points (including non-BMP) are preserved.
     pub fn ensure_valid_identifier(str: &[u8]) -> Result<Box<[u8]>, AllocError> {
         // The result could be either the input borrow or a fresh allocation;
         // rather than a lifetime + Cow we always return owned `Box<[u8]>` and
@@ -175,7 +175,7 @@ impl MutableString {
         if !needs_gap {
             // Are there any non-alphanumeric chars at all?
             while iterator.next(&mut cursor) {
-                if !js_lexer::is_identifier_continue(cursor.c as u32) || cursor.width > 1 {
+                if !js_lexer::is_identifier_continue(cursor.c as u32) {
                     needs_gap = true;
                     start_i = cursor.i as usize;
                     break;
@@ -203,7 +203,7 @@ impl MutableString {
             cursor = strings::Cursor::default();
 
             while iterator.next(&mut cursor) {
-                if js_lexer::is_identifier_continue(cursor.c as u32) && cursor.width == 1 {
+                if js_lexer::is_identifier_continue(cursor.c as u32) {
                     if needs_gap {
                         mutable.append_char(b'_')?;
                         needs_gap = false;
@@ -226,9 +226,7 @@ impl MutableString {
 
             let _ = has_needed_gap;
 
-            if cfg!(debug_assertions) {
-                debug_assert!(js_lexer::is_identifier(&mutable.list));
-            }
+            debug_assert!(js_lexer::is_identifier(&mutable.list));
 
             return Ok(mutable.to_owned_slice());
         }

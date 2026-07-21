@@ -77,14 +77,12 @@ pub enum YamlParseError {
 
 bun_core::oom_from_alloc!(YamlParseError);
 
-impl From<YamlParseError> for bun_core::Error {
-    // Map each variant to its tag string via `bun.err!`, the same shape
-    // `json5::ExternalError` uses one file over.
+impl From<YamlParseError> for crate::Error {
     fn from(e: YamlParseError) -> Self {
         match e {
-            YamlParseError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            YamlParseError::SyntaxError => bun_core::err!("SyntaxError"),
-            YamlParseError::StackOverflow => bun_core::err!("StackOverflow"),
+            YamlParseError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            YamlParseError::SyntaxError => crate::Error::SyntaxError,
+            YamlParseError::StackOverflow => crate::Error::StackOverflow,
         }
     }
 }
@@ -800,8 +798,6 @@ pub enum ParseError {
 }
 
 bun_core::oom_from_alloc!(ParseError);
-
-bun_core::named_error_set!(ParseError);
 
 // ───────────────────────────────────────────────────────────────────────────
 // String / StringRange / StringBuilder
@@ -3280,7 +3276,10 @@ impl MappingProps {
         }
     }
 
-    pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
+    pub fn append(&mut self, mut prop: G::Property) -> Result<(), AllocError> {
+        if let Some(key) = &prop.key {
+            prop.flags |= E::own_key_property_flags(key);
+        }
         self.list.push(prop);
         Ok(())
     }
@@ -3345,12 +3344,11 @@ impl MappingProps {
         };
 
         if !is_merge_key {
-            self.list.push(G::Property {
+            return self.append(G::Property {
                 key: Some(key),
                 value: Some(value),
                 ..Default::default()
             });
-            return Ok(());
         }
 
         match &value.data {
@@ -3365,14 +3363,11 @@ impl MappingProps {
                 }
                 Ok(())
             }
-            _ => {
-                self.list.push(G::Property {
-                    key: Some(key),
-                    value: Some(value),
-                    ..Default::default()
-                });
-                Ok(())
-            }
+            _ => self.append(G::Property {
+                key: Some(key),
+                value: Some(value),
+                ..Default::default()
+            }),
         }
     }
 
@@ -4446,6 +4441,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     return Ok(ctx.done(self));
                 }
 
@@ -4790,6 +4788,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     return Ok((
                         indent_indicator.unwrap_or(IndentIndicator::DEFAULT),
                         chomp.unwrap_or(Chomp::DEFAULT),
@@ -4828,6 +4829,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if Enc::wide(self.next()) == 0x23 /* '#' */ {
                         self.inc(1);
                         while !self.is_b_char_or_eof() {
+                            if Enc::wide(self.next()) == 0 {
+                                return Err(ParseError::UnexpectedCharacter);
+                            }
                             self.inc(1);
                         }
                     }
@@ -5013,6 +5017,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let __c = Enc::wide(self.next());
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     // Official yaml-test-suite JEF9/02: trailing indentation
                     // at EOF without a final break counts as one trailing
                     // empty line for chomping (matches eemeli/yaml + js-yaml).
@@ -5103,7 +5110,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut __c = first;
         loop {
             match __c {
-                0 => return Ok(ctx.done()?),
+                0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
+                    return Ok(ctx.done()?);
+                }
                 0x0D => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
@@ -5703,6 +5715,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let c = Enc::wide(self.next());
             match c {
                 0 => {
+                    // [1] c-printable excludes U+0000. `next()` returns NUL as
+                    // the EOF sentinel, so a literal NUL in the input must be
+                    // rejected here rather than silently ending the stream.
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     let start = self.pos;
                     break 'next Token::eof(self.token_init(start));
                 }
@@ -5847,6 +5865,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     self.inc(1);
                     while !self.is_b_char_or_eof() {
+                        if Enc::wide(self.next()) == 0 {
+                            return Err(ParseError::UnexpectedCharacter);
+                        }
                         self.inc(1);
                     }
                     continue;
@@ -6137,6 +6158,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
             self.inc(1);
             while !self.is_b_char_or_eof() {
+                if Enc::wide(self.next()) == 0 {
+                    return Err(ParseError::UnexpectedCharacter);
+                }
                 self.inc(1);
             }
         }

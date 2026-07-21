@@ -544,3 +544,353 @@ describe("SubtleCrypto.deriveBits length", () => {
     expect(hex(await crypto.subtle.exportKey("raw", aesKey))).toBe(ecSecret);
   });
 });
+
+describe("X25519 JWK import", () => {
+  const x25519Public: JsonWebKey = {
+    kty: "OKP",
+    crv: "X25519",
+    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr06uFD1q1y5Go",
+  };
+  const x25519Private: JsonWebKey = {
+    ...x25519Public,
+    d: "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo",
+  };
+  const outcome = (jwk: JsonWebKey, extractable: boolean, usages: KeyUsage[]) =>
+    crypto.subtle.importKey("jwk", jwk, "X25519", extractable, usages).then(
+      key => (key instanceof CryptoKey ? "imported" : "other"),
+      e => e.name,
+    );
+
+  it("rejects a JWK whose kty is not OKP", async () => {
+    expect({
+      wrongKty: await outcome({ ...x25519Public, kty: "EC" }, true, []),
+      okp: await outcome({ ...x25519Public, ext: true }, true, []),
+    }).toEqual({ wrongKty: "DataError", okp: "imported" });
+  });
+
+  it("rejects a JWK whose key_ops does not include the requested usages", async () => {
+    expect({
+      missingUsage: await outcome({ ...x25519Private, key_ops: ["deriveKey"] }, true, ["deriveBits"]),
+      supersetOfUsages: await outcome({ ...x25519Private, key_ops: ["deriveBits", "deriveKey"], ext: true }, true, [
+        "deriveBits",
+      ]),
+    }).toEqual({ missingUsage: "DataError", supersetOfUsages: "imported" });
+  });
+
+  it("rejects a JWK with ext set to false when extractable is requested", async () => {
+    expect({
+      extFalse: await outcome({ ...x25519Public, ext: false }, true, []),
+      extTrue: await outcome({ ...x25519Public, ext: true }, true, []),
+    }).toEqual({ extFalse: "DataError", extTrue: "imported" });
+  });
+});
+
+// Ed25519 and X25519 share the 1.3.101.* OID prefix and differ only in the last
+// byte, so importing one as the other must report the type mismatch rather than
+// the generic "Invalid keyData" the prefix-only check gave.
+describe("OKP spki/pkcs8 cross-curve import", () => {
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "imported",
+      e => `${e.name}: ${e.message}`,
+    );
+
+  it("Ed25519 key imported as X25519 reports 'Invalid key type'", async () => {
+    const ed = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const spki = await crypto.subtle.exportKey("spki", ed.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", ed.privateKey);
+    expect({
+      spki: await rejection(crypto.subtle.importKey("spki", spki, "X25519", true, [])),
+      pkcs8: await rejection(crypto.subtle.importKey("pkcs8", pkcs8, "X25519", true, ["deriveBits"])),
+    }).toEqual({ spki: "DataError: Invalid key type", pkcs8: "DataError: Invalid key type" });
+  });
+
+  it("X25519 key imported as Ed25519 reports 'Invalid key type'", async () => {
+    const x = await crypto.subtle.generateKey("X25519", true, ["deriveBits"]);
+    const spki = await crypto.subtle.exportKey("spki", x.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", x.privateKey);
+    expect({
+      spki: await rejection(crypto.subtle.importKey("spki", spki, "Ed25519", true, ["verify"])),
+      pkcs8: await rejection(crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", true, ["sign"])),
+    }).toEqual({ spki: "DataError: Invalid key type", pkcs8: "DataError: Invalid key type" });
+  });
+
+  // OKP keys encode a one-element AlgorithmIdentifier (parameters MUST be absent), so
+  // the EC importer's two-element guard bailed without reaching the OID check and
+  // reported the generic "Invalid keyData" instead of the type mismatch.
+  it("OKP key imported as ECDSA/ECDH reports 'Invalid key type'", async () => {
+    const ed = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const spki = await crypto.subtle.exportKey("spki", ed.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", ed.privateKey);
+    expect({
+      ecdsaSpki: await rejection(
+        crypto.subtle.importKey("spki", spki, { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"]),
+      ),
+      ecdhSpki: await rejection(crypto.subtle.importKey("spki", spki, { name: "ECDH", namedCurve: "P-256" }, true, [])),
+      ecdsaPkcs8: await rejection(
+        crypto.subtle.importKey("pkcs8", pkcs8, { name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]),
+      ),
+    }).toEqual({
+      ecdsaSpki: "DataError: Invalid key type",
+      ecdhSpki: "DataError: Invalid key type",
+      ecdsaPkcs8: "DataError: Invalid key type",
+    });
+  });
+});
+
+// importKey's empty-usages guard got Node's message; the same predicate in
+// generateKey, deriveKey's inner import and unwrapKey's inner import still
+// carried the empty-message SyntaxError.
+describe("empty usages on a private or secret key", () => {
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
+
+  it("generateKey reports 'Usages cannot be empty when creating a key.'", async () => {
+    expect({
+      secret: await rejection(crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [])),
+      pair: await rejection(crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, [])),
+    }).toEqual({
+      secret: "SyntaxError: Usages cannot be empty when creating a key.",
+      pair: "SyntaxError: Usages cannot be empty when creating a key.",
+    });
+  });
+
+  it("deriveKey and unwrapKey report the importKey message", async () => {
+    const pb = await crypto.subtle.importKey("raw", new Uint8Array(16), "PBKDF2", false, ["deriveKey"]);
+    const pbkdf2 = { name: "PBKDF2", salt: new Uint8Array(8), iterations: 1, hash: "SHA-256" };
+    const kw = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+    const hm = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+    const wrapped = await crypto.subtle.wrapKey("raw", hm, kw, "AES-KW");
+    expect({
+      deriveKey: await rejection(crypto.subtle.deriveKey(pbkdf2, pb, { name: "AES-GCM", length: 256 }, false, [])),
+      unwrapKey: await rejection(
+        crypto.subtle.unwrapKey("raw", wrapped, kw, "AES-KW", { name: "HMAC", hash: "SHA-256" }, false, []),
+      ),
+    }).toEqual({
+      deriveKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
+      unwrapKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
+    });
+  });
+});
+
+// X25519 deriveBits is a line-for-line parallel of ECDH's; ECDH got Node's
+// mismatch messages but the X25519 twin was left with the empty-message
+// InvalidAccessError. The cfrg vendored test only covers this under X448.
+it("X25519 deriveBits with an ECDH public key reports 'key algorithm mismatch'", async () => {
+  const x = await crypto.subtle.generateKey("X25519", false, ["deriveBits"]);
+  const ec = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
+  expect({
+    x25519WithEcdhPublic: await rejection(
+      crypto.subtle.deriveBits({ name: "X25519", public: ec.publicKey }, x.privateKey, 256),
+    ),
+    ecdhWithX25519Public: await rejection(
+      crypto.subtle.deriveBits({ name: "ECDH", namedCurve: "P-256", public: x.publicKey }, ec.privateKey, 256),
+    ),
+  }).toEqual({
+    x25519WithEcdhPublic: "InvalidAccessError: key algorithm mismatch",
+    ecdhWithX25519Public: "InvalidAccessError: key algorithm mismatch",
+  });
+});
+
+// The RSA importKey usage guards are the same shape as ECDSA/Ed25519's, which
+// got Node's message; the RSA parallels carried the empty-message SyntaxError.
+// RSAES-PKCS1-v1_5 is deprecated in Bun and blocked at normalize, so untested.
+it("RSA importKey with an unsupported usage names the algorithm", async () => {
+  const { publicKey } = await crypto.subtle.generateKey(
+    { name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"],
+  );
+  const spki = await crypto.subtle.exportKey("spki", publicKey);
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
+  expect({
+    pss: await rejection(
+      crypto.subtle.importKey("spki", spki, { name: "RSA-PSS", hash: "SHA-256" }, true, ["encrypt"]),
+    ),
+    rsassa: await rejection(
+      crypto.subtle.importKey("spki", spki, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["encrypt"]),
+    ),
+    oaep: await rejection(crypto.subtle.importKey("spki", spki, { name: "RSA-OAEP", hash: "SHA-256" }, true, ["sign"])),
+  }).toEqual({
+    pss: "SyntaxError: Unsupported key usage for an RSA-PSS key",
+    rsassa: "SyntaxError: Unsupported key usage for an RSASSA-PKCS1-v1_5 key",
+    oaep: "SyntaxError: Unsupported key usage for an RSA-OAEP key",
+  });
+});
+
+// CryptoKey.usages and the JWK key_ops it is built from are ordered by the
+// KeyUsage enum in https://w3c.github.io/webcrypto/#dfn-KeyUsage, not
+// alphabetically, and not by the order the caller passed them in.
+describe("CryptoKey.usages ordering", () => {
+  it("normalizes to KeyUsage enum order regardless of input order", async () => {
+    const forward = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "AES-CBC" }, true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    const reversed = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "AES-CBC" }, true, [
+      "decrypt",
+      "encrypt",
+    ]);
+    expect(forward.usages).toEqual(["encrypt", "decrypt"]);
+    expect(reversed.usages).toEqual(["encrypt", "decrypt"]);
+  });
+
+  it("orders deriveKey before deriveBits", async () => {
+    const { privateKey } = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, [
+      "deriveBits",
+      "deriveKey",
+    ]);
+    expect(privateKey.usages).toEqual(["deriveKey", "deriveBits"]);
+  });
+
+  it("orders sign before verify", async () => {
+    const key = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "HMAC", hash: "SHA-256" }, true, [
+      "verify",
+      "sign",
+    ]);
+    expect(key.usages).toEqual(["sign", "verify"]);
+  });
+
+  it("applies the same order to JWK key_ops", async () => {
+    const key = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "AES-CBC" }, true, [
+      "decrypt",
+      "encrypt",
+    ]);
+    const jwk = await crypto.subtle.exportKey("jwk", key);
+    expect(jwk.key_ops).toEqual(["encrypt", "decrypt"]);
+  });
+
+  it("orders wrapKey/unwrapKey after encrypt/decrypt on an RSA-OAEP pair", async () => {
+    const { publicKey, privateKey } = await crypto.subtle.generateKey(
+      { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["unwrapKey", "decrypt", "wrapKey", "encrypt"],
+    );
+    expect(publicKey.usages).toEqual(["encrypt", "wrapKey"]);
+    expect(privateKey.usages).toEqual(["decrypt", "unwrapKey"]);
+  });
+});
+
+// getRandomValues takes integer-typed views only; every other ArrayBufferView-ish
+// argument raises TypeMismatchError rather than being filled.
+describe("crypto.getRandomValues argument types", () => {
+  const integerViews = [
+    ["Int8Array", () => new Int8Array(4)],
+    ["Uint8Array", () => new Uint8Array(4)],
+    ["Uint8ClampedArray", () => new Uint8ClampedArray(4)],
+    ["Int16Array", () => new Int16Array(4)],
+    ["Uint16Array", () => new Uint16Array(4)],
+    ["Int32Array", () => new Int32Array(4)],
+    ["Uint32Array", () => new Uint32Array(4)],
+    ["BigInt64Array", () => new BigInt64Array(4)],
+    ["BigUint64Array", () => new BigUint64Array(4)],
+  ] as const;
+
+  for (const [name, make] of integerViews) {
+    it(`accepts ${name}`, () => {
+      const view = make();
+      expect(crypto.getRandomValues(view)).toBe(view);
+    });
+  }
+
+  const rejected = [
+    ["Float16Array", () => new Float16Array(4)],
+    ["Float32Array", () => new Float32Array(4)],
+    ["Float64Array", () => new Float64Array(4)],
+    ["DataView", () => new DataView(new ArrayBuffer(4))],
+    ["ArrayBuffer", () => new ArrayBuffer(4)],
+    ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
+    ["plain object", () => ({})],
+  ] as const;
+
+  for (const [name, make] of rejected) {
+    it(`rejects ${name} with TypeMismatchError`, () => {
+      expect(() => crypto.getRandomValues(make() as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeMismatchError",
+          message: "The data argument must be an integer-type TypedArray",
+        }),
+      );
+    });
+  }
+});
+
+describe("exception scope discipline", () => {
+  // BUN_JSC_validateExceptionChecks=1 aborts on the first unchecked throw scope, so the
+  // fixture (every SubtleCrypto op, success and normalize-failure) only produces the full
+  // transcript when every call site is disciplined. Two cases also fail without the option.
+  it("every subtle.* path survives BUN_JSC_validateExceptionChecks", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), import.meta.resolveSync("./exception-scope-fixture.ts")],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // `exitCode` and the transcript length are what fail when a scope goes unchecked;
+    // `uncheckedScopes` just surfaces the offending pair from the validator's stderr
+    // report so the diff names the call site instead of only showing a truncated log.
+    const uncheckedScopes = stderr
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+    expect({ transcript: stdout.trimEnd().split("\n"), uncheckedScopes, exitCode }).toEqual({
+      transcript: [
+        "encrypt ok = RESOLVED",
+        "encrypt bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "encrypt thrower = REJECTED Error: boom",
+        "decrypt ok = RESOLVED",
+        "decrypt bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "sign ok = RESOLVED",
+        "sign bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "verify ok = RESOLVED",
+        "verify bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "digest ok = RESOLVED",
+        "digest bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "digest thrower = REJECTED Error: boom",
+        "generateKey ok = RESOLVED",
+        "generateKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "generateKey nested bogus hash = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "generateKey thrower = REJECTED Error: boom",
+        "deriveKey ok = RESOLVED",
+        "deriveKey bogus algorithm = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "deriveKey bogus derived type = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "deriveKey importable but no key length = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "deriveBits ok = RESOLVED",
+        "deriveBits bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "importKey ok = RESOLVED",
+        "importKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "importKey nested bogus hash = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "importKey thrower = REJECTED Error: boom",
+        "exportKey raw = RESOLVED",
+        "exportKey jwk = RESOLVED",
+        "wrapKey raw = RESOLVED",
+        "wrapKey jwk = RESOLVED",
+        "wrapKey via encrypt = RESOLVED",
+        "wrapKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "wrapKey thrower = REJECTED Error: boom",
+        "wrapKey jwk with throwing Object.prototype.toJSON = REJECTED Error: poisoned toJSON",
+        "unwrapKey raw = RESOLVED",
+        "unwrapKey jwk = RESOLVED",
+        "unwrapKey via decrypt = RESOLVED",
+        "unwrapKey jwk not json = REJECTED DataError: WrappedKey cannot be converted to a JSON object",
+        "unwrapKey bogus unwrap algorithm = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "unwrapKey bogus unwrapped type = REJECTED NotSupportedError: Unrecognized algorithm name",
+      ],
+      uncheckedScopes: [],
+      exitCode: 0,
+    });
+  });
+});

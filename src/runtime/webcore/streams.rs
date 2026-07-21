@@ -39,6 +39,19 @@ pub mod bun_s3 {
 // re-export (e.g. `sink::SinkSignal::init`).
 type BlobSizeType = crate::webcore::BlobSizeType;
 
+/// Upper bound on a JS-supplied `highWaterMark` used as an initial capacity
+/// hint. WHATWG permits `Infinity`; clamp here (monotonic, unlike the Zig
+/// `@truncate(i51)` wrap) and reserve fallibly at the allocation site.
+const MAX_HIGH_WATER_MARK: i64 = 256 * 1024 * 1024;
+
+#[inline]
+fn high_water_mark_from_js(value: JSValue, min: BlobSizeType) -> BlobSizeType {
+    // `to_int64` maps NaN→0 and saturates ±Infinity; clamp in i64 before the
+    // unsigned cast so Infinity/negatives/out-of-range never reach the allocator.
+    let n = value.to_int64();
+    (min as i64).max(n).min(MAX_HIGH_WATER_MARK) as BlobSizeType
+}
+
 // Compat: `webcore::Pipe` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub use StreamResult as Result;
 pub mod result {
@@ -117,9 +130,7 @@ impl Start {
 
         if let Some(chunk_size) = value.get(global_this, b"chunkSize")? {
             if chunk_size.is_number() {
-                // Low-32-bit wrap is correct for the in-range values JS can produce;
-                // revisit if exact i52 sign-extension semantics matter.
-                return Ok(Start::ChunkSize(chunk_size.to_int64() as BlobSizeType));
+                return Ok(Start::ChunkSize(high_water_mark_from_js(chunk_size, 0)));
             }
         }
 
@@ -194,7 +205,7 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
+                        chunk_size = high_water_mark_from_js(chunk_size_val, 0);
                     }
                 }
 
@@ -213,7 +224,7 @@ impl Start {
                     value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
                 {
                     if chunk_size_val.is_number() {
-                        chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
+                        chunk_size = high_water_mark_from_js(chunk_size_val, 0);
                     }
                 }
 
@@ -276,7 +287,7 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        chunk_size = 256i64.max(chunk_size_val.to_int64()) as BlobSizeType;
+                        chunk_size = high_water_mark_from_js(chunk_size_val, 256);
                     }
                 }
 
@@ -498,6 +509,9 @@ impl WritablePending {
             return;
         }
         self.state = PendingState::Used;
+        // `consumed` belongs to the operation being settled here; the next one
+        // starts from zero.
+        self.consumed = 0;
 
         match core::mem::replace(&mut self.future, WritableFuture::None) {
             WritableFuture::Promise { mut strong, global } => {
@@ -1539,8 +1553,13 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         self.buffer.clear_retaining_capacity();
-        self.buffer
-            .ensure_total_capacity_precise(self.high_water_mark as usize);
+        if self
+            .buffer
+            .try_reserve_exact(self.high_water_mark as usize)
+            .is_err()
+        {
+            return Err(SysError::oom());
+        }
 
         self.done = false;
         self.signal.start();
@@ -1985,7 +2004,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             debug_assert!(self.pooled_buffer.is_none());
         }
 
-        if let Some(mut pooled) = self.pooled_buffer {
+        if let Some(pooled) = self.pooled_buffer {
             self.buffer.clear();
             if self.buffer.capacity() > 64 * 1024 {
                 self.buffer.clear_and_free();
@@ -2001,7 +2020,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // SAFETY: `pooled` was obtained from `ByteListPool::get_node` and is
             // exclusively owned by this stream; `data` was rewritten just above,
             // so it is initialized. Ownership returns to the pool.
-            unsafe { ByteListPool::release(pooled.as_mut()) };
+            unsafe { ByteListPool::release(pooled.as_ptr()) };
         } else if self.buffer.capacity() == 0 {
             //
         } else if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {

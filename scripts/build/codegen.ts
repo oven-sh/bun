@@ -570,7 +570,9 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.h"),
   ];
 
-  const outputs = [resolve(cfg.codegenDir, "ErrorCode+List.h"), resolve(cfg.codegenDir, "ErrorCode+Data.h")];
+  const cppOutputs = [resolve(cfg.codegenDir, "ErrorCode+List.h"), resolve(cfg.codegenDir, "ErrorCode+Data.h")];
+  const rustOutput = resolve(cfg.codegenDir, "ErrorCode.generated.rs");
+  const outputs = [...cppOutputs, rustOutput];
 
   n.build({
     outputs,
@@ -586,7 +588,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
 
   o.all.push(...outputs);
   o.rustInputs.push(...outputs);
-  o.cppHeaders.push(outputs[0]!, outputs[1]!);
+  o.cppHeaders.push(...cppOutputs);
 }
 
 function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {

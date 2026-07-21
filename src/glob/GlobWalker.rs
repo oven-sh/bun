@@ -78,6 +78,10 @@ pub trait AccessorHandle: Copy {
 
 pub trait Accessor {
     const COUNT_FDS: bool;
+    /// True when the dir iterator's `kind()` is resolved through symlinks (a
+    /// symlinked directory is reported as `Directory`, never `SymLink`), so the
+    /// Directory descent arm must run the followed-link ancestor check itself.
+    const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = true;
     type Handle: AccessorHandle;
     type DirIter: AccessorDirIter<Handle = Self::Handle>;
 
@@ -103,6 +107,15 @@ pub trait AccessorDirIter {
 pub trait AccessorDirEntry {
     fn name_slice(&self) -> &[u8];
     fn kind(&self) -> bun_sys::FileKind;
+    /// For accessors with [`Accessor::ENTRY_KIND_FOLLOWS_SYMLINKS`]: the
+    /// already-resolved real path of the entry's target when the entry itself
+    /// is a symlink (its `kind()` reports the target's kind). `None` for
+    /// non-symlinks and for accessors that never resolve targets. Must come
+    /// from data the accessor already holds — the walker uses it for the
+    /// followed-link ancestor check without issuing any extra syscall.
+    fn symlink_target(&self) -> Option<&[u8]> {
+        None
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,6 +169,9 @@ impl AccessorDirIter for SyscallDirIter {
 
 impl Accessor for SyscallAccessor {
     const COUNT_FDS: bool = true;
+    // readdir / lstat report symlinks as `SymLink`, so every symlinked
+    // directory flows through the (already checked) Symlink work-item arm.
+    const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = false;
     type Handle = SyscallHandle;
     type DirIter = SyscallDirIter;
 
@@ -260,6 +276,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub path_buf: Box<PathBuffer>,
     // iteration state
     pub workbuf: Vec<WorkItem<A>>,
+
+    followed_links: Vec<FollowedLink>,
 
     is_ignored: IgnoreFilterFn,
 
@@ -814,7 +832,15 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     if self.walker.workbuf.is_empty() {
                         return Ok(Ok(None));
                     }
-                    let work_item = self.walker.workbuf.pop().unwrap();
+                    let mut work_item = self.walker.workbuf.pop().unwrap();
+                    // The workbuf is LIFO, so `followed_links_len` restores the
+                    // exact followed-link ancestor chain of this work item.
+                    self.walker
+                        .followed_links
+                        .truncate(work_item.followed_links_len);
+                    if let Some(link) = work_item.followed_link.take() {
+                        self.walker.followed_links.push(link);
+                    }
                     match work_item.kind {
                         WorkItemKind::Directory => {
                             if let Err(err) =
@@ -939,13 +965,45 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
                             let mut add_dir: bool = false;
                             let child = self.walker.eval_dir(&active, entry_name, &mut add_dir);
-                            if child.count() != 0 {
-                                self.walker.workbuf.push(WorkItem::new_with_fd(
-                                    work_item.path,
-                                    child,
-                                    WorkItemKind::Directory,
-                                    dir_fd,
-                                ));
+                            let mut followed_link: Option<FollowedLink> = None;
+                            let descend = child.count() != 0
+                                && if self.walker.followed_links.is_empty() {
+                                    // No followed ancestor exists, so this descent
+                                    // cannot be a cycle: defer identifying the target
+                                    // (record its logical path) so the walk performs
+                                    // no stat unless a nested followed link needs it.
+                                    followed_link = Some(FollowedLink::Pending(dupe_z(
+                                        symlink_full_path_z.as_bytes(),
+                                    )));
+                                    true
+                                } else {
+                                    match A::statat(dir_fd, ZStr::from_slice_with_nul(b".\0")) {
+                                        Ok(target) => {
+                                            self.walker.resolve_pending_followed_links(self.cwd_fd);
+                                            match self
+                                                .walker
+                                                .check_followed_link(FollowedLink::Target(target))
+                                            {
+                                                Some(link) => {
+                                                    followed_link = Some(link);
+                                                    true
+                                                }
+                                                None => false,
+                                            }
+                                        }
+                                        Err(_) => true,
+                                    }
+                                };
+                            if descend {
+                                self.walker.push_work_item(
+                                    WorkItem::new_with_fd(
+                                        work_item.path,
+                                        child,
+                                        WorkItemKind::Directory,
+                                        dir_fd,
+                                    ),
+                                    followed_link,
+                                );
                             } else {
                                 self.close_disallowing_cwd(dir_fd);
                             }
@@ -1022,13 +1080,22 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let mut add_dir: bool = false;
                             let child = self.walker.eval_dir(&active, entry_name, &mut add_dir);
                             if child.count() != 0 {
-                                let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
-                                let subdir_entry_name = self.walker.join(subdir_parts)?;
-                                self.walker.workbuf.push(WorkItem::new(
-                                    subdir_entry_name,
-                                    child,
-                                    WorkItemKind::Directory,
-                                ));
+                                let mut followed_link: Option<FollowedLink> = None;
+                                if self.walker.should_descend_resolved_dir(
+                                    entry.symlink_target(),
+                                    &mut followed_link,
+                                ) {
+                                    let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
+                                    let subdir_entry_name = self.walker.join(subdir_parts)?;
+                                    self.walker.push_work_item(
+                                        WorkItem::new(
+                                            subdir_entry_name,
+                                            child,
+                                            WorkItemKind::Directory,
+                                        ),
+                                        followed_link,
+                                    );
+                                }
                             }
                             if add_dir && !self.walker.only_files {
                                 match self.walker.prepare_matched_path(entry_name, dir_dir_path)? {
@@ -1107,17 +1174,22 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     }
                                 }
                                 bun_sys::FileKind::Directory => {
+                                    // `lstatat` never reports a symlinked directory as
+                                    // `Directory`, so no followed-link check is needed here.
                                     let mut add_dir: bool = false;
                                     let child =
                                         self.walker.eval_dir(&active, entry_name, &mut add_dir);
                                     if child.count() != 0 {
                                         let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
                                         let subdir_entry_name = self.walker.join(subdir_parts)?;
-                                        self.walker.workbuf.push(WorkItem::new(
-                                            subdir_entry_name,
-                                            child,
-                                            WorkItemKind::Directory,
-                                        ));
+                                        self.walker.push_work_item(
+                                            WorkItem::new(
+                                                subdir_entry_name,
+                                                child,
+                                                WorkItemKind::Directory,
+                                            ),
+                                            None,
+                                        );
                                     }
                                     if add_dir && !self.walker.only_files {
                                         match self
@@ -1200,6 +1272,34 @@ impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
 // WorkItem
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Identity of a symlinked directory on the current work item's ancestor chain.
+/// A walker only ever produces one variant (its accessor either stats followed
+/// targets or caches their real paths), so the two never need to compare equal.
+enum FollowedLink {
+    /// Followed target not yet identified: the NUL-terminated logical path the
+    /// walker opened. Stat'd (once, in place) only if a nested followed link
+    /// later needs the ancestor comparison, so a followed link with no
+    /// followed-link descendant costs no extra syscall.
+    Pending(Box<[u8]>),
+    /// `(st_dev, st_ino)` of the followed target (Symlink work-item arm).
+    Target(Stat),
+    /// Accessor-cached real path of the followed target
+    /// ([`AccessorDirEntry::symlink_target`]).
+    RealPath(Box<[u8]>),
+}
+
+impl FollowedLink {
+    /// `Pending` entries are resolved to `Target` before any comparison; one
+    /// that cannot be resolved never matches (the descent proceeds).
+    fn same_target(&self, other: &FollowedLink) -> bool {
+        match (self, other) {
+            (Self::Target(a), Self::Target(b)) => a.st_dev == b.st_dev && a.st_ino == b.st_ino,
+            (Self::RealPath(a), Self::RealPath(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 pub struct WorkItem<A: Accessor> {
     pub path: Box<[u8]>,
     /// Bitmask of active component indices.
@@ -1207,6 +1307,12 @@ pub struct WorkItem<A: Accessor> {
     pub kind: WorkItemKind,
     pub entry_start: u32,
     pub fd: Option<A::Handle>,
+    /// `followed_links.len()` when this item was pushed: the length of its
+    /// followed-link ancestor chain, restored by truncation when it is popped.
+    followed_links_len: usize,
+    /// The followed link this item descends into, pushed onto `followed_links`
+    /// (after the truncation above) when it is popped.
+    followed_link: Option<FollowedLink>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1223,6 +1329,8 @@ impl<A: Accessor> WorkItem<A> {
             kind,
             entry_start: 0,
             fd: None,
+            followed_links_len: 0,
+            followed_link: None,
         }
     }
 
@@ -1233,21 +1341,15 @@ impl<A: Accessor> WorkItem<A> {
         fd: A::Handle,
     ) -> Self {
         Self {
-            path,
-            active,
-            kind,
-            entry_start: 0,
             fd: Some(fd),
+            ..Self::new(path, active, kind)
         }
     }
 
     fn new_symlink(path: Box<[u8]>, active: ComponentSet, entry_start: u32) -> Self {
         Self {
-            path,
-            active,
-            kind: WorkItemKind::Symlink,
             entry_start,
-            fd: None,
+            ..Self::new(path, active, WorkItemKind::Symlink)
         }
     }
 }
@@ -1395,6 +1497,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             i: 0,
             path_buf: Box::new(PathBuffer::uninit()),
             workbuf: Vec::new(),
+            followed_links: Vec::new(),
             is_ignored: ignore_filter_fn.unwrap_or(dummy_filter_false),
             _accessor: core::marker::PhantomData,
         };
@@ -1920,12 +2023,75 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let joined = work_item_logical_path(&subdir_entry_name);
         let entry_start: u32 =
             u32::try_from(joined.len() - strings::basename(joined).len()).unwrap();
-        self.workbuf.push(WorkItem::new_symlink(
-            subdir_entry_name,
-            active,
-            entry_start,
-        ));
+        self.push_work_item(
+            WorkItem::new_symlink(subdir_entry_name, active, entry_start),
+            None,
+        );
         Ok(())
+    }
+
+    /// Single push site: snapshots the followed-link ancestor chain (and the
+    /// link `item` itself descends into) so the pop site can restore it.
+    fn push_work_item(&mut self, mut item: WorkItem<A>, followed_link: Option<FollowedLink>) {
+        item.followed_links_len = self.followed_links.len();
+        item.followed_link = followed_link;
+        self.workbuf.push(item);
+    }
+
+    /// Identify `Pending` ancestors in place (each is stat'd at most once) so
+    /// the chain can be compared by `(st_dev, st_ino)`. Only called when a
+    /// nested followed link actually needs the comparison.
+    fn resolve_pending_followed_links(&mut self, cwd_fd: A::Handle) {
+        for link in &mut self.followed_links {
+            if let FollowedLink::Pending(path) = link {
+                // SAFETY: `Pending` paths come from `dupe_z` (NUL-terminated).
+                let pathz = ZStr::from_slice_with_nul(path);
+                if let Ok(target) = A::statat(cwd_fd, pathz) {
+                    *link = FollowedLink::Target(target);
+                }
+            }
+        }
+    }
+
+    /// `followed_links` holds exactly the ancestor chain of the work item
+    /// being processed, so a match means descending re-enters it.
+    fn is_followed_link_cycle(&self, target: &FollowedLink) -> bool {
+        self.followed_links
+            .iter()
+            .any(|followed| followed.same_target(target))
+    }
+
+    /// Returns the record to attach to the descent's work item, or `None` when
+    /// `target` is already on the followed-link ancestor chain (a cycle).
+    fn check_followed_link(&self, target: FollowedLink) -> Option<FollowedLink> {
+        if self.is_followed_link_cycle(&target) {
+            return None;
+        }
+        Some(target)
+    }
+
+    /// Accessors with [`Accessor::ENTRY_KIND_FOLLOWS_SYMLINKS`] report a
+    /// symlinked directory as `Directory`, so it never reaches the Symlink
+    /// work-item arm's ancestor check; run the same check here on the
+    /// accessor's already-resolved target (no extra syscall).
+    fn should_descend_resolved_dir(
+        &self,
+        entry_symlink_target: Option<&[u8]>,
+        followed_link: &mut Option<FollowedLink>,
+    ) -> bool {
+        if !A::ENTRY_KIND_FOLLOWS_SYMLINKS {
+            return true;
+        }
+        let Some(target) = entry_symlink_target else {
+            return true;
+        };
+        match self.check_followed_link(FollowedLink::RealPath(Box::from(target))) {
+            Some(link) => {
+                *followed_link = Some(link);
+                true
+            }
+            None => false,
+        }
     }
 
     #[inline]

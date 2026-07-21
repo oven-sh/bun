@@ -42,14 +42,14 @@ pub enum ParseError {
     Lex,
 }
 
-impl From<ParseError> for bun_core::Error {
+impl From<ParseError> for crate::Error {
     fn from(e: ParseError) -> Self {
         match e {
-            ParseError::Unsupported => bun_core::err!("Unsupported"),
-            ParseError::Expected => bun_core::err!("Expected"),
-            ParseError::Unexpected => bun_core::err!("Unexpected"),
-            ParseError::Unknown => bun_core::err!("Unknown"),
-            ParseError::Lex => bun_core::err!("Lex"),
+            ParseError::Unsupported => crate::Error::Unsupported,
+            ParseError::Expected => crate::Error::Expected,
+            ParseError::Unexpected => crate::Error::Unexpected,
+            ParseError::Unknown => crate::Error::Unknown,
+            ParseError::Lex => crate::Error::Lex,
         }
     }
 }
@@ -961,7 +961,7 @@ pub struct ParserError<'bump> {
     pub msg: &'bump [u8],
 }
 
-type ParseResult<T> = Result<T, bun_core::Error>;
+type ParseResult<T> = crate::Result<T>;
 
 impl<'bump> Parser<'bump> {
     pub fn new(
@@ -1157,9 +1157,7 @@ impl<'bump> Parser<'bump> {
 
     fn expect_if_clause_text_token(&mut self, if_clause_token: IfClauseTok) -> Token {
         let tagname = Self::extract_if_clause_text_token(if_clause_token);
-        if cfg!(debug_assertions) {
-            debug_assert!(self.peek().tag() == TokenTag::Text);
-        }
+        debug_assert!(self.peek().tag() == TokenTag::Text);
         if let Token::Text(range) = self.peek() {
             if self.delimits(self.peek_n(1)) && self.text(range) == tagname {
                 let tok = self.advance();
@@ -1181,8 +1179,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn is_if_clause_text_token_impl(&self, range: TextRange, if_clause_token: IfClauseTok) -> bool {
-        let tagname = Self::extract_if_clause_text_token(if_clause_token);
-        self.text(range) == tagname
+        self.if_clause_tok_at(range) == Some(if_clause_token)
     }
 
     fn skip_newlines(&mut self) {
@@ -1913,6 +1910,13 @@ impl<'bump> Parser<'bump> {
             .any(|r| pos >= r.start && pos < r.end)
     }
 
+    fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
+        if self.is_interpolated_position(range.start) {
+            return None;
+        }
+        IfClauseTok::from_text(self.text(range))
+    }
+
     fn advance(&mut self) -> Token {
         if !self.is_at_end() {
             self.current += 1;
@@ -1952,7 +1956,6 @@ impl<'bump> Parser<'bump> {
         let tag = tok.tag();
         tag == TokenTag::Delimit
             || tag == TokenTag::Semicolon
-            || tag == TokenTag::Semicolon
             || tag == TokenTag::Eof
             || tag == TokenTag::Newline
             || (self.inside_subshell.is_some()
@@ -1983,9 +1986,7 @@ impl<'bump> Parser<'bump> {
 
     fn match_if_clausetok(&mut self, toktag: IfClauseTok) -> bool {
         if let Token::Text(range) = self.peek() {
-            if self.delimits(self.peek_n(1))
-                && self.text(range) == <&'static str>::from(toktag).as_bytes()
-            {
+            if self.delimits(self.peek_n(1)) && self.if_clause_tok_at(range) == Some(toktag) {
                 let _ = self.advance();
                 let _ = self.expect_delimit();
                 return true;
@@ -2037,13 +2038,10 @@ impl<'bump> Parser<'bump> {
         if !self.delimits(self.peek_n(1)) {
             return false;
         }
-        let txt = self.text(range);
-        for &tag in toktags {
-            if txt == <&'static str>::from(tag).as_bytes() {
-                return true;
-            }
-        }
-        false
+        let Some(tok) = self.if_clause_tok_at(range) else {
+            return false;
+        };
+        toktags.contains(&tok)
     }
 
     fn peek_any_comptime_ifclausetok(&self, toktags: &[IfClauseTok]) -> bool {
@@ -2092,24 +2090,7 @@ impl<'bump> Parser<'bump> {
     }
 
     pub fn combine_errors(&self) -> &'bump [u8] {
-        let errors = &self.errors[..];
-
-        ({
-            let size = {
-                let mut i = 0usize;
-                for e in errors {
-                    i += e.msg.len();
-                }
-                i
-            };
-            let buf = self.alloc.alloc_slice_fill_copy(size, 0u8);
-            let mut i = 0usize;
-            for e in errors {
-                buf[i..i + e.msg.len()].copy_from_slice(e.msg);
-                i += e.msg.len();
-            }
-            buf
-        }) as _
+        join_error_msgs(self.alloc, self.errors[..].iter().map(|e| e.msg))
     }
 
     fn add_error(&mut self, args: fmt::Arguments<'_>) -> ParseResult<()> {
@@ -2128,6 +2109,26 @@ impl<'bump> Parser<'bump> {
             <&'static str>::from(kind)
         ))
     }
+}
+
+/// Join error messages with a newline so each one renders on its own line in
+/// `ShellError.message` and in the CLI error output.
+fn join_error_msgs<'bump>(
+    bump: &'bump Bump,
+    msgs: impl ExactSizeIterator<Item = &'bump [u8]> + Clone,
+) -> &'bump [u8] {
+    let size = msgs.clone().map(|m| m.len()).sum::<usize>() + msgs.len().saturating_sub(1);
+    let buf = bump.alloc_slice_fill_copy(size, 0u8);
+    let mut i = 0usize;
+    for (n, msg) in msgs.enumerate() {
+        if n > 0 {
+            buf[i] = b'\n';
+            i += 1;
+        }
+        buf[i..i + msg.len()].copy_from_slice(msg);
+        i += msg.len();
+    }
+    buf
 }
 
 #[derive(Default)]
@@ -2164,7 +2165,7 @@ impl IfClauseTok {
     /// `expect_if_clause_text_token`.
     pub fn from_tok(p: &Parser<'_>, tok: Token) -> Option<IfClauseTok> {
         match tok {
-            Token::Text(range) if p.delimits(p.peek_n(1)) => Self::from_text(p.text(range)),
+            Token::Text(range) if p.delimits(p.peek_n(1)) => p.if_clause_tok_at(range),
             _ => None,
         }
     }
@@ -2356,25 +2357,8 @@ pub struct LexResult<'bump> {
 
 impl<'bump> LexResult<'bump> {
     pub fn combine_errors(&self, bump: &'bump Bump) -> &'bump [u8] {
-        let errors = self.errors;
-
-        ({
-            let size = {
-                let mut i = 0usize;
-                for e in errors {
-                    i += e.msg.len() as usize;
-                }
-                i
-            };
-            let buf = bump.alloc_slice_fill_copy(size, 0u8);
-            let mut i = 0usize;
-            for e in errors {
-                let s = e.msg.slice(self.strpool);
-                buf[i..i + s.len()].copy_from_slice(s);
-                i += s.len();
-            }
-            buf
-        }) as _
+        let strpool = self.strpool;
+        join_error_msgs(bump, self.errors.iter().map(move |e| e.msg.slice(strpool)))
     }
 }
 
@@ -3020,7 +3004,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             if next.escaped || next.char != u32::from(b'|') {
                                 self.tokens.push(Token::Pipe);
-                            } else if next.char == u32::from(b'|') {
+                            } else {
                                 self.eat().expect("unreachable");
                                 self.tokens.push(Token::DoublePipe);
                             }
@@ -3079,13 +3063,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 self.tokens.push(Token::Redirect(inner));
                             } else if next.escaped || next.char != u32::from(b'&') {
                                 self.tokens.push(Token::Ampersand);
-                            } else if next.char == u32::from(b'&') {
+                            } else {
                                 self.eat().expect("unreachable");
                                 self.tokens.push(Token::DoubleAmpersand);
-                            } else {
-                                self.tokens.push(Token::Ampersand);
-                                fell_through = true;
-                                break 'escaped;
                             }
                             fell_through = true;
                         }
@@ -4160,14 +4140,17 @@ fn is_all_ascii(s: &[u8]) -> bool {
 // ───────────────────────────── escaping ─────────────────────────────
 
 /// Characters that need to be escaped
-pub const SPECIAL_CHARS: [u8; 34] = [
+pub const SPECIAL_CHARS: [u8; 37] = [
     b'~',
     b'[',
     b']',
     b'#',
     b';',
     b'\n',
+    b'\t',
+    b'\r',
     b'*',
+    b'?',
     b'{',
     b',',
     b'}',
@@ -4217,10 +4200,6 @@ pub const SPECIAL_CHARS_TABLE: ByteTable = {
     ByteTable(table)
 };
 
-pub fn assert_special_char(c: u8) {
-    debug_assert!(SPECIAL_CHARS_TABLE.is_set(c as usize));
-}
-
 /// Characters that need to be backslashed inside double quotes
 pub const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 
@@ -4232,13 +4211,20 @@ pub fn escape_bun_str<const ADD_QUOTES: bool>(
         let res = escape_utf16::<ADD_QUOTES>(bunstr.utf16(), outbuf)?;
         return Ok(!res.is_invalid);
     }
-    // otherwise should be utf-8, latin-1, or ascii
-    escape_8bit::<ADD_QUOTES>(bunstr.byte_slice(), outbuf)?;
+    if bunstr.is_utf8() {
+        escape_8bit::<ADD_QUOTES, false>(bunstr.byte_slice(), outbuf)?;
+        return Ok(true);
+    }
+    // Otherwise 8-bit (Latin-1/ASCII). `outbuf` is consumed as UTF-8, so
+    // Latin-1 code units 0x80..=0xFF must be re-encoded, not copied verbatim.
+    escape_8bit::<ADD_QUOTES, true>(bunstr.byte_slice(), outbuf)?;
     Ok(true)
 }
 
-/// works for utf-8, latin-1, and ascii
-pub fn escape_8bit<const ADD_QUOTES: bool>(
+/// Escapes an 8-bit byte string into UTF-8 output. `LATIN1` selects how bytes
+/// >= 0x80 are interpreted: Latin-1 code units (re-encoded as 2-byte UTF-8) or
+/// bytes of an already-UTF-8 string (copied verbatim).
+pub fn escape_8bit<const ADD_QUOTES: bool, const LATIN1: bool>(
     str: &[u8],
     outbuf: &mut Vec<u8>,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -4257,6 +4243,10 @@ pub fn escape_8bit<const ADD_QUOTES: bool>(
         }
         if c == SPECIAL_JS_CHAR {
             outbuf.extend_from_slice(&[SPECIAL_JS_CHAR, b'"', b'"']);
+            continue;
+        }
+        if LATIN1 && c >= 0x80 {
+            outbuf.extend_from_slice(&[0xC0 | (c >> 6), 0x80 | (c & 0x3F)]);
             continue;
         }
         outbuf.push(c);
@@ -4328,6 +4318,9 @@ pub fn needs_escape_bunstr(bunstr: BunString) -> bool {
 }
 
 pub fn needs_escape_utf16(str: &[u16]) -> bool {
+    if str.is_empty() {
+        return true;
+    }
     for &codeunit in str {
         if codeunit < 0xff && SPECIAL_CHARS_TABLE.is_set(codeunit as usize) {
             return true;
@@ -4339,14 +4332,25 @@ pub fn needs_escape_utf16(str: &[u16]) -> bool {
 /// Checks for the presence of any char from `SPECIAL_CHARS` in `str`. This
 /// indicates the *possibility* that the string must be escaped, so it can have
 /// false positives, but it is faster than running the shell lexer through the
-/// input string for a more correct implementation.
+/// input string for a more correct implementation. An empty string always
+/// needs escaping: quoting is the only way it becomes a shell word at all.
 pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
+    if str.is_empty() {
+        return true;
+    }
     for &c in str {
         if SPECIAL_CHARS_TABLE.is_set(c as usize) {
             return true;
         }
     }
     false
+}
+
+pub fn is_if_clause_keyword_bunstr(bunstr: BunString) -> bool {
+    use IfClauseTok::{Elif, Else, Fi, If, Then};
+    [If, Else, Elif, Then, Fi]
+        .iter()
+        .any(|&kw| bunstr.eql_comptime(<&'static str>::from(kw)))
 }
 
 // ───────────────────────────── SmolList ─────────────────────────────
@@ -4517,12 +4521,10 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     }
 
     pub fn init_with(val: T) -> Self {
-        let mut this = Self::zeroes();
-        if let SmolList::Inlined(inlined) = &mut this {
-            inlined.items[0].write(val);
-            inlined.len += 1;
-        }
-        this
+        let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
+        inlined.items[0].write(val);
+        inlined.len = 1;
+        SmolList::Inlined(inlined)
     }
 
     pub fn memory_cost(&self) -> usize
@@ -4552,14 +4554,12 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     {
         debug_assert!(vals.len() <= u32::MAX as usize);
         if vals.len() <= INLINED_MAX {
-            let mut this = Self::zeroes();
-            if let SmolList::Inlined(inlined) = &mut this {
-                for (i, v) in vals.iter().enumerate() {
-                    inlined.items[i].write(v.clone());
-                }
-                inlined.len += u32::try_from(vals.len()).expect("int cast");
+            let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
+            for (i, v) in vals.iter().enumerate() {
+                inlined.items[i].write(v.clone());
             }
-            return this;
+            inlined.len = u32::try_from(vals.len()).expect("int cast");
+            return SmolList::Inlined(inlined);
         }
         let mut heap = Vec::with_capacity_in(vals.len(), SmolListAlloc::new(bump));
         heap.extend_from_slice(vals);

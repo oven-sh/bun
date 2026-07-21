@@ -48,7 +48,7 @@ pub(crate) const DIGEST_BUF_LEN: usize = {
 };
 
 impl Integrity {
-    pub fn parse_sha_sum(buf: &[u8]) -> Result<Integrity, bun_core::Error> {
+    pub fn parse_sha_sum(buf: &[u8]) -> crate::Result<Integrity> {
         if buf.is_empty() {
             return Ok(Integrity {
                 tag: Tag::UNKNOWN,
@@ -65,7 +65,7 @@ impl Integrity {
             .len()
             .min(buf.len());
         if !end.is_multiple_of(2) {
-            return Err(bun_core::err!("InvalidCharacter"));
+            return Err(crate::Error::InvalidCharacter);
         }
         let mut out_i: usize = 0;
         let mut i: usize = 0;
@@ -81,7 +81,7 @@ impl Integrity {
             // npm sha1 strings are always [0-9a-f]; canonical hex_pair_value
             // narrows the original over-broad b'g'..=b'z' acceptance.
             integrity.value[out_i] = bun_core::fmt::hex_pair_value(buf[i], buf[i + 1])
-                .ok_or_else(|| bun_core::err!("InvalidCharacter"))?;
+                .ok_or(crate::Error::InvalidCharacter)?;
             out_i += 1;
             i += 2;
         }
@@ -90,6 +90,17 @@ impl Integrity {
     }
 
     pub fn parse(buf: &[u8]) -> Integrity {
+        let mut strongest = Integrity::default();
+        for entry in buf.split(|c: &u8| c.is_ascii_whitespace()) {
+            let parsed = Self::parse_entry(entry);
+            if parsed.tag.0 > strongest.tag.0 {
+                strongest = parsed;
+            }
+        }
+        strongest
+    }
+
+    fn parse_entry(buf: &[u8]) -> Integrity {
         if buf.len() < b"sha256-".len() {
             return Integrity {
                 tag: Tag::UNKNOWN,
@@ -115,8 +126,11 @@ impl Integrity {
         }
 
         let input = {
+            let mut s = &buf[offset..];
+            if let Some(i) = strings::index_of_char(s, b'?') {
+                s = &s[..i as usize];
+            }
             // trim trailing '=' padding
-            let s = &buf[offset..];
             let mut end = s.len();
             while end > 0 && s[end - 1] == b'=' {
                 end -= 1;

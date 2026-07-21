@@ -893,32 +893,6 @@ impl PathOrBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct CallbackTask<Result> {
-    pub callback: jsc::C::JSObjectRef,
-    pub option: CallbackTaskOption<Result>,
-}
-
-pub enum CallbackTaskOption<Result> {
-    Err(Box<bun_sys::SystemError>),
-    Result(Result),
-}
-
-impl<Result> Default for CallbackTask<Result>
-where
-    CallbackTaskOption<Result>: Default,
-{
-    fn default() -> Self {
-        // Zero the callback handle
-        // and lean on the `CallbackTaskOption<Result>: Default` bound.
-        Self {
-            callback: core::ptr::null_mut(),
-            option: Default::default(),
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
 // LAYERING: single nominal `PathLike`/`PathOrFileDescriptor` live in
 // `bun_jsc::node_path` so `bun_jsc::webcore_types::store::File::pathlike`
 // and the `Store`/`Blob` constructors here share one type. This module
@@ -1059,7 +1033,7 @@ impl PathLikeExt for PathLike {
                     // The cwd root + path don't fit `buf` (UNC cwds can push
                     // a near-MAX_PATH_BYTES path over); fall through to the
                     // plain copy / too-long handling below.
-                    Err(e) if e == bun_core::err!("NameTooLong") => None,
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 if let Some(len) = resolved_len {
@@ -1181,7 +1155,7 @@ impl PathLikeExt for PathLike {
                     // The cwd root + path don't fit the resolution buffer
                     // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
                     // such a path can't exist on NT.
-                    Err(e) if e == bun_core::err!("NameTooLong") => return Err(NameTooLong),
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
@@ -1235,12 +1209,8 @@ impl PathLikeExt for PathLike {
         use jsc::JSType;
         match arg.js_type() {
             JSType::Uint8Array | JSType::DataView => {
-                let mut buffer = if arguments.will_be_async {
-                    Buffer::from_js_pinned(ctx, arg)
-                        .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg))
-                } else {
-                    Buffer::from_typed_array(ctx, arg)
-                };
+                let mut buffer = Buffer::from_js_pinned(ctx, arg)
+                    .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg));
                 if let Err(err) = Valid::path_buffer(&buffer, ctx)
                     .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
                 {
@@ -1256,12 +1226,8 @@ impl PathLikeExt for PathLike {
             }
 
             JSType::ArrayBuffer => {
-                let mut buffer = if arguments.will_be_async {
-                    Buffer::from_js_pinned(ctx, arg)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg))
-                } else {
-                    Buffer::from_array_buffer(ctx, arg)
-                };
+                let mut buffer = Buffer::from_js_pinned(ctx, arg)
+                    .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg));
                 if let Err(err) = Valid::path_buffer(&buffer, ctx)
                     .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
                 {
@@ -1396,7 +1362,9 @@ pub struct Valid;
 impl Valid {
     pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
         match zig_str.slice().len() {
-            0..=MAX_PATH_BYTES => Ok(()),
+            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
+            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
+            0..MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
@@ -1410,7 +1378,9 @@ impl Valid {
 
     pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
         match len {
-            0..=MAX_PATH_BYTES => Ok(()),
+            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
+            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
+            0..MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
@@ -1432,7 +1402,9 @@ impl Valid {
                 Err(ctx
                     .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
             }
-            1..=MAX_PATH_BYTES => Ok(()),
+            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
+            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
+            1..MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
@@ -1646,7 +1618,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         )?
     };
 
-    Ok(Some((mode_int & 0o777) as Mode))
+    Ok(Some(mode_int as Mode))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1710,7 +1682,7 @@ impl FileSystemFlags {
     /// Open file for reading. An exception occurs if the file does not exist.
     pub const R: Self = Self(O::RDONLY);
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    pub const W: Self = Self(O::WRONLY | O::CREAT);
+    pub const W: Self = Self(O::TRUNC | O::CREAT | O::WRONLY);
 
     #[inline]
     pub fn as_int(self) -> c_int {

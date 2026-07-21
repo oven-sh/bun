@@ -180,7 +180,7 @@ impl UpdateInteractiveCommand {
     fn save_package_json(
         package_json: &mut WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let preserve_trailing_newline = !package_json.source.contents.is_empty()
             && *package_json.source.contents.last().unwrap() == b'\n';
 
@@ -208,7 +208,7 @@ impl UpdateInteractiveCommand {
             },
         ) {
             Output::err_generic("Failed to serialize package.json: {s}", (err.name(),));
-            return Err(err);
+            return Err(err.into());
         }
 
         let new_package_json_source: Box<[u8]> =
@@ -243,7 +243,7 @@ impl UpdateInteractiveCommand {
         Ok(())
     }
 
-    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         bun_core::prettyln!(
             "<r><b>bun update --interactive <r><d>v{}<r>",
             Global::package_json_version_with_sha
@@ -258,7 +258,7 @@ impl UpdateInteractiveCommand {
             Ok(v) => v,
             Err(err) => {
                 if !silent {
-                    if err == bun_core::err!("MissingPackageJSON") {
+                    if err == bun_install::Error::MissingPackageJSON {
                         Output::err_generic("missing package.json, nothing outdated", ());
                     }
                     Output::err_generic("failed to initialize bun install: {s}", (err.name(),));
@@ -275,7 +275,7 @@ impl UpdateInteractiveCommand {
     fn update_package_json_files_from_updates(
         manager: &mut PackageManager,
         updates: &[PackageUpdate],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Group updates by workspace
         let mut workspace_groups: StringHashMap<Vec<usize>> = StringHashMap::default();
 
@@ -283,7 +283,7 @@ impl UpdateInteractiveCommand {
         for (i, update) in updates.iter().enumerate() {
             let result = workspace_groups
                 .get_or_put(&update.workspace_path)
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             if !result.found_existing {
                 *result.value_ptr = Vec::new();
             }
@@ -376,7 +376,7 @@ impl UpdateInteractiveCommand {
                 );
                 dep_obj
                     .put(&bump, &update.name, new_expr)
-                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 modified = true;
             }
 
@@ -391,7 +391,7 @@ impl UpdateInteractiveCommand {
     fn update_catalog_definitions(
         manager: &mut PackageManager,
         catalog_updates: &StringHashMap<CatalogUpdate>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Group catalog updates by workspace path
         let mut workspace_catalog_updates: StringHashMap<Vec<CatalogUpdateRequest>> =
             StringHashMap::default();
@@ -401,7 +401,7 @@ impl UpdateInteractiveCommand {
         while let Some((catalog_key, update)) = catalog_it.next() {
             let result = workspace_catalog_updates
                 .get_or_put(&update.workspace_path)
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             if !result.found_existing {
                 *result.value_ptr = Vec::new();
             }
@@ -473,7 +473,7 @@ impl UpdateInteractiveCommand {
         ctx: Command::Context,
         original_cwd: &[u8],
         manager: &mut PackageManager,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Reshaped for borrowck — capture `log_level` / `ctx.log`
         // before borrowing `&mut manager.lockfile`.
         let not_silent = manager.options.log_level != LogLevel::Silent;
@@ -819,7 +819,7 @@ impl UpdateInteractiveCommand {
 
     fn group_catalog_dependencies(
         packages: Vec<OutdatedPackage>,
-    ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
+    ) -> crate::Result<Vec<OutdatedPackage>> {
         // Create a map to track catalog dependencies by name
         let mut catalog_map: StringHashMap<Vec<OutdatedPackage>> = StringHashMap::default();
 
@@ -830,7 +830,7 @@ impl UpdateInteractiveCommand {
             if pkg.is_catalog {
                 let entry = catalog_map
                     .get_or_put(&pkg.name)
-                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 if !entry.found_existing {
                     *entry.value_ptr = Vec::new();
                 }
@@ -887,7 +887,7 @@ impl UpdateInteractiveCommand {
     fn get_outdated_packages(
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
-    ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
+    ) -> crate::Result<Vec<OutdatedPackage>> {
         // Reshaped for borrowck —
         // hoist the four scalars the manifest-lookup path reads into a by-value
         // `DiskCacheCtx` so the loop body holds only disjoint field borrows
@@ -1241,9 +1241,7 @@ impl UpdateInteractiveCommand {
         result.into_boxed_slice()
     }
 
-    fn prompt_for_updates(
-        packages: &mut [OutdatedPackage],
-    ) -> Result<Box<[bool]>, bun_core::Error> {
+    fn prompt_for_updates(packages: &mut [OutdatedPackage]) -> crate::Result<Box<[bool]>> {
         if packages.is_empty() {
             bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
             return Ok(Box::default());
@@ -1288,7 +1286,10 @@ impl UpdateInteractiveCommand {
         let result = match Self::process_multi_select(&mut state, terminal_size) {
             Ok(r) => r,
             Err(err) => {
-                if err == bun_core::err!("EndOfStream") {
+                if matches!(
+                    err,
+                    crate::Error::EndOfStream | crate::Error::Core(bun_core::Error::EndOfStream)
+                ) {
                     Output::flush();
                     bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);
@@ -1310,11 +1311,7 @@ impl UpdateInteractiveCommand {
         } else if state.cursor >= state.viewport_start + state.viewport_height {
             // Cursor is below viewport - put it at the end of viewport
             if !state.packages.is_empty() {
-                let max_cursor = if state.packages.len() > 1 {
-                    state.packages.len() - 1
-                } else {
-                    0
-                };
+                let max_cursor = state.packages.len() - 1;
                 let viewport_end = state.viewport_start + state.viewport_height;
                 state.cursor = (viewport_end - 1).min(max_cursor);
             }
@@ -1367,11 +1364,7 @@ impl UpdateInteractiveCommand {
             } else {
                 0
             };
-            let desired_start = if state.viewport_height > context_below {
-                state.cursor - (state.viewport_height - context_below)
-            } else {
-                state.cursor
-            };
+            let desired_start = state.cursor - (state.viewport_height - context_below);
             state.viewport_start = desired_start.min(max_start);
         }
         // If cursor is near top of viewport, adjust to maintain context
@@ -1387,7 +1380,7 @@ impl UpdateInteractiveCommand {
     fn process_multi_select<'s, 'b>(
         state: &'b mut MultiSelectState<'s>,
         initial_terminal_size: TerminalSize,
-    ) -> Result<&'b [bool], bun_core::Error> {
+    ) -> crate::Result<&'b [bool]> {
         let colors = Output::enable_ansi_colors_stdout();
 
         // Clear any previous progress output
@@ -1470,7 +1463,9 @@ impl UpdateInteractiveCommand {
                 let help_text: &[u8] = b"Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest";
                 let elipsised_help_text = Self::truncate_with_ellipsis(
                     help_text,
-                    current_size.width - b"? Select packages to update - ".len(),
+                    current_size
+                        .width
+                        .saturating_sub(b"? Select packages to update - ".len()),
                     true,
                 );
                 bun_core::prettyln!(
@@ -2003,7 +1998,7 @@ impl UpdateInteractiveCommand {
                     // ctrl+c, ctrl+d
                     reprint_menu = false;
                     cleanup_and_reprint!(reprint_menu);
-                    return Err(bun_core::err!("EndOfStream"));
+                    return Err(crate::Error::EndOfStream);
                 }
                 b' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];
@@ -2230,7 +2225,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 pub(crate) fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
@@ -2300,7 +2295,7 @@ fn update_default_catalog(
     package_json: &mut Expr,
     package_name: &[u8],
     new_version: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // Get or create the catalog object
     // First check if catalog is under workspaces.catalog
     // Mutate the existing `StoreRef<E::Object>` in place (`StoreRef` is
@@ -2337,7 +2332,7 @@ fn update_default_catalog(
         let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
         catalog_obj
             .put(bump, leak_dup(package_name), new_expr)
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
 
     // Check if we need to update under workspaces.catalog or root-level catalog
@@ -2361,7 +2356,7 @@ fn update_default_catalog(
                 };
                 ws_obj
                     .put(bump, b"catalog", expr)
-                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 return Ok(());
             }
         }
@@ -2377,7 +2372,7 @@ fn update_default_catalog(
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
             .put(bump, b"catalog", Expr::init(fresh_obj, Loc::EMPTY))
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
     Ok(())
 }
@@ -2388,7 +2383,7 @@ fn update_named_catalog(
     catalog_name: &[u8],
     package_name: &[u8],
     new_version: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // Get or create the catalogs object
     // First check if catalogs is under workspaces.catalogs (newer structure)
     // Reshaped — see `update_default_catalog` for the
@@ -2431,7 +2426,7 @@ fn update_named_catalog(
         let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
         catalog_obj
             .put(bump, leak_dup(package_name), new_expr)
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
 
         // Update the catalog in catalogs object
         if existing_catalog.is_none() {
@@ -2441,7 +2436,7 @@ fn update_named_catalog(
                     leak_dup(catalog_name),
                     Expr::init(fresh_catalog, Loc::EMPTY),
                 )
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
         }
     }
 
@@ -2463,7 +2458,7 @@ fn update_named_catalog(
                 };
                 ws_obj
                     .put(bump, b"catalogs", expr)
-                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 return Ok(());
             }
         }
@@ -2477,7 +2472,7 @@ fn update_named_catalog(
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
             .put(bump, b"catalogs", Expr::init(fresh_catalogs, Loc::EMPTY))
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
     Ok(())
 }
@@ -2485,7 +2480,7 @@ fn update_named_catalog(
 fn preserve_version_prefix(
     original_version: &[u8],
     new_version: &[u8],
-) -> Result<Box<[u8]>, bun_core::Error> {
+) -> crate::Result<Box<[u8]>> {
     if original_version.len() > 1 {
         let mut orig_version: &[u8] = original_version;
         let mut alias: Option<&[u8]> = None;

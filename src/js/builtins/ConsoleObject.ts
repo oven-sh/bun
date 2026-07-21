@@ -116,6 +116,8 @@ export function asyncIterator(this: Console) {
 }
 
 export function write(this: Console, input) {
+  if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
+
   var writer = $getByIdDirectPrivate(this, "writer");
   if (!writer) {
     var length = $toLength(input?.length ?? 0);
@@ -302,10 +304,16 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     if (inspectOptions !== undefined) {
       validateObject(inspectOptions, "options.inspectOptions");
 
-      if (inspectOptions.colors !== undefined && options.colorMode !== undefined) {
-        throw $ERR_INCOMPATIBLE_OPTION_PAIR(
-          'Option "options.inspectOptions.color" cannot be used in combination with option "colorMode"',
-        );
+      // inspectOptions may be a Map keyed by stream, giving each stream its own
+      // options; a plain object applies to both.
+      const isPerStream = $isMap(inspectOptions);
+      for (const stream of [stdout, stderr]) {
+        const perStreamOptions = isPerStream ? inspectOptions.$get(stream) : inspectOptions;
+        if (perStreamOptions?.colors !== undefined && options.colorMode !== undefined) {
+          throw $ERR_INCOMPATIBLE_OPTION_PAIR(
+            'Option "options.inspectOptions.color" cannot be used in combination with option "colorMode"',
+          );
+        }
       }
       optionsMap.set(this, inspectOptions);
     }
@@ -479,7 +487,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           }
         }
 
-        const options = optionsMap.get(this);
+        const inspectOptions = optionsMap.get(this);
+        const options = $isMap(inspectOptions) ? inspectOptions.$get(stream) : inspectOptions;
         if (options) {
           if (options.colors === undefined) {
             options.colors = color;

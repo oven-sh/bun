@@ -139,14 +139,15 @@ impl ProgressBuf {
         static BUF_INDEX: Cell<usize> = const { Cell::new(0) };
     }
 
-    pub(crate) fn print(args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
+    pub(crate) fn print(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
         Self::BUF_INDEX.with(|i| i.set(i.get() + 1));
         let idx = Self::BUF_INDEX.with(|i| i.get()) % 2;
         Self::BUFS.with_borrow_mut(|bufs| {
             let buf = &mut bufs[idx];
             let mut cursor: &mut [u8] = &mut buf[..];
             let cap = cursor.len();
-            write!(&mut cursor, "{}", args).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            write!(&mut cursor, "{}", args)
+                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let written = cap - cursor.len();
             // SAFETY: the slice points into a thread-local static buffer that
             // lives for the thread's lifetime; CLI usage prints/copies it before
@@ -160,7 +161,7 @@ impl ProgressBuf {
     /// color template into `args` directly. Note: `<tag>` sequences inside
     /// interpolated arguments (e.g. a user-supplied template name) are also
     /// rewritten here. Cosmetic-only on adversarial input.
-    pub(crate) fn pretty(args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
+    pub(crate) fn pretty(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
         if Output::enable_ansi_colors_stdout() {
             ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<true>(args)))
         } else {
@@ -197,7 +198,7 @@ impl CreateOptions {
         PARAMS
     }
 
-    pub(crate) fn parse(_ctx: &Command::Context<'_>) -> Result<CreateOptions, bun_core::Error> {
+    pub(crate) fn parse(_ctx: &Command::Context<'_>) -> crate::Result<CreateOptions> {
         // The `is_verbose()` accessor reads the env directly each call, so this is a no-op.
         let _ = Output::is_verbose();
 
@@ -214,7 +215,7 @@ impl CreateOptions {
             Err(err) => {
                 // Report useful error and exit
                 let _ = diag.report(Output::error_writer(), err);
-                return Err(err);
+                return Err(err.into());
             }
         };
 
@@ -263,7 +264,7 @@ impl CreateCommand {
         ctx: &Command::Context<'_>,
         example_tag: ExampleTag,
         template: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: false,
             ..Default::default()
@@ -355,9 +356,10 @@ impl CreateCommand {
                         match Example::fetch(ctx, &mut env_loader, template, &mut progress, node) {
                             Ok(b) => b,
                             Err(err) => {
-                                if err == bun_core::err!("HTTPForbidden")
-                                    || err == bun_core::err!("ExampleNotFound")
-                                {
+                                if matches!(
+                                    err,
+                                    crate::Error::HTTPForbidden | crate::Error::ExampleNotFound
+                                ) {
                                     node.end();
                                     progress.refresh();
 
@@ -395,15 +397,32 @@ impl CreateCommand {
                     ) {
                         Ok(b) => b,
                         Err(err) => {
-                            if err == bun_core::err!("HTTPForbidden") {
+                            if matches!(
+                                err,
+                                crate::Error::HTTPForbidden | crate::Error::HTTPTooManyRequests
+                            ) {
                                 node.end();
                                 progress.refresh();
 
                                 pretty_error!(
-                                    "\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
+                                    "\n<r><red>error:<r> GitHub returned {}. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
+                                    if matches!(err, crate::Error::HTTPForbidden) {
+                                        "403"
+                                    } else {
+                                        "429"
+                                    },
                                 );
                                 Global::crash();
-                            } else if err == bun_core::err!("GitHubRepositoryNotFound") {
+                            } else if matches!(err, crate::Error::GitHubIsDown) {
+                                node.end();
+                                progress.refresh();
+
+                                pretty_error!(
+                                    "\n<r><red>error:<r> GitHub returned a server error while fetching the tarball for <b>\"{}\"<r>. GitHub may be temporarily unavailable; wait a moment and try again.\n",
+                                    bstr::BStr::new(template),
+                                );
+                                Global::crash();
+                            } else if matches!(err, crate::Error::GitHubRepositoryNotFound) {
                                 node.end();
                                 progress.refresh();
 
@@ -486,7 +505,7 @@ impl CreateCommand {
                         buf: Vec<u8>,
                     }
                     impl bun_libarchive::ArchiveAppender for OverwriteListAppender {
-                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_core::Error> {
+                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_libarchive::Error> {
                             self.buf.clear();
                             self.buf.extend_from_slice(path);
                             Ok(&self.buf)
@@ -591,7 +610,7 @@ impl CreateCommand {
 
                         pretty_errorln!(
                             "<r><red>{}<r>: creating dir {}",
-                            err.name(),
+                            bstr::BStr::new(err.name()),
                             bstr::BStr::new(destination),
                         );
                         Global::exit(1);
@@ -775,8 +794,8 @@ impl CreateCommand {
                 // SAFETY: single-threaded CLI dispatch; no other borrow of the
                 // process-static `Cli::LOG_` is live across this scope.
                 let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
-                let bump = bun_alloc::Arena::new();
-                let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
+                let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+                let mut package_json_expr = match JSON::parse_utf8(&source, log, bump) {
                     Ok(e) => e,
                     Err(_) => {
                         if log.errors > 0 {
@@ -1633,9 +1652,7 @@ impl CreateCommand {
         Ok(())
     }
 
-    pub(crate) fn extract_info(
-        ctx: &Command::Context<'_>,
-    ) -> Result<ExtractedInfo, bun_core::Error> {
+    pub(crate) fn extract_info(ctx: &Command::Context<'_>) -> crate::Result<ExtractedInfo> {
         let example_tag;
         // SAFETY: process-lifetime singleton; init returns *mut.
         let filesystem = unsafe { &*fs::FileSystem::init(None)? };
@@ -1832,7 +1849,7 @@ fn file_copier_copy(
     #[cfg(windows)] dst_buf: &mut bun_paths::WPathBuffer,
     #[cfg(windows)] src_base_len: usize,
     #[cfg(windows)] src_buf: &mut bun_paths::WPathBuffer,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     while let Some(entry) = walker.next()? {
         #[cfg(windows)]
         {
@@ -2007,11 +2024,12 @@ impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
     fn on_analyze(
         &mut self,
         result: &mut bun_bundler::bundle_v2::DependenciesScannerResult<'_, '_>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), bun_bundler::Error> {
         let this = self;
         this.node.end();
 
         SourceFileProjectGenerator::generate(this.ctx, this.example_tag, this.entry_point, result)
+            .map_err(Into::into)
     }
 }
 
@@ -2020,7 +2038,7 @@ fn run_on_entry_point(
     example_tag: ExampleTag,
     entry_point: &[u8],
     node: &mut ProgressNode,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let mut analyzer = Analyzer {
         ctx,
         example_tag,
@@ -2133,7 +2151,7 @@ impl Example {
         mut node: Option<&mut ProgressNode>,
         env_loader: &mut DotEnv::Loader,
         filesystem: &mut fs::FileSystem,
-    ) -> Result<Vec<Example>, bun_core::Error> {
+    ) -> crate::Result<Vec<Example>> {
         let remote_examples = Example::fetch_all(ctx, env_loader, node.as_deref_mut())?;
         if let Some(node_) = node {
             node_.end();
@@ -2227,7 +2245,7 @@ impl Example {
         name: &[u8],
         refresher: &mut Progress,
         progress: &mut ProgressNode,
-    ) -> Result<MutableString, bun_core::Error> {
+    ) -> crate::Result<MutableString> {
         let owner_i = bun_core::strings::index_of_char_usize(name, b'/').unwrap() as usize;
         let owner = &name[0..owner_i];
         let mut repository = &name[owner_i + 1..];
@@ -2318,12 +2336,12 @@ impl Example {
         let response = async_http.send_sync()?;
 
         match response.status_code {
-            404 => return Err(bun_core::err!("GitHubRepositoryNotFound")),
-            403 => return Err(bun_core::err!("HTTPForbidden")),
-            429 => return Err(bun_core::err!("HTTPTooManyRequests")),
-            499..=599 => return Err(bun_core::err!("NPMIsDown")),
+            404 => return Err(crate::Error::GitHubRepositoryNotFound),
+            403 => return Err(crate::Error::HTTPForbidden),
+            429 => return Err(crate::Error::HTTPTooManyRequests),
+            499..=599 => return Err(crate::Error::GitHubIsDown),
             200 => {}
-            _ => return Err(bun_core::err!("HTTPError")),
+            _ => return Err(crate::Error::HTTPError),
         }
 
         let content_type: &[u8] = response.headers.get(b"content-type").unwrap_or(b"");
@@ -2366,7 +2384,7 @@ impl Example {
         name: &[u8],
         refresher: &mut Progress,
         progress: &mut ProgressNode,
-    ) -> Result<MutableString, bun_core::Error> {
+    ) -> crate::Result<MutableString> {
         progress.name = b"Fetching package.json";
         refresher.refresh();
 
@@ -2421,12 +2439,12 @@ impl Example {
         let mut response = async_http.send_sync()?;
 
         match response.status_code {
-            404 => return Err(bun_core::err!("ExampleNotFound")),
-            403 => return Err(bun_core::err!("HTTPForbidden")),
-            429 => return Err(bun_core::err!("HTTPTooManyRequests")),
-            499..=599 => return Err(bun_core::err!("NPMIsDown")),
+            404 => return Err(crate::Error::ExampleNotFound),
+            403 => return Err(crate::Error::HTTPForbidden),
+            429 => return Err(crate::Error::HTTPTooManyRequests),
+            499..=599 => return Err(crate::Error::NPMIsDown),
             200 => {}
-            _ => return Err(bun_core::err!("HTTPError")),
+            _ => return Err(crate::Error::HTTPError),
         }
 
         progress.name = b"Parsing package.json";
@@ -2537,7 +2555,7 @@ impl Example {
         ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
         progress_node: Option<&mut ProgressNode>,
-    ) -> Result<Box<[Example]>, bun_core::Error> {
+    ) -> crate::Result<Box<[Example]>> {
         let url = URL::parse(Self::EXAMPLES_URL);
         let http_proxy = env_loader.get_http_proxy_for(&url);
 
@@ -2564,7 +2582,7 @@ impl Example {
         let response = match async_http.send_sync() {
             Ok(r) => r,
             Err(err) => {
-                if err == bun_core::err!("WouldBlock") {
+                if err.name() == "EAGAIN" {
                     bun_core::pretty_errorln!(
                         "Request timed out while trying to fetch examples list. Please try again",
                     );
@@ -2643,6 +2661,14 @@ impl Example {
                         .expect("infallible: variant checked")
                         .data
                         .slice();
+                    let string_prop = |key: &[u8]| -> &'static [u8] {
+                        property
+                            .value
+                            .and_then(|v| v.as_property(key))
+                            .and_then(|q| q.expr.data.e_string())
+                            .map(|s| s.data.slice())
+                            .unwrap_or(b"")
+                    };
                     list[i] = Example {
                         name: if let Some(slash) =
                             bun_core::strings::index_of_char_usize(name, b'/')
@@ -2651,28 +2677,8 @@ impl Example {
                         } else {
                             name
                         },
-                        version: property
-                            .value
-                            .unwrap()
-                            .as_property(b"version")
-                            .unwrap()
-                            .expr
-                            .data
-                            .e_string()
-                            .unwrap()
-                            .data
-                            .slice(),
-                        description: property
-                            .value
-                            .unwrap()
-                            .as_property(b"description")
-                            .unwrap()
-                            .expr
-                            .data
-                            .e_string()
-                            .unwrap()
-                            .data
-                            .slice(),
+                        version: string_prop(b"version"),
+                        description: string_prop(b"description"),
                         local: false,
                     };
                 }
@@ -2691,7 +2697,7 @@ impl Example {
 pub(crate) struct CreateListExamplesCommand;
 
 impl CreateListExamplesCommand {
-    pub(crate) fn exec(ctx: &Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: &Command::Context) -> crate::Result<()> {
         let filesystem = fs::FileSystem::init(None)?;
         let mut env_loader: DotEnv::Loader =
             { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
@@ -2789,7 +2795,7 @@ impl GitHandler {
 
     pub(crate) fn wait() -> bool {
         while SUCCESS.load(Ordering::Acquire) == 0 {
-            let _ = Futex::wait(&SUCCESS, 0, Some(1000));
+            Futex::wait_forever(&SUCCESS, 0);
         }
 
         let outcome = SUCCESS.load(Ordering::Acquire) == 1;
@@ -2798,10 +2804,7 @@ impl GitHandler {
         outcome
     }
 
-    pub(crate) fn run<const VERBOSE: bool>(
-        destination: &[u8],
-        path: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    pub(crate) fn run<const VERBOSE: bool>(destination: &[u8], path: &[u8]) -> crate::Result<bool> {
         let git_start = bun_core::time::nano_timestamp();
 
         // Not sure why...

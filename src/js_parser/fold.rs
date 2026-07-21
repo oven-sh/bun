@@ -148,9 +148,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 Some(loc_ref) => loc_ref.ref_,
                                 None => {
                                     // Generate a new import item symbol in the module scope
-                                    let new_ref = p
-                                        .new_symbol(js_ast::symbol::Kind::Import, name)
-                                        .expect("unreachable");
+                                    let new_ref = p.new_symbol(js_ast::symbol::Kind::Import, name);
                                     let new_item = LocRef {
                                         loc: name_loc,
                                         ref_: new_ref,
@@ -393,9 +391,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         format!("${}", bun_core::fmt::fmt_identifier(name))
                                             .as_bytes(),
                                     );
-                                    let new_ref = p
-                                        .new_symbol(js_ast::symbol::Kind::Other, sym_name)
-                                        .expect("unreachable");
+                                    let new_ref =
+                                        p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
                                     // SAFETY: module_scope is arena-owned and valid for 'a.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
                                     p.commonjs_named_exports
@@ -622,9 +619,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             format!("${}", bun_core::fmt::fmt_identifier(name))
                                                 .as_bytes(),
                                         );
-                                        let new_ref = p
-                                            .new_symbol(js_ast::symbol::Kind::Other, sym_name)
-                                            .expect("unreachable");
+                                        let new_ref =
+                                            p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
                                         // SAFETY: module_scope is arena-owned and valid for 'a.
                                         VecExt::append(
                                             &mut p.module_scope_mut().generated,
@@ -809,7 +805,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, bun_core::Error> {
+    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::Error> {
         let p = self;
         let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
             E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
@@ -835,7 +831,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, bun_core::Error> {
+    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, crate::Error> {
         let p = self;
         let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p

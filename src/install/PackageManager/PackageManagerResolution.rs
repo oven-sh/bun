@@ -46,7 +46,7 @@ pub fn get_installed_versions_from_disk_cache(
     this: &mut PackageManager,
     tags_buf: &mut Vec<u8>,
     package_name: &[u8],
-) -> Result<Vec<semver::Version>, bun_core::Error> {
+) -> crate::Result<Vec<semver::Version>> {
     this.get_installed_versions_from_disk_cache(tags_buf, package_name)
 }
 
@@ -142,20 +142,20 @@ impl PackageManager {
         &mut self,
         tags_buf: &mut Vec<u8>,
         package_name: &[u8],
-    ) -> Result<Vec<semver::Version>, bun_core::Error> {
+    ) -> crate::Result<Vec<semver::Version>> {
         let mut list: Vec<semver::Version> = Vec::new();
         let cache_dir = super::get_cache_directory(self);
         let dir = match bun_sys::Dir::borrow(&cache_dir)
             .open_at(package_name)
-            .map_err(bun_core::Error::from)
+            .map_err(crate::Error::from)
         {
             Ok(d) => d,
-            Err(e)
-                if e == bun_core::err!("FileNotFound")
-                    || e == bun_core::err!("NotDir")
-                    || e == bun_core::err!("AccessDenied")
-                    || e == bun_core::err!("DeviceBusy") =>
-            {
+            Err(
+                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                | crate::Error::DeviceBusy,
+            ) => {
                 return Ok(list);
             }
             Err(e) => return Err(e),
@@ -298,13 +298,11 @@ impl PackageManager {
 
     pub fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-            );
-            debug_assert!((package_id as usize) < self.lockfile.packages.len());
-            // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
-        }
+        debug_assert!(
+            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
+        );
+        debug_assert!((package_id as usize) < self.lockfile.packages.len());
+        // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();
@@ -319,16 +317,14 @@ impl PackageManager {
 
     pub fn assign_root_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-            );
-            debug_assert!((package_id as usize) < self.lockfile.packages.len());
-            debug_assert!(
-                self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
-                    == invalid_package_id
-            );
-        }
+        debug_assert!(
+            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
+        );
+        debug_assert!((package_id as usize) < self.lockfile.packages.len());
+        debug_assert!(
+            self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
+                == invalid_package_id
+        );
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();

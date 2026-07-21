@@ -30,9 +30,10 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <stdint.h>
 #include <errno.h>
 #include <string.h> // memset
+#include <mimalloc.h>
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout);
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -101,23 +102,12 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
     p->state.poll_type = poll_type | (p->state.poll_type & POLL_TYPE_POLLING_MASK);
 }
 
-/* Timer */
-void *us_timer_ext(struct us_timer_t *timer) {
-    return ((struct us_internal_callback_t *) timer) + 1;
-}
-
-struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
-    struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) t;
-
-    return internal_cb->loop;
-}
-
-
 #if defined(LIBUS_USE_EPOLL)
 
 #include <sys/syscall.h>
 #include <signal.h>
 #include <errno.h>
+#include <limits.h>
 
 static int has_epoll_pwait2 = -1;
 
@@ -137,10 +127,31 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     sigset_t mask;
     sigemptyset(&mask);
 
+    /* For a finite non-zero timeout, track an absolute monotonic deadline so
+     * EINTR retries wait for the remaining time (signal(7): epoll_*wait is
+     * never restarted by SA_RESTART). NULL and {0,0} are idempotent on retry. */
+    uint64_t deadline_ns = 0;
+    const int has_deadline = timeout && (timeout->tv_sec | timeout->tv_nsec);
+    if (has_deadline) {
+        deadline_ns = us_internal_monotonic_ns()
+                    + (uint64_t) timeout->tv_sec * 1000000000ULL
+                    + (uint64_t) timeout->tv_nsec;
+    }
+
     if (has_epoll_pwait2 != 0) {
-        do {
-            ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
-        } while (ret == -EINTR);
+        struct timespec remaining_ts;
+        const struct timespec *remaining = timeout;
+        for (;;) {
+            ret = sys_epoll_pwait2(epfd, events, maxevents, remaining, &mask);
+            if (LIKELY(ret != -EINTR)) break;
+            if (!has_deadline) continue;
+            uint64_t now = us_internal_monotonic_ns();
+            if (now >= deadline_ns) return 0;
+            uint64_t left = deadline_ns - now;
+            remaining_ts.tv_sec  = (time_t) (left / 1000000000ULL);
+            remaining_ts.tv_nsec = (long)   (left % 1000000000ULL);
+            remaining = &remaining_ts;
+        }
 
         if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP && ret != -EACCES && ret != -EFAULT)) {
             return ret;
@@ -149,19 +160,63 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
         has_epoll_pwait2 = 0;
     }
 
-    int timeoutMs = -1;
-    if (timeout) {
-        timeoutMs = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
+    /* epoll_pwait(2) takes an int millisecond timeout; epoll_pwait2(2) takes a
+     * timespec (since Linux 5.11). Round the ns remainder UP so a sub-ms delta
+     * waits 1 ms instead of truncating to 0 and busy-spinning. */
+    int timeoutMs;
+    if (!timeout) {
+        timeoutMs = -1;
+    } else {
+        uint64_t ns = (uint64_t) timeout->tv_sec * 1000000000ULL + (uint64_t) timeout->tv_nsec;
+        uint64_t ms = (ns + 999999ULL) / 1000000ULL;
+        timeoutMs = ms > (uint64_t) INT_MAX ? INT_MAX : (int) ms;
     }
 
-    do {
+    for (;;) {
         ret = epoll_pwait(epfd, events, maxevents, timeoutMs, &mask);
-    } while (IS_EINTR(ret));
+        if (!IS_EINTR(ret)) break;
+        if (!has_deadline) continue;
+        uint64_t now = us_internal_monotonic_ns();
+        if (now >= deadline_ns) return 0;
+        uint64_t left_ns = deadline_ns - now;
+        uint64_t left_ms = (left_ns + 999999ULL) / 1000000ULL;
+        timeoutMs = left_ms > (uint64_t) INT_MAX ? INT_MAX : (int) left_ms;
+    }
 
     return ret;
 }
 
 extern int Bun__isEpollPwait2SupportedOnLinuxKernel();
+
+#else
+
+/* kevent(2) returns EINTR when a signal is caught (XNU kqueue_scan returns
+ * EINTR on THREAD_INTERRUPTED; FreeBSD kqueue_scan maps ERESTART->EINTR), so
+ * retry with the remaining time against an absolute monotonic deadline. */
+static int bun_kevent64_wait(int kqfd, struct kevent64_s *eventlist, int nevents, unsigned int flags, const struct timespec *timeout) {
+    int ret;
+    uint64_t deadline_ns = 0;
+    const int has_deadline = timeout && (timeout->tv_sec | timeout->tv_nsec);
+    if (has_deadline) {
+        deadline_ns = us_internal_monotonic_ns()
+                    + (uint64_t) timeout->tv_sec * 1000000000ULL
+                    + (uint64_t) timeout->tv_nsec;
+    }
+
+    struct timespec remaining_ts;
+    const struct timespec *remaining = timeout;
+    for (;;) {
+        ret = kevent64(kqfd, NULL, 0, eventlist, nevents, flags, remaining);
+        if (!IS_EINTR(ret)) return ret;
+        if (!has_deadline) continue;
+        uint64_t now = us_internal_monotonic_ns();
+        if (now >= deadline_ns) return 0;
+        uint64_t left = deadline_ns - now;
+        remaining_ts.tv_sec  = (time_t) (left / 1000000000ULL);
+        remaining_ts.tv_nsec = (long)   (left % 1000000000ULL);
+        remaining = &remaining_ts;
+    }
+}
 
 #endif
 
@@ -243,9 +298,9 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         const uint16_t flags = loop->ready_polls[i].flags;
         struct kevent_flags bits = {
 #if defined(__APPLE__)
-            .readable = (filter == EVFILT_READ || filter == EVFILT_TIMER || filter == EVFILT_MACHPORT),
+            .readable = (filter == EVFILT_READ || filter == EVFILT_MACHPORT),
 #else
-            .readable = (filter == EVFILT_READ || filter == EVFILT_TIMER || filter == EVFILT_USER),
+            .readable = (filter == EVFILT_READ || filter == EVFILT_USER),
 #endif
             .writable = (filter == EVFILT_WRITE),
             .error = !!(flags & EV_ERROR),
@@ -320,26 +375,43 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     }
 }
 
-void us_loop_run(struct us_loop_t *loop) {
-    us_loop_integrate(loop);
+/* Bound `timeout` by the socket-timeout sweep deadline (NULL == forever). */
+static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
+    long long ns = us_internal_sweep_timeout_ns(loop);
+    if (ns < 0) {
+        return timeout;
+    }
+    long long sweep_sec = ns / 1000000000LL;
+    long long sweep_nsec = ns % 1000000000LL;
+    if (timeout && (timeout->tv_sec < sweep_sec ||
+                    (timeout->tv_sec == sweep_sec && timeout->tv_nsec <= sweep_nsec))) {
+        return timeout;
+    }
+    storage->tv_sec = (time_t) sweep_sec;
+    storage->tv_nsec = (long) sweep_nsec;
+    return storage;
+}
 
+void us_loop_run(struct us_loop_t *loop) {
     /* While we have non-fallthrough polls we shouldn't fall through */
     while (loop->num_polls) {
         loop->data.tick_depth++;
         /* Emit pre callback */
         us_internal_loop_pre(loop);
 
+        struct timespec sweep_ts;
+        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
+
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, NULL);
+        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
 #else
-        do {
-            loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, NULL);
-        } while (IS_EINTR(loop->num_ready_polls));
+        loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, timeout);
 #endif
 
         us_internal_dispatch_ready_polls(loop);
         us_internal_drain_ready_polls(loop);
+        us_internal_sweep_if_due(loop);
 
         /* Emit post callback */
         us_internal_loop_post(loop);
@@ -347,21 +419,13 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
+extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
         return;
 
     loop->data.tick_depth++;
-
-    struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
-
-    // Only integrate the loop if we haven't already.
-    // Otherwise we will keep restarting the timer.
-    if(!timer_callback->cb) {
-        us_loop_integrate(loop);
-    }
 
     /* Emit pre callback */
     us_internal_loop_pre(loop);
@@ -381,10 +445,32 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
+    struct timespec sweep_ts;
+    timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts);
+
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
+    /* `now_ns` is the reading the JS side took to pick `timeout`
+     * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
+     * if it had none to share. Nothing measures a deadline against it. */
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
+
+    /* The scavenger sweeps our heaps while we are in the kernel. Must come after
+     * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
+     * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
+     * With no scavenger to hand off to, fall back to sweeping inline -- but only on a tick that
+     * really parks, and rate-limited, because doing it between ticks is what we are avoiding. */
+    const int handed_off = mi_on_thread_idle_start();
+    if (!handed_off && will_idle_inside_event_loop) {
+        static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
+        static _Thread_local uint64_t last_idle_sweep_ns = 0;
+        const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
+        if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
+            last_idle_sweep_ns = sweep_now_ns;
+            mi_on_thread_idle();
+        }
+    }
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -393,21 +479,24 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
 #else
-    do {
-        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS,
-            /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
-             * In XNU's kqueue_scan (bsd/kern/kern_event.c):
-             *  - KEVENT_FLAG_IMMEDIATE: returns immediately after kqueue_process() (line 8031)
-             *  - Zero timespec without the flag: falls through to assert_wait_deadline (line 8039)
-             *    and thread_block (line 8048), doing a full context switch cycle (~14us) even
-             *    though the deadline is already in the past. */
-            will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
-            timeout);
-    } while (IS_EINTR(loop->num_ready_polls));
+    loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS,
+        /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
+         * In XNU's kqueue_scan (bsd/kern/kern_event.c):
+         *  - KEVENT_FLAG_IMMEDIATE: returns immediately after kqueue_process() (line 8031)
+         *  - Zero timespec without the flag: falls through to assert_wait_deadline (line 8039)
+         *    and thread_block (line 8048), doing a full context switch cycle (~14us) even
+         *    though the deadline is already in the past. */
+        will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
+        timeout);
 #endif
+
+    /* Before anything can allocate again. */
+    if (handed_off)
+        mi_on_thread_idle_end();
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);
+    us_internal_sweep_if_due(loop);
 
     /* Emit post callback */
     us_internal_loop_post(loop);
@@ -595,122 +684,10 @@ size_t us_internal_accept_poll_event(struct us_poll_t *p) {
     } while (IS_EINTR(read_length));
     return buf;
 #else
-    /* Kqueue has no underlying FD for timers or user events */
+    /* Kqueue has no underlying FD for user events */
     return 0;
 #endif
 }
-
-/* Timer */
-#ifdef LIBUS_USE_EPOLL
-struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
-    struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_internal_callback_t) + ext_size);
-    memset(p, 0, sizeof(struct us_internal_callback_t) + ext_size);
-    int timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-    if (timerfd == -1) {
-      return NULL;
-    }
-    us_poll_init(p, timerfd, POLL_TYPE_CALLBACK);
-
-    struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
-    cb->loop = loop;
-    cb->cb_expects_the_loop = 0;
-    cb->leave_poll_ready = 0;
-    cb->has_added_timer_to_event_loop = 0;
-
-    return (struct us_timer_t *) cb;
-}
-#else
-struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
-    struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
-
-    cb->loop = loop;
-    cb->cb_expects_the_loop = 0;
-    cb->leave_poll_ready = 0;
-
-    /* Bug: us_internal_poll_set_type does not SET the type, it only CHANGES it */
-    cb->p.state.poll_type = POLL_TYPE_POLLING_IN;
-    us_internal_poll_set_type((struct us_poll_t *) cb, POLL_TYPE_CALLBACK);
-
-    if (!fallthrough) {
-        loop->num_polls++;
-    }
-
-    return (struct us_timer_t *) cb;
-}
-#endif
-
-#ifdef LIBUS_USE_EPOLL
-void us_timer_close(struct us_timer_t *timer, int fallthrough) {
-    struct us_internal_callback_t *cb = (struct us_internal_callback_t *) timer;
-
-    us_poll_stop(&cb->p, cb->loop);
-    close(us_poll_fd(&cb->p));
-
-     /* (regular) sockets are the only polls which are not freed immediately */
-    if(fallthrough){
-        us_free(timer);
-    }else {
-        us_poll_free((struct us_poll_t *) timer, cb->loop);
-    }
-}
-
-void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms, int repeat_ms) {
-    struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) t;
-
-    internal_cb->cb = (void (*)(struct us_internal_callback_t *)) cb;
-
-    struct itimerspec timer_spec = {
-        {repeat_ms / 1000, (long) (repeat_ms % 1000) * (long) 1000000},
-        {ms / 1000, (long) (ms % 1000) * (long) 1000000}
-    };
-
-    timerfd_settime(us_poll_fd((struct us_poll_t *) t), 0, &timer_spec, NULL);
-
-    // Avoid the system call overhead of re-adding this timer to the event loop only to receive EEXIST
-    if (internal_cb->loop->data.sweep_timer == t) {
-        if (internal_cb->has_added_timer_to_event_loop) {
-            return;
-        }
-        internal_cb->has_added_timer_to_event_loop = 1;
-    }
-    us_poll_start((struct us_poll_t *) t, internal_cb->loop, LIBUS_SOCKET_READABLE);
-}
-#else
-void us_timer_close(struct us_timer_t *timer, int fallthrough) {
-    struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) timer;
-
-    struct kevent64_s event;
-    EV_SET64(&event, (uint64_t) (void*) internal_cb, EVFILT_TIMER, EV_DELETE, 0, 0, (uint64_t)internal_cb, 0, 0);
-    int ret;
-    do {
-        ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
-    } while (IS_EINTR(ret));
-
-
-    /* (regular) sockets are the only polls which are not freed immediately */
-    if(fallthrough){
-        us_free(timer);
-    }else {
-        us_poll_free((struct us_poll_t *) timer, internal_cb->loop);
-    }
-}
-
-void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms, int repeat_ms) {
-    struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) t;
-
-    internal_cb->cb = (void (*)(struct us_internal_callback_t *)) cb;
-
-    /* Bug: repeat_ms must be the same as ms, or 0 */
-    struct kevent64_s event;
-    uint64_t ptr = (uint64_t)(void*)internal_cb;
-    EV_SET64(&event, ptr, EVFILT_TIMER, EV_ADD | (repeat_ms ? 0 : EV_ONESHOT), 0, ms, (uint64_t)internal_cb, 0, 0);
-
-    int ret;
-    do {
-        ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
-    } while (IS_EINTR(ret));
-}
-#endif
 
 /* Async (internal helper for loop's wakeup feature) */
 #ifdef LIBUS_USE_EPOLL

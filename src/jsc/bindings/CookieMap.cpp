@@ -194,9 +194,10 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
     String name = options.name;
     String domain = options.domain;
     String path = options.path;
+    bool secure = name.startsWithIgnoringASCIICase("__Secure-"_s) || name.startsWithIgnoringASCIICase("__Host-"_s);
 
     // Add the new cookie
-    auto cookie_exception = Cookie::create(name, ""_s, domain, path, 1, false, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
+    auto cookie_exception = Cookie::create(name, ""_s, domain, path, 1, secure, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
     if (cookie_exception.hasException()) {
         return cookie_exception.releaseException();
     }

@@ -602,6 +602,149 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
     // with the fix, bun exits cleanly on its own; on hang, Bun.spawn's
     // timeout kills the child with SIGTERM.
     expect(proc.signalCode).toBeNull();
+    // The exact message matters: it used to leak a literal "<r>" markup tag
+    // ("Integrity check failed<r> for tarball: ...").
+    expect(stderr + stdout).toContain("Integrity check failed for tarball: pkg");
+    expect(stderr + stdout).not.toContain("<r>");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+describe.concurrent("tarball integrity metadata forms", () => {
+  function octal(n: number, width: number) {
+    return n.toString(8).padStart(width - 1, "0") + "\0";
+  }
+  function tarHeader(name: string, size: number) {
+    const buf = Buffer.alloc(512, 0);
+    buf.write(name, 0, 100, "utf8");
+    buf.write(octal(0o644, 8), 100);
+    buf.write(octal(0, 8), 108);
+    buf.write(octal(0, 8), 116);
+    buf.write(octal(size, 12), 124);
+    buf.write(octal(0, 12), 136);
+    buf.fill(" ", 148, 156);
+    buf.write("0", 156);
+    buf.write("ustar\0", 257);
+    buf.write("00", 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += buf[i];
+    buf.write(octal(sum, 8), 148);
+    return buf;
+  }
+  function buildTarball(body: Buffer) {
+    const tar = Buffer.concat([
+      tarHeader("package/package.json", body.length),
+      body,
+      Buffer.alloc((512 - (body.length % 512)) % 512, 0),
+      Buffer.alloc(1024, 0),
+    ]);
+    const tgz = gzipSync(tar);
+    return {
+      tgz,
+      sha512: "sha512-" + createHash("sha512").update(tgz).digest("base64"),
+      sha384: "sha384-" + createHash("sha384").update(tgz).digest("base64"),
+    };
+  }
+  function serveManifest(integrity: string, tgz: Buffer) {
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith("/pkg")) {
+          return Response.json({
+            name: "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "pkg",
+                version: "1.0.0",
+                dist: {
+                  integrity,
+                  tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz`,
+                },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith("/pkg-1.0.0.tgz")) {
+          return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    return server;
+  }
+  function projectDir(name: string, port: number) {
+    return tempDir(name, {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { pkg: "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${port}/"\n`,
+    });
+  }
+
+  it("verifies the tarball against the strongest entry of a multi-hash integrity string", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest(`${other.sha512} ${real.sha384}`, real.tgz);
+    using dir = projectDir("integrity-multi-hash", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).toContain("Integrity check failed");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+
+  it("records the strongest entry of a multi-hash integrity string in the lockfile", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest(`${real.sha512} ${other.sha384}`, real.tgz);
+    using dir = projectDir("integrity-multi-hash-lock", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("1 package installed");
+    const lockContent = await file(join(String(dir), "bun.lock")).text();
+    const integrityMatch = lockContent.match(/"(sha\d+-[A-Za-z0-9+/]+=*)"/);
+    expect(integrityMatch).not.toBeNull();
+    expect(integrityMatch![1]).toBe(real.sha512);
+    expect(exitCode).toBe(0);
+  });
+
+  it("verifies the tarball when the integrity entry carries an option suffix", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest(`${other.sha512}?vcs=git`, real.tgz);
+    using dir = projectDir("integrity-option-suffix", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
     expect(stderr + stdout).toContain("Integrity check failed");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);

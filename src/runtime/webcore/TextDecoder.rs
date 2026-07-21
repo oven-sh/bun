@@ -236,6 +236,7 @@ impl TextDecoder {
         // Hoisted out of the labeled block — `ArrayBuffer::slice` borrows from
         // the by-value `ArrayBuffer`, so it must outlive the `'input_slice` block.
         let array_buffer;
+        let owned_input;
         let input_slice: &[u8] = 'input_slice: {
             if arguments.is_empty() || arguments[0].is_undefined() {
                 break 'input_slice b"";
@@ -243,6 +244,10 @@ impl TextDecoder {
 
             if let Some(ab) = arguments[0].as_array_buffer(global_this) {
                 array_buffer = ab;
+                if array_buffer.shared || array_buffer.resizable {
+                    owned_input = Box::<[u8]>::from(array_buffer.slice());
+                    break 'input_slice &owned_input;
+                }
                 break 'input_slice array_buffer.slice();
             }
 
@@ -278,7 +283,16 @@ impl TextDecoder {
         if !self.do_not_flush.replace(false) {
             self.bom_seen.set(false);
         }
-        self.decode_slice::<true>(global_this, uint8array.slice())
+        let owned_input;
+        let input_slice: &[u8] =
+            match JSValue::from_cell::<JSUint8Array>(uint8array).as_array_buffer(global_this) {
+                Some(array_buffer) if array_buffer.shared || array_buffer.resizable => {
+                    owned_input = Box::<[u8]>::from(array_buffer.slice());
+                    &owned_input
+                }
+                _ => uint8array.slice(),
+            };
+        self.decode_slice::<true>(global_this, input_slice)
     }
 
     fn decode_slice<const FLUSH: bool>(
@@ -591,8 +605,32 @@ impl TextDecoder {
             // default to utf-8
             decoder.encoding = EncodingLabel::Utf8;
         } else {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("TextDecoder(encoding) label is invalid",)));
+            // WebIDL DOMString coercion: any other label value is stringified
+            // and then looked up, so `1` or `{}` reports the same
+            // ERR_ENCODING_NOT_SUPPORTED an unknown string label does.
+            // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl, so the +1
+            // ref `from_js` returns has to be wrapped to deref on scope exit.
+            let converted =
+                OwnedString::new(bun_core::String::from_js(encoding_value, global_this)?);
+            let str = converted.to_utf8();
+
+            // Same rule as the string branch above: "If encoding is failure or
+            // replacement, then throw a RangeError."
+            if let Some(label) = EncodingLabel::which(str.slice())
+                && label != EncodingLabel::Replacement
+            {
+                decoder.encoding = label;
+            } else {
+                return Err(global_this
+                    .err(
+                        jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
+                        format_args!(
+                            "Unsupported encoding label \"{}\"",
+                            bstr::BStr::new(str.slice())
+                        ),
+                    )
+                    .throw());
+            }
         }
 
         if !options_value.is_undefined() {

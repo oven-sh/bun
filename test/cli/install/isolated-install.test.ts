@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readlinkSync } from "fs";
+import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { dirname, join } from "path";
@@ -622,6 +622,107 @@ describe("optional peers", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/28147
+test("patched package shared by multiple peer variants is materialized into the cache once", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  // `peer-deps@1.0.0` has `peerDependencies: { "no-deps": "*" }`. Giving each
+  // workspace a different `no-deps` version forces one isolated store variant
+  // of `peer-deps` per workspace, all sharing one patched cache directory.
+  const noDepsVersions = ["1.0.0", "1.0.1", "1.1.0", "2.0.0"];
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "patched-peer-variants",
+      workspaces: ["packages/*"],
+      patchedDependencies: {
+        "peer-deps@1.0.0": "patches/peer-deps@1.0.0.patch",
+      },
+    }),
+  );
+  await write(
+    join(packageDir, "patches", "peer-deps@1.0.0.patch"),
+    `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`,
+  );
+  for (const version of noDepsVersions) {
+    await write(
+      join(packageDir, "packages", `pkg-${version}`, "package.json"),
+      JSON.stringify({
+        name: `pkg-${version}`,
+        version: "1.0.0",
+        dependencies: {
+          "peer-deps": "1.0.0",
+          "no-deps": version,
+        },
+      }),
+    );
+  }
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides bunfig's `cache`. Pin it
+  // so the patched cache directory is created where the assertions look.
+  const cacheDir = join(packageDir, ".bun-cache");
+
+  // Force the hardlink backend so the inode assertions below hold on every
+  // platform (macOS defaults to clonefile, which copies).
+  async function install() {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--backend", "hardlink"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("packages installed");
+    expect(exitCode).toBe(0);
+  }
+
+  async function checkInstall() {
+    const storeDirs = (await readdirSorted(join(packageDir, "node_modules", ".bun"))).filter(dir =>
+      dir.startsWith("peer-deps@1.0.0"),
+    );
+    expect(storeDirs.length).toBe(noDepsVersions.length);
+
+    // Exactly one patched cache directory exists for the package.
+    const cacheDirs = (await readdirSorted(cacheDir)).filter(
+      dir => dir.startsWith("peer-deps@1.0.0") && dir.includes("_patch_hash="),
+    );
+    expect(cacheDirs.length).toBe(1);
+    const cacheFile = join(cacheDir, cacheDirs[0], "index.js");
+
+    // The patch is applied in every variant, and every variant is hardlinked
+    // from the single patched cache materialization. Before the fix each
+    // variant re-applied the patch, replacing the shared cache directory the
+    // previous variant was concurrently hardlinking from (EPERM on Windows,
+    // divergent inodes on POSIX).
+    const inodes = new Set<number>();
+    for (const storeDir of storeDirs) {
+      const pkgDir = join(packageDir, "node_modules", ".bun", storeDir, "node_modules", "peer-deps");
+      expect(await file(join(pkgDir, "patched.txt")).text()).toBe("hello world\n");
+      inodes.add(statSync(join(pkgDir, "index.js")).ino);
+    }
+    inodes.add(statSync(cacheFile).ino);
+    expect(inodes.size).toBe(1);
+  }
+
+  await install();
+  await checkInstall();
+
+  // Reinstall with a warm cache and no node_modules: the patched cache
+  // directory already exists and must not be rebuilt per variant.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await install();
+  await checkInstall();
+});
+
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
@@ -733,6 +834,229 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
     });
   });
 }
+
+test("ranged peer dependency resolution is stable across installs from bun.lock", async () => {
+  // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. The graph contains both
+  // no-deps@1.0.1 (exact pin via normal-dep-and-dev-dep, hoisted to the root
+  // of the saved tree) and no-deps@1.1.0 (via two-range-deps). The fresh
+  // resolve binds the peer edge to the highest satisfying version (1.1.0) in
+  // its deferred-peer phase; reloading bun.lock used to re-derive the edge
+  // from the saved tree paths instead, rebinding it to the hoisted 1.0.1.
+  // That silently changed the runtime dependency tree on the second install
+  // and re-keyed the isolated store entry (`+<peer hash>` suffix) on every
+  // warm install.
+  const { packageJson, packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "stable-ranged-peers",
+      dependencies: {
+        "peer-deps-fixed": "1.0.0",
+        "normal-dep-and-dev-dep": "1.0.0",
+        "two-range-deps": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  // highest satisfying ^1.0.0 in the graph; `toContain` prints the full
+  // listing when the entry is missing or keyed with a different peer hash
+  const entryName = "peer-deps-fixed@1.0.0+7ff199101204a65d";
+  expect(await readdirSorted(bunDir)).toContain(entryName);
+  expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.1.0",
+  });
+
+  // reinstall from bun.lock: same peer variant, same resolved version
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual([entryName]);
+  expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.1.0",
+  });
+});
+
+test("aliased peer dependency binds to its real package across installs from bun.lock", async () => {
+  // The peer alias `no-deps` points at `npm:a-dep@^1.0.2` while the real
+  // no-deps package (in two versions) is also in the graph. Loading bun.lock
+  // must look the edge up under the aliased *real* name (a-dep) the way the
+  // fresh resolver does; a lookup under the alias would find the real
+  // no-deps packages, whose versions also satisfy ^1.0.2, and rebind the
+  // edge to the wrong package.
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "aliased-peer-root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "normal-dep-and-dev-dep": "1.0.0",
+          "two-range-deps": "1.0.0",
+        },
+      }),
+      "packages/m/package.json": JSON.stringify({
+        name: "m",
+        version: "1.0.0",
+        peerDependencies: { "no-deps": "npm:a-dep@^1.0.2" },
+      }),
+    },
+  });
+
+  await runBunInstall(bunEnv, packageDir);
+  const aliasLink = join(packageDir, "packages", "m", "node_modules", "no-deps", "package.json");
+  const fresh = await file(aliasLink).json();
+  expect(fresh).toMatchObject({ name: "a-dep" });
+
+  // reinstall from bun.lock: still the aliased package, same version
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "packages", "m", "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  expect(await file(aliasLink).json()).toEqual(fresh);
+});
+
+test("optional ranged peer keeps its hoisted-tree binding across installs from bun.lock", async () => {
+  // Optional peers never reach the fresh resolver's deferred-peer phase: it
+  // returns before the version scan and the edge is bound to the
+  // hoisted-tree sibling during tree resolution, which the printed tree's
+  // path walk reproduces exactly. With both no-deps@1.0.1 and no-deps@1.1.0
+  // in the graph, binding the optional peer by version on load would pick
+  // the highest satisfying (1.1.0) while the fresh install bound the hoisted
+  // 1.0.1, re-keying the entry on the first reinstall.
+  const { packageJson, packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "stable-optional-peers",
+      dependencies: {
+        "one-optional-peer-dep": "1.0.2",
+        "normal-dep-and-dev-dep": "1.0.0",
+        "two-range-deps": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const freshEntries = (await readdirSorted(bunDir)).filter(e => e.startsWith("one-optional-peer-dep@"));
+  expect(freshEntries).toHaveLength(1);
+  // the hoisted candidate, not the highest satisfying (1.1.0)
+  expect(await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.1",
+  });
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect((await readdirSorted(bunDir)).filter(e => e.startsWith("one-optional-peer-dep@"))).toEqual(freshEntries);
+  expect(await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.1",
+  });
+});
+
+test("overridden peer dependency keeps the override across installs from bun.lock", async () => {
+  // `overrides` rewrites the peer range before the fresh resolver's version
+  // scan, binding the peer to no-deps@1.0.1 even though the graph also
+  // contains no-deps@1.1.0 (via an override-exempt npm: alias). Loading
+  // bun.lock must not re-filter candidates with the raw ^1.0.0 manifest
+  // range, which the override replaced; that would rebind the edge to 1.1.0
+  // and re-key the entry on the first reinstall.
+  const { packageJson, packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "stable-overridden-peers",
+      dependencies: {
+        "peer-deps-fixed": "1.0.0",
+        "nd11": "npm:no-deps@1.1.0",
+        // provides no-deps@1.0.1 so the overridden peer range resolves to an
+        // installed package
+        "normal-dep-and-dev-dep": "1.0.0",
+      },
+      overrides: { "no-deps": "1.0.1" },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const entryName = "peer-deps-fixed@1.0.0+f8a822eca018d0a1";
+  // the override-exempt alias keeps the competing 1.1.0 candidate in the graph
+  const aliasManifest = join(packageDir, "node_modules", "nd11", "package.json");
+  expect(await file(aliasManifest).json()).toMatchObject({ name: "no-deps", version: "1.1.0" });
+  expect(await readdirSorted(bunDir)).toContain(entryName);
+  expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.1",
+  });
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect(await file(aliasManifest).json()).toMatchObject({ name: "no-deps", version: "1.1.0" });
+  expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual([entryName]);
+  expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.1",
+  });
+});
+
+test("peer satisfied by a workspace package keeps the workspace across installs from bun.lock", async () => {
+  // The fresh resolver binds an npm-range peer to a same-named workspace
+  // package before any deferral when linkWorkspacePackages is on and the
+  // workspace version satisfies the range. The graph also contains npm
+  // no-deps@1.0.1 (normal-dep-and-dev-dep's exact pin, which the workspace's
+  // 1.0.0 cannot satisfy), and that version satisfies the peer's ^1.0.0 too;
+  // loading bun.lock must not rebind the peer from the workspace to the npm
+  // package through the version scan.
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "workspace-peer-root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "normal-dep-and-dev-dep": "1.0.0",
+        },
+      }),
+      "packages/no-deps/package.json": JSON.stringify({
+        name: "no-deps",
+        version: "1.0.0",
+        workspaceMarker: true,
+      }),
+    },
+  });
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const freshEntries = (await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"));
+  expect(freshEntries).toHaveLength(1);
+  expect(await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.0",
+    workspaceMarker: true,
+  });
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual(freshEntries);
+  expect(await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.0",
+    workspaceMarker: true,
+  });
+});
 
 describe("existing node_modules, missing node_modules/.bun", () => {
   test("root and workspace node_modules are reset", async () => {
@@ -1944,6 +2268,55 @@ describe("global virtual store", () => {
     expect(existsSync(join(entry, "node_modules", "no-deps", "package.json"))).toBe(true);
   });
 
+  test("disabling the global store detaches entries on the next install", async () => {
+    // The reverse of the upgrade test above: a project installed with the
+    // global store enabled has `node_modules/.bun/<X>` symlinks into
+    // `<cache>/links/`. Re-running install with the store disabled must
+    // replace those links with real project-local directories — the
+    // warm-path existence check passes *through* a live link, so without
+    // stale-link detection the project would silently keep running against
+    // (and a later rebuild would write into) the shared store.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-disable",
+        dependencies: { "two-range-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+    const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+    const globalTarget = readlinkSync(entry);
+
+    await runBunInstall({ ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "0" }, packageDir, { savesLockfile: false });
+
+    // Every entry is detached into a real project-local directory.
+    expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(entry).isDirectory()).toBe(true);
+    const depEntry = join(packageDir, "node_modules", ".bun", "no-deps@1.1.0");
+    expect(lstatSync(depEntry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(depEntry).isDirectory()).toBe(true);
+
+    // The rebuilt project-local tree resolves, including dep links between
+    // detached entries.
+    expect(await file(join(entry, "node_modules", "two-range-deps", "package.json")).json()).toMatchObject({
+      name: "two-range-deps",
+      version: "1.0.0",
+    });
+    expect(await file(join(entry, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+    });
+    expect(await file(join(packageDir, "node_modules", "two-range-deps", "package.json")).json()).toMatchObject({
+      name: "two-range-deps",
+    });
+
+    // The shared global entry is left untouched for other projects.
+    expect(existsSync(join(globalTarget, "node_modules", "two-range-deps", "package.json"))).toBe(true);
+  });
+
   test("preserves bun patch workspace when install runs before --commit", async () => {
     // Regression: `bun patch <pkg>` detaches the project store entry from the
     // global virtual store (symlink → real directory) so the user can edit it.
@@ -2024,6 +2397,33 @@ test("rejects dependency aliases that traverse outside node_modules", async () =
   // Nothing may be created outside of node_modules. `lstatSync` instead of
   // `existsSync` because the escaped artifact would be a dangling symlink.
   expect(() => lstatSync(join(packageDir, "pwned-by-alias"))).toThrow();
+  expect(exitCode).not.toBe(0);
+});
+
+test("rejects a dependency alias with more than one path component", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-nested-alias",
+      dependencies: {
+        "somepkg/lib": "npm:no-deps@1.0.0",
+      },
+    }),
+  );
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`"somepkg/lib" is not a valid install folder name`);
+  expect(() => lstatSync(join(packageDir, "node_modules", "somepkg", "lib"))).toThrow();
   expect(exitCode).not.toBe(0);
 });
 

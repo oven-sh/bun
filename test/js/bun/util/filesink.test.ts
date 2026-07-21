@@ -207,6 +207,72 @@ it("write result is not cumulative", async () => {
   await util.promisify(fs.close)(fd);
 });
 
+// A backpressured write buffers everything `write(2)` would not take, so the
+// Promise it returns has to resolve with the chunk's own byte count. It used to
+// resolve with the partial `write(2)` return instead.
+it.skipIf(!isPosix)("a backpressured write() resolves to the chunk's byte count", async () => {
+  const [readFd, writeFd] = createSocketPair();
+  const sink = Bun.file(writeFd).writer();
+  const size = 4 * 1024 * 1024;
+  const chunk = Buffer.alloc(size, 0x61);
+
+  // Nothing drains `readFd` yet, so the socket buffers fill up and only part of
+  // the chunk reaches the fd.
+  const first = sink.write(chunk);
+
+  let received = 0;
+  const reader = (async () => {
+    for await (const part of Bun.file(readFd).stream()) received += part.byteLength;
+  })();
+
+  try {
+    expect(first).toBeInstanceOf(Promise);
+    expect(await first).toBe(size);
+
+    // The next backpressured write starts its own accounting.
+    const second = sink.write(chunk);
+    expect(second).toBeInstanceOf(Promise);
+    expect(await second).toBe(size);
+  } finally {
+    await Promise.resolve(sink.end()).catch(() => {});
+    fs.closeSync(writeFd);
+    await reader;
+    fs.closeSync(readFd);
+  }
+
+  expect(received).toBe(size * 2);
+});
+
+// Strings are buffered as UTF-8, so the count the Promise reports is the
+// encoded byte count, which is what a non-pending write() returns too.
+it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte count", async () => {
+  const [readFd, writeFd] = createSocketPair();
+  const sink = Bun.file(writeFd).writer();
+  // Latin-1 in JSC, two bytes per character once encoded.
+  const text = Buffer.alloc(2 * 1024 * 1024, "é").toString();
+  const size = Buffer.byteLength(text);
+  expect(size).toBe(text.length * 2);
+
+  const written = sink.write(text);
+
+  let received = 0;
+  const reader = (async () => {
+    for await (const part of Bun.file(readFd).stream()) received += part.byteLength;
+  })();
+
+  try {
+    expect(written).toBeInstanceOf(Promise);
+    expect(await written).toBe(size);
+  } finally {
+    await Promise.resolve(sink.end()).catch(() => {});
+    fs.closeSync(writeFd);
+    await reader;
+    fs.closeSync(readFd);
+  }
+
+  expect(received).toBe(size);
+});
+
 if (isWindows) {
   it("ENOENT, Windows", () => {
     expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(
@@ -324,7 +390,9 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
         const fs = require("fs");
         const fd = fs.openSync(${JSON.stringify(join(dir, "out.txt"))}, "w");
         const buf = Buffer.alloc(64 * 1024, 0x61);
-        for (let i = 0; i < 200; i++) {
+        // A synchronous Bun.gc() costs ~18ms under debug+ASAN; 50 rounds keeps
+        // this inside the default timeout there, and still reproduced the crash.
+        for (let i = 0; i < 50; i++) {
           const w = Bun.file(fd).writer();
           const p = w.write(buf);
           if (p && typeof p.then === "function") await p;

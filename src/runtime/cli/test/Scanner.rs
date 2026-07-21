@@ -5,7 +5,6 @@ use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
 #[cfg(not(windows))]
 use bun_core::ZStr;
-use bun_core::err;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
@@ -57,9 +56,8 @@ pub enum ScanError {
     OutOfMemory,
 }
 bun_core::oom_from_alloc!(ScanError);
-bun_core::named_error_set!(ScanError);
-impl PartialEq<bun_core::Error> for ScanError {
-    fn eq(&self, other: &bun_core::Error) -> bool {
+impl PartialEq<crate::Error> for ScanError {
+    fn eq(&self, other: &crate::Error) -> bool {
         <&'static str>::from(self) == other.name()
     }
 }
@@ -149,7 +147,7 @@ impl<'a> Scanner<'a> {
 
         if let EntriesOption::Err(root_err) = root {
             let e = root_err.original_err;
-            if e == err!("NotDir") || e == err!("ENOTDIR") {
+            if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
                 if self.is_test_file(path) {
                     let stored = self
                         .fs()
@@ -159,7 +157,7 @@ impl<'a> Scanner<'a> {
                     let rel_path = Interned::from_static(stored);
                     self.test_files.push(rel_path);
                 }
-            } else if e == err!("ENOENT") {
+            } else if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 return Err(ScanError::DoesNotExist);
             } else {
                 scoped_log!(
@@ -263,12 +261,14 @@ impl<'a> Scanner<'a> {
         &mut self,
         name: &[u8],
         handle: Option<bun_sys::Dir>,
-    ) -> Result<&'static mut EntriesOption, bun_core::Error> {
+    ) -> crate::Result<&'static mut EntriesOption> {
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
-        unsafe { &mut (*fs_ptr).fs }.read_directory_with_iterator(name, raw, 0, true, iter)
+        unsafe { &mut (*fs_ptr).fs }
+            .read_directory_with_iterator(name, raw, 0, true, iter)
+            .map_err(Into::into)
     }
 
     pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
@@ -375,11 +375,7 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(
-                        strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none()
-                    );
-                }
+                debug_assert!(strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none());
 
                 for exclude_name in self.exclusion_names {
                     if strings::eql(exclude_name, name) {

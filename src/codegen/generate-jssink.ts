@@ -208,7 +208,6 @@ extern "C" bool JSSink_isSink(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 namespace WebCore {
 using namespace JSC;
 
-JSC_DECLARE_HOST_FUNCTION(functionStartDirectStream);
 `;
 
   const bottom = `
@@ -276,7 +275,6 @@ async function implementation() {
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
-#include "JSReadableStream.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
@@ -287,66 +285,8 @@ using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
 ${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
-
-JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
-{
-    
-    auto& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-    JSC::JSValue readableStream = callFrame->argument(0);
-    JSC::JSValue onPull = callFrame->argument(1);
-    JSC::JSValue onClose = callFrame->argument(2);
-    JSC::JSValue asyncContext = callFrame->argument(3);
-
-    if (!readableStream.isObject()) {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ReadableStream"_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    if (!onPull.isObject() || !onPull.isCallable()) {
-        onPull = JSC::jsUndefined();
-    } else if (!asyncContext.isUndefined()) {
-        onPull = AsyncContextFrame::create(globalObject, onPull, asyncContext);
-    }
-
-    if (!onClose.isObject() || !onClose.isCallable()) {
-        onClose = JSC::jsUndefined();
-    } else if (!asyncContext.isUndefined()) {
-        onClose = AsyncContextFrame::create(globalObject, onClose, asyncContext);
-    }
-
 `;
   var templ = head;
-
-  var isFirst = true;
-  for (let name of classes) {
-    const { className, controller, prototypeName, controllerPrototypeName, constructor } = names(name);
-
-    templ += `
-
-    ${isFirst ? "" : "else"} if (WebCore::${controller}* ${name}Controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue())) {
-        if (${name}Controller->wrapped() == nullptr) {
-            scope.throwException(globalObject, JSC::createTypeError(globalObject, "Cannot start stream with closed controller"_s));
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        }
-
-        ${name}Controller->start(globalObject, readableStream, onPull, onClose);
-    }
-`;
-    isFirst = false;
-  }
-
-  templ += `
-    else {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Unknown direct controller. This is a bug in Bun."_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-}
-`;
 
   for (let name of classes) {
     const {

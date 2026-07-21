@@ -46,9 +46,10 @@ pub struct RuntimeDevelopmentPair {
 bun_core::comptime_string_map! {
     pub static RUNTIME_MAP: RuntimeDevelopmentPair = {
         b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: None },
         b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        // TypeScript: "react-jsx" selects jsx/jsxs (production), "react-jsxdev" selects jsxDEV.
+        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(false) },
         b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
     };
 }
@@ -218,6 +219,9 @@ impl Pragma {
         hasher.update(&self.import_source.production);
         hasher.update(&self.classic_import_source);
         hasher.update(&self.package_name);
+        // `runtime` selects classic vs automatic emission; `development`
+        // selects `jsx` vs `jsxDEV`. Both shape transpiled output.
+        hasher.update(&[self.runtime as u8, self.development as u8]);
     }
 
     pub fn import_source(&self) -> &[u8] {
@@ -297,7 +301,7 @@ impl Pragma {
     pub fn member_list_to_components_if_different(
         original: MemberList,
         new: &[u8],
-    ) -> Result<MemberList, bun_core::Error> {
+    ) -> Result<MemberList, crate::Error> {
         let count = strings::count_char(new, b'.') + 1;
 
         let mut needs_alloc = false;
@@ -329,7 +333,7 @@ impl Pragma {
         Ok(MemberList::Owned(out.into_boxed_slice()))
     }
 
-    pub fn from_api(jsx: api::Jsx) -> Result<Pragma, bun_core::Error> {
+    pub fn from_api(jsx: api::Jsx) -> Result<Pragma, crate::Error> {
         let mut pragma = Pragma::default();
 
         if !jsx.fragment.is_empty() {

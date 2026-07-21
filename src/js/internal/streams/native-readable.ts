@@ -6,7 +6,11 @@
 // Bun, `fromWeb` is able to check if the stream is backed by a native handle,
 // to which it will take this path.
 const Readable = require("internal/streams/readable");
-const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
+const transferToNativeReadable = $newCppFunction(
+  "streams/BunStreamConsumers.cpp",
+  "jsFunctionTransferToNativeReadableStream",
+  1,
+);
 const { errorOrDestroy } = require("internal/streams/destroy");
 
 const kRefCount = Symbol("refCount");

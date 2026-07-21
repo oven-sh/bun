@@ -3,7 +3,7 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf } = require("internal/validators");
+const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
@@ -300,6 +300,19 @@ function aborted(signal: AbortSignal, resource: object) {
   return promise;
 }
 
+function setTraceSigInt(enable) {
+  // Node validates the argument before the worker check (lib/util.js), so a
+  // bad type throws ERR_INVALID_ARG_TYPE even inside a worker.
+  validateBoolean(enable, "enable");
+  if (!Bun.isMainThread) {
+    // Matches node's ERR_WORKER_UNSUPPORTED_OPERATION('Calling util.setTraceSigInt').
+    throw $ERR_WORKER_UNSUPPORTED_OPERATION("Calling util.setTraceSigInt is not supported in workers");
+  }
+  // Node starts/stops a SIGINT watchdog that prints a stack trace when the
+  // process is interrupted; bun does not implement the watchdog yet, so this
+  // is accepted as a no-op on the main thread.
+}
+
 cjs_exports = {
   // This is in order of `node --print 'Object.keys(util)'`
   // _errnoException,
@@ -321,6 +334,7 @@ cjs_exports = {
   inspect,
   isDeepStrictEqual,
   promisify,
+  setTraceSigInt,
   stripVTControlCharacters,
   toUSVString,
   // transferableAbortSignal,

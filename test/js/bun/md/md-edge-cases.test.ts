@@ -1110,6 +1110,32 @@ describe("pathological reference definition inputs", () => {
     expect(resolved).toContain('<a href="/url">text</a>');
     expect(resolved).toContain("[missing]");
   }, 90_000);
+
+  test("caps the total destination and title bytes emitted by expanding reference links", () => {
+    const dest = "/" + Buffer.alloc(2000, "x").toString();
+    const title = Buffer.alloc(500, "t").toString();
+    const lines = [`[a]: ${dest} "${title}"`, ""];
+    for (let i = 0; i < 1000; i++) {
+      lines.push("[a]", "", "[a][]", "", "[text][a]", "");
+    }
+    // The budget is md4c's: min(16 * input size, 1 MiB). On exhaustion the parse
+    // still succeeds; remaining references degrade to literal bracket text.
+    const html = Markdown.html(lines.join("\n"));
+    const resolved = html.match(/<a href=/g)!.length;
+    expect(resolved).toBeGreaterThan(0);
+    expect(resolved).toBeLessThan(3000);
+    expect(html).toStartWith(`<p><a href="${dest}" title="${title}">a</a></p>`);
+    expect(html).toContain("<p>[a]</p>");
+    expect(html).toContain("<p>[a][]</p>");
+    expect(html).toContain("<p>[text][a]</p>");
+
+    const small = Markdown.html('[a]: /url "title"\n\n[a]\n\n[a][]\n\n[text][a]\n');
+    expect(small).toBe(
+      '<p><a href="/url" title="title">a</a></p>\n' +
+        '<p><a href="/url" title="title">a</a></p>\n' +
+        '<p><a href="/url" title="title">text</a></p>\n',
+    );
+  });
 });
 
 // ============================================================================

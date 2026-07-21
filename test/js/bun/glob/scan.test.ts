@@ -22,8 +22,9 @@
 
 import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -1075,6 +1076,48 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(result).toEqual(["top/file.txt"]);
   });
 
+  test("** with followSymlinks does not descend into a symlink that resolves to one of its own ancestors", () => {
+    using dir = tempDir("glob-scan-symlink-self-cycle", {
+      "top/file.txt": "x",
+    });
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
+    const cwd = path.join(String(dir), "top");
+    const result = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd, followSymlinks: true })));
+    expect(result).toEqual(["file.txt", "loop/file.txt"]);
+
+    using shared = tempDir("glob-scan-symlink-shared-target", {
+      "realdir/file.txt": "x",
+    });
+    fs.symlinkSync("realdir", path.join(String(shared), "linkA"), "dir");
+    fs.symlinkSync("realdir", path.join(String(shared), "linkB"), "dir");
+    const dag = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd: String(shared), followSymlinks: true })));
+    expect(dag).toEqual(["linkA/file.txt", "linkB/file.txt", "realdir/file.txt"]);
+  });
+
+  // Symlinks to the same target in *different* subtrees are not a cycle: a
+  // followed link recorded in one subtree must not suppress its cousin.
+  test("** with followSymlinks descends cousin symlinks that share a target", () => {
+    using dir = tempDir("glob-scan-symlink-cousins", {
+      "shared/file.txt": "x",
+      "a/keep.txt": "x",
+      "b/keep.txt": "x",
+    });
+    fs.symlinkSync(path.join("..", "shared"), path.join(String(dir), "a", "link"), "dir");
+    fs.symlinkSync(path.join("..", "shared"), path.join(String(dir), "b", "link"), "dir");
+    const result = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd: String(dir), followSymlinks: true })));
+    expect(result).toEqual(["a/keep.txt", "a/link/file.txt", "b/keep.txt", "b/link/file.txt", "shared/file.txt"]);
+  });
+
+  test("async ** with followSymlinks does not descend into a symlink that resolves to one of its own ancestors", async () => {
+    using dir = tempDir("glob-scan-symlink-self-cycle-async", {
+      "top/file.txt": "x",
+    });
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
+    const cwd = path.join(String(dir), "top");
+    const result = await Array.fromAsync(new Glob("**/*.txt").scan({ cwd, followSymlinks: true }));
+    expect(norm(result)).toEqual(["file.txt", "loop/file.txt"]);
+  });
+
   test("async scan resolves a literal path through a symlink", async () => {
     using dir = makeTree("glob-scan-symlink-literal-async");
     const result = await Array.fromAsync(
@@ -1082,4 +1125,58 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     );
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
+});
+
+// A directory the user can read but not write (RX-only grant) must still be
+// descended by the scanner: directory opens used to request FILE_ADD_FILE and
+// fail ACCESS_DENIED there. Elevated tokens bypass the ACL; the precondition
+// is probed and the test skips visibly then.
+let roDirRoot = "";
+let roDirA = "";
+let roDirEnforced = false;
+if (isWindows) {
+  try {
+    roDirRoot = tempDirWithFiles("glob-scan-readonly-dir", {
+      "a/b/file.txt": "under a read-only directory",
+    });
+    roDirA = path.join(roDirRoot, "a");
+    execSync(`icacls "${roDirA}" /inheritance:r /grant:r "${process.env.USERNAME}:(OI)(CI)(RX)" /Q`);
+    try {
+      fs.mkdirSync(path.join(roDirA, "probe"));
+      // Creation succeeded: ACL not enforced under this token — restore and skip.
+      execSync(`icacls "${roDirA}" /reset /T /Q`);
+    } catch {
+      roDirEnforced = true;
+    }
+  } catch {}
+}
+
+afterAll(() => {
+  if (!roDirA) return;
+  try {
+    execSync(`icacls "${roDirA}" /reset /T /Q`);
+  } catch {}
+  try {
+    fs.rmSync(roDirRoot, { recursive: true, force: true });
+  } catch {}
+});
+
+describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
+  test.skipIf(!roDirEnforced)(
+    `RX-only directory is descended, creates still fail${roDirEnforced ? "" : " (skipped: ACL not enforced under this token)"}`,
+    () => {
+      const entries = Array.from(new Glob("**/*.txt").scanSync({ cwd: roDirRoot }))
+        .map(p => p.replaceAll("\\", "/"))
+        .sort();
+      expect(entries).toEqual(["a/b/file.txt"]);
+
+      let err: any;
+      try {
+        fs.mkdirSync(path.join(roDirA, "x"));
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("EPERM");
+    },
+  );
 });

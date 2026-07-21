@@ -419,7 +419,7 @@ test("no assertion failures", () => {
 
   // Errors
   const err = new Error("foo");
-  assert(util.format(err).startsWith(err.stack), `Expected "${util.format(err)}" to start with "${err.stack}"`);
+  assert.strictEqual(util.format(err), err.stack);
 
   class CustomError extends Error {
     constructor(msg) {
@@ -433,7 +433,7 @@ test("no assertion failures", () => {
   customError.stack;
   delete customError.originalLine;
   delete customError.originalColumn;
-  assert.strictEqual(util.format(customError), customError.stack.replace(/^Error/, "Custom$&")); //! temp bug workaround
+  assert.strictEqual(util.format(customError), customError.stack);
   // Doesn't capture stack trace
   function BadCustomError(msg) {
     Error.call(this);

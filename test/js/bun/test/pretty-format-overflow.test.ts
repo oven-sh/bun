@@ -78,6 +78,7 @@ describe.concurrent("pretty_format stops recursion before native stack overflow"
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("expect(received).toEqual(expected)");
+    expect(stderr).toContain("+ Received");
     expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });
@@ -102,6 +103,7 @@ describe.concurrent("pretty_format stops recursion before native stack overflow"
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("expect(received).toEqual(expected)");
+    expect(stderr).toContain("+ Received");
     expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });

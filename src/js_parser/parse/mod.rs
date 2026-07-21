@@ -1519,9 +1519,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // bytes between the quotes rather than the cooked value —
                             // otherwise `"use\x20strict"` would be mistaken for `use strict`.
                             if Self::directive_raw_eq(p.source, stmt.loc, b"use strict") {
-                                // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
+                                // Track "use strict" directives — but only in scopes that
+                                // actually have a Directive Prologue: the script/module body,
+                                // function bodies, and TypeScript enum/namespace bodies
+                                // (`Kind::Entry`, which lower to function bodies). Elsewhere
+                                // the string must not make the scope strict, or a reserved
+                                // word after a block-scope `"use strict"` would spuriously
+                                // error where Node accepts it.
+                                if matches!(
+                                    p.current_scope().kind,
+                                    js_ast::scope::Kind::Entry | js_ast::scope::Kind::FunctionBody
+                                ) {
+                                    p.current_scope_mut().strict_mode =
+                                        StrictModeKind::ExplicitStrictMode;
+                                }
                                 if p.current_scope == p.module_scope {
                                     // The module-scope directive is dropped here and
                                     // re-synthesized during printing only when the module

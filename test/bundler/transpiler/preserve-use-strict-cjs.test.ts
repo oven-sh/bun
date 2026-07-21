@@ -176,3 +176,31 @@ test.concurrent(`a block-scope "use strict" is not a directive, even when minifi
   expect(stdout.trim()).toBe("2");
   expect(exitCode).toBe(0);
 });
+
+// A block-scope "use strict" must not make the scope strict either: a
+// strict-mode reserved word used after it is valid sloppy code (matches Node).
+test.concurrent(`a block-scope "use strict" does not make the scope strict`, async () => {
+  using dir = tempDir("issue-31806-block-reserved", {
+    "index.cjs": String.raw`
+      function f() {
+        { "use strict"; var package = 1; }
+        return package;
+      }
+      console.log(f());
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("1");
+  expect(exitCode).toBe(0);
+});

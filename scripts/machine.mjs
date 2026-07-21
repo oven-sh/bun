@@ -1484,12 +1484,23 @@ async function main() {
 
   // Use Packer for Windows Azure image builds — it handles VM creation,
   // bootstrap, sysprep, and gallery capture via WinRM (no Run Command hacks).
+  // Its idempotency check (gallery version probe) is inside the function.
   if (args["cloud"] === "azure" && os === "windows" && command === "create-image") {
-    if (!imageName) {
-      throw new Error("create-image for windows requires --image-name (ci.mjs passes the spec-derived name)");
-    }
     await buildWindowsImageWithPacker({ image: options.imageEntry, ci, repoRef, agentPath, bootstrapDir });
     return;
+  }
+
+  // Idempotent by name on AWS, same shape as the Azure path: one cheap
+  // describe-images by exact name BEFORE launching anything. Same name means
+  // the identical recipe already baked (another branch, or a retried job),
+  // so there is nothing to do — no bake VM, no hour of bootstrap.
+  if (command === "create-image" && bakeName) {
+    const [existing] = await aws.describeImages({ "state": "available", "name": bakeName });
+    if (existing) {
+      console.log(`[aws] ${bakeName} already exists (${existing.ImageId}); reusing (nothing to bake)`);
+      return;
+    }
+    console.log(`[aws] ${bakeName} does not exist yet; baking it`);
   }
 
   /** @type {Machine} */

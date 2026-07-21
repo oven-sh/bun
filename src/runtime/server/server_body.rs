@@ -2557,7 +2557,14 @@ where
             }
             false
         };
-        if self.has_listener() || (abrupt && !self.flags.contains(ServerFlags::TERMINATED)) {
+        // `!deinit_running`: a `server.stop()` from inside a websocket close
+        // handler fired by an outer `stop()`'s drain would re-enter
+        // `stop_listening` with a fresh `&mut self` under the outer borrow.
+        if self.has_listener()
+            || (abrupt
+                && !self.flags.contains(ServerFlags::TERMINATED)
+                && !self.deinit_running.get())
+        {
             self.stop(abrupt);
         }
 
@@ -2565,7 +2572,9 @@ where
     }
 
     pub fn dispose_from_js(&mut self) -> JSValue {
-        if self.has_listener() || !self.flags.contains(ServerFlags::TERMINATED) {
+        if self.has_listener()
+            || (!self.flags.contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
+        {
             self.stop(true);
         }
         JSValue::UNDEFINED

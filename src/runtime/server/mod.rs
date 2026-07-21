@@ -1694,10 +1694,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // through a fresh `&mut NewServer` while this frame still holds
         // `&mut self`. Hold the re-entrance guard across the drain so the
         // nested call early-returns; `stop()` runs the idle pass afterwards.
-        self.deinit_running.set(true);
+        // Save/restore so a nested `server.stop(true)` from a close handler
+        // cannot clear the outer frame's guard.
+        let prev = self.deinit_running.replace(true);
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         bun_opaque::opaque_deref_mut(app).end_all_websockets(1001, b"Server closed");
-        self.deinit_running.set(false);
+        self.deinit_running.set(prev);
     }
 
     /// Force-close every connection on the uws app and mark the server
@@ -1711,10 +1713,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         self.flags.insert(ServerFlags::TERMINATED);
         if let Some(app) = self.app {
-            self.deinit_running.set(true);
+            let prev = self.deinit_running.replace(true);
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(app).close();
-            self.deinit_running.set(false);
+            self.deinit_running.set(prev);
         }
         // Only clear after the drain — `on_close` defers reach
         // `on_websocket_closed` through `handler.server`, so wiping it

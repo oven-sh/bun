@@ -1585,7 +1585,7 @@ describe("server.stop() with open WebSockets", () => {
     const opened = Promise.withResolvers<void>();
     const clientClose = Promise.withResolvers<CloseEvent>();
     ws.onopen = () => opened.resolve();
-    ws.onerror = () => {};
+    ws.onerror = e => opened.reject(e);
     ws.onclose = e => clientClose.resolve(e);
     await opened.promise;
     return { srv, ws, serverClose: serverClose.promise, clientClose: clientClose.promise };
@@ -1663,14 +1663,15 @@ describe("server.stop() with open WebSockets", () => {
     const gotData = Promise.withResolvers<void>();
     const sockClosed = Promise.withResolvers<void>();
     sock.once("data", () => gotData.resolve());
-    sock.on("error", () => {});
+    sock.on("error", e => gotData.reject(e));
     sock.on("close", () => sockClosed.resolve());
     const ws = new WebSocket(`ws://127.0.0.1:${srv.port}/`);
+    const wsOpened = Promise.withResolvers<void>();
     const wsClosed = Promise.withResolvers<CloseEvent>();
-    ws.onopen = () => {};
-    ws.onerror = () => {};
+    ws.onopen = () => wsOpened.resolve();
+    ws.onerror = e => wsOpened.reject(e);
     ws.onclose = e => wsClosed.resolve(e);
-    await Promise.all([gotData.promise, new Promise(r => (ws.onopen = r))]);
+    await Promise.all([gotData.promise, wsOpened.promise]);
     try {
       const graceful = srv.stop(false);
       expect((await wsClosed.promise).code).toBe(1001);
@@ -1694,6 +1695,59 @@ describe("server.stop() with open WebSockets", () => {
       await srv.stop(false);
       expect(srv.pendingWebSockets).toBe(0);
     } finally {
+      srv.stop(true);
+    }
+  });
+
+  it("stop(false) reaches every WebSocket when a close handler terminates another", async () => {
+    const sockets: ServerWebSocket<unknown>[] = [];
+    const serverCodes: number[] = [];
+    const srv = serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("http");
+      },
+      websocket: {
+        open(ws) {
+          sockets.push(ws);
+        },
+        message() {},
+        close(ws, code) {
+          serverCodes.push(code);
+          // From the first close handler, terminate every other open socket and
+          // re-enter stop(true) so the drain has to survive list mutation and
+          // nested re-entry.
+          if (serverCodes.length === 1) {
+            for (const other of sockets) if (other !== ws) other.terminate();
+            srv.stop(true);
+          }
+        },
+      },
+    });
+    const clients: WebSocket[] = [];
+    const clientCloses: Promise<void>[] = [];
+    try {
+      for (let i = 0; i < 4; i++) {
+        const opened = Promise.withResolvers<void>();
+        const closed = Promise.withResolvers<void>();
+        const c = new WebSocket(`ws://127.0.0.1:${srv.port}/`);
+        c.onopen = () => opened.resolve();
+        c.onerror = e => opened.reject(e);
+        c.onclose = () => closed.resolve();
+        clients.push(c);
+        clientCloses.push(closed.promise);
+        await opened.promise;
+      }
+      expect(srv.pendingWebSockets).toBe(4);
+      await srv.stop(false);
+      await Promise.all(clientCloses);
+      expect({ pendingWebSockets: srv.pendingWebSockets, serverCodes: serverCodes.sort() }).toEqual({
+        pendingWebSockets: 0,
+        serverCodes: [1001, 1006, 1006, 1006],
+      });
+    } finally {
+      for (const c of clients) c.close();
       srv.stop(true);
     }
   });

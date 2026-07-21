@@ -389,16 +389,20 @@ public:
      * Unlike close(), this performs the WebSocket closing handshake so peers
      * observe the given status (e.g. 1001 Going Away) rather than 1006. */
     TemplatedApp &&endAllWebSockets(int code, std::string_view message = {}) {
+        /* end() fires the close handler synchronously; user JS there can
+         * terminate() a later socket, which rewrites its ->next into the
+         * loop's closed_head and would derail an in-place walk. Snapshot. */
+        std::vector<us_socket_t *> sockets;
         for (us_socket_group_t *g : webSocketGroups) {
-            struct us_socket_t *s = g->head_sockets;
-            while (s) {
-                struct us_socket_t *next = s->next;
-                if (!us_socket_is_closed(s)) {
-                    /* USERDATA is erased in the handler slots; see the
-                     * TopicTree cast above. end() no-ops on isShuttingDown. */
-                    ((WebSocket<SSL, true, int> *) s)->end(code, message);
-                }
-                s = next;
+            for (struct us_socket_t *s = g->head_sockets; s; s = s->next) {
+                sockets.push_back(s);
+            }
+        }
+        for (us_socket_t *s : sockets) {
+            if (!us_socket_is_closed(s)) {
+                /* USERDATA is erased in the handler slots; see the TopicTree
+                 * cast above. end() no-ops on isShuttingDown. */
+                ((WebSocket<SSL, true, int> *) s)->end(code, message);
             }
         }
         return std::move(*this);

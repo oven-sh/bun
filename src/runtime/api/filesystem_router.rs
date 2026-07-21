@@ -705,11 +705,14 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_asset_prefix(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(ref asset_prefix) = this.asset_prefix {
-            return Ok(zs_to_js(asset_prefix.leak(), global_this));
-        }
+        // An omitted `assetPrefix` and `assetPrefix: ""` both store no prefix, so report
+        // the empty string the router actually applies rather than null.
+        let prefix = match this.asset_prefix {
+            Some(ref asset_prefix) => asset_prefix.leak(),
+            None => b"",
+        };
 
-        Ok(JSValue::NULL)
+        Ok(zs_to_js(prefix, global_this))
     }
 
     // Codegen's `host_fn_finalize` calls this via `|b| FileSystemRouter::finalize(b)`

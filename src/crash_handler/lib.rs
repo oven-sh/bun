@@ -1687,6 +1687,39 @@ mod draft {
         );
     }
 
+    #[cfg(target_env = "ohos")]
+    extern "C" fn handle_sigsys_posix(_sig: c_int, info: *mut libc::siginfo_t, _ctx: *mut c_void) {
+        // OHOS seccomp blocked a syscall. The si_call_addr field tells us
+        // which instruction was interrupted. Log the syscall info to stderr
+        // (async-signal-safe output), then re-raise with SIG_DFL so the
+        // default disposition (core dump) still fires.
+        let syscall = unsafe { (*info).si_addr() as usize };
+        // Async-signal-safe hex syscall number to stderr
+        const PREFIX: &[u8] = b"\n*** SIGSYS (blocked syscall #";
+        const SUFFIX: &[u8] = b") ***\n";
+        unsafe {
+            let _ = libc::write(libc::STDERR_FILENO, PREFIX.as_ptr().cast(), PREFIX.len());
+            let mut tmp = [0u8; 20];
+            let mut n = syscall;
+            let mut i = tmp.len();
+            loop {
+                i -= 1;
+                tmp[i] = b"0123456789abcdef"[n & 0xf] as u8;
+                n >>= 4;
+                if n == 0 { break; }
+            }
+            let _ = libc::write(libc::STDERR_FILENO, tmp[i..].as_ptr().cast(), tmp.len() - i);
+            let _ = libc::write(libc::STDERR_FILENO, SUFFIX.as_ptr().cast(), SUFFIX.len());
+        }
+        // Restore default SIGSYS disposition and re-raise
+        unsafe {
+            let mut dfl: libc::sigaction = bun_core::ffi::zeroed();
+            dfl.sa_sigaction = libc::SIG_DFL;
+            let _ = libc::sigaction(libc::SIGSYS, &raw const dfl, core::ptr::null_mut());
+            let _ = libc::raise(libc::SIGSYS);
+        }
+    }
+
     #[cfg(unix)]
     static DID_REGISTER_SIGALTSTACK: AtomicBool = AtomicBool::new(false);
     /// 512K alternate signal stack. The kernel writes here during signal delivery;
@@ -1726,6 +1759,14 @@ mod draft {
             libc::sigaction(libc::SIGILL, act_ptr, core::ptr::null_mut());
             libc::sigaction(libc::SIGBUS, act_ptr, core::ptr::null_mut());
             libc::sigaction(libc::SIGFPE, act_ptr, core::ptr::null_mut());
+            #[cfg(target_env = "ohos")]
+            {
+                let mut sigsys: libc::sigaction = bun_core::ffi::zeroed();
+                sigsys.sa_sigaction = handle_sigsys_posix as *const () as usize;
+                sigsys.sa_flags = libc::SA_SIGINFO;
+                let _ = libc::sigemptyset(&raw mut sigsys.sa_mask);
+                libc::sigaction(libc::SIGSYS, &raw const sigsys, core::ptr::null_mut());
+            }
         }
         Ok(())
     }

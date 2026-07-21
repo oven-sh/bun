@@ -1065,7 +1065,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                     None => {
                         Output::print_errorln(format_args!(
                             "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {}",
-                            String::from_utf8_lossy(kill_signal)
+                            bstr::BStr::new(kill_signal)
                         ));
                         Output::flush();
                         Global::exit(1);

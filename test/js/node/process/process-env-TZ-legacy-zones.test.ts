@@ -6,8 +6,8 @@
 // The Intl.DateTimeFormat({ timeZone: "EST5EDT" }) option path is tracked
 // separately in issue #30618.
 
-import { describe, expect, test } from "bun:test";
 import { setTimeZone } from "bun:jsc";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // July 14 2018 12:34:56 UTC: northern-hemisphere summer, so the DST-bearing
@@ -55,8 +55,10 @@ describe("TZ=<legacy zone> at process start", () => {
 });
 
 describe("process.env.TZ = <legacy zone> at runtime", () => {
-  test.concurrent.each(zones)("process.env.TZ = $tz resolves to $canonical", async ({ tz, canonical, offset, display }) => {
-    const script = `
+  test.concurrent.each(zones)(
+    "process.env.TZ = $tz resolves to $canonical",
+    async ({ tz, canonical, offset, display }) => {
+      const script = `
       process.env.TZ = ${JSON.stringify(tz)};
       const d = new Date(${JSON.stringify(summer)});
       process.stdout.write(JSON.stringify({
@@ -65,20 +67,21 @@ describe("process.env.TZ = <legacy zone> at runtime", () => {
         resolved: new Intl.DateTimeFormat().resolvedOptions().timeZone,
       }));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, TZ: "UTC" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const out = JSON.parse(stdout);
-    expect(out.offset).toBe(offset);
-    expect(out.string).toMatch(display);
-    expect(out.resolved).toBe(canonical);
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, TZ: "UTC" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const out = JSON.parse(stdout);
+      expect(out.offset).toBe(offset);
+      expect(out.string).toMatch(display);
+      expect(out.resolved).toBe(canonical);
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe("bun:jsc setTimeZone(<legacy zone>)", () => {

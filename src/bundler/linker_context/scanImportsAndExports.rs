@@ -213,12 +213,17 @@ pub fn scan_imports_and_exports(
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
                         }
 
+                        // The "import *" check is guarded on the file having actually
+                        // been CommonJS before conversion. FORCE_CJS_TO_ESM is also set
+                        // for ESM packages via unwrap_commonjs_packages (react, react-dom),
+                        // and wrapping a real ESM file as CJS would drop its exports.
                         if (record
                             .flags
-                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                            || record
+                            .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
+                            || (record
                                 .flags
-                                .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS))
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                                && other_kind != ExportsKind::Esm))
                             && other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                         {
                             col!(exports_kind)[other_file] = ExportsKind::Cjs;

@@ -69,7 +69,10 @@ async function run() {
         },
         minifySyntax: !debug,
         platform: side === "server" ? "node" : "browser",
-        drop: debug ? [] : ["ASSERT", "DEBUG"],
+        // esbuild's `drop` only accepts console/debugger; bun's accepted
+        // arbitrary names. `pure` + minifySyntax removes the call (arguments
+        // that have side effects survive, which is fine for assertions).
+        pure: debug ? [] : ["DEBUG.ASSERT", "DEBUG", "ASSERT"],
         conditions: [side],
         supported: { "using": false },
         logLevel: "silent",
@@ -107,7 +110,7 @@ async function run() {
         target: "esnext",
         write: false,
         minify: !debug,
-        drop: debug ? [] : ["DEBUG"],
+        pure: debug ? [] : ["DEBUG.ASSERT", "DEBUG"],
         platform: side === "server" ? "node" : "browser",
         supported: { "using": false },
         logLevel: "silent",

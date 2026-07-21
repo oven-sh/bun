@@ -1958,6 +1958,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Restored manually below.
             let old_should_fold_typescript_constant_expressions =
                 p.should_fold_typescript_constant_expressions;
+            let old_is_inside_macro_arguments = p.is_inside_macro_arguments;
             let old_is_control_flow_dead = p.is_control_flow_dead;
 
             // We want to forcefully fold constants inside of
@@ -1973,6 +1974,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.options.ignore_dce_annotations = true;
                 p.should_fold_typescript_constant_expressions = true;
+            }
+            if is_macro_ref {
+                p.is_inside_macro_arguments = true;
             }
 
             // When a value is targeted by `--drop`, it will be removed.
@@ -2004,6 +2008,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.options.ignore_dce_annotations = old_ce;
             p.should_fold_typescript_constant_expressions =
                 old_should_fold_typescript_constant_expressions;
+            p.is_inside_macro_arguments = old_is_inside_macro_arguments;
 
             if method_call_should_be_replaced_with_undefined {
                 p.is_control_flow_dead = old_is_control_flow_dead;

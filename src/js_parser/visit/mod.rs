@@ -406,7 +406,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.visit_decl(
                     decl,
                     was_anonymous_named_expr,
-                    was_const && !is_after,
+                    was_const,
+                    is_after,
                     if Self::ALLOW_MACROS {
                         prev_macro_call_count != self.macro_call_count
                     } else {
@@ -429,7 +430,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
                             let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(decl, false, was_const && !is_after, false);
+                            self.visit_decl(decl, false, was_const, is_after, false);
                         } else {
                             continue 'outer;
                         }
@@ -540,20 +541,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         decl: &mut G::Decl,
         was_anonymous_named_expr: bool,
-        could_be_const_value: bool,
+        was_const: bool,
+        is_after_const_local_prefix: bool,
         could_be_macro: bool,
     ) {
+        let could_be_const_value = was_const && !is_after_const_local_prefix;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
                 let id_ref = id.r#ref;
-                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
+                // When the file imports macros, also track `const` literals that
+                // appear after the leading declaration prefix so they can be
+                // substituted into macro arguments. Visiting is top-down, so an
+                // entry only becomes visible to textually-later uses. Macro-
+                // derived values are only recorded for `const` bindings so a
+                // reassignable `let`/`var` never enters the map.
+                let track_for_macro_args =
+                    Self::ALLOW_MACROS && was_const && self.macro_.refs.count() > 0;
+                let track_macro_result = Self::ALLOW_MACROS && was_const && could_be_macro;
+                if could_be_const_value || track_macro_result || track_for_macro_args {
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
                             self.const_values.put(id_ref, val).expect("oom");
                         }
                     }
-                } else {
+                }
+                if !could_be_const_value && !track_macro_result {
                     self.vis_scope().is_after_const_local_prefix = true;
                 }
                 // SAFETY: original_name is arena-owned, valid for 'a.
@@ -568,7 +581,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
-                    if could_be_macro && let Some(value) = decl.value {
+                    if was_const
+                        && could_be_macro
+                        && let Some(value) = decl.value
+                    {
                         self.visit_binding_and_expr_for_macro(decl.binding, value);
                     }
                 }
@@ -1660,6 +1676,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let id = ident_ptr.r#ref;
 
                     let symbol: &Symbol = &p.symbols[id.inner_index() as usize];
+
+                    // Drop a `const` whose value was already substituted at
+                    // every use via `const_values` (use count now 0). The
+                    // "remove inlined constants" pass above only walks the
+                    // leading declaration prefix, so a past-prefix const that
+                    // `track_for_macro_args` recorded would otherwise be left
+                    // as dead output. Presence in `const_values` already
+                    // implies the binding was `const` and the initialiser is
+                    // side-effect free (`can_be_const_value()`), so no
+                    // separate kind check is needed after `select_local_kind`
+                    // may have rewritten it.
+                    if symbol.use_count_estimate == 0 && p.const_values.contains(&id) {
+                        match local.decls.len_u32() {
+                            1 => {
+                                local.decls.clear();
+                                let new_len = output.len() - 1;
+                                output.truncate(new_len);
+                                continue 'inner;
+                            }
+                            _ => {
+                                let n = local.decls.len() - 1;
+                                local.decls.truncate(n);
+                                continue 'inner;
+                            }
+                        }
+                    }
 
                     // Try to substitute the identifier with the initializer. This will
                     // fail if something with side effects is in between the declaration

@@ -363,6 +363,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// we always fold constant expressions.
     pub should_fold_typescript_constant_expressions: bool,
 
+    /// Set while visiting the arguments of a macro call so `handle_identifier`
+    /// substitutes from `const_values` even when `features.inlining` is off.
+    /// Narrower than `should_fold_typescript_constant_expressions` so dynamic
+    /// `import()` / `require()` specifiers are not collapsed as a side effect.
+    pub is_inside_macro_arguments: bool,
+
     pub emitted_namespace_vars: RefMap,
     pub is_exported_inside_namespace: RefRefMap,
     pub local_type_names: StringBoolMap,
@@ -1809,7 +1815,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let ref_ = ident.ref_;
 
-        if self.options.features.inlining {
+        if self.options.features.inlining || self.is_inside_macro_arguments {
             if let Some(replacement) = self.const_values.get(&ref_) {
                 let replacement = *replacement;
                 self.ignore_usage(ref_);
@@ -9114,6 +9120,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,
+            is_inside_macro_arguments: false,
             emitted_namespace_vars: RefMap::default(),
             is_exported_inside_namespace: Default::default(),
             local_type_names: StringBoolMap::default(),

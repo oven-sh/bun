@@ -190,10 +190,8 @@ test.concurrent("RedisClient survives subscribe() + close() against a server tha
 // guards at the end of on_connection_timeout dropped the count to 0 and freed
 // the Box while the wrapper was live. GC finalize -> stop_timers then read the
 // freed allocation.
-test.concurrent(
-  "RedisClient survives on_connection_timeout firing after an auto-reconnect close",
-  async () => {
-    const src = `
+test.concurrent("RedisClient survives on_connection_timeout firing after an auto-reconnect close", async () => {
+  const src = `
     const CRLF = "\\r\\n";
     const blk = s => "$" + s.length + CRLF + s + CRLF;
     const sockets = [];
@@ -242,20 +240,19 @@ test.concurrent(
     process.exit(0);
   `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("OK");
-    expect(proc.signalCode).toBeNull();
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stdout.trim()).toBe("OK");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
 
 // Fuzzer found a flaky SIGILL when a RedisClient is constructed, a command
 // throws during argument validation (before any connection attempt), and the

@@ -68,10 +68,6 @@ describe("$.braces", () => {
       ["{x,{a,,b}}", ["x", "a", "", "b"]],
       ["{x,{a,b,}}", ["x", "a", "b", ""]],
       ["{{a,},x}", ["a", "", "x"]],
-      // The outer `{...}` has no top-level comma, so its braces are literal
-      // (bash 5.2); the inner `{a,}`/`{b,}` still exercise the trailing-empty
-      // variant path this block covers.
-      ["{{a,}{b,}}", ["{ab}", "{a}", "{b}", "{}"]],
       ["p{q,{r,}{s,}}t", ["pqt", "prst", "prt", "pst", "pt"]],
     ])("%s", (pattern, expected) => {
       expect($.braces(pattern)).toEqual(expected);
@@ -219,6 +215,7 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
     // `{foo}` with no comma is literal at any depth.
     ["{a,{b}}", ["a", "{b}"]],
     ["{a{b,c}}", ["{ab}", "{ac}"]],
+    ["{{a,}{b,}}", ["{ab}", "{a}", "{b}", "{}"]],
     // A comma outside every `{...}` does not make one expand.
     ["{foo},x", ["{foo},x"]],
     ["{a},{b}", ["{a},{b}"]],

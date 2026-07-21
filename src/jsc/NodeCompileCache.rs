@@ -334,7 +334,10 @@ fn enable_with_dir(dir: &[u8]) -> EnableResult {
                 return EnableResult {
                     status: STATUS_FAILED,
                     directory: None,
-                    message: Some(format!("Cannot resolve cache directory: {}", errno_name(&e))),
+                    message: Some(format!(
+                        "Cannot resolve cache directory: {}",
+                        errno_name(&e)
+                    )),
                 };
             }
         };
@@ -753,7 +756,11 @@ fn persist_locked(state: &mut CacheState) {
             continue;
         };
 
-        let format = if entry.is_cjs { Format::Cjs } else { Format::Esm };
+        let format = if entry.is_cjs {
+            Format::Cjs
+        } else {
+            Format::Esm
+        };
         let Some(blob) = generate_bytecode(format, code, &entry.filename) else {
             cclog!("[compile cache] generating cache for {tname} {name} failed, skipping\n");
             // Do not retry on the next persist pass.

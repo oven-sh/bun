@@ -2027,10 +2027,7 @@ fn note_compile_cache_parse_failure(
     loader: Loader,
     module_type: ModuleType,
 ) {
-    if bun_jsc::node_compile_cache::is_enabled()
-        && loader.is_java_script_like()
-        && path.is_file()
-    {
+    if bun_jsc::node_compile_cache::is_enabled() && loader.is_java_script_like() && path.is_file() {
         bun_jsc::node_compile_cache::note_parse_failure(
             path.text,
             !matches!(module_type, ModuleType::Esm),

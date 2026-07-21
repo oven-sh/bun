@@ -498,8 +498,6 @@ pub mod virtual_machine_exports;
 pub mod any_promise;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
-#[path = "NodeCompileCache.rs"]
-pub mod node_compile_cache;
 #[path = "DeferredError.rs"]
 pub mod deferred_error;
 #[path = "DOMFormData.rs"]
@@ -512,6 +510,8 @@ pub mod js_array_iterator;
 pub mod js_global_object;
 #[path = "JSPropertyIterator.rs"]
 pub mod js_property_iterator;
+#[path = "NodeCompileCache.rs"]
+pub mod node_compile_cache;
 #[path = "SystemError.rs"]
 pub mod system_error;
 #[path = "URL.rs"]

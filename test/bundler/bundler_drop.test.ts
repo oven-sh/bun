@@ -219,6 +219,18 @@ describe("bundler", () => {
     drop: ["devlog"],
     backend: "api",
   });
+  itBundled("drop/BoundDotNonCallNotReplaced", {
+    files: {
+      "/a.js": `
+        const logger = { debug: (s) => process.stdout.write("DEBUG " + s + "\\n") };
+        const ref = logger.debug;
+        ref("alive");
+      `,
+    },
+    run: { stdout: "DEBUG alive" },
+    drop: ["logger.debug"],
+    backend: "api",
+  });
   itBundled("drop/DefineDoesNotReplaceBoundIdentifier", {
     files: {
       "/a.js": `

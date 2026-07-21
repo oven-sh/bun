@@ -1,30 +1,32 @@
 use core::fmt;
 
-use bun_core::String;
+use bun_core::{OwnedString, String};
 
 use super::field_type::FieldType;
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
 
+/// Each variant owns a +1 `WTFStringImpl` ref from `String::clone_utf8` in
+/// `init()`; `OwnedString` releases it on drop.
 pub enum FieldMessage {
-    Severity(String),
-    LocalizedSeverity(String),
-    Code(String),
-    Message(String),
-    Detail(String),
-    Hint(String),
-    Position(String),
-    InternalPosition(String),
-    Internal(String),
-    Where(String),
-    Schema(String),
-    Table(String),
-    Column(String),
-    Datatype(String),
-    Constraint(String),
-    File(String),
-    Line(String),
-    Routine(String),
+    Severity(OwnedString),
+    LocalizedSeverity(OwnedString),
+    Code(OwnedString),
+    Message(OwnedString),
+    Detail(OwnedString),
+    Hint(OwnedString),
+    Position(OwnedString),
+    InternalPosition(OwnedString),
+    Internal(OwnedString),
+    Where(OwnedString),
+    Schema(OwnedString),
+    Table(OwnedString),
+    Column(OwnedString),
+    Datatype(OwnedString),
+    Constraint(OwnedString),
+    File(OwnedString),
+    Line(OwnedString),
+    Routine(OwnedString),
 }
 
 impl fmt::Display for FieldMessage {
@@ -84,28 +86,27 @@ impl FieldMessage {
     }
 
     pub fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {
+        let s = || OwnedString::new(String::clone_utf8(message));
         Ok(match tag {
-            FieldType::SEVERITY => FieldMessage::Severity(String::clone_utf8(message)),
+            FieldType::SEVERITY => FieldMessage::Severity(s()),
             // Ignore this one for now.
-            // FieldType::LOCALIZED_SEVERITY => FieldMessage::LocalizedSeverity(String::clone_utf8(message)),
-            FieldType::CODE => FieldMessage::Code(String::clone_utf8(message)),
-            FieldType::MESSAGE => FieldMessage::Message(String::clone_utf8(message)),
-            FieldType::DETAIL => FieldMessage::Detail(String::clone_utf8(message)),
-            FieldType::HINT => FieldMessage::Hint(String::clone_utf8(message)),
-            FieldType::POSITION => FieldMessage::Position(String::clone_utf8(message)),
-            FieldType::INTERNAL_POSITION => {
-                FieldMessage::InternalPosition(String::clone_utf8(message))
-            }
-            FieldType::INTERNAL => FieldMessage::Internal(String::clone_utf8(message)),
-            FieldType::WHERE => FieldMessage::Where(String::clone_utf8(message)),
-            FieldType::SCHEMA => FieldMessage::Schema(String::clone_utf8(message)),
-            FieldType::TABLE => FieldMessage::Table(String::clone_utf8(message)),
-            FieldType::COLUMN => FieldMessage::Column(String::clone_utf8(message)),
-            FieldType::DATATYPE => FieldMessage::Datatype(String::clone_utf8(message)),
-            FieldType::CONSTRAINT => FieldMessage::Constraint(String::clone_utf8(message)),
-            FieldType::FILE => FieldMessage::File(String::clone_utf8(message)),
-            FieldType::LINE => FieldMessage::Line(String::clone_utf8(message)),
-            FieldType::ROUTINE => FieldMessage::Routine(String::clone_utf8(message)),
+            // FieldType::LOCALIZED_SEVERITY => FieldMessage::LocalizedSeverity(s()),
+            FieldType::CODE => FieldMessage::Code(s()),
+            FieldType::MESSAGE => FieldMessage::Message(s()),
+            FieldType::DETAIL => FieldMessage::Detail(s()),
+            FieldType::HINT => FieldMessage::Hint(s()),
+            FieldType::POSITION => FieldMessage::Position(s()),
+            FieldType::INTERNAL_POSITION => FieldMessage::InternalPosition(s()),
+            FieldType::INTERNAL => FieldMessage::Internal(s()),
+            FieldType::WHERE => FieldMessage::Where(s()),
+            FieldType::SCHEMA => FieldMessage::Schema(s()),
+            FieldType::TABLE => FieldMessage::Table(s()),
+            FieldType::COLUMN => FieldMessage::Column(s()),
+            FieldType::DATATYPE => FieldMessage::Datatype(s()),
+            FieldType::CONSTRAINT => FieldMessage::Constraint(s()),
+            FieldType::FILE => FieldMessage::File(s()),
+            FieldType::LINE => FieldMessage::Line(s()),
+            FieldType::ROUTINE => FieldMessage::Routine(s()),
             _ => return Err(crate::Error::UnknownFieldType),
         })
     }

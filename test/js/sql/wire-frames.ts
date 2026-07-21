@@ -97,17 +97,14 @@ export function pgReadyForQuery(status: "I" | "T" | "E" = "I"): Buffer {
   return buf;
 }
 
-// PostgreSQL FE/BE protocol §55.7 ErrorResponse: Byte1('E') Int32(len) (Byte1 field-code, String value)* Byte1(0)
-export function pgErrorResponse(fields: { S: string; C: string; M: string; [k: string]: string }): Buffer {
+// PostgreSQL FE/BE protocol §55.8 ErrorResponse / NoticeResponse field list: (Byte1 field-code, String value)* Byte1(0)
+function pgErrorNoticeFields(fields: { S: string; C: string; M: string; [k: string]: string }): Buffer {
   const entries = Object.entries(fields);
-  let len = 4; // Int32 length itself
+  let len = 0;
   for (const [, v] of entries) len += 1 + Buffer.byteLength(v) + 1; // code + value + NUL
   len += 1; // terminating NUL
-  const buf = Buffer.alloc(1 + len);
+  const buf = Buffer.alloc(len);
   let o = 0;
-  buf.write("E", o++);
-  buf.writeInt32BE(len, o);
-  o += 4;
   for (const [k, v] of entries) {
     buf.write(k, o++);
     o += buf.write(v, o);
@@ -115,6 +112,16 @@ export function pgErrorResponse(fields: { S: string; C: string; M: string; [k: s
   }
   buf[o] = 0;
   return buf;
+}
+
+// PostgreSQL FE/BE protocol §55.7 ErrorResponse: Byte1('E') Int32(len) (Byte1 field-code, String value)* Byte1(0)
+export function pgErrorResponse(fields: { S: string; C: string; M: string; [k: string]: string }): Buffer {
+  return pgRaw("E", pgErrorNoticeFields(fields));
+}
+
+// PostgreSQL FE/BE protocol §55.7 NoticeResponse: Byte1('N') Int32(len) (Byte1 field-code, String value)* Byte1(0)
+export function pgNoticeResponse(fields: { S: string; C: string; M: string; [k: string]: string }): Buffer {
+  return pgRaw("N", pgErrorNoticeFields(fields));
 }
 
 // PostgreSQL FE/BE protocol §55.7 generic backend message: Byte1(type) Int32(len = 4 + body.length) body

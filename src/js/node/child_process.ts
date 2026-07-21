@@ -543,10 +543,8 @@ function spawnSync(file, args, options) {
     }
   }
 
-  // normalizeSpawnArguments has already prepended argv0 to the spawnargs array.
-  // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when
-  // running the command, so we save argv0 and overwrite cmd[0] in place (options.args is already
-  // our private copy from normalizeSpawnArguments).
+  // normalizeSpawnArguments prepended argv0 to its own copy of args; Bun.spawn wants
+  // cmd[0] = file and a separate argv0, so save argv0 and overwrite index 0 in place.
   const cmd = options.args;
   const argv0 = cmd[0];
   cmd[0] = options.file;

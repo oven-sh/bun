@@ -5,7 +5,7 @@
 
 import { join } from "node:path";
 import * as win from "../bootstrap/ops-windows.ts";
-import { download, invalidateChildPath, log, mode, scratchDir } from "../bootstrap/runtime.ts";
+import { download, invalidateChildPath, log, scratchDir } from "../bootstrap/runtime.ts";
 import type { Component } from "./component.ts";
 import { artifact } from "./component.ts";
 import { windowsSystem32 } from "./paths.ts";

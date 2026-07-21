@@ -1051,10 +1051,23 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
-                if dependency.version.tag == crate::dependency::VersionTag::Npm {
+                // `catalog:` peer dependencies only carry the catalog name, not the
+                // resolved npm version range. Look it up so a catalog peer hoists
+                // the same way the equivalent npm range would.
+                let catalog_resolved;
+                let peer_version = if dependency.version.tag
+                    == crate::dependency::VersionTag::Catalog
+                {
+                    catalog_resolved = builder.lockfile().resolve_catalog_dependency(dependency);
+                    catalog_resolved.as_ref().unwrap_or(&dependency.version)
+                } else {
+                    &dependency.version
+                };
+
+                if peer_version.tag == crate::dependency::VersionTag::Npm {
                     let resolution: Resolution =
                         builder.lockfile().packages.items_resolution()[res_id as usize];
-                    let version = &dependency.version.npm().version;
+                    let version = &peer_version.npm().version;
                     if resolution.tag == crate::resolution::Tag::Npm
                         && version.satisfies(resolution.npm().version, builder.buf(), builder.buf())
                     {

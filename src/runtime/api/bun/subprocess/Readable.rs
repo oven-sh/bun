@@ -1,7 +1,7 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::node::types::FdJsc as _;
@@ -289,7 +289,7 @@ impl Readable {
                 {
                     let fd = *fd;
                     *self = Readable::Closed;
-                    jsc::ArrayBuffer::to_js_buffer_from_memfd(fd, global)
+                    bun_jsc::ArrayBuffer::to_js_buffer_from_memfd(fd, global)
                 }
             }
             Readable::Pipe(_) => {

@@ -65,93 +65,26 @@ pub struct ScopeFunctions {
     pub each: JSValue,
 }
 
+#[rustfmt::skip]
 pub mod strings {
     use bun_core::String as BunString;
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn DESCRIBE() -> BunString {
-        BunString::static_str("describe")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn XDESCRIBE() -> BunString {
-        BunString::static_str("xdescribe")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn TEST() -> BunString {
-        BunString::static_str("test")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn XTEST() -> BunString {
-        BunString::static_str("xtest")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn SKIP() -> BunString {
-        BunString::static_str("skip")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn TODO() -> BunString {
-        BunString::static_str("todo")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn FAILING() -> BunString {
-        BunString::static_str("failing")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn CONCURRENT() -> BunString {
-        BunString::static_str("concurrent")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn SERIAL() -> BunString {
-        BunString::static_str("serial")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn ONLY() -> BunString {
-        BunString::static_str("only")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn IF() -> BunString {
-        BunString::static_str("if")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn SKIP_IF() -> BunString {
-        BunString::static_str("skipIf")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn TODO_IF() -> BunString {
-        BunString::static_str("todoIf")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn FAILING_IF() -> BunString {
-        BunString::static_str("failingIf")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn CONCURRENT_IF() -> BunString {
-        BunString::static_str("concurrentIf")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn SERIAL_IF() -> BunString {
-        BunString::static_str("serialIf")
-    }
-    #[allow(non_snake_case)]
-    #[inline]
-    pub fn EACH() -> BunString {
-        BunString::static_str("each")
-    }
+    #[allow(non_snake_case)] #[inline] pub fn DESCRIBE() -> BunString { BunString::static_str("describe") }
+    #[allow(non_snake_case)] #[inline] pub fn XDESCRIBE() -> BunString { BunString::static_str("xdescribe") }
+    #[allow(non_snake_case)] #[inline] pub fn TEST() -> BunString { BunString::static_str("test") }
+    #[allow(non_snake_case)] #[inline] pub fn XTEST() -> BunString { BunString::static_str("xtest") }
+    #[allow(non_snake_case)] #[inline] pub fn SKIP() -> BunString { BunString::static_str("skip") }
+    #[allow(non_snake_case)] #[inline] pub fn TODO() -> BunString { BunString::static_str("todo") }
+    #[allow(non_snake_case)] #[inline] pub fn FAILING() -> BunString { BunString::static_str("failing") }
+    #[allow(non_snake_case)] #[inline] pub fn CONCURRENT() -> BunString { BunString::static_str("concurrent") }
+    #[allow(non_snake_case)] #[inline] pub fn SERIAL() -> BunString { BunString::static_str("serial") }
+    #[allow(non_snake_case)] #[inline] pub fn ONLY() -> BunString { BunString::static_str("only") }
+    #[allow(non_snake_case)] #[inline] pub fn IF() -> BunString { BunString::static_str("if") }
+    #[allow(non_snake_case)] #[inline] pub fn SKIP_IF() -> BunString { BunString::static_str("skipIf") }
+    #[allow(non_snake_case)] #[inline] pub fn TODO_IF() -> BunString { BunString::static_str("todoIf") }
+    #[allow(non_snake_case)] #[inline] pub fn FAILING_IF() -> BunString { BunString::static_str("failingIf") }
+    #[allow(non_snake_case)] #[inline] pub fn CONCURRENT_IF() -> BunString { BunString::static_str("concurrentIf") }
+    #[allow(non_snake_case)] #[inline] pub fn SERIAL_IF() -> BunString { BunString::static_str("serialIf") }
+    #[allow(non_snake_case)] #[inline] pub fn EACH() -> BunString { BunString::static_str("each") }
 }
 
 impl ScopeFunctions {
@@ -169,18 +102,11 @@ impl ScopeFunctions {
         Ok(scope.local(v))
     }
     #[bun_jsc::host_fn(getter, scoped)]
+    #[rustfmt::skip]
     pub fn get_todo<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         let global = scope.unscoped_global();
-        this.generic_extend(
-            global,
-            BaseScopeCfg {
-                self_mode: SelfMode::Todo,
-                ..Default::default()
-            },
-            b"get .todo",
-            strings::TODO(),
-        )
-        .map(|v| scope.local(v))
+        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", strings::TODO())
+            .map(|v| scope.local(v))
     }
     #[bun_jsc::host_fn(getter, scoped)]
     pub fn get_failing<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
@@ -269,24 +195,11 @@ impl ScopeFunctions {
         Ok(scope.local(v))
     }
     #[bun_jsc::host_fn(method, scoped)]
-    pub fn fn_todo_if<'s>(
-        this: &Self,
-        scope: &mut Scope<'s>,
-        frame: &CallFrame,
-    ) -> JsResult<Local<'s>> {
+    #[rustfmt::skip]
+    pub fn fn_todo_if<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
         let global = scope.unscoped_global();
-        this.generic_if(
-            global,
-            frame,
-            BaseScopeCfg {
-                self_mode: SelfMode::Todo,
-                ..Default::default()
-            },
-            b"call .todoIf()",
-            false,
-            strings::TODO_IF(),
-        )
-        .map(|v| scope.local(v))
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, strings::TODO_IF())
+            .map(|v| scope.local(v))
     }
     #[bun_jsc::host_fn(method, scoped)]
     pub fn fn_failing_if<'s>(

@@ -4947,7 +4947,6 @@ pub fn js_set_socket_options<'s>(
     scope: &mut Scope<'s>,
     callframe: &CallFrame,
 ) -> JsResult<Local<'s>> {
-    let global = scope.unscoped_global();
     let arguments = callframe.arguments();
 
     if arguments.len() < 3 {
@@ -4965,6 +4964,7 @@ pub fn js_set_socket_options<'s>(
 
     #[cfg(unix)]
     {
+        let global = scope.unscoped_global();
         // `bun_sys` exposes no public wrapper, so call libc directly.
         let setsockopt = |level: libc::c_int, opt: libc::c_int| -> Option<sys::Error> {
             let val: libc::c_int = buffer_size;

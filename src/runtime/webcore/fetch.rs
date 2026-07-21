@@ -189,7 +189,7 @@ fn data_url_response(
     let blob = Blob::init(data_url.body, global_this);
     blob.content_type
         .set(crate::webcore::blob::BlobContentType::Owned(
-            content_type.clone(),
+            std::sync::Arc::clone(&content_type),
         ));
 
     // Materialize `Content-Type` now: the lazy path in `get_or_create_headers`

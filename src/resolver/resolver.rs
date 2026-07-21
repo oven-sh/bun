@@ -6528,7 +6528,12 @@ impl<'a> Resolver<'a> {
                     let mut worklist: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
                     worklist.append(tsconfig_json)?;
                     'walk: while let Some(current_ptr) = worklist.pop() {
-                        parent_configs.append(current_ptr)?;
+                        if parent_configs.append(current_ptr).is_err() {
+                            // Degenerate >64-config extends tree (or a cycle):
+                            // drop this config and merge what was collected.
+                            TSConfigJSON::destroy(unsafe { bun_core::heap::take(current_ptr) });
+                            break 'walk;
+                        }
                         let current = bun_ptr::BackRef::from(
                             core::ptr::NonNull::new(current_ptr).expect("heap alloc"),
                         );
@@ -6549,9 +6554,21 @@ impl<'a> Resolver<'a> {
                             };
                             match parse_result {
                                 Ok(Some(parent)) => {
-                                    worklist.append(bun_core::heap::into_raw(parent))?;
+                                    let raw = bun_core::heap::into_raw(parent);
+                                    if worklist.append(raw).is_err() {
+                                        // Degenerate >64-config extends tree (or a
+                                        // cycle): drop this base and stop walking.
+                                        TSConfigJSON::destroy(unsafe {
+                                            bun_core::heap::take(raw)
+                                        });
+                                        break 'walk;
+                                    }
                                 }
-                                Ok(None) => break 'walk,
+                                // Found but unparseable; the JSON parser already
+                                // logged it. Skip so sibling entries still apply.
+                                Ok(None) => {}
+                                // Missing entry: skip it, keep sibling entries
+                                // (tsc errors here, esbuild warns and continues).
                                 Err(err) => {
                                     let _ = self.log_mut().add_debug_fmt(
                                         None,
@@ -6562,15 +6579,16 @@ impl<'a> Resolver<'a> {
                                             bun_core::fmt::quote(&entry[..])
                                         ),
                                     );
-                                    break 'walk;
                                 }
                             }
                         }
                     }
-                    // Drain anything the 'walk break left on the worklist so it is
-                    // still merged (and freed) rather than leaked.
+                    // Drain anything an overflow break left on the worklist so it
+                    // is still merged (and freed) rather than leaked.
                     while let Some(pending) = worklist.pop() {
-                        parent_configs.append(pending)?;
+                        if parent_configs.append(pending).is_err() {
+                            TSConfigJSON::destroy(unsafe { bun_core::heap::take(pending) });
+                        }
                     }
 
                     let merged_config = parent_configs.pop().unwrap();
@@ -6583,6 +6601,11 @@ impl<'a> Resolver<'a> {
                         let mc = unsafe { &mut *merged_config };
                         mc.emit_decorator_metadata =
                             mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
+                        mc.experimental_decorators =
+                            mc.experimental_decorators || parent_config.experimental_decorators;
+                        if let Some(value) = parent_config.use_define_for_class_fields {
+                            mc.use_define_for_class_fields = Some(value);
+                        }
                         if !parent_config.base_url.is_empty() {
                             mc.base_url = core::mem::take(&mut parent_config.base_url);
                         }

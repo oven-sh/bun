@@ -15,6 +15,18 @@ you merge — computes the same hash and reuses it. There is no
 `[build images]` commit tag, no `[publish images]` step, and no version
 number to bump anywhere. Merging *is* publishing.
 
+## Prerequisites
+
+- **node >= 25 on the CI orchestrator** (the `build-image` Buildkite queue,
+  which runs `.buildkite/ci.mjs` and `scripts/machine.mjs`). Both import
+  `.ts` modules directly and rely on node\'s built-in type stripping; older
+  nodes fail at import time. (The node baked ONTO the images is separate —
+  it is the `nodejs.version` fact in `spec.ts`, currently 26.x, and the
+  delivery shim fetches exactly that build to run `bootstrap.ts`.)
+- The `build-image` queue holds the AWS + Azure credentials `machine.mjs`
+  already uses; `ci.mjs`\'s existence check reads the same secrets there.
+- The `aws` CLI on that queue (the AWS existence check shells out to it).
+
 ## The files
 
 | file | role |

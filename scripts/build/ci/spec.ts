@@ -38,7 +38,7 @@
 // of them drifts underneath us in a way that breaks the image, bump `epoch`
 // to force a re-bake.
 //
-// This module is imported by both node (>= 23.6, via type stripping) and bun.
+// This module is imported by both node (>= 25, via type stripping) and bun.
 // Keep it dependency-free, side-effect-free, function-free, and made of
 // erasable TypeScript syntax only (no enums / namespaces).
 

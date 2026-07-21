@@ -2,7 +2,7 @@
 //
 // A bare base image has neither bun nor node. The image spec pins the node
 // the image ships with, so the bake fetches exactly that node onto the box
-// and runs bootstrap.ts under it (node >= 23.6 executes .ts via type
+// and runs bootstrap.ts under it (that node executes .ts via type
 // stripping). The same tarball then satisfies bootstrap's own node install.
 //
 // machine.mjs (which already has node and imports the spec) renders these

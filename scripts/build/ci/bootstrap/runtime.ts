@@ -14,7 +14,7 @@
 // echoed as "would run", downloads as "would fetch", file writes as diffs.
 // Read-only probes (which(), existsSync) still run for real.
 //
-// Node built-ins only — this runs under a bare `node` (>= 23.6, type
+// Node built-ins only — this runs under a bare `node` (>= 25, type
 // stripping) on a fresh machine, before anything else is installed.
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";

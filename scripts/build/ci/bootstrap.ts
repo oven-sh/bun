@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Entry point for baking a Bun CI machine image (or provisioning a machine
-// like one). Runs under a bare node >= 23.6 via type stripping — no bun, no
+// like one). Runs under a bare node (>= 25, type stripping) — no bun, no
 // build step — because it is what installs everything else.
 //
 //   node scripts/build/ci/bootstrap.ts --image=<key> --ci --repo-ref=<ref>

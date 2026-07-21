@@ -141,17 +141,6 @@ pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
     simdutf::base64::encode(source, dest, true)
 }
 
-/// `encode_url_safe` into a freshly-allocated `Vec<u8>` sized exactly via
-/// `simdutf_encode_len_url_safe` (simdutf computes the exact no-padding length, so
-/// the trailing `truncate` is a no-op kept for symmetry with `encode_alloc`).
-pub fn simdutf_encode_url_safe_alloc(source: &[u8]) -> Vec<u8> {
-    let len = simdutf_encode_len_url_safe(source.len());
-    let mut destination = vec![0u8; len];
-    let encoded_len = encode_url_safe(&mut destination, source);
-    destination.truncate(encoded_len);
-    destination
-}
-
 pub fn decode_len_upper_bound(len: usize) -> usize {
     match zig_base64::STANDARD.decoder.calc_size_upper_bound(len) {
         Ok(v) => v,

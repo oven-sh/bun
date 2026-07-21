@@ -83,4 +83,27 @@ describe("URL-safe base64 encoding", () => {
       base64UrlReference(new Uint8Array(raw)),
     );
   });
+
+  // Encoding::encode_with_max_size sizes the destination WTF string via
+  // url_safe_encode_len before encoding in place; cover every mod-3 digest
+  // length the crypto callers actually produce so a mis-sized buffer (trailing
+  // garbage or truncation) would show up here. Bun.CryptoHasher routes through
+  // encode_with_max_size; node:crypto's createHash takes the C++ JSHash path.
+  const digestCases = [
+    ["md5", 16],
+    ["sha1", 20],
+    ["sha224", 28],
+    ["sha256", 32],
+    ["sha384", 48],
+    ["sha512", 64],
+    ["sha512-224", 28],
+    ["sha512-256", 32],
+  ] as const;
+  test.each(digestCases)("Bun.CryptoHasher digest('base64url') is exact for %s (%d bytes)", (algo, size) => {
+    const raw = new Uint8Array(new Bun.CryptoHasher(algo).update("bun").digest());
+    expect(raw.length).toBe(size);
+    const enc = new Bun.CryptoHasher(algo).update("bun").digest("base64url");
+    expect(enc).toBe(base64UrlReference(raw));
+    expect(enc.length).toBe(Math.ceil((size * 4) / 3));
+  });
 });

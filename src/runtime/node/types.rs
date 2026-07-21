@@ -5,7 +5,7 @@ use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{WStr, ZStr, ZigString};
-use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
+use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _};
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
@@ -808,8 +808,6 @@ impl Encoding {
             input.len(),
             max_size,
         );
-        // Stable Rust forbids const-generic arithmetic in array lengths, so
-        // we heap-allocate.
         match self {
             Self::Base64 => {
                 let encoded_len = bun_core::base64::encode_len(input);
@@ -823,8 +821,15 @@ impl Encoding {
                 encoded.transfer_to_js(global_object)
             }
             Self::Base64url => {
-                let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
+                let encoded_len = bun_base64::url_safe_encode_len(input);
+                let (mut encoded, bytes) =
+                    bun_core::String::create_uninitialized_latin1(encoded_len);
+                if encoded.is_dead() {
+                    return encoded.transfer_to_js(global_object);
+                }
+                let n = bun_base64::encode_url_safe(bytes, input);
+                debug_assert_eq!(n, encoded_len);
+                encoded.transfer_to_js(global_object)
             }
             Self::Hex => {
                 // The byte-by-byte `write!` formatting machinery is pathologically

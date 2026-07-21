@@ -2986,6 +2986,17 @@ impl RunCommand {
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
 
         if !ctx.runtime_options.eval.script.is_empty() {
+            // node -e 'process.argv' a b -> ['node', 'a', 'b']: the first
+            // positional lands in ctx.positionals (stop_after_positional_at=1)
+            // and must reach process.argv. Also reached by `node --test <file>`
+            // which boots the eval driver.
+            if !ctx.positionals.is_empty() {
+                let mut merged: Vec<Box<[u8]>> =
+                    Vec::with_capacity(ctx.positionals.len() + ctx.passthrough.len());
+                merged.extend(ctx.positionals.iter().cloned());
+                merged.append(&mut ctx.passthrough);
+                ctx.passthrough = merged;
+            }
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
             let mut cwd_buf = PathBuffer::uninit();

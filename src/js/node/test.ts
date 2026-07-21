@@ -3515,7 +3515,13 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
       (reporter as { prototype?: object })?.prototype &&
       Object.getOwnPropertyDescriptor((reporter as { prototype: object }).prototype, "constructor")?.value === reporter
     ) {
-      reporter = new (reporter as new () => unknown)();
+      try {
+        reporter = new (reporter as new () => unknown)();
+      } catch (err) {
+        console.error(err);
+        process.exitCode = 1;
+        continue;
+      }
     }
     if (typeof reporter !== "function" && !(reporter && typeof (reporter as { pipe?: unknown }).pipe === "function")) {
       // Validate upfront, like node: a plain object must not reach compose(),

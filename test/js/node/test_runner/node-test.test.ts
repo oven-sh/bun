@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // Every test here spawns a bun subprocess (debug+ASAN startup is ~3s each).
@@ -590,3 +591,33 @@ test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned g
   expect({ counts, stderr, exitCode }).toMatchObject({ counts: { failed: 0 }, exitCode: 0 });
   expect(counts.passed).toBeGreaterThanOrEqual(1);
 }, 30_000);
+
+test.skipIf(isWindows)("--test runs the named file when bun is invoked as node", async () => {
+  // exec_as_if_node's eval branch must merge positionals into passthrough so
+  // the eval driver sees the file in process.argv; without that it silently
+  // falls back to default-glob discovery in cwd.
+  using dir = tempDir("node-test-as-node", {
+    "a.test.mjs": `
+      import { test } from 'node:test';
+      test('a', () => {});
+    `,
+    // A glob-matching sibling that must NOT run when a.test.mjs is named.
+    "nested/b.test.mjs": `
+      import { test } from 'node:test';
+      test('b', () => { throw new Error('b should not run'); });
+    `,
+  });
+  const node = join(String(dir), "node");
+  symlinkSync(bunExe(), node);
+  await using proc = Bun.spawn({
+    cmd: [node, "--test", "--test-reporter=tap", "a.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("ok 1 - a");
+  expect(stdout).not.toContain("- b");
+  expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
+});

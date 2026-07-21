@@ -86,7 +86,7 @@ export const workarounds: Workaround[] = [
     },
     cleanup:
       `Delete scripts/build/rust-lto-fix-cli.ts, the rust_lto_fix rule and rustLtoLinkInputs() in ` +
-      `rust.ts, unwrap its two call sites in bun.ts, drop "llvm-tools" from rust-toolchain.toml's ` +
+      `rust.ts, unwrap its call sites in bun.ts, drop "llvm-tools" from rust-toolchain.toml's ` +
       `components, and delete this entry.`,
   },
   {

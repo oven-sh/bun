@@ -6,6 +6,13 @@ unsafe extern "C" {
 
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
 
+    fn highway_memmem(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: *const u8,
+        needle_len: usize,
+    ) -> *const u8;
+
     fn highway_index_of_interesting_character_in_string_literal(
         text: *const u8,
         text_len: usize,
@@ -138,6 +145,31 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     debug_assert!(haystack[result] == needle);
 
     Some(result)
+}
+
+#[inline(always)]
+pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    // SAFETY: both (ptr,len) pairs are valid readable ranges.
+    let p = unsafe {
+        highway_memmem(
+            haystack.as_ptr(),
+            haystack.len(),
+            needle.as_ptr(),
+            needle.len(),
+        )
+    };
+    if p.is_null() {
+        None
+    } else {
+        // SAFETY: highway_memmem returns a pointer within `haystack` on success.
+        Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+    }
 }
 
 #[inline(always)]

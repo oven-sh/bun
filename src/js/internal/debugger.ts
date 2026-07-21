@@ -114,7 +114,9 @@ export default function (
   try {
     debug = new Debugger(executionContextId, url, createBackend, send, close);
   } catch (error) {
-    exit("Failed to start inspector:\n", error);
+    // Match Node.js: a failure to bind the inspector address is a warning, not fatal.
+    console.error(`Failed to start inspector: ${error && (error as any).message ? (error as any).message : error}`);
+    return;
   }
 
   // If the user types --inspect, we print the URL to the console.
@@ -178,53 +180,48 @@ class Debugger {
     send: (message: string | string[]) => void,
     close: () => void,
   ) {
-    try {
-      this.#createBackend = (refEventLoop, receive) => {
-        const backend = createBackend(executionContextId, refEventLoop, receive);
-        return {
-          write: (message: string | string[]) => {
-            send.$call(backend, message);
-            return true;
-          },
-          close: () => close.$call(backend),
-        };
+    this.#createBackend = (refEventLoop, receive) => {
+      const backend = createBackend(executionContextId, refEventLoop, receive);
+      return {
+        write: (message: string | string[]) => {
+          send.$call(backend, message);
+          return true;
+        },
+        close: () => close.$call(backend),
       };
+    };
 
-      if (url.startsWith("unix://")) {
-        this.#connectOverSocket({
-          unix: unescapeUnixSocketUrl(url),
-        });
-        return;
-      } else if (url.startsWith("fd://")) {
-        this.#connectOverSocket({
-          fd: Number(url.substring("fd://".length)),
-        });
-        return;
-      } else if (url.startsWith("fd:")) {
-        this.#connectOverSocket({
-          fd: Number(url.substring("fd:".length)),
-        });
-        return;
-      } else if (url.startsWith("unix:")) {
-        this.#connectOverSocket({
-          unix: url.substring("unix:".length),
-        });
-        return;
-      } else if (url.startsWith("tcp://")) {
-        const { hostname, port } = new URL(url);
-        this.#connectOverSocket({
-          hostname,
-          port: port && port !== "0" ? Number(port) : undefined,
-        });
-        return;
-      }
-
-      this.#url = parseUrl(url);
-      this.#listen();
-    } catch (error) {
-      console.error(error);
-      throw error;
+    if (url.startsWith("unix://")) {
+      this.#connectOverSocket({
+        unix: unescapeUnixSocketUrl(url),
+      });
+      return;
+    } else if (url.startsWith("fd://")) {
+      this.#connectOverSocket({
+        fd: Number(url.substring("fd://".length)),
+      });
+      return;
+    } else if (url.startsWith("fd:")) {
+      this.#connectOverSocket({
+        fd: Number(url.substring("fd:".length)),
+      });
+      return;
+    } else if (url.startsWith("unix:")) {
+      this.#connectOverSocket({
+        unix: url.substring("unix:".length),
+      });
+      return;
+    } else if (url.startsWith("tcp://")) {
+      const { hostname, port } = new URL(url);
+      this.#connectOverSocket({
+        hostname,
+        port: port && port !== "0" ? Number(port) : undefined,
+      });
+      return;
     }
+
+    this.#url = parseUrl(url);
+    this.#listen();
   }
 
   get url(): URL | undefined {
@@ -451,7 +448,7 @@ async function connectToUnixServer(
         port: Number(port),
       };
     } catch {
-      exit("Invalid tcp: URL:" + unix);
+      console.error(`Failed to start inspector: invalid tcp: URL '${unix}'`);
       return;
     }
   } else if (unix.startsWith("/")) {
@@ -694,11 +691,6 @@ function notify(options): void {
   }).catch(() => {
     // Best-effort
   });
-}
-
-function exit(...args: unknown[]): never {
-  console.error(...args);
-  process.exit(1);
 }
 
 type ConnectionOwner = {

@@ -826,7 +826,10 @@ function makeCancelledByParentError() {
 }
 
 // Reports a declared-but-never-run child of a skipped suite (node's
-// cancelledByParent verdict).
+// cancelledByParent verdict). Recurses into a cancelled suite's own declared
+// children so every leaf emits cancelledByParent (node's postRun() recurses
+// #cancel() + postRun()), otherwise a suite-only subtree lands in counts.suites
+// alone and never reaches counts.cancelled, so the run can exit 0.
 function reportCancelledNode(node: TestNode) {
   if (!runEventsEnabled()) return;
   reportQueueChain(node);
@@ -843,6 +846,17 @@ function reportCancelledNode(node: TestNode) {
     error: makeCancelledByParentError(),
   };
   emitRunChildEvent("test:complete", { ...data, passed: false });
+  if (node.isSuite) {
+    node.suiteReported = true;
+    for (const child of node.standaloneChildren ?? []) {
+      reportCancelledNode(child.node);
+    }
+    emitRunChildEvent("test:plan", {
+      __proto__: null,
+      nesting: nestingOf(node) + 1,
+      count: node.childrenCount,
+    });
+  }
   reportStartChain(node);
   emitRunChildEvent("test:fail", data);
   noteRunChildDone(node.parent, true);
@@ -3124,7 +3138,10 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
         try {
           await import(file);
         } catch (err) {
-          // A file that fails to load is itself a failing test node.
+          // A file that fails to load is itself a failing test node. Emitted
+          // directly (not through republishChildEvent), so top-level numbering
+          // is taken from the same counter the republish path bumps.
+          const testNumber = ++counts.topLevel;
           const fileNode = {
             __proto__: null,
             name: file,
@@ -3138,18 +3155,17 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
           reporter.emitMessage("test:dequeue", { ...fileNode, type: "test" });
           reporter.emitMessage("test:complete", {
             ...fileNode,
-            testNumber: 1,
+            testNumber,
             details: { __proto__: null, duration_ms: 0, type: "test", passed: false, error: err },
           });
           reporter.emitMessage("test:start", { ...fileNode });
           reporter.emitMessage("test:fail", {
             ...fileNode,
-            testNumber: 1,
+            testNumber,
             details: { __proto__: null, duration_ms: 0, type: "test", error: err },
           });
           counts.tests++;
           counts.failed++;
-          counts.topLevel++;
         }
       }
     } finally {
@@ -3179,9 +3195,11 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     }
 
     const durationMs = roundDurationMs(performance.now() - started);
-    const { reportedCount } = root;
-    if (reportedCount > 0) {
-      standaloneSink("test:plan", { __proto__: null, nesting: 0, count: reportedCount });
+    // counts.topLevel covers both the republished entries and the failed-import
+    // file nodes emitted above (root.reportedCount only the former).
+    const { topLevel } = counts;
+    if (topLevel > 0) {
+      standaloneSink("test:plan", { __proto__: null, nesting: 0, count: topLevel });
     }
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {

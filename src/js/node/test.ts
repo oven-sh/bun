@@ -1883,6 +1883,9 @@ class TestNode {
   mockTracker: MockTracker | null = null;
   skipped = false;
   todoFlag = false;
+  // Set by both {only: true} and the .only spelling, so pruneToOnly sees
+  // node's two equivalent spellings the same way (it.only === it({only:true})).
+  onlyFlag = false;
   // The skip/todo reason string ({ skip: 'reason' }, t.skip('reason')).
   directiveMessage: string | null = null;
   cancelled = false;
@@ -1940,6 +1943,7 @@ class TestNode {
     const { skip, todo } = options;
     this.skipped = skip !== undefined && skip !== false;
     this.todoFlag = (todo !== undefined && todo !== false) || (parent?.todoFlag ?? false);
+    this.onlyFlag = !!options.only;
     this.directiveMessage = typeof skip === "string" ? skip : typeof todo === "string" ? todo : null;
     this.expectFailure = parseExpectFailure(options.expectFailure) || parent?.expectFailure || false;
   }
@@ -3049,8 +3053,24 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   return hookError;
 }
 
+// Recursively awaits every suite's build promise so late-registered children
+// (from an async describe body that yielded past import) are in place before
+// pruning walks standaloneChildren. Rejections are handled at runStandaloneEntry.
+async function awaitSuiteBuilds(entries: StandaloneEntry[]): Promise<void> {
+  for (const entry of entries) {
+    const { build } = entry;
+    if (build !== undefined) {
+      try {
+        await build;
+      } catch {}
+    }
+    const children = entry.node.standaloneChildren;
+    if (children !== undefined) await awaitSuiteBuilds(children);
+  }
+}
+
 function entryHasOnly(entry: StandaloneEntry): boolean {
-  if (entry.node.options.only) return true;
+  if (entry.node.onlyFlag) return true;
   for (const child of entry.node.standaloneChildren ?? []) {
     if (entryHasOnly(child)) return true;
   }
@@ -3066,7 +3086,7 @@ function standaloneQueueHasOnly(entries: StandaloneEntry[]): boolean {
 function pruneToOnly(entries: StandaloneEntry[]): StandaloneEntry[] {
   const kept: StandaloneEntry[] = [];
   for (const entry of entries) {
-    if (entry.node.options.only) {
+    if (entry.node.onlyFlag) {
       kept.push(entry);
       continue;
     }
@@ -3122,6 +3142,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
   const callerRoot = getRootNode();
   const savedRootHooks = callerRoot.hooks;
   const savedRootReportedCount = callerRoot.reportedCount;
+  const savedSink = standaloneSink;
   callerRoot.hooks = { before: [], after: [], beforeEach: [], afterEach: [] };
   callerRoot.reportedCount = 0;
 
@@ -3186,6 +3207,12 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     }
 
     const filters = opts.testTagFilterExpressions as string[] | null;
+    const applyOnly = standaloneQueueHasOnly(standaloneQueue);
+    // Pruning walks standaloneChildren, which an async describe body may still
+    // be appending to; node awaits Suite.buildPromise before consulting them.
+    if ((filters !== null && filters.length > 0) || applyOnly) {
+      await awaitSuiteBuilds(standaloneQueue);
+    }
     if (filters !== null && filters.length > 0) {
       const pruned = pruneStandaloneEntries(standaloneQueue, filters);
       standaloneQueue.length = 0;
@@ -3194,7 +3221,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
 
     // node honors `only` in the shared process: when any registration carries
     // it, everything outside the only-marked branches is dropped silently.
-    if (standaloneQueueHasOnly(standaloneQueue)) {
+    if (applyOnly || standaloneQueueHasOnly(standaloneQueue)) {
       const pruned = pruneToOnly(standaloneQueue);
       standaloneQueue.length = 0;
       standaloneQueue.push(...pruned);
@@ -3232,7 +3259,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
 
   function restoreAfterInProcessRun() {
     inProcessRunActive = false;
-    standaloneSink = null;
+    standaloneSink = savedSink;
     activeRunFile = null;
     // Give the caller its own tests and mode flags back so a standalone file
     // that also calls run() still gets its beforeExit pass (finding: the run
@@ -3534,7 +3561,7 @@ function addTest(
   arg1: unknown,
   arg2: unknown,
   executionParent: TestNode | undefined,
-  mode?: "skip" | "todo",
+  mode?: "skip" | "todo" | "only",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
   const { ownTags } = validateTestOptions(options);
@@ -3563,11 +3590,12 @@ function addTest(
   const parent = currentCollectionParent();
   const node = new TestNode(name, parent, options, false, false);
   node.ownTags = ownTags;
+  if (mode === "only") node.onlyFlag = true;
 
   // Node checks `skip` before `todo`, so `{ skip: true, todo: true }` is a skip.
   // Execution routing is by truthiness: node runs the body for falsy-but-
   // defined skip/todo ({ skip: '' }) and only reports the directive.
-  const effectiveMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+  const effectiveMode = mode === "only" ? undefined : (mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined));
 
   if (inStandaloneMode()) {
     noteRunChildRegistered(parent);
@@ -3659,7 +3687,7 @@ function addSuite(
   arg1: unknown,
   arg2: unknown,
   executionParent?: TestNode,
-  mode?: "skip" | "todo",
+  mode?: "skip" | "todo" | "only",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
   const { ownTags } = validateTestOptions(options);
@@ -3707,12 +3735,13 @@ function addSuite(
   const parent = currentCollectionParent();
   const suiteNode = new TestNode(name, parent, options, true, false);
   suiteNode.ownTags = ownTags;
+  if (mode === "only") suiteNode.onlyFlag = true;
   noteRunChildRegistered(parent);
 
   // Node checks `skip` before `todo`, so `{ skip: true, todo: true }` is a skip.
   // Execution routing is by truthiness: node runs the body for falsy-but-
   // defined skip/todo ({ skip: '' }) and only reports the directive.
-  const effectiveMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+  const effectiveMode = mode === "only" ? undefined : (mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined));
 
   if (inStandaloneMode()) {
     if (effectiveMode === "skip") {
@@ -3844,7 +3873,7 @@ test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addTest(arg0, arg1, arg2, undefined);
+  return addTest(arg0, arg1, arg2, undefined, "only");
 };
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -3860,7 +3889,7 @@ describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addSuite(arg0, arg1, arg2, undefined);
+  return addSuite(arg0, arg1, arg2, undefined, "only");
 };
 
 function hookOwner(): TestNode {

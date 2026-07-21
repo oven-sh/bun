@@ -385,18 +385,23 @@ describe("junit reporter", () => {
     expect(proc.exitCode).toBe(1);
   });
 
-  it("creates parent directories for --reporter-outfile", async () => {
+  it.each([[[]], [["--parallel=2"]]])("creates parent directories for --reporter-outfile %j", async extra => {
     const tmpDir = tempDirWithFiles("junit-mkdir", {
       "package.json": "{}",
+      // Two files so --parallel=2 actually shards and goes through merge_junit_fragments.
       "pass.test.js": `
         import { test, expect } from "bun:test";
         test("ok", () => expect(1).toBe(1));
+      `,
+      "pass2.test.js": `
+        import { test, expect } from "bun:test";
+        test("ok2", () => expect(1).toBe(1));
       `,
     });
 
     const junitPath = `${tmpDir}/out/nested/junit.xml`;
     await using proc = spawn({
-      cmd: [bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath, "pass.test.js"],
+      cmd: [bunExe(), "test", ...extra, "--reporter=junit", "--reporter-outfile", junitPath],
       cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
@@ -408,6 +413,7 @@ describe("junit reporter", () => {
     const xmlContent = await file(junitPath).text();
     expect(xmlContent).toContain("<testsuites");
     expect(xmlContent).toContain('name="ok"');
+    expect(xmlContent).toContain('name="ok2"');
     expect(proc.exitCode).toBe(0);
   });
 });

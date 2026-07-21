@@ -3595,7 +3595,8 @@ function addTest(
   // Node checks `skip` before `todo`, so `{ skip: true, todo: true }` is a skip.
   // Execution routing is by truthiness: node runs the body for falsy-but-
   // defined skip/todo ({ skip: '' }) and only reports the directive.
-  const effectiveMode = mode === "only" ? undefined : (mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined));
+  const effectiveMode =
+    mode === "only" ? undefined : (mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined));
 
   if (inStandaloneMode()) {
     noteRunChildRegistered(parent);
@@ -3741,7 +3742,8 @@ function addSuite(
   // Node checks `skip` before `todo`, so `{ skip: true, todo: true }` is a skip.
   // Execution routing is by truthiness: node runs the body for falsy-but-
   // defined skip/todo ({ skip: '' }) and only reports the directive.
-  const effectiveMode = mode === "only" ? undefined : (mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined));
+  const effectiveMode =
+    mode === "only" ? undefined : (mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined));
 
   if (inStandaloneMode()) {
     if (effectiveMode === "skip") {

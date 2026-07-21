@@ -30,7 +30,6 @@ pub enum RmState {
     Done {
         exit_code: ExitCode,
     },
-    WaitingWriteErr,
     Err(ExitCode),
 }
 
@@ -38,6 +37,9 @@ pub struct ExecState {
     /// Index into argv where filepath args start.
     pub args_start: usize,
     pub total_tasks: usize,
+    /// Set when any operand was refused up front (`.`/`..` basename, or
+    /// preserve-root); forces exit code 1 even if every task succeeds.
+    pub had_refusal: bool,
     pub err: Option<bun_sys::Error>,
     pub error_signal: AtomicBool,
     pub output_done: AtomicUsize,
@@ -50,6 +52,11 @@ impl ExecState {
     #[inline]
     fn output_drained(&self) -> bool {
         self.output_done.load(Ordering::SeqCst) >= self.output_count.load(Ordering::SeqCst)
+    }
+
+    #[inline]
+    fn exit_code(&self) -> ExitCode {
+        if self.err.is_some() || self.had_refusal { 1 } else { 0 }
     }
 }
 
@@ -115,7 +122,6 @@ impl Rm {
                 Exec,
                 Done(ExitCode),
                 Err(ExitCode),
-                WaitErr,
             }
             let tag = match &Self::state_mut(interp, cmd).state {
                 RmState::Idle => Tag::Idle,
@@ -126,10 +132,8 @@ impl Rm {
                 RmState::Exec(_) => Tag::Exec,
                 RmState::Done { exit_code } => Tag::Done(*exit_code),
                 RmState::Err(c) => Tag::Err(*c),
-                RmState::WaitingWriteErr => Tag::WaitErr,
             };
             match tag {
-                Tag::WaitErr => return Yield::suspended(),
                 Tag::Idle => {
                     Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                         idx: 0,
@@ -175,87 +179,10 @@ impl Rm {
                             }
 
                             let args_start = idx as usize;
-
-                            // Check that none of the paths will delete the root.
-                            {
-                                let mut buf = bun_paths::PathBuffer::uninit();
-                                let cwd = match bun_sys::getcwd_z(&mut buf) {
-                                    Ok(c) => c.as_bytes().to_vec(),
-                                    Err(err) => {
-                                        let msg =
-                                            err.msg().map(bstr::BStr::new).unwrap_or_else(|| {
-                                                bstr::BStr::new(b"failed to get cwd")
-                                            });
-                                        let buf = Builtin::fmt_error_arena(
-                                            interp,
-                                            cmd,
-                                            Some(Kind::Rm),
-                                            format_args!("getcwd: {}", msg),
-                                        )
-                                        .to_vec();
-                                        return Self::write_failing_error(interp, cmd, &buf, 1);
-                                    }
-                                };
-
-                                for i in args_start..argc {
-                                    let path = Builtin::of(interp, cmd).arg_bytes(i);
-                                    let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
-                                        path
-                                    } else {
-                                        resolve_path::join::<platform::Auto>(&[&cwd, path])
-                                    };
-                                    let normalized = resolve_path::normalize_string::<
-                                        false,
-                                        platform::Auto,
-                                    >(resolved);
-                                    let dirname =
-                                        resolve_path::dirname::<platform::Auto>(normalized);
-                                    if dirname.is_empty() {
-                                        // Copy resolved before
-                                        // re-borrowing `interp` mutably.
-                                        let resolved_owned = resolved.to_vec();
-                                        if let Some(safeguard) =
-                                            Builtin::of(interp, cmd).stderr.needs_io()
-                                        {
-                                            Self::state_mut(interp, cmd).state =
-                                                RmState::ParseOpts {
-                                                    idx,
-                                                    wait_write_err: true,
-                                                };
-                                            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                                            return Builtin::of_mut(interp, cmd)
-                                                .stderr
-                                                .enqueue_fmt(
-                                                    child,
-                                                    Some(Kind::Rm),
-                                                    format_args!(
-                                                        "\"{}\" may not be removed\n",
-                                                        bstr::BStr::new(&resolved_owned)
-                                                    ),
-                                                    safeguard,
-                                                );
-                                        }
-                                        let buf = Builtin::fmt_error_arena(
-                                            interp,
-                                            cmd,
-                                            Some(Kind::Rm),
-                                            format_args!(
-                                                "\"{}\" may not be removed\n",
-                                                bstr::BStr::new(&resolved_owned)
-                                            ),
-                                        )
-                                        .to_vec();
-                                        let _ =
-                                            Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
-                                        return Builtin::done(interp, cmd, 1);
-                                    }
-                                }
-                            }
-
-                            let total_tasks = argc - args_start;
                             Self::state_mut(interp, cmd).state = RmState::Exec(ExecState {
                                 args_start,
-                                total_tasks,
+                                total_tasks: argc - args_start,
+                                had_refusal: false,
                                 err: None,
                                 error_signal: AtomicBool::new(false),
                                 output_done: AtomicUsize::new(0),
@@ -308,7 +235,8 @@ impl Rm {
                         _ => unreachable!(),
                     };
                     if !started {
-                        let cwd = Builtin::cwd(interp, cmd);
+                        let cwd_fd = Builtin::cwd(interp, cmd);
+                        let cwd_path = Builtin::shell(interp, cmd).cwd().to_vec();
                         let evtloop = Builtin::event_loop(interp, cmd);
                         let opts = Self::state_mut(interp, cmd).opts;
                         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
@@ -320,6 +248,54 @@ impl Rm {
                             e.started = true;
                             (e.args_start, e.args_start + e.total_tasks)
                         };
+
+                        // Per-operand refusals. POSIX: rm must write a
+                        // diagnostic and do nothing to an operand whose last
+                        // path component is `.` or `..`. The preserve-root
+                        // check resolves against the shell instance's cwd (set
+                        // by `$.cwd()` / `cd`), not the host process cwd.
+                        let mut refused_msg = Vec::<u8>::new();
+                        let mut args_to_run = Vec::<usize>::with_capacity(argc - args_start);
+                        for i in args_start..argc {
+                            use std::io::Write as _;
+                            let path = Builtin::of(interp, cmd).arg_bytes(i);
+                            let base = resolve_path::basename(path);
+                            if base == b"." || base == b".." {
+                                let _ = writeln!(
+                                    &mut refused_msg,
+                                    "rm: refusing to remove '.' or '..' directory: skipping '{}'",
+                                    bstr::BStr::new(path),
+                                );
+                                continue;
+                            }
+                            let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
+                                path
+                            } else {
+                                resolve_path::join::<platform::Auto>(&[&cwd_path, path])
+                            };
+                            let normalized =
+                                resolve_path::normalize_string::<false, platform::Auto>(resolved);
+                            let dirname = resolve_path::dirname::<platform::Auto>(normalized);
+                            if dirname.is_empty() {
+                                let _ = writeln!(
+                                    &mut refused_msg,
+                                    "rm: \"{}\" may not be removed",
+                                    bstr::BStr::new(resolved),
+                                );
+                                continue;
+                            }
+                            args_to_run.push(i);
+                        }
+
+                        let total_tasks = args_to_run.len();
+                        let had_refusal = !refused_msg.is_empty();
+                        {
+                            let RmState::Exec(e) = &mut Self::state_mut(interp, cmd).state else {
+                                unreachable!()
+                            };
+                            e.total_tasks = total_tasks;
+                            e.had_refusal = had_refusal;
+                        }
                         let (sig, out_count) = match &Self::state_mut(interp, cmd).state {
                             RmState::Exec(e) => (
                                 bun_ptr::BackRef::new(&e.error_signal),
@@ -327,14 +303,14 @@ impl Rm {
                             ),
                             _ => unreachable!(),
                         };
-                        for i in args_start..argc {
+                        for i in args_to_run {
                             let root = Builtin::of(interp, cmd).arg_bytes(i);
                             let is_absolute = Platform::AUTO.is_absolute(root);
                             let task = ShellRmTask::create(
                                 cmd,
                                 opts,
                                 root,
-                                cwd,
+                                cwd_fd,
                                 sig,
                                 out_count,
                                 is_absolute,
@@ -343,6 +319,32 @@ impl Rm {
                             );
                             // SAFETY: freshly heap-allocated.
                             unsafe { ShellRmTask::schedule(task) };
+                        }
+                        // Flush the per-operand refusals after scheduling so the
+                        // completion path (`on_io_writer_chunk` /
+                        // `on_shell_rm_task_done`) sees a consistent
+                        // `output_count` vs `tasks_done`. Task completions
+                        // bounce back to the main thread, so scheduling above
+                        // cannot race this.
+                        if !refused_msg.is_empty() {
+                            if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+                                if let RmState::Exec(e) = &mut Self::state_mut(interp, cmd).state {
+                                    e.output_count.fetch_add(1, Ordering::SeqCst);
+                                }
+                                let child = ChildPtr::new(cmd, WriterTag::Builtin);
+                                return Builtin::of_mut(interp, cmd).stderr.enqueue(
+                                    child,
+                                    &refused_msg,
+                                    safeguard,
+                                );
+                            }
+                            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &refused_msg);
+                        }
+                        if total_tasks == 0 {
+                            Self::state_mut(interp, cmd).state = RmState::Done {
+                                exit_code: if had_refusal { 1 } else { 0 },
+                            };
+                            continue;
                         }
                     }
                     return Yield::suspended();
@@ -368,23 +370,6 @@ impl Rm {
         Builtin::done(interp, cmd, 1)
     }
 
-    fn write_failing_error(
-        interp: &Interpreter,
-        cmd: NodeId,
-        buf: &[u8],
-        exit_code: ExitCode,
-    ) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            Self::state_mut(interp, cmd).state = RmState::WaitingWriteErr;
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, buf, safeguard);
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
-        Builtin::done(interp, cmd, exit_code)
-    }
-
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -395,7 +380,7 @@ impl Rm {
             RmState::Exec(exec) => {
                 exec.output_done.fetch_add(1, Ordering::SeqCst);
                 if exec.tasks_done >= exec.total_tasks && exec.output_drained() {
-                    Some(if exec.err.is_some() { 1 } else { 0 })
+                    Some(exec.exit_code())
                 } else {
                     None
                 }
@@ -471,13 +456,7 @@ impl Rm {
         };
         if tasks_done >= total && all_out {
             let code = match &Self::state_mut(interp, cmd).state {
-                RmState::Exec(exec) => {
-                    if exec.err.is_some() {
-                        1
-                    } else {
-                        0
-                    }
-                }
+                RmState::Exec(exec) => exec.exit_code(),
                 _ => 0,
             };
             Self::state_mut(interp, cmd).state = RmState::Done { exit_code: code };
@@ -526,13 +505,7 @@ impl Rm {
         };
         if done {
             let code = match &Self::state_mut(interp, cmd).state {
-                RmState::Exec(exec) => {
-                    if exec.err.is_some() {
-                        1
-                    } else {
-                        0
-                    }
-                }
+                RmState::Exec(exec) => exec.exit_code(),
                 _ => 0,
             };
             return Builtin::done(interp, cmd, code);

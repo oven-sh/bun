@@ -6,8 +6,8 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -210,6 +210,89 @@ foo/
     });
     expect(exitCode).toBe(0);
   }, 120_000);
+});
+
+// POSIX: an operand whose last path component is `.` or `..` must be refused
+// with a diagnostic and not processed (GNU rm: "refusing to remove '.' or
+// '..' directory"). Previously these were recursed into, so the directory was
+// emptied before the final rmdir failed with EINVAL.
+describe.concurrent("rm refuses '.' and '..' operands", () => {
+  const ops = [".", "..", "./", "../", "d/.", "d/..", "d/./"] as const;
+  test.each(ops)("rm -rf %s", async op => {
+    using dir = tempDir("rm-dot", { "d/a.txt": "A", "d/s/c.txt": "C" });
+    const r = await $`cd d && rm -rf ${op}`.cwd(String(dir)).nothrow().quiet();
+    expect({
+      stderr: r.stderr.toString(),
+      exitCode: r.exitCode,
+      remaining: readdirSync(path.join(String(dir), "d")).sort(),
+    }).toEqual({
+      stderr: `rm: refusing to remove '.' or '..' directory: skipping '${op}'\n`,
+      exitCode: 1,
+      remaining: ["a.txt", "s"],
+    });
+  });
+
+  test("skips the refused operand and still removes the others", async () => {
+    using dir = tempDir("rm-dot-mixed", { "keep.txt": "K", "go.txt": "G" });
+    const r = await $`rm -rf . go.txt`.cwd(String(dir)).nothrow().quiet();
+    expect({
+      stderr: r.stderr.toString(),
+      exitCode: r.exitCode,
+      remaining: readdirSync(String(dir)).sort(),
+    }).toEqual({
+      stderr: "rm: refusing to remove '.' or '..' directory: skipping '.'\n",
+      exitCode: 1,
+      remaining: ["keep.txt"],
+    });
+  });
+
+  test("does not refuse '...' or dotfiles", async () => {
+    using dir = tempDir("rm-dot-ok", { ".hidden": "H", ".../x.txt": "X" });
+    const r = await $`rm -rf .hidden ...`.cwd(String(dir)).nothrow().quiet();
+    expect({ stderr: r.stderr.toString(), exitCode: r.exitCode, remaining: readdirSync(String(dir)) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      remaining: [],
+    });
+  });
+
+  test.skipIf(isWindows)("still refuses '/'", async () => {
+    using dir = tempDir("rm-root", {});
+    const r = await $`rm -rf /`.cwd(String(dir)).nothrow().quiet();
+    expect({ exitCode: r.exitCode, stderr: r.stderr.toString() }).toEqual({
+      exitCode: 1,
+      stderr: 'rm: "/" may not be removed\n',
+    });
+  });
+});
+
+// The preserve-root guard resolves relative operands against the shell
+// instance's cwd (set via `$.cwd()` / `cd`), not the host process cwd.
+// With the process launched from `/`, a relative operand used to resolve to a
+// top-level path and be spuriously refused.
+test.skipIf(isWindows)("rm preserve-root guard resolves against the shell cwd", async () => {
+  using dir = tempDir("rm-guard-cwd", { "sub/a.txt": "A" });
+  const fixture = `
+    import { $ } from "bun";
+    $.nothrow();
+    const r = await $\`rm -rf sub\`.cwd(${JSON.stringify(String(dir))}).quiet();
+    console.log(JSON.stringify({ exitCode: r.exitCode, stderr: r.stderr.toString() }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    cwd: "/",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect({ ...JSON.parse(stdout.trim()), subExists: existsSync(path.join(String(dir), "sub")) }).toEqual({
+    exitCode: 0,
+    stderr: "",
+    subExists: false,
+  });
+  expect(exitCode).toBe(0);
 });
 
 function packagejson() {

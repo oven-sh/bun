@@ -188,6 +188,15 @@ tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }
 
 tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>>(Bun.spawnSync([], {}));
 
+{
+  const { stdout, stderr } = Bun.spawnSync(["echo", "hi"], {
+    stdout: new Uint8Array(16),
+    stderr: new Uint8Array(16),
+  });
+  tsd.expectType(stdout).is<Uint8Array>();
+  tsd.expectType(stderr).is<Uint8Array>();
+}
+
 // Lazy option types (async only)
 {
   // valid: lazy usable with async spawn

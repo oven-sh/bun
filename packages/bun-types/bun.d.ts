@@ -6826,7 +6826,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
-       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `ArrayBufferView`: `spawnSync` only. The process writes to the preallocated buffer and the result's `stdout`/`stderr` is a `Uint8Array` subarray over the bytes written.
        * - `number`: The process writes to the file descriptor
        *
        * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
@@ -6859,7 +6859,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
-       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `ArrayBufferView`: `spawnSync` only. The process writes to the preallocated buffer and `stdout` is a `Uint8Array` subarray over the bytes written.
        * - `number`: The process writes to the file descriptor
        *
        * @default "pipe"
@@ -6871,7 +6871,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
-       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `ArrayBufferView`: `spawnSync` only. The process writes to the preallocated buffer and `stderr` is a `Uint8Array` subarray over the bytes written.
        * - `number`: The process writes to the file descriptor
        *
        * @default "inherit" for `spawn`
@@ -7142,7 +7142,11 @@ declare module "bun" {
         ? number
         : undefined;
 
-    type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined ? Buffer : undefined;
+    type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
+      ? Buffer
+      : X extends ArrayBufferView
+        ? Uint8Array
+        : undefined;
 
     type WritableIO = FileSink | number | undefined;
 

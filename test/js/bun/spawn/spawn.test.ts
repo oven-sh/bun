@@ -279,7 +279,7 @@ for (let [gcTick, label] of [
         const text2 = new TextDecoder().decode(stdout_buffer);
         expect(text).toBe("hello world\n");
         expect(text2).toBe("hello world\n\u0000\u0000\u0000");
-        expect((stdout as Uint8Array).buffer).toBe(stdout_buffer.buffer);
+        expect(stdout.buffer).toBe(stdout_buffer.buffer);
         gcTick();
       });
 

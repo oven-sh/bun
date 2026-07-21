@@ -1443,13 +1443,16 @@ async function main() {
   };
 
   let { detached, bootstrap, ci, os, arch, distro, release } = options;
-  // There is no live-Windows bootstrap: Windows images bake through the
-  // Packer path (create-image --cloud=azure). An `ssh` of a Windows spec
-  // image gives you the base machine, so bootstrap is off rather than a
-  // default that could only fail.
-  if (os === "windows" && command === "ssh") {
-    if (bootstrap) console.log("Windows machines are not bootstrapped by ssh (Packer bakes them); connecting to the base image.");
-    bootstrap = false;
+  // Windows spec images exist only on Azure and are baked end-to-end by
+  // Packer (create-image --cloud=azure). This tool has no live-Windows
+  // machine path — refuse up front with the reason, instead of accepting the
+  // request and failing deep inside base-image lookup.
+  if (options.imageEntry && options.imageEntry.os === "windows" && command === "ssh") {
+    throw new Error(
+      `Windows CI images live in Azure and are baked by Packer; there is no interactive ` +
+        `Windows machine path in machine.mjs. To bake ${options.imageEntry.key}: ` +
+        `create-image --image=${options.imageEntry.key} --cloud=azure`,
+    );
   }
 
   // create-image bakes options.imageEntry (from --image). The image name is

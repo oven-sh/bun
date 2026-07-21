@@ -2292,28 +2292,30 @@ describe("open flag string validation matches node", () => {
   // Node's fs.open/openSync has no options-object overload; any object in the
   // flags slot must throw ERR_INVALID_ARG_VALUE, not be treated as
   // `{flags, mode}` and default to O_RDONLY.
-  it.each([["{}", {}], ["[]", []], ["new String('r')", new String("r")], ["{flags:'w'}", { flags: "w" }]])(
-    "openSync/open/promises.open reject object flag %s with ERR_INVALID_ARG_VALUE",
-    async (_, flag) => {
-      using dir = tempDir("fs-flags-object", { "f.txt": "x" });
-      const file = join(String(dir), "f.txt");
-      for (const fn of [() => openSync(file, flag as any), () => fs.open(file, flag as any, () => {})]) {
-        let err: any;
-        try {
-          const fd = fn();
-          if (typeof fd === "number") closeSync(fd);
-        } catch (e) {
-          err = e;
-        }
-        expect(err).toBeInstanceOf(TypeError);
-        expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+  it.each([
+    ["{}", {}],
+    ["[]", []],
+    ["new String('r')", new String("r")],
+    ["{flags:'w'}", { flags: "w" }],
+  ])("openSync/open/promises.open reject object flag %s with ERR_INVALID_ARG_VALUE", async (_, flag) => {
+    using dir = tempDir("fs-flags-object", { "f.txt": "x" });
+    const file = join(String(dir), "f.txt");
+    for (const fn of [() => openSync(file, flag as any), () => fs.open(file, flag as any, () => {})]) {
+      let err: any;
+      try {
+        const fd = fn();
+        if (typeof fd === "number") closeSync(fd);
+      } catch (e) {
+        err = e;
       }
-      await expect(promises.open(file, flag as any)).rejects.toMatchObject({
-        name: "TypeError",
-        code: "ERR_INVALID_ARG_VALUE",
-      });
-    },
-  );
+      expect(err).toBeInstanceOf(TypeError);
+      expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    }
+    await expect(promises.open(file, flag as any)).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+  });
 
   it.each(invalidFlags)("openSync rejects flag %p with ERR_INVALID_ARG_VALUE", flag => {
     using dir = tempDir("fs-flags-invalid", {});

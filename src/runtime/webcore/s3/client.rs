@@ -538,17 +538,13 @@ pub(crate) fn writable_stream(
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink =
         bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
+            ref_count: core::cell::Cell::new(2), // +1 for callback_context
             task: NonNull::new(task_ptr).map(bun_ptr::BackRef::from),
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             high_water_mark: part_size as BlobSizeType,
             ..Default::default()
         }));
 
-    // +1 for `callback_context` below; released by `wrapper_callback`'s trailing
-    // `sink.finalize()`. The JS wrapper's +1 is the `Default` rc=1, released by
-    // `NetworkSink__finalize` when the wrapper is swept.
-    // SAFETY: freshly heap-allocated; exclusive access here.
-    unsafe { &*response_stream }.ref_();
     task.callback_context = response_stream.cast::<c_void>();
     task.on_writable = Some(on_writable_thunk);
 

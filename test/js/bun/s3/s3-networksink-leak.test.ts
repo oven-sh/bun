@@ -5,16 +5,17 @@ import { bunEnv, bunExe, isASAN } from "harness";
 // owners: the JS wrapper (m_sinkPtr) and the MultiPartUpload's callback_context.
 // Both release paths routed through NetworkSink::finalize(), which only
 // detached the upload task and never reclaimed the Box. Every writer() leaked
-// one ~80-byte NetworkSink on both the success and failure completion paths.
+// one ~80-byte NetworkSink on both the success and failure completion paths,
+// whether finished via .end() or .close().
 //
 // This test spawns two subprocesses under detect_leaks=1 with N and N+20
 // writers and asserts the extra 20 writers do not add a proportional number of
 // leaked bytes. symbolize=0 keeps each run under a second; one-time at-exit
 // allocations are constant between the two runs and cancel out in the diff.
 
-async function runWriters(count: number, fail: boolean) {
+async function runWriters(count: number, fail: boolean, finish: "end" | "close") {
   const script = `
-    using server = Bun.serve({
+    const server = Bun.serve({
       port: 0,
       async fetch(req) {
         await req.arrayBuffer();
@@ -28,25 +29,31 @@ async function runWriters(count: number, fail: boolean) {
         }
       },
     });
+    server.unref();
     const s3 = new Bun.S3Client({
       accessKeyId: "k",
       secretAccessKey: "s",
       bucket: "b",
       endpoint: \`http://127.0.0.1:\${server.port}\`,
     });
+    process.once("beforeExit", () => { Bun.gc(true); console.log("done"); });
     for (let i = 0; i < ${count}; i++) {
-      const w = s3.file("key-" + i, { retry: 0 }).writer();
+      const w = s3.file("key-" + i).writer({ retry: 0 });
       w.write("hello");
-      try { await w.end(); } catch {}
+      ${finish === "end" ? `try { await w.end(); } catch {}` : `w.close();`}
     }
-    Bun.gc(true);
-    console.log("done");
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
     env: {
       ...bunEnv,
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "symbolize=0"].filter(Boolean).join(":"),
+      // The S3 client does not honor NO_PROXY for writer(), so an inherited
+      // proxy would hijack the request to the in-process mock server.
+      http_proxy: undefined,
+      HTTP_PROXY: undefined,
+      https_proxy: undefined,
+      HTTPS_PROXY: undefined,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -58,11 +65,13 @@ async function runWriters(count: number, fail: boolean) {
 
 describe.skipIf(!isASAN)("S3 writer() NetworkSink is freed", () => {
   for (const fail of [true, false]) {
-    test.concurrent(`when the upload ${fail ? "fails" : "succeeds"}`, async () => {
-      const small = await runWriters(2, fail);
-      const large = await runWriters(22, fail);
-      // Before the fix the diff is exactly 20 * sizeof(NetworkSink) = 1600.
-      expect(large - small).toBeLessThan(400);
-    });
+    for (const finish of ["end", "close"] as const) {
+      test.concurrent(`via .${finish}() when the upload ${fail ? "fails" : "succeeds"}`, async () => {
+        const small = await runWriters(2, fail, finish);
+        const large = await runWriters(22, fail, finish);
+        // Before the fix the diff is >= 20 * sizeof(NetworkSink) ~= 1600.
+        expect(large - small).toBeLessThan(400);
+      });
+    }
   }
 });

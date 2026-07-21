@@ -513,6 +513,9 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     sink->detach();
     RETURN_IF_EXCEPTION(scope, {});
     ${name}__close(lexicalGlobalObject, ptr);
+    // detach() nulled m_sinkPtr so ~${className} will not reach __finalize;
+    // release the wrapper's ref here instead.
+    ${name}__finalize(ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

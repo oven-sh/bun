@@ -873,12 +873,17 @@ function validateVariant(variant: any) {
   return { minRequiredArgs };
 }
 
+// Node ESM frames use file:// URLs (forward-slash even on Windows); Bun uses
+// plain host paths. Compare against the forward-slash form so a Windows
+// `import.meta.dirname` still matches the frame.
+const codegenDirForward = import.meta.dirname.replaceAll("\\", "/");
+
 function snapshotCallerLocation(): string | undefined {
   const stack = new Error().stack!;
   const lines = stack.split("\n");
   let i = 1;
   for (; i < lines.length; i++) {
-    if (!lines[i].includes(import.meta.dirname)) {
+    if (!lines[i].replaceAll("\\", "/").includes(codegenDirForward)) {
       return lines[i];
     }
   }
@@ -890,8 +895,9 @@ function snapshotCallerLocation(): string | undefined {
 
 function stackTraceFileName(line: string | undefined): string {
   if (line === undefined) return "";
-  // Under Node the frame path is a file:// URL; under Bun it's a plain path.
-  const urlMatch = /(file:\/\/[^\s):]+)/.exec(line);
+  // Under Node the frame path is a file:// URL (`file:///C:/...` on Windows);
+  // anchor on the trailing :line:col so the drive-letter colon stays inside.
+  const urlMatch = /(file:\/\/\S+?):\d+:\d+\)?\s*$/.exec(line);
   if (urlMatch) return fileURLToPath(urlMatch[1]).replaceAll("\\", "/");
   const match = /(?:at\s+|\()(.:?[^:\n(\)]*)[^(\n]*$/i.exec(line);
   assert(match, `Couldn't extract filename from stack trace line: ${line}`);

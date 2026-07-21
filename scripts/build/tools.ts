@@ -132,21 +132,15 @@ export function findPackageManager(os: OS): PackageManager {
     return { exe: bunPath, installArgs: ["install", "--frozen-lockfile"], lockfile: "bun.lock" };
   }
 
-  const npm = findTool({ names: ["npm"], required: false });
-  if (npm) return { exe: npm.path, installArgs: ["ci"], lockfile: "package-lock.json" };
-
-  const pnpm = findTool({ names: ["pnpm"], required: false });
-  if (pnpm) return { exe: pnpm.path, installArgs: ["install", "--frozen-lockfile"], lockfile: "pnpm-lock.yaml" };
-
-  const yarn = findTool({ names: ["yarn"], required: false });
-  if (yarn) return { exe: yarn.path, installArgs: ["install", "--immutable"], lockfile: "yarn.lock" };
-
-  // npm ships with node; this should be unreachable.
-  return findTool({
+  // Only bun.lock is checked in, so the non-bun fallbacks resolve from
+  // package.json rather than running a frozen install. --no-save keeps the
+  // tree clean of a generated package-lock.json.
+  const npm = findTool({
     names: ["npm"],
     required: true,
-    hint: "No package manager found (tried bun, npm, pnpm, yarn). Install Node.js, which bundles npm.",
-  }) as never;
+    hint: "No package manager found (tried bun, npm). Install Node.js, which bundles npm.",
+  })!;
+  return { exe: npm.path, installArgs: ["install", "--no-save"], lockfile: "package-lock.json" };
 }
 
 /**

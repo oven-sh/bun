@@ -1849,7 +1849,12 @@ pub fn init(
     let npmrc_local = ZBox::from_bytes(b".npmrc");
     let mut buf = PathBuffer::uninit();
     if let Some(global_npmrc) = ::bun_bunfig::home_config_path(&mut buf, b".npmrc") {
-        ini::load_npmrc_config(&mut **install_ref, env, true, &[global_npmrc, &*npmrc_local]);
+        ini::load_npmrc_config(
+            &mut **install_ref,
+            env,
+            true,
+            &[global_npmrc, &*npmrc_local],
+        );
     } else {
         ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]);
     }

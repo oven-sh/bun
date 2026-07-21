@@ -2195,12 +2195,9 @@ it("new Database() does not leak the sqlite3 handle when open fails", async () =
   // handle has been released.
   expect(() => new Database(badPath)).toThrow(expect.objectContaining({ code: "SQLITE_CANTOPEN" }));
 
-  // sqlite3_open_v2 writes a handle to *ppDb even when it returns an error,
-  // and that handle must be sqlite3_close()'d by the caller. Before the fix
-  // the SQLITE_CANTOPEN branch threw without closing it, so every failed open
-  // leaked the connection object (~3.5 KB each). ASAN's quarantine holds freed
-  // allocations in RSS, so the signal is LSAN's leak byte total on ASAN builds
-  // and RSS growth on release builds.
+  // sqlite3_open_v2 returns a handle that must be sqlite3_close()'d even on
+  // failure; previously it leaked (~3.5 KB/attempt). ASAN's quarantine hides
+  // this in RSS, so assert on LSAN bytes there and on RSS for release builds.
   const iters = 2000;
   const src = `
     import { Database } from "bun:sqlite";

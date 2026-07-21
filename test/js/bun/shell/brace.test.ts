@@ -44,6 +44,27 @@ describe("$.braces", () => {
     expect($.braces(`{{a,b}{c,d}{e,f}}`)).toEqual(["ace", "acf", "ade", "adf", "bce", "bcf", "bde", "bdf"]);
   });
 
+  // The nested-expansion parser consumed `}` via the outer loop guard after a
+  // trailing `,`, so `{a,}` inside a nested group yielded one variant instead
+  // of two and the last output slot was left empty.
+  describe("nested with empty variant", () => {
+    test.each([
+      ["{x,a{,}b}", ["x", "ab", "ab"]],
+      ["{x,{a,}}z", ["xz", "az", "z"]],
+      ["{x,{,a}}z", ["xz", "z", "az"]],
+      ["{x,{,}}z", ["xz", "z", "z"]],
+      ["a{b,c{d,}}e", ["abe", "acde", "ace"]],
+      ["a{b,c{,d}}e", ["abe", "ace", "acde"]],
+      ["{x,{a,,b}}", ["x", "a", "", "b"]],
+      ["{x,{a,b,}}", ["x", "a", "b", ""]],
+      ["{{a,},x}", ["a", "", "x"]],
+      ["{{a,}{b,}}", ["ab", "a", "b", ""]],
+      ["p{q,{r,}{s,}}t", ["pqt", "prst", "prt", "pst", "pt"]],
+    ])("%s", (pattern, expected) => {
+      expect($.braces(pattern)).toEqual(expected);
+    });
+  });
+
   test("very deeply nested", () => {
     const result = $.braces(`{1,{2,{3,{4,{5,{6,{7,{8,{9,{10,{11,{12,{13,{14,{15,{16,{17}}}}}}}}}}}}}}}}}`);
     expect(result).toEqual([

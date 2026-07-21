@@ -1,0 +1,9 @@
+{
+  "name": "winsysfuzz",
+  "private": true,
+  "scripts": {
+    "codegen": "bun codegen.ts",
+    "configure": "cmake -S . -B build -G \"Visual Studio 17 2022\" -A x64",
+    "build": "bun run codegen && bun run configure && cmake --build build --config Release --parallel"
+  }
+}

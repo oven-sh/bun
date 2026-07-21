@@ -1761,6 +1761,50 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
+  /* Raw write via the AsyncSocket buffering layer (cork buffer then
+   * AsyncSocketData::buffer) instead of straight to the fd like
+   * us_socket_write. Uncorking first is what orders a node:http
+   * req.socket.write() behind any res.write()/writeHead() output still
+   * parked in the cork buffer; the write() then drains
+   * AsyncSocketData::buffer ahead of the new bytes. Returns true when bytes
+   * remain buffered after the call. */
+  bool uws_async_socket_write(int ssl, us_socket_t *s, const char *data, size_t length)
+  {
+    auto body = [&](auto *asyncSocket) {
+      auto [uncorked, bp0] = asyncSocket->uncork();
+      (void)uncorked;
+      bool backpressure = bp0;
+      while (length > 0) {
+        int len = (int)std::min(length, (size_t)INT_MAX);
+        auto [written, bp] = asyncSocket->write(data, len);
+        (void)written;
+        backpressure |= bp;
+        data += (size_t)len;
+        length -= (size_t)len;
+      }
+      return backpressure || asyncSocket->getBufferedAmount() > 0;
+    };
+    return ssl ? body(reinterpret_cast<uWS::AsyncSocket<true> *>(s))
+               : body(reinterpret_cast<uWS::AsyncSocket<false> *>(s));
+  }
+
+  /* Half-close once the cork and AsyncSocket buffers are empty. Returns
+   * true when bytes remain buffered (shutdown deferred to the drain path);
+   * false when the FIN was sent. */
+  bool uws_async_socket_end(int ssl, us_socket_t *s)
+  {
+    auto body = [](auto *asyncSocket) {
+      asyncSocket->uncork();
+      if (asyncSocket->getBufferedAmount() > 0) {
+        return true;
+      }
+      asyncSocket->shutdown();
+      return false;
+    };
+    return ssl ? body(reinterpret_cast<uWS::AsyncSocket<true> *>(s))
+               : body(reinterpret_cast<uWS::AsyncSocket<false> *>(s));
+  }
+
   void us_socket_mark_needs_more_not_ssl(uws_res_r res)
   {
     us_socket_r s = (us_socket_t *)res;

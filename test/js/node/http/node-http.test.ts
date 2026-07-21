@@ -4054,3 +4054,39 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
 });
+
+// In Node.js res.write() and req.socket.write() land on the same net.Socket
+// Writable, so raw bytes written between framework writes appear on the wire in
+// call order. Bun routed req.socket.write() straight to the fd while the
+// response head sat in a cork buffer, so the raw bytes would overtake the
+// status line and the client parsed a garbage "RAWHTTP/1.1 200 OK".
+describe.each([true, false])("req.socket.write() interleaved with res.write() (flushHeaders=%p)", flush => {
+  it("reaches the wire after the response head and in call order", async () => {
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Length", "9");
+      if (flush) res.flushHeaders();
+      res.write("AAA");
+      req.socket.write("RAW");
+      res.write("BBB");
+      res.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as AddressInfo;
+      const c = connect(port, "127.0.0.1");
+      await once(c, "connect");
+      let wire = "";
+      c.setEncoding("latin1");
+      c.on("data", d => (wire += d));
+      c.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      await once(c, "close");
+
+      const headEnd = wire.indexOf("\r\n\r\n");
+      expect(headEnd).toBeGreaterThan(0);
+      expect(wire.slice(0, "HTTP/1.1 200 OK\r\n".length)).toBe("HTTP/1.1 200 OK\r\n");
+      expect(wire.slice(headEnd + 4)).toBe("AAARAWBBB");
+    } finally {
+      server.close();
+    }
+  });
+});

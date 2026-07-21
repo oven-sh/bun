@@ -16,10 +16,6 @@ struct us_socket_stream_buffer_t {
     size_t total_bytes_written = 0;
     size_t cursor = 0;
 
-    size_t bufferedSize() const
-    {
-        return listLen - cursor;
-    }
     size_t totalBytesWritten() const
     {
         return total_bytes_written;

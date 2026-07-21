@@ -552,26 +552,16 @@ void JSNodeHTTPServerSocket::onDrain()
 {
     // This function can be called during GC!
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
-    if (!functionToCallOnDrain) {
-        return;
+
+    // A socket.end() that was deferred while AsyncSocketData::buffer still
+    // held bytes sends its FIN now that the buffer is empty, even when no JS
+    // drain callback is armed.
+    if (this->ended && this->socket && !us_socket_is_shut_down(this->socket)) {
+        us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
     }
 
-    auto bufferedSize = this->streamBuffer.bufferedSize();
-    if (bufferedSize > 0) {
-        auto* globalObject = defaultGlobalObject(this->globalObject());
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-        us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        if (auto* exception = scope.exception()) {
-            (void)scope.tryClearException();
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
-            return;
-        }
-        bufferedSize = this->streamBuffer.bufferedSize();
-
-        if (bufferedSize > 0) {
-            // need to drain more
-            return;
-        }
+    if (!functionToCallOnDrain) {
+        return;
     }
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 

@@ -53,6 +53,10 @@ export function linuxPackerTemplate(input: LinuxPackerTemplateInput): Record<str
 
   const source: Record<string, unknown> = {
     region: aws.region,
+    // Region validation calls ec2:DescribeRegions purely to catch a typo'd
+    // region name; ours is the fixed EC2_REGION the rest of the system uses,
+    // and the CI identity is not granted DescribeRegions. Skip it.
+    skip_region_validation: true,
     // Resolve the newest AMI matching the spec's glob from its owner — the
     // FLOATING base image, exactly as the spec describes it.
     source_ami_filter: {

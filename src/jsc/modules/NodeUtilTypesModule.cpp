@@ -9,12 +9,14 @@
 #include "webcrypto/JSJsonWebKey.h"
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/AsyncFunctionPrototype.h>
+#include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/CallFrame.h>
 #include <JavaScriptCore/CallFrameInlines.h>
 #include <JavaScriptCore/ErrorPrototype.h>
 #include <JavaScriptCore/GeneratorFunctionPrototype.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SymbolObject.h>
 #include "ZigGeneratedClasses.h"
 #include "JSKeyObject.h"
 
@@ -72,8 +74,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBigIntObject,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-    return JSValue::encode(
-        jsBoolean(globalObject->bigIntObjectStructure() == cell->structure()));
+    return JSValue::encode(jsBoolean(cell->inherits<JSC::BigIntObject>()));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBooleanObject,
     (JSC::JSGlobalObject * globalObject,
@@ -104,9 +105,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSymbolObject,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-
-    return JSValue::encode(
-        jsBoolean(globalObject->symbolObjectStructure() == cell->structure()));
+    return JSValue::encode(jsBoolean(cell->inherits<JSC::SymbolObject>()));
 }
 extern "C" bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
 
@@ -343,16 +342,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBoxedPrimitive,
     case JSC::DerivedStringObjectType:
         return JSValue::encode(jsBoolean(true));
 
-    default: {
-        if (cell->structure() == globalObject->symbolObjectStructure())
-            return JSValue::encode(jsBoolean(true));
-
-        if (cell->structure() == globalObject->bigIntObjectStructure())
-            return JSValue::encode(jsBoolean(true));
+    default:
+        return JSValue::encode(jsBoolean(cell->inherits<JSC::SymbolObject>() || cell->inherits<JSC::BigIntObject>()));
     }
-    }
-
-    return JSValue::encode(jsBoolean(false));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsArrayBufferView,
     (JSC::JSGlobalObject * globalObject,

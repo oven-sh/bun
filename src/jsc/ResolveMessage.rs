@@ -99,7 +99,7 @@ impl ResolveMessage {
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<*mut ResolveMessage> {
-        Err(global.throw_illegal_constructor("ResolveMessage"))
+        Err(global.throw_illegal_constructor())
     }
 
     #[crate::host_fn(getter)]

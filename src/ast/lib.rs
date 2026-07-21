@@ -881,9 +881,24 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            if full_line.len() > 80 + data.column_count {
-                full_line = &full_line[data.column_count.max(40) - 40
-                    ..(data.column_count + 40).min(full_line.len() - 40) + 40];
+            // Window a long line to ~120 bytes around the error. Bounds are
+            // BYTE offsets; the gate keeps the original shape (no left trim for
+            // an error in the last 80 bytes) so `write_format`'s caret aligns.
+            let offset_in_line = clamp_error_offset(&source.contents, r.loc)
+                .saturating_sub(data.line_start)
+                .min(full_line.len());
+            if full_line.len() > 80 + offset_in_line {
+                let mut lo = offset_in_line.saturating_sub(40);
+                let mut hi = (offset_in_line + 80).min(full_line.len());
+                while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
+                    lo -= 1;
+                }
+                while hi < full_line.len()
+                    && !bun_core::strings::is_utf8_char_boundary(full_line[hi])
+                {
+                    hi += 1;
+                }
+                full_line = &full_line[lo..hi];
             }
 
             return Some(Location {
@@ -2748,7 +2763,9 @@ impl ErrorPositionState {
                     crossed_line_break = true;
                 }
                 _ => {
-                    self.column_number += 1;
+                    // Columns count UTF-16 code units (JSC/V8 stack traces, the
+                    // source-map spec, and the CSS logger all agree on this).
+                    self.column_number += 1 + (iter.c > 0xFFFF) as usize;
                 }
             }
 
@@ -3824,5 +3841,23 @@ mod line_column_tracker_tests {
                 bstr::BStr::new(source.contents())
             );
         }
+    }
+
+    #[test]
+    fn error_position_counts_utf16_columns() {
+        // `]` sits at UTF-16 unit index 18 (1-based col 19); the two U+1F600
+        // take two UTF-16 units each. Previously columns counted codepoints
+        // and this returned 17.
+        let src = "const a = \"\u{1F600}\u{1F600}\"; ]".as_bytes();
+        let source = Source::init_path_string(b"t.js" as &[u8], src);
+        let pos = source.init_error_position(usize2loc(src.len() - 1));
+        assert_eq!(pos.column_count, 19);
+
+        // BMP-only control: `é` is one UTF-16 unit, so astral vs BMP lines
+        // with the same layout must agree.
+        let bmp = "const a = \"\u{00E9}\u{00E9}\u{00E9}\u{00E9}\"; ]".as_bytes();
+        let bmp_source = Source::init_path_string(b"t.js" as &[u8], bmp);
+        let bmp_pos = bmp_source.init_error_position(usize2loc(bmp.len() - 1));
+        assert_eq!(bmp_pos.column_count, 19);
     }
 }

@@ -1354,8 +1354,15 @@ impl NodeHTTPResponse {
         {
             return Ok(JSValue::FALSE);
         }
-        self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
-        raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+        // Body already delivered: nothing to buffer, and re-arming onData would
+        // overwrite a pipelined request's userData on the shared HttpResponseData.
+        // pause_socket() still runs so pausePipelineReads can gate the fd.
+        if self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
+            self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
+            raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+        }
 
         // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
         #[cfg(not(windows))]
@@ -1419,8 +1426,15 @@ impl NodeHTTPResponse {
         {
             return JSValue::FALSE;
         }
-        self.set_on_aborted_handler();
-        raw.on_data(on_data_shim, self.as_ctx_ptr());
+        // Body already delivered: re-arming onData/onTimeout would overwrite a
+        // pipelined request's userData on the shared HttpResponseData. The drain
+        // below still runs so a body buffered-while-paused reaches its own caller.
+        if self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
+            self.set_on_aborted_handler();
+            raw.on_data(on_data_shim, self.as_ctx_ptr());
+        }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
         let mut result: JSValue = JSValue::TRUE;
 

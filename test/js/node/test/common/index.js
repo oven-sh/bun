@@ -1147,6 +1147,12 @@ function expectRequiredModule(mod, expectation, checkESModule = true) {
   assert.deepStrictEqual(clone, { ...expectation });
 }
 
+function sleepSync(ms) {
+  const sab = new SharedArrayBuffer(4);
+  const i32 = new Int32Array(sab);
+  Atomics.wait(i32, 0, 0, ms);
+}
+
 const common = {
   allowGlobals,
   buildType,
@@ -1207,6 +1213,7 @@ const common = {
   skipIfInspectorDisabled,
   skipIfSQLiteMissing,
   skipIfWorker,
+  sleepSync,
   spawnPromisified,
 
   get enoughTestMem() {

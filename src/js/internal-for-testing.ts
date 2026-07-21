@@ -52,6 +52,8 @@ const shellParse = $newRustFunction("shell.rs", "TestingAPIs.shellParse", 2);
 
 export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount", 0);
 
+export const dirnameStoreAppendCount = $newRustFunction("filesystem_router.rs", "jsDirnameStoreAppendCount", 0);
+
 export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
 
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);

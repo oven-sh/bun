@@ -1121,17 +1121,18 @@ impl Route {
                     let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
                     let name_len = name.len();
 
-                    // NOTE: DirnameStore::append returns `&'static [u8]` (process-
+                    // NOTE: DirnameStore::intern_* returns `&'static [u8]` (process-
                     // lifetime arena), so rebinding here drops the borrow on
                     // `route_file_buf` and avoids needing lifetime transmutes
                     // below.
                     let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
+                    let public_path: &'static [u8] = dirname_store
+                        .intern_slice(public_path)
+                        .expect("unreachable");
                     let name: &'static [u8] = &public_path[name_offset..][0..name_len];
                     let match_name: &'static [u8] = if has_uppercase {
                         dirname_store
-                            .append_lower_case(&name[1..])
+                            .intern_lower_case(&name[1..])
                             .expect("unreachable")
                     } else {
                         &name[1..]
@@ -1142,8 +1143,9 @@ impl Route {
                     (public_path, name, match_name)
                 } else {
                     let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
+                    let public_path: &'static [u8] = dirname_store
+                        .intern_slice(public_path)
+                        .expect("unreachable");
                     (
                         public_path,
                         Route::INDEX_ROUTE_NAME,
@@ -1231,7 +1233,7 @@ impl Route {
 
                 abs_path_str = FileSystem::instance()
                     .dirname_store()
-                    .append(_abs)
+                    .intern_slice(_abs)
                     .expect("unreachable");
 
                 // SAFETY: sole mutation; `base_`/`extname` (which may borrow
@@ -1249,7 +1251,7 @@ impl Route {
                 );
                 let interned: &'static [u8] = FileSystem::instance()
                     .dirname_store()
-                    .append(normalized)
+                    .intern_slice(normalized)
                     .expect("unreachable");
                 Interned::from_static(interned)
             };
@@ -1267,13 +1269,13 @@ impl Route {
             }
 
             // NOTE: name/match_name/public_path are already `&'static` via
-            // DirnameStore::append above. `entry.base()` borrows the entry (it
-            // may be inline-stored for ≤31-byte names); intern it
+            // DirnameStore::intern_slice above. `entry.base()` borrows the entry
+            // (it may be inline-stored for ≤31-byte names); intern it
             // explicitly to get `&'static` without a lifetime transmute.
             // SAFETY: read-only reborrow; the `&mut` write above is dead.
             let basename: &'static [u8] = FileSystem::instance()
                 .dirname_store()
-                .append(unsafe { &*entry }.base())
+                .intern_slice(unsafe { &*entry }.base())
                 .expect("unreachable");
 
             Some(Route {

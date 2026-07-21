@@ -122,11 +122,86 @@ pub mod fs {
                     // SAFETY: see `append_slice`.
                     unsafe { &*$backing() }.exists(value)
                 }
+                /// Total number of `append*` calls (inline + overflow). Exposed via
+                /// `bun:internal-for-testing` so leak tests can assert "N reloads
+                /// performed zero new appends".
+                pub fn append_count(&self) -> u32 {
+                    let this = $backing();
+                    // SAFETY: `this` is the live process-lifetime singleton; `Mutex: Sync`
+                    // so concurrent `&Mutex` formation is sound. With the inner mutex
+                    // held no other thread holds `&mut *this`, so the raw-place reads
+                    // of `slice_buf_used` / `overflow_list.count` are race-free.
+                    unsafe {
+                        let _g = (*this).mutex.lock();
+                        (*this).slice_buf_used as u32 + (*this).overflow_list.count
+                    }
+                }
             }
         };
     }
     string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing);
     string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing);
+
+    // Process-wide (not thread-local): the backing store is process-global, so the
+    // dedupe index must match its lifetime or resolver worker threads each re-append.
+    static DIRNAME_INTERN: std::sync::LazyLock<
+        bun_core::Mutex<bun_collections::HashMap<&'static [u8], ()>>,
+    > = std::sync::LazyLock::new(Default::default);
+
+    impl DirnameStore {
+        /// Content-deduplicated [`append_slice`]. `BSSStringList::append` does not
+        /// dedupe, so a bust-then-reread cycle (hot reload, `FileSystemRouter.reload`)
+        /// would otherwise re-append the same directory path on every miss, exhausting
+        /// the store's slot capacity and leaking one heap buffer per overflow append.
+        pub fn intern_slice(&self, value: &[u8]) -> crate::CrateResult<&'static [u8]> {
+            if self.exists(value) {
+                // SAFETY: `exists` is a pointer-range check — `value` lies wholly
+                // within the process-lifetime backing buffer, so widening is sound.
+                return Ok(unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) });
+            }
+            let mut set = DIRNAME_INTERN.lock();
+            if let Some((interned, ())) = set.get_key_value(value) {
+                return Ok(*interned);
+            }
+            let interned = self.append_slice(value)?;
+            set.insert(interned, ());
+            Ok(interned)
+        }
+
+        /// Content-deduplicated [`append_parts`]. See [`intern_slice`].
+        pub fn intern_parts(&self, parts: &[&[u8]]) -> crate::CrateResult<&'static [u8]> {
+            const STACK: usize = 512;
+            let total: usize = parts.iter().map(|p| p.len()).sum();
+            let mut stack = [0u8; STACK];
+            let mut heap: Vec<u8>;
+            let scratch: &mut [u8] = if total <= STACK {
+                &mut stack[..total]
+            } else {
+                heap = vec![0u8; total];
+                &mut heap[..]
+            };
+            let mut at = 0;
+            for p in parts {
+                scratch[at..at + p.len()].copy_from_slice(p);
+                at += p.len();
+            }
+            self.intern_slice(&scratch[..at])
+        }
+
+        /// Content-deduplicated [`append_lower_case`]. See [`intern_slice`].
+        pub fn intern_lower_case(&self, value: &[u8]) -> crate::CrateResult<&'static [u8]> {
+            const STACK: usize = 256;
+            let mut stack = [0u8; STACK];
+            let mut heap: Vec<u8>;
+            let scratch: &mut [u8] = if value.len() <= STACK {
+                &mut stack[..value.len()]
+            } else {
+                heap = vec![0u8; value.len()];
+                &mut heap[..]
+            };
+            self.intern_slice(bun_core::strings::copy_lowercase(value, scratch))
+        }
+    }
 
     macro_rules! string_store_append_impl {
         ($t:ty, $backing:ident) => {
@@ -1298,11 +1373,10 @@ pub mod fs {
                 // its `dir` field is DirnameStore-interned (&'static).
                 unsafe { (*existing).dir }
             } else if !had_handle {
-                DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
+                DirnameStore::instance().intern_slice(dir_maybe_trail_slash)?
             } else {
-                // Intern into DirnameStore so the cache entry never dangles —
-                // `append_slice` is a bump-pointer copy, cost is bounded.
-                DirnameStore::instance().append_slice(dir)?
+                // Intern into DirnameStore so the cache entry never dangles.
+                DirnameStore::instance().intern_slice(dir)?
             };
 
             // Cache miss: read the directory entries

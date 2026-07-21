@@ -1,0 +1,10 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const t = (label, src, str) => { const m = new RegExp(src).exec(str); out(label.padEnd(30) + s(m && [...m])); };
+t("1 bounded {1,2}", "(?<=(a){1,2}(b){1,2})!", "abb!");
+t("1b bounded {1,2}", "(?<=(a){2,3})b", "aaaab");
+t("2 unbounded nonempty", "(?<=(a)+?)b", "aaab");
+t("2b unbounded nonempty", "(?<=(ab)+c)!", "xababc!");
+t("3 unbounded min0-body", "(?<=$(.?)+?)\\w?", "0");
+t("3b unbounded min0-body", "(?<=$(a|.?|)+?)!", "0!");
+t("4 star min0-body", "(?<=(a*))b", "aaab");
+t("5 bounded min0-body", "(?<=$(.?){1,2}?)\\w?", "0");

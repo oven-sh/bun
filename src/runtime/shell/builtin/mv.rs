@@ -494,7 +494,9 @@ impl ShellMvBatchedTask {
         // Rename single entry to a new path (target was not a directory).
         if this.no_overwrite && bun_sys::lstatat(this.cwd, &this.target).is_ok() {
             // Still surface a missing source; `-n` only suppresses overwrite.
-            this.err = bun_sys::lstatat(this.cwd, &this.sources[0]).err();
+            this.err = bun_sys::lstatat(this.cwd, &this.sources[0])
+                .err()
+                .map(|e| e.with_path(this.sources[0].as_bytes()));
             return;
         }
         if let Err(e) = bun_sys::renameat(this.cwd, &this.sources[0], this.cwd, &this.target) {
@@ -531,7 +533,9 @@ impl ShellMvBatchedTask {
         let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
         if no_overwrite && bun_sys::lstatat(target_fd, path_in_dir).is_ok() {
             // Still surface a missing source; `-n` only suppresses overwrite.
-            return bun_sys::lstatat(cwd, src).map(drop);
+            return bun_sys::lstatat(cwd, src)
+                .map(drop)
+                .map_err(|e| e.with_path(src.as_bytes()));
         }
         bun_sys::renameat(cwd, src, target_fd, path_in_dir).map_err(|e| {
             // Surface `target/basename(src)` as the failing path.

@@ -4444,7 +4444,7 @@ pub mod formatter {
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
                 'first: {
-                    let element = value.get_direct_index(self.global_this, 0);
+                    let element = value.get_own_index_for_inspect(self.global_this, 0);
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
@@ -4484,7 +4484,7 @@ pub mod formatter {
                 let mut nonempty_count: u32 = 1;
 
                 while (i as u64) < len {
-                    let element = value.get_direct_index(self.global_this, i);
+                    let element = value.get_own_index_for_inspect(self.global_this, i);
                     if element.is_empty() {
                         if empty_start.is_none() {
                             empty_start = Some(i);

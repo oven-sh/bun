@@ -7880,20 +7880,7 @@ impl H2FrameParser {
                         return Err(global_object.throw_value(exception));
                     }
 
-                    let value_str = match item.to_js_string(global_object) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            scope.clear_exception();
-                            let exception = global_object.to_type_error(
-                                bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                format_args!(
-                                    "Invalid value for header \"{}\"",
-                                    BStr::new(validated_name)
-                                ),
-                            );
-                            return Err(global_object.throw_value(exception));
-                        }
-                    };
+                    let value_str = item.to_js_string(global_object)?;
 
                     // All-digit names can't be passed to get_truthy (integer-index-like names
                     // trip a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
@@ -7927,20 +7914,7 @@ impl H2FrameParser {
                     }
                     single_value_headers[idx] = true;
                 }
-                let value_str = match js_value.to_js_string(global_object) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        scope.clear_exception();
-                        let exception = global_object.to_type_error(
-                            bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                            format_args!(
-                                "Invalid value for header \"{}\"",
-                                BStr::new(validated_name)
-                            ),
-                        );
-                        return Err(global_object.throw_value(exception));
-                    }
-                };
+                let value_str = js_value.to_js_string(global_object)?;
 
                 // All-digit names can't be passed to get_truthy (integer-index-like names trip
                 // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
@@ -8315,18 +8289,7 @@ impl H2FrameParser {
                 if js_value.is_empty_or_undefined_or_null() {
                     continue;
                 }
-                let value_str = match js_value.to_js_string(global_object) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        global_object.clear_exception();
-                        return Err(global_object
-                            .err(
-                                JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                format_args!("Invalid value for header \"{}\"", BStr::new(name)),
-                            )
-                            .throw());
-                    }
-                };
+                let value_str = js_value.to_js_string(global_object)?;
                 // All-digit names can't be passed to get_truthy (integer-index-like names trip
                 // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
                 let never_index = if Self::is_index_like_name(validated_name) {
@@ -8736,21 +8699,7 @@ impl H2FrameParser {
                         single_value_headers[idx] = true;
                     }
 
-                    let value_str = match value_js.to_js_string(global_object) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            global_object.clear_exception();
-                            return Err(global_object
-                                .err(
-                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                    format_args!(
-                                        "Invalid value for header \"{}\"",
-                                        BStr::new(name)
-                                    ),
-                                )
-                                .throw());
-                        }
-                    };
+                    let value_str = value_js.to_js_string(global_object)?;
 
                     let never_index = if Self::is_index_like_name(validated_name) {
                         false
@@ -8923,21 +8872,7 @@ impl H2FrameParser {
                             return Ok(JSValue::ZERO);
                         }
 
-                        let value_str = match item.to_js_string(global_object) {
-                            Ok(s) => s,
-                            Err(_) => {
-                                global_object.clear_exception();
-                                return Err(global_object
-                                    .err(
-                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                        format_args!(
-                                            "Invalid value for header \"{}\"",
-                                            BStr::new(validated_name)
-                                        ),
-                                    )
-                                    .throw());
-                            }
-                        };
+                        let value_str = item.to_js_string(global_object)?;
 
                         let never_index = if Self::is_index_like_name(validated_name) {
                             false
@@ -9013,21 +8948,7 @@ impl H2FrameParser {
                         }
                         single_value_headers[idx] = true;
                     }
-                    let value_str = match js_value.to_js_string(global_object) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            global_object.clear_exception();
-                            return Err(global_object
-                                .err(
-                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                    format_args!(
-                                        "Invalid value for header \"{}\"",
-                                        BStr::new(name)
-                                    ),
-                                )
-                                .throw());
-                        }
-                    };
+                    let value_str = js_value.to_js_string(global_object)?;
 
                     let never_index = if Self::is_index_like_name(validated_name) {
                         false

@@ -133,7 +133,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global.throw_illegal_constructor("ResumableSink"))
+        Err(global.throw_illegal_constructor())
     }
 
     pub fn init(

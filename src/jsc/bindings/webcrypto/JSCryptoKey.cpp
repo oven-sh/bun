@@ -46,6 +46,7 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
+#include "streams/WebStreamsInspectCustom.h"
 #include "WebCoreJSClientData.h"
 #include "WebCoreOpaqueRoot.h"
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -105,6 +106,7 @@ template<> ASCIILiteral expectedEnumerationValues<CryptoKey::Type>()
 // Attributes
 
 static JSC_DECLARE_CUSTOM_GETTER(jsCryptoKeyConstructor);
+static JSC_DECLARE_HOST_FUNCTION(jsCryptoKeyPrototype_inspectCustom);
 static JSC_DECLARE_CUSTOM_GETTER(jsCryptoKey_type);
 static JSC_DECLARE_CUSTOM_GETTER(jsCryptoKey_extractable);
 static JSC_DECLARE_CUSTOM_GETTER(jsCryptoKey_algorithm);
@@ -177,6 +179,7 @@ void JSCryptoKeyPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSCryptoKey::info(), JSCryptoKeyPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsCryptoKeyPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -288,6 +291,41 @@ static inline JSValue jsCryptoKey_usagesGetter(JSGlobalObject& lexicalGlobalObje
 JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_usages, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_usagesGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+}
+
+// The attributes are prototype accessors, so a CryptoKey has no own enumerable
+// properties and would otherwise inspect as an empty `CryptoKey {}`. Read the
+// internal state directly: the getters hand out a cache user code can mutate.
+JSC_DEFINE_HOST_FUNCTION(jsCryptoKeyPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSCryptoKey>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+
+    auto& impl = thisObject->wrapped();
+    auto& globalObject = *thisObject->globalObject();
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+
+    JSValue type = toJS<IDLEnumeration<CryptoKey::Type>>(*lexicalGlobalObject, scope, impl.type());
+    RETURN_IF_EXCEPTION(scope, {});
+    data->putDirect(vm, Identifier::fromString(vm, "type"_s), type, 0);
+
+    JSValue extractable = toJS<IDLBoolean>(*lexicalGlobalObject, scope, impl.extractable());
+    RETURN_IF_EXCEPTION(scope, {});
+    data->putDirect(vm, Identifier::fromString(vm, "extractable"_s), extractable, 0);
+
+    JSValue algorithm = toJS<IDLUnion<IDLDictionary<CryptoKeyAlgorithm>, IDLDictionary<CryptoAesKeyAlgorithm>, IDLDictionary<CryptoEcKeyAlgorithm>, IDLDictionary<CryptoHmacKeyAlgorithm>, IDLDictionary<CryptoRsaHashedKeyAlgorithm>, IDLDictionary<CryptoRsaKeyAlgorithm>>>(*lexicalGlobalObject, globalObject, scope, impl.algorithm());
+    RETURN_IF_EXCEPTION(scope, {});
+    data->putDirect(vm, Identifier::fromString(vm, "algorithm"_s), algorithm, 0);
+
+    JSValue usages = toJS<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, globalObject, scope, impl.usages());
+    RETURN_IF_EXCEPTION(scope, {});
+    data->putDirect(vm, Identifier::fromString(vm, "usages"_s), usages, 0);
+
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "CryptoKey"_s, data));
 }
 
 JSC::GCClient::IsoSubspace* JSCryptoKey::subspaceForImpl(JSC::VM& vm)

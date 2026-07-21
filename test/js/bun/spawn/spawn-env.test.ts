@@ -29,9 +29,11 @@ describe("default env inherits live process.env", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("runtime-value,[unset]");
-      expect(exitCode).toBe(0);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "runtime-value,[unset]",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   }
 
@@ -55,9 +57,11 @@ describe("default env inherits live process.env", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("true\nfound-the-tool\nfound-the-tool\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "true\nfound-the-tool\nfound-the-tool\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

@@ -2307,10 +2307,7 @@ it("should not send 100 Continue for an over-limit Content-Length with Expect: 1
   // Over limit without Expect: unchanged baseline.
   expect(await probe(500, false)).toEqual(["HTTP/1.1 413 Request Entity Too Large"]);
   // Under limit with Expect: still get 100 Continue, then the final response.
-  expect(await probe(50, true, Buffer.alloc(50, "x").toString())).toEqual([
-    "HTTP/1.1 100 Continue",
-    "HTTP/1.1 200 OK",
-  ]);
+  expect(await probe(50, true, Buffer.alloc(50, "x").toString())).toEqual(["HTTP/1.1 100 Continue", "HTTP/1.1 200 OK"]);
 });
 
 it("should support promise returned from error", async () => {

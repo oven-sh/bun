@@ -1053,8 +1053,8 @@ impl<'a> Parser<'a> {
 
                     js_ast::StmtData::SClass(class) => {
                         // Move class statements ahead of other code to help cyclical imports
-                        // (https://github.com/kysely-org/kysely/issues/412). Skip when an
-                        // earlier statement already references the name so its TDZ is kept.
+                        // (https://github.com/kysely-org/kysely/issues/412). Skip when any
+                        // already-visited statement mentions the name so its TDZ is kept.
                         let used_before_decl = match class.class.class_name {
                             Some(name) => {
                                 p.symbols.as_slice()[name.ref_.inner_index() as usize]

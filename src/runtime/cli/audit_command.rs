@@ -475,7 +475,7 @@ fn send_audit_request(
     // `init_sync` erases lifetimes internally (port-erased raw pointers); all
     // borrowed inputs live on this stack frame past `send_sync()`.
     let mut req = http::AsyncHTTP::init_sync(
-        http::Method::POST,
+        http::Method::POST.into(),
         url,
         headers.entries,
         headers_buf,

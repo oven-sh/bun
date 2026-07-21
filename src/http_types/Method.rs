@@ -49,9 +49,10 @@ pub type Set = EnumSet<Method>;
 
 bun_core::comptime_string_map! {
     /// The wire form is RFC 9110 case-sensitive uppercase, so the per-request
-    /// hot path hits the uppercase entries; the all-lower entries exist only
-    /// for `new Request("get", …)` JS-side convenience (mixed-case still
-    /// rejects).
+    /// hot path hits the uppercase entries; the all-lower entries exist because
+    /// uWS lower-cases the request line's method in place before `Bun.serve`
+    /// looks it up. Lookup is exact-byte, so mixed case misses — JS-facing entry
+    /// points go through [`Method::normalize`] / [`MethodBuf`] instead.
     static METHOD_MAP: Method = {
         b"ACL" => Method::ACL,
         b"acl" => Method::ACL,
@@ -221,6 +222,164 @@ impl Method {
     pub fn which(str: &[u8]) -> Option<Method> {
         METHOD_MAP.get(str).copied()
     }
+
+    /// `tchar` per RFC 9110 §5.6.2.
+    const fn is_token_char(byte: u8) -> bool {
+        matches!(byte,
+            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.'
+            | b'^' | b'_' | b'`' | b'|' | b'~'
+            | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z')
+    }
+
+    /// A `method` per <https://fetch.spec.whatwg.org/#concept-method>: a
+    /// non-empty RFC 9110 token.
+    pub fn is_token(str: &[u8]) -> bool {
+        !str.is_empty() && str.iter().copied().all(Method::is_token_char)
+    }
+
+    /// <https://fetch.spec.whatwg.org/#forbidden-method>
+    pub fn is_forbidden(str: &[u8]) -> bool {
+        [&b"CONNECT"[..], b"TRACE", b"TRACK"]
+            .iter()
+            .any(|forbidden| str.eq_ignore_ascii_case(forbidden))
+    }
+
+    /// <https://fetch.spec.whatwg.org/#concept-method-normalize>: only these
+    /// six verbs are case-normalized; every other token is forwarded as given.
+    pub fn normalize(str: &[u8]) -> Option<Method> {
+        const NORMALIZED: [Method; 6] = [
+            Method::DELETE,
+            Method::GET,
+            Method::HEAD,
+            Method::OPTIONS,
+            Method::POST,
+            Method::PUT,
+        ];
+        NORMALIZED
+            .into_iter()
+            .find(|method| str.eq_ignore_ascii_case(method.as_str().as_bytes()))
+    }
+}
+
+/// The method a request is sent with: a well-known verb, or a custom RFC 9110
+/// token forwarded to the server byte-for-byte.
+///
+/// `Copy`, so `HTTPClient`/`AsyncHTTP` keep their bitwise-copy semantics; the
+/// `Custom` token borrows storage owned by whoever built the request (a
+/// `FetchTasklet`, for fetch).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MethodRef<'a> {
+    Known(Method),
+    Custom(&'a [u8]),
+}
+
+impl<'a> MethodRef<'a> {
+    /// The wire form of the method.
+    pub fn as_bytes(self) -> &'a [u8] {
+        match self {
+            MethodRef::Known(method) => method.as_str().as_bytes(),
+            MethodRef::Custom(token) => token,
+        }
+    }
+
+    /// The wire form of the method. A `Custom` token is an RFC 9110 token, so
+    /// it is always ASCII; a non-UTF-8 one renders as empty rather than panic.
+    pub fn as_str(self) -> &'a str {
+        match self {
+            MethodRef::Known(method) => method.as_str(),
+            MethodRef::Custom(token) => core::str::from_utf8(token).unwrap_or_default(),
+        }
+    }
+
+    pub fn known(self) -> Option<Method> {
+        match self {
+            MethodRef::Known(method) => Some(method),
+            MethodRef::Custom(_) => None,
+        }
+    }
+
+    /// True when this is exactly `method`. A `Custom` token never compares
+    /// equal to a known verb, which is what makes the redirect and
+    /// body-allowed rules below treat custom verbs conservatively.
+    pub fn is(self, method: Method) -> bool {
+        self == MethodRef::Known(method)
+    }
+
+    /// Custom verbs are assumed to carry a body: the set of bodyless methods is
+    /// closed (RFC 9110 §9.3) and an unknown verb is not in it.
+    pub fn has_request_body(self) -> bool {
+        match self {
+            MethodRef::Known(method) => method.has_request_body(),
+            MethodRef::Custom(_) => true,
+        }
+    }
+
+    /// Whether a response to this method may carry a body.
+    pub fn has_body(self) -> bool {
+        match self {
+            MethodRef::Known(method) => method.has_body(),
+            MethodRef::Custom(_) => true,
+        }
+    }
+
+    /// Custom verbs are never assumed idempotent, so they are not retried.
+    pub fn is_idempotent(self) -> bool {
+        match self {
+            MethodRef::Known(method) => method.is_idempotent(),
+            MethodRef::Custom(_) => false,
+        }
+    }
+}
+
+impl From<Method> for MethodRef<'_> {
+    fn from(method: Method) -> Self {
+        MethodRef::Known(method)
+    }
+}
+
+/// Owning counterpart of [`MethodRef`], for the JS-side `Request`/`fetch`
+/// objects that must keep a custom token alive.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MethodBuf {
+    Known(Method),
+    Custom(Box<[u8]>),
+}
+
+impl MethodBuf {
+    pub fn as_ref(&self) -> MethodRef<'_> {
+        match self {
+            MethodBuf::Known(method) => MethodRef::Known(*method),
+            MethodBuf::Custom(token) => MethodRef::Custom(token),
+        }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.as_ref().as_bytes()
+    }
+
+    pub fn known(&self) -> Option<Method> {
+        self.as_ref().known()
+    }
+
+    pub fn is(&self, method: Method) -> bool {
+        self.as_ref().is(method)
+    }
+
+    pub fn has_request_body(&self) -> bool {
+        self.as_ref().has_request_body()
+    }
+}
+
+impl Default for MethodBuf {
+    fn default() -> Self {
+        MethodBuf::Known(Method::GET)
+    }
+}
+
+impl From<Method> for MethodBuf {
+    fn from(method: Method) -> Self {
+        MethodBuf::Known(method)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -385,7 +544,7 @@ pub enum HeaderName {
 
 #[cfg(test)]
 mod tests {
-    use super::Method;
+    use super::{Method, MethodBuf, MethodRef};
 
     /// Exhaustive parity check for `Method::which`: every variant round-trips
     /// via its uppercase wire form and the all-lower convenience form, and
@@ -409,5 +568,61 @@ mod tests {
         assert_eq!(Method::which(b"GETS"), None);
         assert_eq!(Method::which(b"BREW"), None);
         assert_eq!(Method::which(b"MKADDRESSBOOKS"), None);
+    }
+
+    #[test]
+    fn normalize_only_the_six() {
+        for (input, expected) in [
+            (&b"delete"[..], Method::DELETE),
+            (b"Get", Method::GET),
+            (b"hEaD", Method::HEAD),
+            (b"OPTIONS", Method::OPTIONS),
+            (b"post", Method::POST),
+            (b"Put", Method::PUT),
+        ] {
+            assert_eq!(Method::normalize(input), Some(expected), "{input:?}");
+        }
+        // Everything else is forwarded as-is, including verbs the table knows.
+        for input in [&b"patch"[..], b"PATCH", b"Propfind", b"QUERY", b"BREW", b""] {
+            assert_eq!(Method::normalize(input), None, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn tokens_and_forbidden_methods() {
+        for input in [&b"GET"[..], b"BREW", b"X-Custom_1", b"a!#$%&'*+-.^_`|~0"] {
+            assert!(Method::is_token(input), "{input:?}");
+        }
+        for input in [&b""[..], b"GET POST", b"GET\r\n", b"GET/1", b"\x80"] {
+            assert!(!Method::is_token(input), "{input:?}");
+        }
+        for input in [&b"CONNECT"[..], b"trace", b"TrAcK"] {
+            assert!(Method::is_forbidden(input), "{input:?}");
+        }
+        for input in [&b"GET"[..], b"TRACER", b"CONNEC"] {
+            assert!(!Method::is_forbidden(input), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn custom_methods_carry_a_body_and_are_not_idempotent() {
+        let custom = MethodRef::Custom(b"BREW");
+        assert_eq!(custom.as_bytes(), b"BREW");
+        assert!(custom.has_request_body());
+        assert!(!custom.is_idempotent());
+        assert!(!custom.is(Method::GET));
+        assert_eq!(custom.known(), None);
+
+        let known = MethodRef::Known(Method::GET);
+        assert_eq!(known.as_bytes(), b"GET");
+        assert!(!known.has_request_body());
+        assert!(known.is_idempotent());
+        assert!(known.is(Method::GET));
+
+        assert_eq!(MethodBuf::default().as_bytes(), b"GET");
+        assert_eq!(
+            MethodBuf::Custom(Box::from(&b"pAtCh"[..])).as_bytes(),
+            b"pAtCh"
+        );
     }
 }

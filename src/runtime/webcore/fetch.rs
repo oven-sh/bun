@@ -51,7 +51,7 @@ use crate::webcore::jsc::{
 use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
-use bun_http_types::Method::Method;
+use bun_http_types::Method::{Method, MethodBuf};
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
@@ -628,27 +628,38 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // **Start with the harmless ones.**
 
-    // "method"
-    let mut method = 'extract_method: {
+    // "method". `get` (not `get_truthy`) because the fetch spec keys on WebIDL
+    // presence: only `undefined` falls through to the default, while `""` is an
+    // invalid token and must throw.
+    let mut method: MethodBuf = match 'extract_method: {
         if let Some(options) = options_object {
-            if let Some(method_) = options.get_truthy(global_this, "method")? {
-                break 'extract_method method_jsc::from_js(global_this, method_)?;
+            if let Some(method_) = options.get(global_this, "method")? {
+                break 'extract_method method_jsc::request_method_from_js(global_this, method_)?;
             }
         }
 
         if let Some(req) = request_mut!() {
-            break 'extract_method Some(req.method);
+            break 'extract_method Ok(req.method.clone());
         }
 
         if let Some(req) = request_init_object {
-            if let Some(method_) = req.get_truthy(global_this, "method")? {
-                break 'extract_method method_jsc::from_js(global_this, method_)?;
+            if let Some(method_) = req.get(global_this, "method")? {
+                break 'extract_method method_jsc::request_method_from_js(global_this, method_)?;
             }
         }
 
-        break 'extract_method None;
-    }
-    .unwrap_or(Method::GET);
+        break 'extract_method Ok(MethodBuf::default());
+    } {
+        Ok(method) => method,
+        Err(err) => {
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    err,
+                ),
+            );
+        }
+    };
 
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
@@ -1903,7 +1914,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // we cannot direct stream to s3 we need to use multi part upload
             // `defer body.ReadableStream.deinit()` → Drop on `body` scope exit.
 
-            if method != Method::PUT && method != Method::POST {
+            if !method.is(Method::PUT) && !method.is(Method::POST) {
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global_this,
@@ -1971,14 +1982,25 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
         }
-        if method == Method::POST {
-            method = Method::PUT;
+        if method.is(Method::POST) {
+            method = MethodBuf::Known(Method::PUT);
         }
+        let Some(signed_method) = method.known() else {
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    global_this.create_error_instance(format_args!(
+                        "{} is not a supported HTTP method when using S3",
+                        bun_core::fmt::quote(method.as_bytes())
+                    )),
+                ),
+            );
+        };
 
         let mut result = match credentials_with_options.credentials.sign_request::<false>(
             &SignOptions {
                 path: url.s3_path(),
-                method,
+                method: signed_method,
                 ..Default::default()
             },
             None,
@@ -2148,7 +2170,7 @@ impl<'a> S3StreamWrapper<'a> {
             s3::S3UploadResult::Success => {
                 let response = Box::new(Response::init(
                     response::Init {
-                        method: Method::PUT,
+                        method: Method::PUT.into(),
                         status_code: 200,
                         ..Default::default()
                     },
@@ -2166,7 +2188,7 @@ impl<'a> S3StreamWrapper<'a> {
             s3::S3UploadResult::Failure(err) => {
                 let response = Box::new(Response::init(
                     response::Init {
-                        method: Method::PUT,
+                        method: Method::PUT.into(),
                         status_code: 500,
                         status_text: BunString::create_atom_if_possible(err.code).into(),
                         ..Default::default()

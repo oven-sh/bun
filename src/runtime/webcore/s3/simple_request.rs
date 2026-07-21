@@ -680,7 +680,7 @@ pub(crate) fn execute_simple_s3_request(
     let verbose = vm.as_mut().get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
     task.http.write(AsyncHTTP::init(
-        options.method,
+        options.method.into(),
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,

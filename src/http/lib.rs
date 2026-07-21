@@ -86,7 +86,7 @@ pub type HttpClient<'a> = HTTPClient<'a>;
 pub type AsyncHttp<'a> = AsyncHTTP<'a>;
 pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
-pub use bun_http_types::Method::Method;
+pub use bun_http_types::Method::{Method, MethodBuf, MethodRef};
 pub use bun_picohttp as picohttp;
 
 #[repr(u8)]
@@ -744,7 +744,8 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
 // Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
 // lifetime-erased `HTTPClient<'static>` form via [`HTTPClient::as_erased_ptr`].
 pub struct HTTPClient<'a> {
-    pub method: Method,
+    /// `'a` also covers a `MethodRef::Custom` token (caller-owned storage).
+    pub method: MethodRef<'a>,
     pub header_entries: headers::EntryList,
     pub header_buf: &'a [u8],
     pub url: URL<'a>,
@@ -2561,12 +2562,14 @@ impl<'a> HTTPClient<'a> {
         }
 
         // SAFETY: every borrowed slice points into storage that outlives the
-        // returned `Request` — `Method::as_str()` is `'static`; `url.pathname`
-        // borrows `self.url` (lives for the client); `request_headers_buf` is
-        // the per-HTTP-thread `SHARED_REQUEST_HEADERS_BUF` static. Return as
+        // returned `Request` — a known method's `as_str()` is `'static` and a
+        // custom method token is `'a` (caller-owned); `url.pathname` borrows
+        // `self.url` (lives for the client); `request_headers_buf` is the
+        // per-HTTP-thread `SHARED_REQUEST_HEADERS_BUF` static. Return as
         // `'static` so callers don't pin `&mut self` for the rest of their fn.
         picohttp::Request {
-            method: self.method.as_str().as_bytes(),
+            // SAFETY: see the block comment above.
+            method: unsafe { bun_ptr::detach_lifetime(self.method.as_bytes()) },
             // SAFETY: `url.pathname` borrows `self.url`, which outlives the returned `Request`.
             path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
             minor_version: 1,
@@ -5402,13 +5405,13 @@ impl<'a> HTTPClient<'a> {
                         // - internalResponse's status is 303 and request's method is not `GET` or `HEAD`
                         // then:
                         if ((status_code == 301 || status_code == 302)
-                            && self.method == Method::POST)
+                            && self.method.is(Method::POST))
                             || (status_code == 303
-                                && self.method != Method::GET
-                                && self.method != Method::HEAD)
+                                && !self.method.is(Method::GET)
+                                && !self.method.is(Method::HEAD))
                         {
                             // - Set request's method to `GET` and request's body to null.
-                            self.method = Method::GET;
+                            self.method = MethodRef::Known(Method::GET);
 
                             // https://github.com/oven-sh/bun/issues/6053
                             if self.header_entries.len() > 0 {

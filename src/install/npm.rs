@@ -154,7 +154,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let header_buf: &[u8] = headers.content.written_slice();
 
     let mut req = AsyncHTTP::init_sync(
-        http::Method::GET,
+        http::Method::GET.into(),
         url,
         headers.entries,
         header_buf,

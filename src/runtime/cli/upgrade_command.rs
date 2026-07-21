@@ -264,7 +264,7 @@ impl UpgradeCommand {
 
         // ensure very stable memory address
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
-            HTTP::Method::GET,
+            HTTP::Method::GET.into(),
             api_url,
             header_entries,
             headers_buf,
@@ -662,7 +662,7 @@ impl UpgradeCommand {
                 .alloc(MutableString::init(version.size.max(1024) as usize)?);
 
             let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
-                HTTP::Method::GET,
+                HTTP::Method::GET.into(),
                 zip_url,
                 headers::EntryList::default(),
                 b"",

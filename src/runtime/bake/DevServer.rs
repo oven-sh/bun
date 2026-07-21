@@ -2249,7 +2249,7 @@ impl ReqOrSaved {
             }
             ReqOrSaved::Saved(saved) => {
                 // SAFETY: `saved.request` is kept alive by `saved.js_request` (Strong handle).
-                unsafe { (*saved.request).method }
+                unsafe { (*saved.request).method.known() }.unwrap_or(Method::POST)
             }
             ReqOrSaved::Aborted => unreachable!(),
         }
@@ -2282,7 +2282,7 @@ impl DevServer {
             ReqOrSaved::Req(r) => Method::which(unsafe { &**r }.method()).unwrap_or(Method::GET),
             ReqOrSaved::Saved(saved) => {
                 // SAFETY: `saved.request` is kept alive by `saved.js_request` (Strong handle).
-                unsafe { (*saved.request).method }
+                unsafe { (*saved.request).method.known() }.unwrap_or(Method::GET)
             }
             _ => unreachable!(),
         };

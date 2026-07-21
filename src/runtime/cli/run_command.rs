@@ -3307,7 +3307,7 @@ impl RunCommand {
                 unsafe { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
             let d_ptr: *mut RemoteImageDownload = slot;
             let async_http = bun_http::AsyncHTTP::init(
-                bun_http::Method::GET,
+                bun_http::Method::GET.into(),
                 bun_url::URL::parse(url_static),
                 Default::default(),
                 b"",

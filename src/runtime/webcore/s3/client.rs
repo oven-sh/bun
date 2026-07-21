@@ -349,7 +349,7 @@ pub(crate) fn list_objects(
     let vm = unsafe { vm_ref.get_mut() };
 
     task.http.write(bun_http::AsyncHTTP::init(
-        bun_http::Method::GET,
+        bun_http::Method::GET.into(),
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
@@ -1066,7 +1066,7 @@ pub(crate) fn download_stream(
     let reject_unauthorized = vm_mut.get_tls_reject_unauthorized();
 
     task.http.write(bun_http::AsyncHTTP::init(
-        bun_http::Method::GET,
+        bun_http::Method::GET.into(),
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,

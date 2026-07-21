@@ -10,11 +10,11 @@ use bun_event_loop::{
     Task, Taskable,
 };
 use bun_http as http;
-use bun_http::Method;
 use bun_http::{
     AsyncHTTP, CertificateInfo, FetchRedirect, HTTPClientResult, HTTPResponseMetadata, Headers,
     Signals, ThreadSafeStreamBuffer,
 };
+use bun_http_types::Method::{MethodBuf, MethodRef};
 use bun_io::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -117,6 +117,9 @@ pub struct FetchTasklet {
     pub upgraded_connection: bool,
     // Custom Hostname
     pub hostname: Option<Box<[u8]>>,
+    /// Owns the `MethodRef::Custom` token the `AsyncHTTP` in `http` borrows.
+    /// Declared after `http` so field drop order frees it last.
+    pub method: MethodBuf,
     pub is_waiting_body: bool,
     pub is_waiting_abort: bool,
     pub is_waiting_request_stream_start: bool,
@@ -1907,6 +1910,7 @@ impl FetchTasklet {
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             hostname: fetch_options.hostname,
+            method: fetch_options.method,
             is_waiting_body: false,
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
@@ -1999,6 +2003,14 @@ impl FetchTasklet {
             .as_deref()
             // SAFETY: see block note above — same `FetchTasklet` owner.
             .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
+        let method: MethodRef<'static> = match fetch_tasklet.method.as_ref() {
+            MethodRef::Known(known) => MethodRef::Known(known),
+            MethodRef::Custom(token) => {
+                // SAFETY: see `Interned::assume` note above — same `FetchTasklet` owner;
+                // `method` is declared after `http`, so the token outlives the `AsyncHTTP`.
+                MethodRef::Custom(unsafe { bun_ptr::Interned::assume(token) }.as_bytes())
+            }
+        };
         let response_buffer: *mut MutableString = &raw mut fetch_tasklet.response_buffer;
         // `MultiArrayList` owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
@@ -2008,7 +2020,7 @@ impl FetchTasklet {
         let url_is_http = url.is_http();
 
         fetch_tasklet.http = Some(Box::new(AsyncHTTP::init(
-            fetch_options.method,
+            method,
             url,
             header_entries,
             headers_buf,
@@ -2549,7 +2561,7 @@ impl FetchTasklet {
 }
 
 pub struct FetchOptions {
-    pub method: Method,
+    pub method: MethodBuf,
     pub headers: Headers,
     pub body: HTTPRequestBody,
     pub disable_timeout: bool,
@@ -2587,7 +2599,7 @@ impl Default for FetchOptions {
         // callers can use `..Default::default()` struct-update syntax while
         // still overriding the required fields explicitly.
         Self {
-            method: Method::GET,
+            method: MethodBuf::default(),
             headers: Headers::default(),
             body: HTTPRequestBody::default(),
             disable_timeout: false,

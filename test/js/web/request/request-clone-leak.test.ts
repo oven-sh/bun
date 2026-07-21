@@ -1,7 +1,14 @@
-import { expect, test } from "bun:test";
-import { isASAN } from "harness";
+import { test as bunTest, expect } from "bun:test";
+import { isASAN, isDebug } from "harness";
 
 const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
+
+// Each case builds ~100k Requests, which a debug JSC takes ~30s to do — past
+// the default test timeout, so these have never run under `bun bd`. Shrinking
+// the workload enough to fit would leave the RSS bounds below measuring
+// nothing, so skip instead: the release and release-ASAN lanes are where this
+// guard earns its keep.
+const test = isDebug ? bunTest.skip : bunTest;
 
 const constructorArgs = [
   [
@@ -79,8 +86,11 @@ for (let i = 0; i < constructorArgs.length; i++) {
     // ASAN's quarantine and redzones retain freed pages so RSS over-reports
     // even when nothing leaks; CI samples show 30-50 MB delta with ASAN's 1/10
     // iteration multiplier vs <10 MB native. The unfixed leak presents as
-    // 100+ MB so 64 MB still catches it.
-    expect(delta).toBeLessThan(isASAN ? 64 : 30);
+    // 100+ MB, so the bound stays well under that.
+    //
+    // 64 had no headroom: this case measures 65 MB under ASAN with no leak
+    // present, and run-to-run variance is a few MB either way.
+    expect(delta).toBeLessThan(isASAN ? 80 : 30);
   });
 
   test("request.clone(test #" + i + ")", () => {

@@ -2380,7 +2380,7 @@ where
         }
 
         let mut headers: Option<HeadersRef> = None;
-        let mut method = Method::GET;
+        let mut method = http::MethodBuf::default();
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
         let mut args = jsc::ArgumentsSlice::init(ctx.bun_vm(), arguments);
 
@@ -2421,8 +2421,16 @@ where
             if arguments.len() >= 2 && arguments[1].is_object() {
                 let opts = arguments[1];
                 if let Some(method_) = opts.fast_get(ctx, jsc::BuiltinName::Method)? {
-                    let slice_ = method_.to_slice(ctx)?;
-                    method = Method::which(slice_.slice()).unwrap_or(method);
+                    match bun_http_jsc::method_jsc::request_method_from_js(ctx, method_)? {
+                        Ok(parsed) => method = parsed,
+                        Err(err) => {
+                            return Ok(
+                                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                    ctx, err,
+                                ),
+                            );
+                        }
+                    }
                 }
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
@@ -3114,7 +3122,7 @@ where
         // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
         let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
         let request_object_box = Request::new(Request::init(
-            ctx.ctx_method(),
+            ctx.ctx_method().into(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
             SSL,
             Some(signal_for_req),
@@ -3374,7 +3382,7 @@ where
         // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
         let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
         let request_object_box = Request::new(Request::init(
-            ctx.method,
+            ctx.method.into(),
             AnyRequestContext::init(std::ptr::from_ref(ctx)),
             SSL,
             Some(signal_for_req),

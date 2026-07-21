@@ -10,6 +10,7 @@ use bun_url::{PercentEncoding, URL};
 
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_http_types::Encoding::Encoding;
+use bun_http_types::Method::MethodRef;
 use bun_picohttp as picohttp;
 
 use crate::headers::{self, Headers};
@@ -37,7 +38,7 @@ pub struct AsyncHTTP<'a> {
     pub response_buffer: *mut MutableString,
     pub request_body: HTTPRequestBody<'a>,
     pub request_header_buf: &'a [u8],
-    pub method: Method,
+    pub method: MethodRef<'a>,
     pub url: URL<'a>,
     pub http_proxy: Option<URL<'a>>,
     // Backref to the JS-thread `real` AsyncHTTP this HTTP-thread copy mirrors.
@@ -168,7 +169,7 @@ pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
 /// `HTTPClient` has no `Default` (it has a `Drop` impl with side-effects), so
 /// this is the single place that enumerates the field set.
 fn make_client<'a>(
-    method: Method,
+    method: MethodRef<'a>,
     url: URL<'a>,
     header_entries: headers::EntryList,
     header_buf: &'a [u8],
@@ -423,7 +424,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         let response_buffer: *mut MutableString = core::ptr::addr_of_mut!((*this).response_buffer);
         let url = (*this).url.clone();
         let async_http = (*this).async_http.insert(AsyncHTTP::init(
-            Method::GET,
+            MethodRef::Known(Method::GET),
             url,
             headers::EntryList::default(),
             b"",
@@ -445,7 +446,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
 
 impl<'a> AsyncHTTP<'a> {
     pub fn init(
-        method: Method,
+        method: MethodRef<'a>,
         url: URL<'a>,
         headers: headers::EntryList,
         headers_buf: &'a [u8],
@@ -562,7 +563,7 @@ impl<'a> AsyncHTTP<'a> {
     /// request is driven to completion via `send_sync` before that frame
     /// returns.
     pub fn init_sync(
-        method: Method,
+        method: MethodRef<'a>,
         url: URL<'a>,
         headers: headers::EntryList,
         headers_buf: &'a [u8],

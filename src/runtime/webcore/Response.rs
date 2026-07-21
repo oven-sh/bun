@@ -13,7 +13,7 @@ use bun_core::Output;
 use bun_core::{
     OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice,
 };
-use bun_http_types::Method::Method;
+use bun_http_types::Method::{Method, MethodBuf};
 
 use super::blob::Internal as InternalBlob;
 use super::body::{Body, BodyMixin, Value as BodyValue};
@@ -288,7 +288,7 @@ impl Response {
 
     /// Takes ownership (+1) of `status_text`.
     #[inline]
-    pub fn set_init(&self, method: Method, status_code: u16, status_text: BunString) {
+    pub fn set_init(&self, method: MethodBuf, status_code: u16, status_text: BunString) {
         self.init.with_mut(|init| {
             init.method = method;
             init.status_code = status_code;
@@ -374,8 +374,8 @@ impl Response {
     }
 
     #[inline]
-    pub fn get_method(&self) -> Method {
-        self.init.get().method
+    pub fn get_method(&self) -> MethodBuf {
+        self.init.get().method.clone()
     }
 
     pub fn estimated_size(this: &Response) -> usize {
@@ -1316,7 +1316,7 @@ pub struct Init {
     pub headers: Option<HeadersRef>,
     pub status_code: u16,
     pub status_text: OwnedString,
-    pub method: Method,
+    pub method: MethodBuf,
 }
 
 impl Default for Init {
@@ -1325,7 +1325,7 @@ impl Default for Init {
             headers: None,
             status_code: 0,
             status_text: OwnedString::new(BunString::empty()),
-            method: Method::GET,
+            method: MethodBuf::default(),
         }
     }
 }
@@ -1343,11 +1343,31 @@ impl Init {
             headers,
             status_code: self.status_code,
             status_text: self.status_text.clone(),
-            method: self.method,
+            method: self.method.clone(),
         })
     }
 
+    /// `new Response(body, init)` / `Response.json` / `Response.redirect`.
+    /// `init["method"]` is a Bun extension there (WebIDL `ResponseInit` has no
+    /// such member, and `Response` never exposes one), so a method this parser
+    /// cannot represent is ignored rather than rejected.
     pub fn init(global_this: &JSGlobalObject, response_init: JSValue) -> JsResult<Option<Init>> {
+        Self::parse::<false>(global_this, response_init)
+    }
+
+    /// `new Request(url, init)` reads the same shape, but there `init["method"]`
+    /// is a real `RequestInit` member: an invalid or forbidden token must throw.
+    pub fn init_for_request(
+        global_this: &JSGlobalObject,
+        response_init: JSValue,
+    ) -> JsResult<Option<Init>> {
+        Self::parse::<true>(global_this, response_init)
+    }
+
+    fn parse<const REQUEST_INIT: bool>(
+        global_this: &JSGlobalObject,
+        response_init: JSValue,
+    ) -> JsResult<Option<Init>> {
         let mut result = Init {
             status_code: 200,
             ..Default::default()
@@ -1377,7 +1397,7 @@ impl Init {
                     result.headers = headers.clone_this(global_this)?;
                 }
 
-                result.method = req.method;
+                result.method = req.method.clone();
                 return Ok(Some(result));
             }
 
@@ -1443,11 +1463,14 @@ impl Init {
             result.status_text = OwnedString::new(status_text.to_bun_string(global_this)?);
         }
 
-        if let Some(method_value) =
-            response_init.fast_get_truthy(global_this, BuiltinName::method)?
-        {
-            if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
-                result.method = method;
+        // `fast_get`, not `fast_get_truthy`: the fetch spec keys on WebIDL
+        // presence, so only `undefined` falls through to the default and `""`
+        // reaches the validator.
+        if let Some(method_value) = response_init.fast_get(global_this, BuiltinName::method)? {
+            match bun_http_jsc::method_jsc::request_method_from_js(global_this, method_value)? {
+                Ok(method) => result.method = method,
+                Err(err) if REQUEST_INIT => return Err(global_this.throw_value(err)),
+                Err(_) => {}
             }
         }
 

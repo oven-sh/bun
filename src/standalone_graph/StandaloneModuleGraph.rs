@@ -1555,7 +1555,7 @@ pub(crate) fn download_to_path(
             let progress = refresher.start(b"Downloading", 0);
 
             let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
-                bun_http::Method::GET,
+                bun_http::Method::GET.into(),
                 url,
                 Default::default(),
                 b"",

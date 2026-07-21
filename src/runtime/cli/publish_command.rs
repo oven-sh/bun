@@ -838,7 +838,7 @@ impl PublishCommand {
         }
 
         let mut req = http::AsyncHTTP::init_sync(
-            http::Method::GET,
+            http::Method::GET.into(),
             package_url,
             headers.entries,
             headers.content.written_slice(),
@@ -963,7 +963,7 @@ impl PublishCommand {
         print_buf.clear();
 
         let mut req = http::AsyncHTTP::init_sync(
-            http::Method::PUT,
+            http::Method::PUT.into(),
             publish_url.clone(),
             publish_headers.entries,
             publish_headers.content.written_slice(),
@@ -1060,7 +1060,7 @@ impl PublishCommand {
                 response_buf.reset();
 
                 let mut otp_req = http::AsyncHTTP::init_sync(
-                    http::Method::PUT,
+                    http::Method::PUT.into(),
                     publish_url,
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
@@ -1279,7 +1279,7 @@ impl PublishCommand {
                     // Note: `done_url`/`auth_headers.entries` move into
                     // `init_sync`, so re-clone per iteration.
                     let mut req = http::AsyncHTTP::init_sync(
-                        http::Method::GET,
+                        http::Method::GET.into(),
                         done_url.clone(),
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),

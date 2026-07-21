@@ -2320,7 +2320,7 @@ impl Example {
 
         // ensure very stable memory address
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
-            HTTP::Method::GET,
+            HTTP::Method::GET.into(),
             api_url,
             header_entries,
             headers_buf,
@@ -2422,7 +2422,7 @@ impl Example {
         // ensure very stable memory address
         let async_http: &mut HTTP::AsyncHTTP =
             crate::cli::cli_arena().alloc(HTTP::AsyncHTTP::init_sync(
-                HTTP::Method::GET,
+                HTTP::Method::GET.into(),
                 // SAFETY: single-threaded CLI access to static URL_ (set just above)
                 unsafe { (*URL_.get()).clone() }.unwrap(),
                 Default::default(),
@@ -2517,7 +2517,7 @@ impl Example {
             .map(|u| unsafe { u.erase_lifetime() });
 
         *async_http = HTTP::AsyncHTTP::init_sync(
-            HTTP::Method::GET,
+            HTTP::Method::GET.into(),
             parsed_tarball_url,
             Default::default(),
             b"",
@@ -2563,7 +2563,7 @@ impl Example {
             crate::cli::cli_arena().alloc(MutableString::init(2048)?);
 
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
-            HTTP::Method::GET,
+            HTTP::Method::GET.into(),
             url,
             Default::default(),
             b"",

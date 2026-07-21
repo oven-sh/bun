@@ -819,7 +819,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `Request::finalize`.
         let request_object: *mut crate::webcore::Request =
             bun_core::heap::into_raw(crate::webcore::Request::new(crate::webcore::Request::init(
-                ctx_mut.method,
+                ctx_mut.method.into(),
                 AnyRequestContext::init(ctx),
                 SSL,
                 Some(signal_ref),

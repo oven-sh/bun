@@ -960,14 +960,23 @@ test("error snapshots", () => {
   expect(() => {
     throw undefined; // this one doesn't work in jest because it doesn't think the function threw
   }).toThrowErrorMatchingInlineSnapshot(`undefined`);
-  expect(() => {
-    expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
-  }).toThrowErrorMatchingInlineSnapshot(`
+  // The matcher-error message includes ANSI colour codes only when colours are
+  // enabled (CI sets FORCE_COLOR=1); keep the snapshot check but don't fail on
+  // the colour-stripped form.
+  if (Bun.enableANSIColors) {
+    expect(() => {
+      expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    }).toThrowErrorMatchingInlineSnapshot(`
 "\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoThrowErrorMatchingInlineSnapshot\x1B[2m(\x1B[0m\x1B[2m)\x1B[0m
 
 \x1B[1mMatcher error\x1B[0m: Received function did not throw
 "
 `);
+  } else {
+    expect(() => {
+      expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    }).toThrow("Received function did not throw");
+  }
 });
 test("error inline snapshots", () => {
   expect(() => {

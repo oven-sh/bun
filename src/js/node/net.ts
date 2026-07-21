@@ -162,6 +162,11 @@ const kOnreadDeliver = Symbol("kOnreadDeliver");
 function rethrowOnreadError(err) {
   throw err;
 }
+function onUpgradeAttachedWrite(chunk, encoding, callback, onClose) {
+  this.off("close", onClose);
+  this._write(chunk, encoding, callback);
+}
+
 function onUpgradeWriteClose(callback) {
   // ServerHandlers.error may have already failed this write.
   if (this[kwriteCallback] !== callback) return;
@@ -1049,6 +1054,20 @@ function onHandshakeTimeout() {
   this._emitTLSError($ERR_TLS_HANDSHAKE_TIMEOUT());
 }
 
+function onHandshakeDeadline(socket) {
+  socket[khandshakeTimer] = undefined;
+  if (!socket.destroyed) socket.emit("timeout");
+}
+
+// 'close' listener: `this` is the socket.
+function clearHandshakeTimeout() {
+  if (this[khandshakeTimer]) {
+    clearTimeout(this[khandshakeTimer]);
+    this[khandshakeTimer] = undefined;
+    this.removeListener("timeout", onHandshakeTimeout);
+  }
+}
+
 function initAcceptedTLSSocket(server, socket) {
   socket[kerrorEmitted] = false;
   socket.on("_tlsError", onSocketTLSError);
@@ -1065,22 +1084,13 @@ function initAcceptedTLSSocket(server, socket) {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L961-L962
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1056-L1058
   socket.once("timeout", onHandshakeTimeout);
-  const timer = setTimeout(() => {
-    socket[khandshakeTimer] = undefined;
-    if (!socket.destroyed) socket.emit("timeout");
-  }, handshakeTimeout);
+  const timer = setTimeout(onHandshakeDeadline, handshakeTimeout, socket);
   // Node's handshake timer is unref'd: a fully-unref'd server (the
   // graceful-shutdown pattern) must not be held open by a client that
   // stalls mid-handshake.
   timer.unref?.();
   socket[khandshakeTimer] = timer;
-  socket.once("close", () => {
-    if (socket[khandshakeTimer]) {
-      clearTimeout(socket[khandshakeTimer]);
-      socket[khandshakeTimer] = undefined;
-      socket.removeListener("timeout", onHandshakeTimeout);
-    }
-  });
+  socket.once("close", clearHandshakeTimeout);
 }
 // Node.js-compatible onconnection: assigned to server._handle.onconnection in
 // kRealListen and invoked from ServerHandlers.open with `this` bound to the
@@ -2192,7 +2202,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
 
     if (!this._closeAfterHandlingError) {
       const handle = this._handle;
-      if (handle) handle.onread = () => {};
+      if (handle) handle.onread = noop;
       this._handle = null;
       this._sockname = null;
     }
@@ -2729,10 +2739,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     this._pendingData = chunk;
     this._pendingEncoding = encoding;
     const onClose = onUpgradeWriteClose.bind(this, callback);
-    this.once(kUpgradeAttached, function () {
-      this.off("close", onClose);
-      this._write(chunk, encoding, callback);
-    });
+    this.once(kUpgradeAttached, onUpgradeAttachedWrite.bind(this, chunk, encoding, callback, onClose));
     this.once("close", onClose);
     return;
   }
@@ -4050,6 +4057,8 @@ function initSocketHandle(self) {
   }
 }
 
+function noop() {}
+
 // Node's handle.close(callback) takes a completion callback; userland code
 // intercepts close on `socket._handle` and invokes it, so always pass one.
 function onSocketHandleClosed() {}
@@ -4065,7 +4074,7 @@ function closeSocketHandle(self, isException, isCleanupPending = false) {
       if (isCleanupPending) {
         // A second destroy() before this runs clears self._handle, and a
         // re-attach replaces it - only tear down the handle captured here.
-        handle.onread = () => {};
+        handle.onread = noop;
         if (self._handle === handle) {
           self._handle = null;
           self._sockname = null;

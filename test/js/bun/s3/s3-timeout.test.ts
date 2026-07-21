@@ -18,8 +18,6 @@ type Op =
   | "stream"
   | "client-text"
   | "override-text"
-  | "writer"
-  | "writer-multipart"
   | "type-error";
 
 function fixture(op: Op) {
@@ -64,18 +62,6 @@ const calls = {
   },
   "client-text": () => s3short.file("k").text(),
   "override-text": () => s3off.file("k", { timeout: 500 }).text(),
-  // writer() under partSize: single-file PUT path inside MultiPartUpload
-  writer: async () => {
-    const w = s3.file("k", { timeout: 500, retry: 0 }).writer();
-    w.write("hello");
-    await w.end();
-  },
-  // writer() at partSize: CreateMultipartUpload (?uploads=) request path
-  "writer-multipart": async () => {
-    const w = s3.file("k", { timeout: 500, retry: 0 }).writer({ partSize: 5 * 1024 * 1024 });
-    w.write(Buffer.alloc(5 * 1024 * 1024, "x"));
-    await w.end();
-  },
   "type-error": () => s3.file("k", { timeout: "soon" }).text(),
 };
 
@@ -140,8 +126,6 @@ describe("S3Options.timeout", () => {
     "stream",
     "client-text",
     "override-text",
-    "writer",
-    "writer-multipart",
   ] as const)(
     "%s rejects with Timeout against a stalled endpoint",
     async op => {

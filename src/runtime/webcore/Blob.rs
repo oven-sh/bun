@@ -5011,7 +5011,7 @@ pub fn write_file_with_source_destination(
                         s3.path(),
                         stream,
                         ctx,
-                        s3.options,
+                        aws_options.options,
                         aws_options.acl,
                         aws_options.storage_class,
                         destination_blob.content_type_or_mime_type(),

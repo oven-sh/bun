@@ -15,9 +15,11 @@ async function run(code: string) {
   return { stdout, stderr, exitCode };
 }
 
+const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+
 describe.concurrent("node:child_process with Array.prototype[Symbol.iterator] overridden", () => {
   test("spawnSync argv is not rewritten by the polluted iterator", async () => {
-    const { stdout, stderr, exitCode } = await run(`
+    const result = await run(`
       const { spawnSync } = require("node:child_process");
       Array.prototype[Symbol.iterator] = function* () { yield "REWRITTEN"; };
       const r = spawnSync(process.execPath, ["-e", "process.stdout.write(process.argv[1])", "intended"], {
@@ -25,13 +27,11 @@ describe.concurrent("node:child_process with Array.prototype[Symbol.iterator] ov
       });
       process.stdout.write(r.stdout + "|" + r.status);
     `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("intended|0");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(ok("intended|0"));
   });
 
   test("spawn argv is not rewritten by the polluted iterator", async () => {
-    const { stdout, stderr, exitCode } = await run(`
+    const result = await run(`
       const { spawn } = require("node:child_process");
       Array.prototype[Symbol.iterator] = function* () { yield "REWRITTEN"; };
       const child = spawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", "intended"]);
@@ -40,13 +40,11 @@ describe.concurrent("node:child_process with Array.prototype[Symbol.iterator] ov
       child.stdout.on("data", d => out += d);
       child.on("close", code => process.stdout.write(out + "|" + code));
     `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("intended|0");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(ok("intended|0"));
   });
 
   test("spawnSync with argv0 still passes the requested argv0", async () => {
-    const { stdout, stderr, exitCode } = await run(`
+    const result = await run(`
       const { spawnSync } = require("node:child_process");
       Array.prototype[Symbol.iterator] = function* () { yield "REWRITTEN"; };
       const r = spawnSync(process.execPath, ["-e", "process.stdout.write(process.argv0)"], {
@@ -55,71 +53,76 @@ describe.concurrent("node:child_process with Array.prototype[Symbol.iterator] ov
       });
       process.stdout.write(r.stdout + "|" + r.status);
     `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("custom-argv0|0");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(ok("custom-argv0|0"));
+  });
+
+  test("util.promisify(execFile) argv is not rewritten by the polluted iterator", async () => {
+    const result = await run(`
+      const { execFile } = require("node:child_process");
+      const { promisify } = require("node:util");
+      const execFileP = promisify(execFile);
+      Array.prototype[Symbol.iterator] = function* () {
+        yield process.execPath;
+        yield ["-e", "process.stdout.write('REWRITTEN')"];
+      };
+      execFileP(process.execPath, ["-e", "process.stdout.write('intended')"]).then(
+        r => process.stdout.write(r.stdout),
+        e => process.stdout.write("err:" + e.message),
+      );
+    `);
+    expect(result).toEqual(ok("intended"));
   });
 
   test("execSync works after pollution (lazy node:path/node:fs load)", async () => {
     const cmd = isWindows ? `cmd /c echo intended` : `/bin/echo intended`;
-    const { stdout, stderr, exitCode } = await run(`
+    const result = await run(`
       const { execSync } = require("node:child_process");
       Array.prototype[Symbol.iterator] = function* () { yield "REWRITTEN"; };
       const out = execSync(${JSON.stringify(cmd)}, { encoding: "utf8" });
       process.stdout.write(out.trim());
     `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("intended");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(ok("intended"));
   });
 
   test("node:child_process can be loaded after pollution", async () => {
-    const { stdout, stderr, exitCode } = await run(`
+    const result = await run(`
       Array.prototype[Symbol.iterator] = function* () { yield "x"; };
       const cp = process.getBuiltinModule("node:child_process");
       process.stdout.write(typeof cp.spawnSync);
     `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("function");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(ok("function"));
   });
 
   test("node:events can be loaded after pollution", async () => {
-    const { stdout, stderr, exitCode } = await run(`
+    const result = await run(`
       Array.prototype[Symbol.iterator] = function* () { yield "x"; };
       const EE = process.getBuiltinModule("node:events");
       process.stdout.write(typeof EE);
     `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("function");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(ok("function"));
   });
 
   test("node:path can be loaded after pollution", async () => {
-    const { stdout, stderr, exitCode } = await run(`
+    const result = await run(`
       Array.prototype[Symbol.iterator] = function* () { yield "x"; };
       const path = process.getBuiltinModule("node:path");
       process.stdout.write(path.posix.join("a", "b"));
     `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("a/b");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(ok("a/b"));
   });
 
   test("node:url can be loaded after pollution", async () => {
-    const { stdout, stderr, exitCode } = await run(`
+    const result = await run(`
       Array.prototype[Symbol.iterator] = function* () { yield "x"; };
       const url = process.getBuiltinModule("node:url");
       process.stdout.write(url.domainToASCII("example.com"));
     `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("example.com");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(ok("example.com"));
   });
 });
 
 test("ChildProcess#spawn envPairs preserves '=' inside values", async () => {
-  const { stdout, stderr, exitCode } = await run(`
+  const result = await run(`
     const { ChildProcess } = require("node:child_process");
     const cp = new ChildProcess();
     cp.spawn({
@@ -132,7 +135,5 @@ test("ChildProcess#spawn envPairs preserves '=' inside values", async () => {
     cp.stdout.on("data", d => out += d);
     cp.on("close", () => process.stdout.write(out));
   `);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("a=b=c");
-  expect(exitCode).toBe(0);
+  expect(result).toEqual(ok("a=b=c"));
 });

@@ -428,7 +428,7 @@ const customPromiseExecFunction = orig => {
   return (...args) => {
     const { resolve, reject, promise } = Promise.withResolvers();
 
-    promise.child = orig(...args, (err, stdout, stderr) => {
+    ArrayPrototypePush.$call(args, (err, stdout, stderr) => {
       if (err !== null) {
         err.stdout = stdout;
         err.stderr = stderr;
@@ -437,6 +437,7 @@ const customPromiseExecFunction = orig => {
         resolve({ stdout, stderr });
       }
     });
+    promise.child = orig.$apply(undefined, args);
 
     return promise;
   };

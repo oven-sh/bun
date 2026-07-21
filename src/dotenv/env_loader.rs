@@ -14,17 +14,22 @@ use bun_which::which;
 use bun_core::analytics;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum DotEnvFileSuffix {
+pub enum DotEnvFileSuffix<'a> {
     Development,
     Production,
     Test,
+    /// `NODE_ENV` set to something other than development/production/test
+    /// (e.g. `staging`, `qa`). Loads `.env.{mode}` / `.env.{mode}.local`
+    /// literally, like dotenv-flow/vite, instead of falling through to the
+    /// development files.
+    Custom(&'a [u8]),
 }
 
 /// Downstream callers (transpiler, install, lockfile) variously spell the load-mode
 /// discriminant `Kind` or `Mode`; both alias the same `DotEnvFileSuffix` enum so the
 /// crate exports a single canonical type without forcing a tree-wide rename.
-pub type Kind = DotEnvFileSuffix;
-pub type Mode = DotEnvFileSuffix;
+pub type Kind<'a> = DotEnvFileSuffix<'a>;
+pub type Mode<'a> = DotEnvFileSuffix<'a>;
 
 /// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
 /// `bun_resolver` in the crate graph, so the concrete
@@ -35,6 +40,9 @@ pub type Mode = DotEnvFileSuffix;
 pub trait DirEntryProbe {
     /// The argument MUST already be ASCII-lowercase.
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
+    /// Dynamic (non-`'static`) variant of `has_comptime_query`. The argument
+    /// MUST already be ASCII-lowercase.
+    fn has_query(&self, query_lower: &[u8]) -> bool;
 }
 
 // LAYERING: the concrete `DirEntry` lives in `bun_resolver::fs` (higher tier,
@@ -645,7 +653,7 @@ impl<'a> Loader<'a> {
         &mut self,
         dir: &D,
         env_files: &[&[u8]],
-        suffix: DotEnvFileSuffix,
+        suffix: DotEnvFileSuffix<'_>,
         skip_default_env: bool,
     ) -> crate::Result<()> {
         // `suffix` is a runtime arg (avoids unstable adt_const_params; cold path).
@@ -704,7 +712,7 @@ impl<'a> Loader<'a> {
     // .env goes last
     fn load_default_files<D: DirEntryProbe + ?Sized>(
         &mut self,
-        suffix: DotEnvFileSuffix,
+        suffix: DotEnvFileSuffix<'_>,
         dir: &D,
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
@@ -723,9 +731,12 @@ impl<'a> Loader<'a> {
             DotEnvFileSuffix::Test => {
                 self.try_load_default(dir, dir_handle, b".env.test.local", value_buffer)?
             }
+            DotEnvFileSuffix::Custom(mode) => {
+                self.try_load_custom_mode(dir, mode, b".local", value_buffer)?
+            }
         }
 
-        if suffix != DotEnvFileSuffix::Test {
+        if !matches!(suffix, DotEnvFileSuffix::Test) {
             self.try_load_default(dir, dir_handle, b".env.local", value_buffer)?;
         }
 
@@ -738,6 +749,9 @@ impl<'a> Loader<'a> {
             }
             DotEnvFileSuffix::Test => {
                 self.try_load_default(dir, dir_handle, b".env.test", value_buffer)?
+            }
+            DotEnvFileSuffix::Custom(mode) => {
+                self.try_load_custom_mode(dir, mode, b"", value_buffer)?
             }
         }
 
@@ -757,6 +771,32 @@ impl<'a> Loader<'a> {
     ) -> crate::Result<()> {
         if dir.has_comptime_query(name) {
             self.load_env_file::<false>(dir_handle, name, value_buffer)?;
+            analytics::Features::dotenv_inc();
+        }
+        Ok(())
+    }
+
+    /// `DotEnvFileSuffix::Custom` counterpart of `try_load_default`: build
+    /// `.env.{mode}{extra}` at runtime, probe the directory listing, and load
+    /// via the dynamic path (tracked in `custom_files_loaded`).
+    fn try_load_custom_mode<D: DirEntryProbe + ?Sized>(
+        &mut self,
+        dir: &D,
+        mode: &[u8],
+        extra: &[u8],
+        value_buffer: &mut Vec<u8>,
+    ) -> crate::Result<()> {
+        let mut name = Vec::with_capacity(5 + mode.len() + extra.len());
+        name.extend_from_slice(b".env.");
+        name.extend_from_slice(mode);
+        name.extend_from_slice(extra);
+
+        // The resolver's entry map is keyed lowercase; probe with a lowered
+        // copy. `mode` comes from user env so its case is unknown.
+        let mut lower = name.clone();
+        lower.make_ascii_lowercase();
+        if dir.has_query(&lower) {
+            self.load_env_file_dynamic::<false>(&name, value_buffer)?;
             analytics::Features::dotenv_inc();
         }
         Ok(())

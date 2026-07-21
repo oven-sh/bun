@@ -789,12 +789,23 @@ impl<'a> Transpiler<'a> {
                 // `--env-file` list is bounded (CLI args), not hot-path.
                 let env_files: Vec<&[u8]> = self.options.env.files.iter().map(|f| &**f).collect();
 
+                // Own the NODE_ENV value so a `Custom(&[u8])` suffix doesn't
+                // hold a borrow into `env.map` across the `&mut` `env.load`.
+                let node_env: Option<Vec<u8>> = env.get_node_env().map(|v| v.to_vec());
                 let suffix = if self.options.is_test() || env.is_test() {
                     dot_env::DotEnvFileSuffix::Test
                 } else if self.options.production {
                     dot_env::DotEnvFileSuffix::Production
                 } else {
-                    dot_env::DotEnvFileSuffix::Development
+                    match node_env.as_deref() {
+                        Some(mode) if !mode.is_empty() && mode != b"development" => {
+                            // An explicit NODE_ENV outside {development,
+                            // production, test} must not fall through to the
+                            // development files; load `.env.{mode}` instead.
+                            dot_env::DotEnvFileSuffix::Custom(mode)
+                        }
+                        _ => dot_env::DotEnvFileSuffix::Development,
+                    }
                 };
                 env.load(dir, &env_files, suffix, skip_default_env)?;
             }

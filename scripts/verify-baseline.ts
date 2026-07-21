@@ -11,6 +11,7 @@
 
 import { readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { parseJSCFlags, wasmSIMDFixtures } from "../test/js/bun/jsc-stress/jsc-flags";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import { markBuildkiteStepReported } from "./utils.mjs";
 
@@ -92,12 +93,25 @@ console.log();
 let instructionFailures = 0;
 let otherFailures = 0;
 let passed = 0;
+let skipped = 0;
 const failedTests: string[] = [];
+
+// Mirrors the relevant bits of test/harness.ts's bunEnv so fixtures behave the
+// same here as under jsc-stress.test.ts.
+const fixtureBaseEnv = {
+  ...process.env,
+  BUN_DEBUG_QUIET_LOGS: "1",
+  NO_COLOR: "1",
+  BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
+  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+};
 
 interface RunTestOptions {
   cwd?: string;
   /** Tee output live to the console while still capturing it for analysis */
   live?: boolean;
+  /** Extra environment (e.g. parsed `//@` JSC flags) for the spawned binary */
+  env?: Record<string, string>;
 }
 
 /** Read a stream, write each chunk to a writable, and return the full text. */
@@ -118,6 +132,7 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   const proc = Bun.spawn([...config.runnerCmd, binary, ...binaryArgs], {
     // config.cwd takes priority — SDE on Windows must run from its own directory for Pin DLL resolution
     cwd: config.cwd ?? options?.cwd,
+    env: { ...fixtureBaseEnv, ...(options?.env ?? {}) },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -241,7 +256,10 @@ if (values["skip-emulation"]) {
   console.log(`--- JS fixtures (DFG/FTL) — ${jsFixtures.length} tests`);
   for (let i = 0; i < jsFixtures.length; i++) {
     const fixture = jsFixtures[i];
-    await runTest(`[${i + 1}/${jsFixtures.length}] ${fixture}`, ["--preload", preloadPath, join(fixturesDir, fixture)]);
+    const fixturePath = join(fixturesDir, fixture);
+    await runTest(`[${i + 1}/${jsFixtures.length}] ${fixture}`, ["--preload", preloadPath, fixturePath], {
+      env: parseJSCFlags(fixturePath),
+    });
   }
 
   const wasmFixtures = readdirSync(wasmFixturesDir)
@@ -251,11 +269,20 @@ if (values["skip-emulation"]) {
   console.log(`--- Wasm fixtures (BBQ/OMG) — ${wasmFixtures.length} tests`);
   for (let i = 0; i < wasmFixtures.length; i++) {
     const fixture = wasmFixtures[i];
-    await runTest(
-      `[${i + 1}/${wasmFixtures.length}] ${fixture}`,
-      ["--preload", preloadPath, join(wasmFixturesDir, fixture)],
-      { cwd: wasmFixturesDir },
-    );
+    const fixturePath = join(wasmFixturesDir, fixture);
+    // Nehalem has no AVX; JSC's recomputeDependentOptions() force-disables
+    // useWasmSIMD there, so v128-typed modules fail to parse. A real baseline
+    // CPU never runs the wasm-SIMD JIT path, so there is nothing to verify.
+    if (!isAarch64 && wasmSIMDFixtures.has(fixture)) {
+      console.log(`--- [${i + 1}/${wasmFixtures.length}] ${fixture}`);
+      console.log("    SKIP (uses wasm v128; JSC disables wasm SIMD on x64 without AVX)");
+      skipped++;
+      continue;
+    }
+    await runTest(`[${i + 1}/${wasmFixtures.length}] ${fixture}`, ["--preload", preloadPath, fixturePath], {
+      cwd: wasmFixturesDir,
+      env: parseJSCFlags(fixturePath),
+    });
   }
 } else {
   console.log();
@@ -266,6 +293,7 @@ if (values["skip-emulation"]) {
 console.log();
 console.log("--- Summary");
 console.log(`    Passed: ${passed}`);
+if (skipped) console.log(`    Skipped: ${skipped}`);
 console.log(`    Instruction failures: ${instructionFailures}`);
 console.log(`    Other failures: ${otherFailures} (not CPU instruction issues)`);
 console.log();

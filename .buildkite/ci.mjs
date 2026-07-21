@@ -746,7 +746,7 @@ function getEmulatorBinary(platform) {
  */
 function hasWebKitChanges(options) {
   const { changedFiles = [] } = options;
-  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
+  return changedFiles.some(file => file.includes("scripts/build/deps/webkit.ts") || file.startsWith("vendor/WebKit/"));
 }
 
 /**

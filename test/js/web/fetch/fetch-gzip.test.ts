@@ -538,10 +538,6 @@ describe("corrupt compressed responses", () => {
     }
   });
 
-  // A close-delimited body (no Content-Length, no Transfer-Encoding) is the
-  // framing where mid-stream truncation is most likely (origin/proxy dying on
-  // a `Connection: close` response). The decompressor's end-of-stream check
-  // must run on FIN, same as it already does for the framed variants above.
   describe("close-delimited (FIN) framing", () => {
     const FULL = 50000;
     const plain = Buffer.alloc(FULL, "A");
@@ -589,8 +585,6 @@ describe("corrupt compressed responses", () => {
       });
     }
 
-    // Regression guard: a complete stream under close-delimited framing must
-    // still resolve with the full body.
     for (const [encoding, compress] of [
       ["gzip", gzipSync],
       ["deflate", deflateSync],

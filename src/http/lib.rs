@@ -2113,8 +2113,7 @@ impl<'a> HTTPClient<'a> {
                 self.state.flags.received_last_chunk = true;
                 // Close-delimited bodies were decompressed per packet with
                 // is_final_chunk=false; drive a final empty chunk so a
-                // truncated compressed stream is rejected instead of
-                // resolving with a short body.
+                // truncated compressed stream is rejected, not resolved short.
                 let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
                 if let Err(err) = self.state.process_body_buffer(buffer_snap, true) {
                     self.fail(err);

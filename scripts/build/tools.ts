@@ -220,16 +220,22 @@ export function clangTargetArch(clang: string): Arch | undefined {
  * Returns the absolute path or undefined (if not required).
  */
 export function findTool(spec: ToolSpec): FoundTool | undefined {
-  const exeSuffix = process.platform === "win32" ? ".exe" : "";
+  // Windows ships shims like npm.cmd with no .exe; probe PATHEXT, not just .exe.
+  const exeSuffixes =
+    process.platform === "win32"
+      ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";").map(s => s.toLowerCase())
+      : [""];
   const searchPaths = [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
   const versionArg = spec.versionArg ?? "--version";
   const rejections: Rejection[] = [];
 
   for (const name of spec.names) {
-    const candidate = name.endsWith(exeSuffix) ? name : name + exeSuffix;
+    const candidates = exeSuffixes.some(s => s && name.toLowerCase().endsWith(s))
+      ? [name]
+      : exeSuffixes.map(s => name + s);
     for (const dir of searchPaths) {
-      const full = join(dir, candidate);
-      if (!isExecutable(full)) continue;
+      const full = candidates.map(c => join(dir, c)).find(isExecutable);
+      if (full === undefined) continue;
 
       if (spec.version !== undefined) {
         const v = getToolVersion(full, versionArg);

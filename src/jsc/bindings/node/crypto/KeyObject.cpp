@@ -27,6 +27,7 @@
 #include "JSDOMConvertEnumeration.h"
 #include "JSDOMExceptionHandling.h"
 #include <openssl/bytestring.h>
+#include <wtf/Scope.h>
 #include "CryptoGenKeyPair.h"
 #include "JSBuffer.h"
 #include "BunString.h"
@@ -879,12 +880,16 @@ static WebCore::CryptoKeyUsageBitmap toWebCryptoUsageBitmap(const Vector<WebCore
 
 static std::optional<Vector<uint8_t>> marshalAsymmetricKey(const ncrypto::EVPKeyPointer& pkey, bool isPublic)
 {
-    bssl::ScopedCBB cbb;
-    if (!CBB_init(cbb.get(), 0))
+    // bssl::ScopedCBB is unavailable on Windows (BORINGSSL_NO_CXX), so use the
+    // C API with a scope-exit cleanup.
+    CBB cbb;
+    CBB_zero(&cbb);
+    auto cleanup = WTF::makeScopeExit([&] { CBB_cleanup(&cbb); });
+    if (!CBB_init(&cbb, 0))
         return std::nullopt;
-    if (isPublic ? !EVP_marshal_public_key(cbb.get(), pkey.get()) : !EVP_marshal_private_key(cbb.get(), pkey.get()))
+    if (isPublic ? !EVP_marshal_public_key(&cbb, pkey.get()) : !EVP_marshal_private_key(&cbb, pkey.get()))
         return std::nullopt;
-    return Vector<uint8_t>(std::span { CBB_data(cbb.get()), CBB_len(cbb.get()) });
+    return Vector<uint8_t>(std::span { CBB_data(&cbb), CBB_len(&cbb) });
 }
 
 // KeyObject.prototype.toCryptoKey, following Node's per-algorithm dispatch in

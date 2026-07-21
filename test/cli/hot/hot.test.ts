@@ -1,11 +1,25 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
 const longTimeout = isDebug ? Infinity : 30_000;
+// Finite even in debug builds: the package.json tests below use it where the
+// unfixed failure mode is "no reload ever happens", which must fail instead
+// of hanging forever.
+const boundedTimeout = isDebug ? 60_000 : 10_000;
 
 /**
  * Helper to parse stderr from a --hot process that throws errors.
@@ -775,4 +789,115 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// Buffers a --hot runner's stdout and returns the next line starting with
+// `prefix`. On exit it resolves to a marker (rather than throwing) so a
+// timed-out test does not leave an unhandled rejection behind.
+function stdoutLineReader(runner: ReturnType<typeof spawn>) {
+  const reader = (runner.stdout as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  const lines: string[] = [];
+  return async (prefix: string): Promise<string> => {
+    while (true) {
+      const i = lines.findIndex(l => l.startsWith(prefix));
+      if (i !== -1) return lines.splice(0, i + 1)[i];
+      const { value, done } = await reader.read();
+      if (done) {
+        return `<--hot child exited before printing "${prefix}"; stdout so far: ${JSON.stringify(lines)}>`;
+      }
+      buffered += decoder.decode(value);
+      const parts = buffered.split("\n");
+      buffered = parts.pop()!;
+      lines.push(...parts);
+    }
+  };
+}
+
+it(
+  'should hot reload when the enclosing package.json\'s "imports" map changes',
+  async () => {
+    using dir = tempDir("hot-imports-map", {
+      "package.json": JSON.stringify({ name: "app", imports: { "#impl": "./a.js" } }),
+      "a.js": `export default "FROM-A";\n`,
+      "b.js": `export default "FROM-B";\n`,
+      // The manifest must not be imported here: that alone puts it in the
+      // watch set, which is exactly what this test proves is no longer needed.
+      "entry.js": `import v from "#impl";\nconsole.log("gen1 " + v);\n`,
+    });
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const next = stdoutLineReader(runner);
+
+    expect(await next("gen1 ")).toBe("gen1 FROM-A");
+
+    // Rewriting the package.json must trigger a reload by itself, and that
+    // reload must resolve "#impl" through the rewritten map.
+    writeFileSync(join(String(dir), "package.json"), JSON.stringify({ name: "app", imports: { "#impl": "./b.js" } }));
+    expect(await next("gen1 ")).toBe("gen1 FROM-B");
+  },
+  boundedTimeout,
+);
+
+// Windows is excluded: ReadDirectoryChangesW reports changes by physical path
+// (packages\dep\package.json), but the manifest is registered under its
+// node_modules link alias, so the per-file watch never matches there.
+it.skipIf(isWindows)(
+  'should hot reload when a linked dependency\'s "exports" map changes',
+  async () => {
+    // The `./package.json` import is load-bearing on macOS: resolving "dep"
+    // registers the root manifest first, so the manifest's own fetch reuses
+    // the watcher's cached fd, which must therefore be readable.
+    const entry = (gen: number) =>
+      `import v from "dep";\nimport pkg from "./package.json";\nconsole.log("gen${gen} " + v + " " + pkg.name);\n`;
+    using dir = tempDir("hot-exports-map", {
+      "package.json": JSON.stringify({ name: "app" }),
+      "packages/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", exports: { ".": "./a.js" } }),
+      "packages/dep/a.js": `export default "FROM-A";\n`,
+      "packages/dep/b.js": `export default "FROM-B";\n`,
+      "entry.js": entry(1),
+    });
+    // `bun install` links a workspace/`file:` dependency into node_modules as
+    // a symlink, which is what aliases the resolver's cache key.
+    mkdirSync(join(String(dir), "node_modules"));
+    symlinkSync(join(String(dir), "packages", "dep"), join(String(dir), "node_modules", "dep"));
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const next = stdoutLineReader(runner);
+
+    expect(await next("gen1 ")).toBe("gen1 FROM-A app");
+
+    writeFileSync(
+      join(String(dir), "packages", "dep", "package.json"),
+      JSON.stringify({ name: "dep", version: "1.0.0", exports: { ".": "./b.js" } }),
+    );
+
+    // Force reloads via the (always-watched) entry until one resolves "dep"
+    // through the rewritten exports map: a stale resolver cache never reaches
+    // FROM-B, so the bounded loop fails with the stale value, not a hang.
+    let gen = 1;
+    let line = "";
+    while (gen < 6 && !line.endsWith(" FROM-B app")) {
+      gen += 1;
+      writeFileSync(join(String(dir), "entry.js"), entry(gen));
+      line = await next(`gen${gen} `);
+    }
+    expect(line).toBe(`gen${gen} FROM-B app`);
+  },
+  boundedTimeout,
 );

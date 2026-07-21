@@ -30,11 +30,11 @@ pub enum ImportWatcher {
     Watch(Box<Watcher>),
 }
 
-// Drift guard for the bun_watcher CYCLEBREAK `Loader` newtype: its `File`
-// constant must mirror `bun_ast::Loader::File` —
-// the watcher stores that value for auto-watched directories. This crate sees
-// both types, so the compile-time check lives here.
+// Drift guard for the bun_watcher CYCLEBREAK `Loader` newtype: its `File` and
+// `Json` constants must mirror `bun_ast::Loader`. This crate sees both types,
+// so the compile-time check lives here.
 const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
+const _: () = assert!(bun_watcher::Loader::Json.0 == bun_ast::Loader::Json as u8);
 
 impl ImportWatcher {
     pub fn start(&mut self) -> Result<(), crate::CrateError> {
@@ -954,6 +954,15 @@ where
                         .op
                         .intersects(WatchOp::WRITE | WatchOp::DELETE | WatchOp::RENAME)
                     {
+                        // A changed package.json must also bust the resolver's
+                        // per-directory manifest cache, or the reload keeps
+                        // resolving through the stale exports/imports maps.
+                        if bun_paths::basename(file_path) == b"package.json" {
+                            if let Some(dir) = bun_paths::dirname(file_path) {
+                                let _ = self.ctx_mut().bust_dir_cache(dir);
+                            }
+                        }
+
                         record_changed_path(file_path);
                         if IS_KQUEUE {
                             if event.op.contains(WatchOp::RENAME) {

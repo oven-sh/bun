@@ -73,12 +73,23 @@ pub struct AnyResolveWatcher {
     // closure-style invariant upheld by this struct), and the body discharges
     // its own type-recovery `unsafe` internally.
     pub callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
+    /// Registers a package.json the resolver read so `--hot`/`--watch` observe
+    /// edits to its exports/imports maps, "main", and "type". `None` when the
+    /// producer has no file watcher to register it with.
+    pub package_json_callback: Option<fn(*mut (), path: &[u8])>,
 }
 
 impl AnyResolveWatcher {
     #[inline]
     pub fn watch(self, dir_path: &[u8], dir_fd: Fd) {
         (self.callback)(self.context, dir_path, dir_fd)
+    }
+
+    #[inline]
+    pub fn watch_package_json(self, path: &[u8]) {
+        if let Some(callback) = self.package_json_callback {
+            callback(self.context, path);
+        }
     }
 }
 
@@ -797,6 +808,13 @@ impl Watcher {
     /// - true if the file is successfully added to the watchlist or already watched
     /// - false if the file cannot be opened or added to the watchlist
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: Loader) -> bool {
+        self.add_file_by_path(file_path, loader, WATCH_OPEN_FLAGS)
+    }
+
+    /// [`Self::add_file_by_path_slow`] with an explicit macOS/FreeBSD open
+    /// mode. The stored fd is handed to the transpiler if the same path is
+    /// later fetched as a module, so pre-load callers need a readable mode.
+    pub fn add_file_by_path(&mut self, file_path: &[u8], loader: Loader, open_flags: i32) -> bool {
         if file_path.is_empty() {
             return false;
         }
@@ -825,13 +843,16 @@ impl Watcher {
             // `path_z[file_path.len()] == 0` written above; `from_buf` borrows
             // `path_z[..len]` as a `&ZStr` with the NUL debug-asserted in-bounds.
             let z = ZStr::from_buf(&path_z[..], file_path.len());
-            match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
+            match bun_sys::open(z, open_flags, 0) {
                 Ok(opened) => opened,
                 Err(_) => return false,
             }
         };
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-        let fd: Fd = Fd::INVALID;
+        let fd: Fd = {
+            let _ = open_flags;
+            Fd::INVALID
+        };
 
         let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
         match res {
@@ -874,10 +895,12 @@ impl Watcher {
         self.mutex.lock();
 
         if let Some(index) = self.index_of(hash) {
-            if feature_flags::ATOMIC_FILE_WATCHER {
-                // On Linux, the file descriptor might be out of date.
-                if fd.is_valid() {
-                    let fds = self.watchlist.items_fd_mut();
+            // The caller has transferred ownership of `fd`. Adopt it when the
+            // stored slot is empty so Windows does not leak the transpiler's
+            // handle into a slot pre-seeded by `wrap_package_json`.
+            if fd.is_valid() {
+                let fds = self.watchlist.items_fd_mut();
+                if feature_flags::ATOMIC_FILE_WATCHER || !fds[index as usize].is_valid() {
                     fds[index as usize] = fd;
                 }
             }
@@ -947,9 +970,18 @@ impl Watcher {
             let this = unsafe { &mut *ctx.cast::<Watcher>() };
             Watcher::on_maybe_watch_directory(this, dir_path, dir_fd);
         }
+        fn wrap_package_json(ctx: *mut (), path: &[u8]) {
+            // SAFETY: same pairing invariant as `wrap` above.
+            let this = unsafe { &mut *ctx.cast::<Watcher>() };
+            // `O_RDONLY`, not `WATCH_OPEN_FLAGS`: this runs at resolve time,
+            // so a later `import './package.json'` reuses the stored fd, and
+            // the transpiler cannot `read()` a macOS `O_EVTONLY` descriptor.
+            let _ = this.add_file_by_path(path, Loader::Json, bun_sys::O::RDONLY);
+        }
         AnyResolveWatcher {
             context: std::ptr::from_mut::<Self>(self).cast::<()>(),
             callback: wrap,
+            package_json_callback: Some(wrap_package_json),
         }
     }
 

@@ -718,10 +718,17 @@ describe("HTMLRewriter", () => {
     const nest = (name, n) => (":" + name + "(").repeat(n) + "span" + Buffer.alloc(n, ")").toString();
     expect(() => new HTMLRewriter().on(nest("not", 129), { element() {} })).toThrow("Selector nesting is too deep.");
     expect(() => new HTMLRewriter().on(nest("host", 129), { element() {} })).toThrow("Selector nesting is too deep.");
+    // Exactly at the limit the depth guard lets the selector through to lol-html.
+    expect(() => new HTMLRewriter().on(nest("not", 128), { element() {} })).not.toThrow();
+    expect(() => new HTMLRewriter().on(nest("host", 128), { element() {} })).toThrow(
+      "Unsupported pseudo-class or pseudo-element in selector.",
+    );
     // Parentheses inside an attribute-value string must not count toward depth.
     expect(() =>
       new HTMLRewriter().on('[data-x="' + Buffer.alloc(200, "(").toString() + '"]', { element() {} }),
     ).not.toThrow();
+    // Escaped parentheses must not count toward depth either.
+    expect(() => new HTMLRewriter().on("a" + Buffer.alloc(400, "\\(").toString(), { element() {} })).not.toThrow();
     // Single-level :not() continues to work.
     expect(() => new HTMLRewriter().on(":not(span)", { element() {} })).not.toThrow();
   });

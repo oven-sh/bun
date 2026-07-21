@@ -11,12 +11,13 @@ describe.concurrent("top-level class declaration TDZ", () => {
       out.push("typeof=" + typeof K);
       out.push("constructed=" + new K().constructor.name);
     } catch (e) {
-      out.push("ERR=" + e.constructor.name);
+      out.push("ERR=" + String(e));
     }
     ${decl}
     out.push("after=" + typeof K);
     console.log(out.join(" | "));
   `;
+  const expected = "ERR=ReferenceError: Cannot access 'K' before initialization. | after=function";
 
   async function run(cmd: string[], files: Record<string, string>) {
     using dir = tempDir("runtime-transpiler-class-tdz", files);
@@ -37,14 +38,14 @@ describe.concurrent("top-level class declaration TDZ", () => {
     ["export default class K { m() {} }", "export default named class"],
   ])("preserved for a %s referenced before its declaration (%s)", async decl => {
     expect(await run(["index.mjs"], { "index.mjs": tdzFixture(decl) })).toMatchObject({
-      stdout: "ERR=ReferenceError | after=function",
+      stdout: expected,
       exitCode: 0,
     });
   });
 
   test("preserved for a CommonJS top-level class declaration", async () => {
     expect(await run(["index.cjs"], { "index.cjs": tdzFixture("class K { m() {} }") })).toMatchObject({
-      stdout: "ERR=ReferenceError | after=function",
+      stdout: expected,
       exitCode: 0,
     });
   });

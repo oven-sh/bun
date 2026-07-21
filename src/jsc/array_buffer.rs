@@ -1127,7 +1127,14 @@ fn empty_typed_array(global: &JSGlobalObject, ty: TypedArrayType) -> JsResult<JS
     if ty == TypedArrayType::TypeDataView || ty == TypedArrayType::TypeNone {
         // SAFETY: null ptr + len 0 + no deallocator — trivially valid.
         return unsafe {
-            make_typed_array_with_bytes_no_copy(global, ty, ptr::null_mut(), 0, None, ptr::null_mut())
+            make_typed_array_with_bytes_no_copy(
+                global,
+                ty,
+                ptr::null_mut(),
+                0,
+                None,
+                ptr::null_mut(),
+            )
         };
     }
     crate::host_fn::from_js_host_call(global, || {

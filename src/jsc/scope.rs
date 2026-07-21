@@ -663,7 +663,6 @@ impl<'s> Local<'s> {
             _no_reentry: PhantomData,
         })
     }
-
 }
 
 /// Guard for [`Local::array_buffer_bytes`]. Holds the `ArrayBuffer`
@@ -682,7 +681,6 @@ impl Deref for ArrayBufferBytes<'_, '_> {
         self.ab.byte_slice()
     }
 }
-
 
 impl CallFrame {
     /// `this` (or `new.target` in constructors), branded.

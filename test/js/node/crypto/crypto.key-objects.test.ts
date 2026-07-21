@@ -610,6 +610,75 @@ describe("crypto.KeyObjects", () => {
     });
   });
 
+  describe("ec with explicit curve parameters", () => {
+    // P-256 key pair whose PEM encodings use the specifiedCurve (explicit) form of
+    // ECParameters instead of a namedCurve OID. OpenSSL emits this form for
+    // `openssl ec -param_enc explicit`; jsonwebtoken's committed ES256 fixtures
+    // use it. BoringSSL's d2i_PUBKEY rejects the public key but OpenSSL accepts it.
+    const publicPem =
+      "-----BEGIN PUBLIC KEY-----\n" +
+      "MIIBSzCCAQMGByqGSM49AgEwgfcCAQEwLAYHKoZIzj0BAQIhAP////8AAAABAAAA\n" +
+      "AAAAAAAAAAAA////////////////MFsEIP////8AAAABAAAAAAAAAAAAAAAA////\n" +
+      "///////////8BCBaxjXYqjqT57PrvVV2mIa8ZR0GsMxTsPY7zjw+J9JgSwMVAMSd\n" +
+      "NgiG5wSTamZ44ROdJreBn36QBEEEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5\n" +
+      "RdiYwpZP40Li/hp/m47n60p8D54WK84zV2sxXs7LtkBoN79R9QIhAP////8AAAAA\n" +
+      "//////////+85vqtpxeehPO5ysL8YyVRAgEBA0IABGrCjldfJzjPCHeMi8LX++ZD\n" +
+      "9NLZxsyXF3HNMrOm9JWKYcV32b4R/4z2MnDKMxLXaQLFHgjYKdLxbBjpeIBkqc0=\n" +
+      "-----END PUBLIC KEY-----\n";
+    const privatePem =
+      "-----BEGIN EC PRIVATE KEY-----\n" +
+      "MIIBaAIBAQQgImAk/YsR1fRVtjTAB4W4JB/71TOst16Bv8muhUb0BZWggfowgfcC\n" +
+      "AQEwLAYHKoZIzj0BAQIhAP////8AAAABAAAAAAAAAAAAAAAA////////////////\n" +
+      "MFsEIP////8AAAABAAAAAAAAAAAAAAAA///////////////8BCBaxjXYqjqT57Pr\n" +
+      "vVV2mIa8ZR0GsMxTsPY7zjw+J9JgSwMVAMSdNgiG5wSTamZ44ROdJreBn36QBEEE\n" +
+      "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li/hp/m47n60p8D54W\n" +
+      "K84zV2sxXs7LtkBoN79R9QIhAP////8AAAAA//////////+85vqtpxeehPO5ysL8\n" +
+      "YyVRAgEBoUQDQgAEasKOV18nOM8Id4yLwtf75kP00tnGzJcXcc0ys6b0lYphxXfZ\n" +
+      "vhH/jPYycMozEtdpAsUeCNgp0vFsGOl4gGSpzQ==\n" +
+      "-----END EC PRIVATE KEY-----\n";
+
+    test("createPublicKey accepts PEM SPKI with explicit parameters", () => {
+      const key = createPublicKey(publicPem);
+      expect({
+        type: key.type,
+        asymmetricKeyType: key.asymmetricKeyType,
+        asymmetricKeyDetails: key.asymmetricKeyDetails,
+      }).toEqual({
+        type: "public",
+        asymmetricKeyType: "ec",
+        asymmetricKeyDetails: { namedCurve: "prime256v1" },
+      });
+      // Re-export should produce a well-formed SPKI that we can parse again.
+      const exported = key.export({ type: "spki", format: "pem" });
+      expect(createPublicKey(exported).asymmetricKeyDetails).toEqual({ namedCurve: "prime256v1" });
+    });
+
+    test("createPublicKey accepts DER SPKI with explicit parameters", () => {
+      const der = Buffer.from(
+        publicPem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, "").replace(/\s/g, ""),
+        "base64",
+      );
+      const key = createPublicKey({ key: der, format: "der", type: "spki" });
+      expect({
+        asymmetricKeyType: key.asymmetricKeyType,
+        asymmetricKeyDetails: key.asymmetricKeyDetails,
+      }).toEqual({
+        asymmetricKeyType: "ec",
+        asymmetricKeyDetails: { namedCurve: "prime256v1" },
+      });
+    });
+
+    test("sign/verify round-trips with explicit-parameter key pair", () => {
+      const priv = createPrivateKey(privatePem);
+      expect(priv.asymmetricKeyDetails).toEqual({ namedCurve: "prime256v1" });
+      const data = Buffer.from("explicit-params");
+      const sig = sign("sha256", data, priv);
+      expect(verify("sha256", data, publicPem, sig)).toBe(true);
+      expect(verify("sha256", data, createPublicKey(publicPem), sig)).toBe(true);
+      expect(createVerify("sha256").update(data).verify(publicPem, sig)).toBe(true);
+    });
+  });
+
   test("private encrypted should work", async () => {
     // Reading an encrypted key without a passphrase should fail.
     expect(() => createPrivateKey(privateEncryptedPem)).toThrow();

@@ -793,17 +793,21 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const baseline = partial.baseline ?? x64;
 
   // LTO: default on for CI release non-asan non-assertions builds across
-  // linux, darwin-cross, and windows-cross. All three use ThinLTO (the JSC
-  // ThinLTO miscompile was fixed upstream). The -lto WebKit prebuilts only
-  // exist for the cross toolchain, so native windows/darwin stay non-LTO.
+  // linux and darwin-cross, both on ThinLTO (the JSC ThinLTO miscompile was
+  // fixed upstream). The -lto WebKit prebuilts only exist for the cross
+  // toolchain, so native windows/darwin stay non-LTO.
   const windowsCross = windows && host.os !== "windows";
-  const ltoDefault = release && (linux || darwinCross || windowsCross) && ci && !assertions && !asan;
+  const ltoDefault = release && (linux || darwinCross) && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
   // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
   // Windows arm64: oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
   // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers).
-  if ((asan && lto) || abi === "android" || (windows && arm64)) {
+  // Windows x64 baseline: oven-sh/WebKit ships no -baseline-lto (the -lto
+  // tarball is haswell-targeted bitcode), and ThinLTO+crossLangLto with the
+  // non-LTO -baseline WebKit crashes TLS init at STATUS_BREAKPOINT on the
+  // sysv64 Rust↔C++ boundary. Off until a -baseline-lto prebuilt exists.
+  if ((asan && lto) || abi === "android" || (windows && (arm64 || baseline))) {
     lto = false;
   }
 

@@ -75,14 +75,22 @@ function resolveWindowsCross(partial: PartialConfig = {}, toolchain = mockToolch
 }
 
 describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)", () => {
-  test("ci release x64 cross builds default to ThinLTO with cross-language LTO", () => {
+  test("ci release x64 cross builds default to non-LTO (no -baseline-lto WebKit exists)", () => {
     const cfg = resolveWindowsCross();
     expect(cfg.windows).toBe(true);
     expect(cfg.crossTarget).toBe("x86_64-pc-windows-msvc");
-    expect(cfg.lto).toBe(true);
-    // Rust↔C++ inlining: rustc emits bitcode (-Clinker-plugin-lto) and the
-    // final lld-link runs one ThinLTO graph across both halves.
-    expect(cfg.crossLangLto).toBe(true);
+    // x64 defaults to baseline=true; oven-sh/WebKit has no windows
+    // -baseline-lto tarball (the -lto one is haswell bitcode), and ThinLTO
+    // against the non-LTO -baseline WebKit crashes TLS init on the sysv64
+    // Rust↔C++ boundary. LTO stays off until a -baseline-lto prebuilt exists.
+    expect(cfg.baseline).toBe(true);
+    expect(cfg.lto).toBe(false);
+    expect(cfg.crossLangLto).toBe(false);
+    // Explicit opt-in (non-baseline, lto=true) can still ThinLTO against the
+    // haswell -lto WebKit with cross-language LTO.
+    const explicit = resolveWindowsCross({ baseline: false, lto: true });
+    expect(explicit.lto).toBe(true);
+    expect(explicit.crossLangLto).toBe(true);
   });
 
   test("no -lto WebKit prebuilt exists for arm64 — LTO is forced off there", () => {
@@ -196,7 +204,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(rustTarget(resolveWindowsCross({ arch: "aarch64" }))).toBe("aarch64-pc-windows-msvc");
   });
 
-  test("linux LTO config uses ThinLTO with WPD and no-split-lto-unit", () => {
+  test("linux LTO config uses ThinLTO with no-split-lto-unit and no WPD", () => {
     const linux = resolveConfig(
       { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", ci: true, buildkite: false, linuxSysroot: "/fake" },
       mockToolchain({ cc: "/fake/llvm/bin/clang", cxx: "/fake/llvm/bin/clang++", ld: "/fake/llvm/bin/ld.lld" }),
@@ -204,10 +212,12 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(linux.lto).toBe(true);
     const linuxFlags = computeFlags(linux);
     expect(linuxFlags.cxxflags).toContain("-flto=thin");
-    expect(linuxFlags.cxxflags).toContain("-fwhole-program-vtables");
+    // WPD is darwin-only: on ELF index-only WPD mis-devirtualizes JSC typed
+    // arrays (Uint8Array reads sign-extend as Int8Array). See flags.ts entry.
+    expect(linuxFlags.cxxflags).not.toContain("-fwhole-program-vtables");
+    expect(linuxFlags.ldflags).not.toContain("-fwhole-program-vtables");
     // rustc bitcode says EnableSplitLTOUnit=0; clang must match so lld doesn't
-    // reject with "inconsistent LTO Unit splitting". WPD falls back to
-    // index-only mode (still devirtualizes, just without the hybrid split).
+    // reject with "inconsistent LTO Unit splitting".
     expect(linuxFlags.cxxflags).toContain("-fno-split-lto-unit");
   });
 });

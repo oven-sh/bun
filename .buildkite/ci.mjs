@@ -167,8 +167,8 @@ const buildPlatforms = [
   // as macOS above. There is no native Windows build lane: the Windows fleet
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
-  // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
-  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
+  // release ships. Both stay non-LTO: arm64 has no -lto WebKit prebuilt, and
+  // x64 baseline has no -baseline-lto one (the -lto tarball is haswell).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
@@ -662,7 +662,7 @@ function getEmulatorBinary(platform) {
  */
 function hasWebKitChanges(options) {
   const { changedFiles = [] } = options;
-  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
+  return changedFiles.some(file => file.includes("scripts/build/deps/webkit.ts"));
 }
 
 /**

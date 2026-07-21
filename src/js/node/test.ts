@@ -995,13 +995,16 @@ function maybeCompleteSuite(suite: TestNode): boolean {
       : undefined,
   };
   // node's order around a finishing suite: its completion, the plan covering
-  // its children, then its own verdict.
+  // its children, then its own verdict. The chain calls are no-ops when a
+  // child already walked up, but an empty suite has no child to do so.
+  reportQueueChain(suite);
   emitRunChildEvent("test:complete", { ...data, passed: !suiteFailed });
   emitRunChildEvent("test:plan", {
     __proto__: null,
     nesting: nestingOf(suite) + 1,
     count: suite.childrenCount,
   });
+  reportStartChain(suite);
   emitRunChildEvent(suiteFailed ? "test:fail" : "test:pass", data);
   return true;
 }
@@ -3280,6 +3283,11 @@ async function runStandalone() {
     standaloneSink = null;
     await reporterDone;
     if (counts.failed > 0 || counts.cancelled > 0) process.exitCode = 1;
+    // node's harness calls process.exit() after postRun when the flag is set;
+    // mirrors the eval driver's handling for the --test path.
+    if (process.execArgv.includes("--test-force-exit")) {
+      process.exit(process.exitCode ?? 0);
+    }
   }
 }
 
@@ -3743,7 +3751,15 @@ function addSuite(
             throw err;
           }
           if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
-            return (built as Promise<unknown>).finally(() => noteSuiteCollectionSettled(suiteNode));
+            return (built as Promise<unknown>).then(
+              () => noteSuiteCollectionSettled(suiteNode),
+              err => {
+                suiteNode.childrenFailed++;
+                suiteNode.error = err;
+                noteSuiteCollectionSettled(suiteNode);
+                throw err;
+              },
+            );
           }
           noteSuiteCollectionSettled(suiteNode);
           return built;

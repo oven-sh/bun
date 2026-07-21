@@ -30,10 +30,16 @@ test("dev server html route: non-GET/HEAD requests complete without hanging", as
   for (const method of ["POST", "PUT", "DELETE", "OPTIONS", "PATCH"]) {
     const res = await fetch(server.url, { method });
     await res.arrayBuffer();
-    expect({ method, status: res.status, contentLength: res.headers.get("content-length") }).toEqual({
+    expect({
+      method,
+      status: res.status,
+      contentLength: res.headers.get("content-length"),
+      allow: res.headers.get("allow"),
+    }).toEqual({
       method,
       status: 405,
       contentLength: "0",
+      allow: "GET, HEAD",
     });
   }
 });

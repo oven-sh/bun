@@ -21,8 +21,9 @@ export const LINUX_REMOTE_ROOT = "/tmp/bun-bootstrap";
 /**
  * POSIX script that downloads the spec-pinned node into the remote root and
  * runs bootstrap.ts with the given flags. Reads no host state and pins
- * nothing itself: the URL and folder come from the image entry. `curl` and
- * `tar` exist on every supported base cloud image.
+ * nothing itself: the URL and folder come from the image entry. Fetches with
+ * curl when present and falls back to wget (alpine cloud images ship
+ * busybox wget but not always curl).
  */
 export function linuxBootstrapCommand(image: LinuxImage, args: { ci: boolean; repoRef: string }): string {
   const node = nodejsDownload(image.nodejs, "linux", image.arch, image.abi);
@@ -34,7 +35,11 @@ export function linuxBootstrapCommand(image: LinuxImage, args: { ci: boolean; re
     "set -ex",
     `cd ${LINUX_REMOTE_ROOT}`,
     `echo ">>> Downloading node from ${node.url}"`,
-    `curl -fsSL --retry 5 --retry-all-errors ${node.url} -o node.tar.gz`,
+    "if command -v curl >/dev/null 2>&1; then",
+    `  curl -fsSL --retry 5 --retry-all-errors ${node.url} -o node.tar.gz`,
+    "else",
+    `  wget -q --tries=5 -O node.tar.gz ${node.url}`,
+    "fi",
     "tar -xzf node.tar.gz",
     `NODE=${LINUX_REMOTE_ROOT}/${folder}/bin/node`,
     `"$NODE" --version`,

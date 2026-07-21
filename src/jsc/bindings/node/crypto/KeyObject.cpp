@@ -964,6 +964,14 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* globalObject, ThrowScope& scope, 
     }
 
     Ref<CryptoKey> cryptoKey = result.releaseReturnValue();
+    // Node dispatches secret vs. asymmetric algorithms separately, so a category
+    // mismatch is NotSupportedError. Without this a secret KeyObject's bytes can
+    // be reinterpreted as a raw Ed25519/X25519/EC public key.
+    if (cryptoKey->type() != type()) {
+        WebCore::propagateException(*globalObject, scope,
+            WebCore::Exception { NotSupportedError, "Unrecognized algorithm name"_s });
+        return {};
+    }
     RELEASE_AND_RETURN(scope, toJS(globalObject, domGlobalObject, cryptoKey.get()));
 }
 

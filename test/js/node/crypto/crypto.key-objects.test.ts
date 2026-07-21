@@ -1992,5 +1992,23 @@ describe("KeyObject.prototype.toCryptoKey", () => {
         expect.objectContaining({ name: "DataError" }),
       );
     });
+
+    test("key type mismatch (secret as Ed25519)", () => {
+      expect(() => secret.toCryptoKey("Ed25519", true, ["verify"])).toThrow(
+        expect.objectContaining({ name: "NotSupportedError" }),
+      );
+    });
+
+    test("key type mismatch (secret as X25519)", () => {
+      expect(() => secret.toCryptoKey("X25519", true, [])).toThrow(
+        expect.objectContaining({ name: "NotSupportedError" }),
+      );
+    });
+
+    test("key type mismatch (asymmetric as HMAC)", () => {
+      expect(() => edPub.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"])).toThrow(
+        expect.objectContaining({ name: "NotSupportedError" }),
+      );
+    });
   });
 });

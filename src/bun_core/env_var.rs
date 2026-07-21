@@ -141,6 +141,9 @@ new!(pub JENKINS_URL: string, "JENKINS_URL", {});
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
+// A string, not a boolean: node suppresses warnings only when the value is
+// exactly "1" (lib/internal/process/pre_execution.js).
+new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
@@ -247,7 +250,6 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304, "BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304", {});
     new_feature_flag!(pub BUN_NO_CODESIGN_MACHO_BINARY, "BUN_NO_CODESIGN_MACHO_BINARY", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_NO_LIBDEFLATE, "BUN_FEATURE_FLAG_NO_LIBDEFLATE", {});
-    new_feature_flag!(pub NODE_NO_WARNINGS, "NODE_NO_WARNINGS", {});
     new_feature_flag!(pub BUN_TRACE, "BUN_TRACE", {});
 }
 

@@ -4558,6 +4558,7 @@ impl VirtualMachine {
         allow_side_effects: bool,
     ) {
         let mut formatter = crate::console_object::Formatter::new(self.global());
+        formatter.stack_check = bun_core::StackCheck::init();
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),
@@ -4868,6 +4869,17 @@ impl VirtualMachine {
         // tail instead of via a drop guard (the body has no early-`?` returns
         // once the AggregateError branch is taken).
         let global_ref = self.global();
+
+        // Stack-safety guard for the AggregateError recursion below (`agg_iter`
+        // → `print_errorlike_object`). The `cause` chain is already guarded in
+        // `print_error_instance_js`; this covers the `.errors` chain.
+        if !formatter.stack_check.is_safe_to_recurse() {
+            formatter.failed = true;
+            if formatter.can_throw_stack_overflow {
+                let _ = global_ref.throw_stack_overflow();
+            }
+            return;
+        }
 
         if value.is_aggregate_error(global_ref) {
             // Note: `JSValue::for_each` takes a C-ABI fn

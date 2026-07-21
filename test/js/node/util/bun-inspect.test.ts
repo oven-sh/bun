@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import stripAnsi from "strip-ansi";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.inspect", () => {
   it("reports error instead of [native code]", () => {
@@ -85,6 +86,38 @@ describe("Bun.inspect", () => {
     expect(() => Bun.inspect(object, { depth: Infinity })).toThrowErrorMatchingInlineSnapshot(
       `"Maximum call stack size exceeded."`,
     );
+  });
+
+  it("stack overflow is thrown when it should be for AggregateError", () => {
+    let e: unknown = new Error("leaf");
+    for (let i = 0; i < 16 * 1024; i++) {
+      e = new AggregateError([e], "agg");
+    }
+
+    expect(() => Bun.inspect(e)).toThrowErrorMatchingInlineSnapshot(`"Maximum call stack size exceeded."`);
+  });
+
+  describe.each(["log", "throw", "reject", "cause"])("printing a deeply nested error via %s", face => {
+    it.concurrent("does not crash", async () => {
+      const src =
+        face === "cause"
+          ? `let e = new Error("leaf"); for (let i = 0; i < 16 * 1024; i++) e = new Error("c", { cause: e }); throw e;`
+          : `let e = new Error("leaf"); for (let i = 0; i < 16 * 1024; i++) e = new AggregateError([e], "agg");` +
+            {
+              log: ` console.log(e);`,
+              throw: ` throw e;`,
+              reject: ` Promise.reject(e); await 0;`,
+            }[face];
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(proc.signalCode).toBeNull();
+      expect(exitCode).toBe(1);
+    });
   });
 
   it("depth = 0", () => {

@@ -2810,14 +2810,38 @@ mod posix_impl {
     }
     pub fn fchmodat(dir: impl AsFd, path: &ZStr, mode: Mode, flags: i32) -> Maybe<()> {
         let dir = dir.as_fd();
-        check_p!(
-            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-            // valid NUL-terminated C string.
-            unsafe { libc::fchmodat(dir.native(), path.as_ptr(), mode as libc::mode_t, flags) },
-            Tag::fchmodat,
-            path
-        );
-        Ok(())
+        #[cfg(target_env = "ohos")]
+        {
+            // OHOS seccomp blocks fchmodat2 (syscall 452) which newer glibc
+            // uses internally for fchmodat(). Call SYS_fchmodat (53 on aarch64)
+            // directly so seccomp doesn't SIGSYS us.
+            let rc = unsafe {
+                libc::syscall(
+                    libc::SYS_fchmodat as libc::c_long,
+                    dir.native() as libc::c_long,
+                    path.as_ptr() as libc::c_long,
+                    mode as libc::c_long,
+                    flags as libc::c_long,
+                )
+            };
+            if rc != 0 {
+                let errno = unsafe { *crate::errno() };
+                return Err(Error::from_code_int(errno, Tag::fchmodat)
+                    .with_path(path.as_bytes()));
+            }
+            Ok(())
+        }
+        #[cfg(not(target_env = "ohos"))]
+        {
+            check_p!(
+                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+                // valid NUL-terminated C string.
+                unsafe { libc::fchmodat(dir.native(), path.as_ptr(), mode as libc::mode_t, flags) },
+                Tag::fchmodat,
+                path
+            );
+            Ok(())
+        }
     }
     /// `lchmod` is BSD/Darwin-only; Linux: `fchmodat(.., AT_SYMLINK_NOFOLLOW)`.
     pub fn lchmod(path: &ZStr, mode: Mode) -> Maybe<()> {

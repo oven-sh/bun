@@ -559,6 +559,143 @@ test("Blob.slice at an odd byte offset decodes UTF-16LE (BOM) content with text(
   expect(exitCode).toBe(0);
 });
 
+// https://w3c.github.io/FileAPI/#stream-method-algo
+// "return the result of running get stream on this"; get stream creates a byte stream.
+describe("Blob.prototype.stream() is a byte stream (supports BYOB readers)", () => {
+  test("getReader({ mode: 'byob' }) fills the caller's view", async () => {
+    const payload = new Uint8Array(100_000);
+    for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+    const blob = new Blob([payload]);
+
+    const reader = blob.stream().getReader({ mode: "byob" });
+    const first = await reader.read(new Uint8Array(64));
+    expect(first.done).toBe(false);
+    expect(first.value).toBeInstanceOf(Uint8Array);
+    expect(first.value!.byteLength).toBe(64);
+    expect(first.value![0]).toBe(0);
+    expect(first.value![63]).toBe(63);
+
+    // Second read with a different-sized view picks up where the first left off.
+    const second = await reader.read(new Uint8Array(200));
+    expect(second.value!.byteLength).toBe(200);
+    expect(second.value![0]).toBe(64);
+    expect(second.value![199]).toBe((64 + 199) & 0xff);
+
+    await reader.cancel();
+  });
+
+  test("BYOB read loop reassembles the full blob", async () => {
+    const payload = new Uint8Array(10_000);
+    for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+    const blob = new Blob([payload]);
+
+    const reader = blob.stream().getReader({ mode: "byob" });
+    const out = new Uint8Array(payload.length);
+    let offset = 0;
+    let buf = new Uint8Array(777);
+    while (offset < out.length) {
+      const { value, done } = await reader.read(buf);
+      if (done) break;
+      out.set(value, offset);
+      offset += value.byteLength;
+      buf = new Uint8Array(value.buffer, 0, value.buffer.byteLength);
+    }
+    expect(offset).toBe(payload.length);
+    expect(out).toEqual(payload);
+    // The stream closes once the blob is drained.
+    const tail = await reader.read(new Uint8Array(16));
+    expect(tail.done).toBe(true);
+  });
+
+  test("new ReadableStreamBYOBReader(blob.stream()) also works", async () => {
+    const blob = new Blob([new Uint8Array(256).map((_, i) => i)]);
+    const reader = new ReadableStreamBYOBReader(blob.stream());
+    const { value, done } = await reader.read(new Uint8Array(16));
+    expect(done).toBe(false);
+    expect([...value!]).toEqual([...Array(16).keys()]);
+    await reader.cancel();
+  });
+
+  test("Bun.file().stream() supports BYOB readers", async () => {
+    using dir = tempDir("blob-byob", {
+      "data.bin": Buffer.alloc(1024, "abcd").toString("binary"),
+    });
+    const reader = Bun.file(path.join(String(dir), "data.bin"))
+      .stream()
+      .getReader({ mode: "byob" });
+    const { value, done } = await reader.read(new Uint8Array(8));
+    expect(done).toBe(false);
+    expect(Buffer.from(value!).toString()).toBe("abcdabcd");
+    await reader.cancel();
+  });
+
+  test("default reader still works on a Blob byte stream", async () => {
+    const payload = new Uint8Array(5_000).map((_, i) => i & 0xff);
+    const blob = new Blob([payload]);
+    const reader = blob.stream().getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    expect(Buffer.concat(chunks)).toEqual(Buffer.from(payload));
+  });
+
+  test("releaseLock after a default reader then attach a BYOB reader", async () => {
+    const payload = new Uint8Array(40_000).map((_, i) => i & 0xff);
+    const stream = new Blob([payload]).stream();
+    const r1 = stream.getReader();
+    const first = await r1.read();
+    expect(first.done).toBe(false);
+    const consumed = first.value!.byteLength;
+    expect(consumed).toBeGreaterThan(0);
+    expect(consumed).toBeLessThan(payload.length);
+    r1.releaseLock();
+
+    // A byte stream permits a BYOB reader after a default reader is released,
+    // and the BYOB read picks up exactly where the default reader left off.
+    const r2 = stream.getReader({ mode: "byob" });
+    const second = await r2.read(new Uint8Array(32));
+    expect(second.done).toBe(false);
+    expect(second.value!.byteLength).toBe(32);
+    expect(Buffer.from(second.value!)).toEqual(Buffer.from(payload.subarray(consumed, consumed + 32)));
+    await r2.cancel();
+  });
+
+  test("empty Blob byte stream closes immediately for a BYOB reader", async () => {
+    const reader = new Blob([]).stream().getReader({ mode: "byob" });
+    const { value, done } = await reader.read(new Uint8Array(8));
+    expect(done).toBe(true);
+    expect(value!.byteLength).toBe(0);
+  });
+
+  test("closing with a partially-filled multi-byte-element BYOB view rejects read() without an uncaught exception", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.on("uncaughtException", e => { console.log("UNCAUGHT"); process.exitCode = 1; });
+          const r = new Blob([new Uint8Array([1, 2, 3])]).stream().getReader({ mode: "byob" });
+          const err = await r.read(new Uint32Array(4)).then(() => null, e => e);
+          console.log(err instanceof TypeError ? "rejected" : "resolved");
+          await r.closed.catch(() => {});
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "rejected",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // structuredClone/postMessage of sliced Blobs and Files is covered by
 // test/js/web/structured-clone-blob-file.test.ts. These tests focus on the
 // consumer paths that go through resolve_size()/resolved_size() rather than

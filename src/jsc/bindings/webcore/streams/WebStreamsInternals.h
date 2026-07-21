@@ -493,17 +493,17 @@ void pipeToReadRequestErrorSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*,
 
 // BunStreamSource.cpp — the lazy native source and the native-sink pumps.
 
-// lazyLoadStream: installs the Native default controller (or the empty fast path).
+// lazyLoadStream: installs the Native byte controller (or the empty fast path).
 void materializeNativeSource(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamSource.cpp
 
 // The SourceKind::Native algorithm ARMS. The pull/cancel dispatch is a TOTAL
-// `switch (m_algorithms.kind)` in JSReadableStreamDefaultController.cpp (a Native source is
-// ALWAYS a default controller); these bodies live HERE per BunStreamSource.h's owner rule,
-// so this is the declared bridge between the two files. The controller's algorithmContext is
-// the JSNativeStreamSourceAdapter for all three.
-JSC::JSValue nativeSourceStart(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: no (native handle.start; enqueues the drain value) — BunStreamSource.cpp
-JSC::JSPromise* nativeSourcePull(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: no (native handle.pull; its promise's reactions are onNativePull*) — BunStreamSource.cpp
-JSC::JSPromise* nativeSourceCancel(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue reason); // userJS: no (native handle.cancel + teardown) — BunStreamSource.cpp
+// `switch (m_algorithms.kind)` in JSReadableByteStreamController.cpp (a Native source is
+// ALWAYS a byte controller so Blob/File/Bytes streams accept BYOB readers); these bodies live
+// HERE per BunStreamSource.h's owner rule, so this is the declared bridge between the two
+// files. The controller's algorithmContext is the JSNativeStreamSourceAdapter for all three.
+JSC::JSValue nativeSourceStart(JSC::JSGlobalObject*, JSReadableByteStreamController*); // userJS: no (native handle.start; enqueues the drain value) — BunStreamSource.cpp
+JSC::JSPromise* nativeSourcePull(JSC::JSGlobalObject*, JSReadableByteStreamController*); // userJS: no (native handle.pull; its promise's reactions are onNativePull*) — BunStreamSource.cpp
+JSC::JSPromise* nativeSourceCancel(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSValue reason); // userJS: no (native handle.cancel + teardown) — BunStreamSource.cpp
 // The JSSink entry point (GlobalObject::assignToStream's body). Returns undefined or
 // a JSPromise (the Signal protocol's value).
 JSC::JSValue assignToStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue jsSinkController); // userJS: yes — BunStreamSource.cpp

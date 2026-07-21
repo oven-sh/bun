@@ -114,7 +114,7 @@ enum class SourceKind : uint8_t {
     ByteTeeBranch, // a ReadableByteStreamTee branch     (context = the JSStreamTeeState)
     FromIterable, // ReadableStream.from(asyncIterable)  (context = JSStreamFromIterableContext)
     CrossRealm, // receiving end of a postMessage transfer (context = JSCrossRealmTransformState)
-    Native, // Bun: lazily-materialized native source on a DEFAULT controller
+    Native, // Bun: lazily-materialized native source on a BYTE controller
             // (context = JSNativeStreamSourceAdapter)
 };
 

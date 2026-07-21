@@ -11,8 +11,10 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
 #include "JSDirectSinkCloseState.h"
+#include "JSPullIntoDescriptor.h"
 #include "JSReadRequest.h"
 #include "JSReadStreamIntoSinkOperation.h"
+#include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSResumableSinkPumpOperation.h"
@@ -414,20 +416,48 @@ static void nativeSourceSever(JSGlobalObject* globalObject, JSNativeStreamSource
     }
     adapter->m_handle.clear();
     adapter->m_pendingView.clear();
+    adapter->m_pendingIsBYOB = false;
+}
+
+static inline bool nativeByteControllerCanCloseOrEnqueue(JSReadableByteStreamController* controller)
+{
+    return !controller->m_closeRequested && controller->m_stream->m_state == ReadableStreamState::Readable;
+}
+
+// Enqueue a native-owned chunk on the byte controller. The native side hands over a fresh
+// buffer that nothing else aliases, so the byte-controller transfer/detach is harmless.
+static void nativeByteControllerEnqueue(JSGlobalObject* globalObject, JSReadableByteStreamController* controller, JSValue chunk)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk);
+    if (!view || !view->byteLength())
+        return;
+    if (!nativeByteControllerCanCloseOrEnqueue(controller))
+        return;
+    RELEASE_AND_RETURN(scope, readableByteStreamControllerEnqueue(globalObject, controller, view));
 }
 
 // The queued callClose job body: close the controller if the consumer is still alive, then sever.
 static void nativeSourceCallClose(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto* controller = adapter->m_controller.get();
-    if (controller && readableStreamDefaultControllerCanCloseOrEnqueue(controller)) {
+    if (controller && nativeByteControllerCanCloseOrEnqueue(controller)) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        readableStreamDefaultControllerClose(globalObject, controller);
+        readableByteStreamControllerClose(globalObject, controller);
+        // A pending BYOB pull-into still needs a respond(0) so the reader's promise settles.
+        if (!catchScope.exception() && !controller->m_pendingPullIntos.isEmpty())
+            readableByteStreamControllerRespond(globalObject, controller, 0);
         if (catchScope.exception()) [[unlikely]] {
             JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty())
                 return;
-            Bun__reportError(globalObject, JSValue::encode(thrown));
+            // readableByteStreamControllerClose throws by spec when the head pull-into's
+            // bytesFilled is not a multiple of its element size; it has already errored the
+            // stream and rejected the pending read, so swallow that throw rather than
+            // surfacing a spurious uncaught exception.
+            if (controller->m_stream->m_state != ReadableStreamState::Errored)
+                Bun__reportError(globalObject, JSValue::encode(thrown));
         }
     }
     nativeSourceSever(globalObject, adapter);
@@ -447,12 +477,6 @@ static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t r
     }
 }
 
-static JSC::JSUint8Array* uint8Subarray(JSGlobalObject* globalObject, JSC::JSUint8Array* view, size_t offset, size_t length)
-{
-    RefPtr<JSC::ArrayBuffer> buffer = view->possiblySharedBuffer();
-    return JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), WTF::move(buffer), view->byteOffset() + offset, length);
-}
-
 // Reuse the pending view only when its BACKING BUFFER is large enough.
 static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
@@ -469,28 +493,48 @@ static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* g
     return fresh;
 }
 
-// Decodes one pull result. Returns the value to store as the pending view (a view or undefined).
-static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableStreamDefaultController* controller, JSValue result, JSC::JSUint8Array* view, bool isClosed)
+// Decodes one pull result. When `hasBYOBRequest` the native side wrote into the head
+// pull-into descriptor's view and a Respond(N) commits it; otherwise the adapter owns its
+// own scratch buffer and the filled prefix is enqueued. Returns the value to store as the
+// pending view (a view or undefined); always undefined on the BYOB path.
+static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableByteStreamController* controller, JSValue result, JSC::JSUint8Array* view, bool isClosed, bool hasBYOBRequest)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (result.isNumber()) {
         double written = result.asNumber();
         if (!isClosed)
             nativeAdjustChunkSize(adapter, written > 0 ? static_cast<size_t>(written) : 0);
+        if (hasBYOBRequest) {
+            // The pull-into can be gone by the time an async pull settles (cancel / release
+            // cleared it); skip respond() rather than tripping its non-empty precondition.
+            if (written > 0 && controller && view && !controller->m_pendingPullIntos.isEmpty()) {
+                uint64_t count = static_cast<uint64_t>(std::min(static_cast<size_t>(written), static_cast<size_t>(view->length())));
+                if (count > 0) {
+                    readableByteStreamControllerRespond(globalObject, controller, count);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+            }
+            if (isClosed)
+                scheduleNativeSourceCallClose(globalObject, adapter);
+            return jsUndefined();
+        }
         JSValue newView = view ? JSValue(view) : jsUndefined();
         if (written > 0 && view) {
             size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
             JSC::JSArrayBufferView* toEnqueue = view;
+            // readableByteStreamControllerEnqueue detaches the chunk's backing buffer; a
+            // subarray of the scratch buffer would detach the scratch buffer too and defeat
+            // its reuse. Copy the filled prefix into a fresh Uint8Array and keep the scratch
+            // buffer (rewound to offset 0) as the pending view for the next pull.
             if (view->length() - count > 0) {
-                toEnqueue = uint8Subarray(globalObject, view, 0, count);
+                auto* copy = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), count);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto* tail = uint8Subarray(globalObject, view, count, view->length() - count);
-                RETURN_IF_EXCEPTION(scope, {});
-                newView = tail;
+                memcpy(copy->typedVector(), static_cast<const uint8_t*>(view->typedVector()), count);
+                toEnqueue = copy;
             } else
                 newView = jsUndefined();
             if (controller) {
-                readableStreamDefaultControllerEnqueue(globalObject, controller, toEnqueue);
+                nativeByteControllerEnqueue(globalObject, controller, toEnqueue);
                 RETURN_IF_EXCEPTION(scope, {});
             }
         }
@@ -508,14 +552,14 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         if (!isClosed)
             nativeAdjustChunkSize(adapter, chunk->byteLength());
         if (chunk->byteLength() > 0 && controller) {
-            readableStreamDefaultControllerEnqueue(globalObject, controller, chunk);
+            nativeByteControllerEnqueue(globalObject, controller, chunk);
             RETURN_IF_EXCEPTION(scope, {});
         }
         if (isClosed) {
             scheduleNativeSourceCallClose(globalObject, adapter);
             return jsUndefined();
         }
-        return view ? JSValue(view) : jsUndefined();
+        return hasBYOBRequest ? jsUndefined() : (view ? JSValue(view) : jsUndefined());
     }
     Bun::ERR::INVALID_STATE(scope, globalObject, "Internal error: invalid result from pull. This is a bug in Bun. Please report it."_s);
     return {};
@@ -556,16 +600,16 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
 
     // Fully-buffered fast path: no adapter, no further native round-trips.
     if (chunkSize == 0) {
-        auto* controller = WebCore::JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableStreamDefaultController>(vm, *domGlobalObject));
+        auto* controller = WebCore::JSReadableByteStreamController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableByteStreamController>(vm, *domGlobalObject));
         controller->m_algorithms.kind = SourceKind::Nothing;
-        setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), 1);
+        setUpReadableByteStreamController(globalObject, stream, controller, jsUndefined(), 0, std::nullopt);
         RETURN_IF_EXCEPTION(scope, );
         auto* drainView = dynamicDowncast<JSC::JSArrayBufferView>(drainValue);
         if (drainView && drainView->byteLength() > 0) {
-            readableStreamDefaultControllerEnqueue(globalObject, controller, drainView);
+            readableByteStreamControllerEnqueue(globalObject, controller, drainView);
             RETURN_IF_EXCEPTION(scope, );
         }
-        readableStreamDefaultControllerClose(globalObject, controller);
+        readableByteStreamControllerClose(globalObject, controller);
         RETURN_IF_EXCEPTION(scope, );
         return;
     }
@@ -592,16 +636,20 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     handle->methodTable()->put(handle, globalObject, builtinNames(vm).onDrainPublicName(), onDrainBound, onDrainSlot);
     RETURN_IF_EXCEPTION(scope, );
 
-    auto* controller = WebCore::JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableStreamDefaultController>(vm, *domGlobalObject));
+    auto* controller = WebCore::JSReadableByteStreamController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableByteStreamController>(vm, *domGlobalObject));
     controller->m_algorithms.kind = SourceKind::Native;
     controller->m_algorithms.algorithmContext.set(vm, controller, adapter);
-    setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), 1);
+    // HWM > 0 keeps one pull outstanding once the queue drains (desiredSize > 0), matching
+    // the prior default-controller HWM=1. ByteStream/FileReader only surface close/error via
+    // the pending pull's promise, so without a proactive pull an abort after a satisfied
+    // read() would never reach the controller.
+    setUpReadableByteStreamController(globalObject, stream, controller, jsUndefined(), 1, std::nullopt);
     RETURN_IF_EXCEPTION(scope, );
     nativeSourceStart(globalObject, controller);
     RETURN_IF_EXCEPTION(scope, );
 }
 
-JSValue nativeSourceStart(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
+JSValue nativeSourceStart(JSGlobalObject* globalObject, JSReadableByteStreamController* controller)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -610,18 +658,35 @@ JSValue nativeSourceStart(JSGlobalObject* globalObject, JSReadableStreamDefaultC
     if (!drainValue.isEmpty()) {
         adapter->m_drainValue.clear();
         if (!adapter->m_controller)
-            adapter->m_controller = JSC::Weak<JSReadableStreamDefaultController>(controller);
-        readableStreamDefaultControllerEnqueue(globalObject, controller, drainValue);
+            adapter->m_controller = JSC::Weak<JSReadableByteStreamController>(controller);
+        nativeByteControllerEnqueue(globalObject, controller, drainValue);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return jsUndefined();
 }
 
-static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableStreamDefaultController* controller)
+// A BYOB reader supplies the buffer to write into: if the head pending pull-into exists,
+// return a Uint8Array over its unfilled tail (what controller.byobRequest.view would expose).
+// With no pull-into pending (default reader, autoAllocateChunkSize unset), return nullptr and
+// the caller falls back to its own scratch buffer.
+static JSC::JSUint8Array* nativePendingPullIntoView(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableByteStreamController* controller)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (controller->m_pendingPullIntos.isEmpty())
+        return nullptr;
+    const JSPullIntoDescriptor* firstDescriptor = controller->m_pendingPullIntos.first().get();
+    const size_t bytesFilled = firstDescriptor->m_bytesFilled;
+    RefPtr<JSC::ArrayBuffer> buffer = firstDescriptor->m_buffer;
+    auto* view = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), WTF::move(buffer), firstDescriptor->m_byteOffset + bytesFilled, firstDescriptor->m_byteLength - bytesFilled);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return view;
+}
+
+static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableByteStreamController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!adapter->m_controller)
-        adapter->m_controller = JSC::Weak<JSReadableStreamDefaultController>(controller);
+        adapter->m_controller = JSC::Weak<JSReadableByteStreamController>(controller);
 
     JSObject* handle = adapter->m_handle.get();
     if (!handle || adapter->m_closed) {
@@ -636,24 +701,36 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
     closer->putDirectIndex(globalObject, 0, jsBoolean(false));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    if (JSObject* pendingObject = adapter->m_pendingView.get()) {
-        MarkedArgumentBuffer noArgs;
-        JSValue drained = invokeMethod(vm, globalObject, handle, builtinNames(vm).drainPublicName(), noArgs);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        bool isTruthy = drained.toBoolean(globalObject);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (isTruthy) {
-            bool isClosed = nativeCloserFlag(vm, globalObject, adapter);
+    auto* byobView = nativePendingPullIntoView(vm, globalObject, controller);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    const bool hasBYOBRequest = byobView;
+
+    if (!hasBYOBRequest) {
+        if (JSObject* pendingObject = adapter->m_pendingView.get()) {
+            MarkedArgumentBuffer noArgs;
+            JSValue drained = invokeMethod(vm, globalObject, handle, builtinNames(vm).drainPublicName(), noArgs);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, drained, uncheckedDowncast<JSC::JSUint8Array>(pendingObject), isClosed);
+            bool isTruthy = drained.toBoolean(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            nativeStorePendingView(vm, adapter, newView);
-            return nullptr;
+            if (isTruthy) {
+                bool isClosed = nativeCloserFlag(vm, globalObject, adapter);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, drained, uncheckedDowncast<JSC::JSUint8Array>(pendingObject), isClosed, false);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                nativeStorePendingView(vm, adapter, newView);
+                return nullptr;
+            }
         }
     }
 
-    auto* view = nativeGetInternalBuffer(vm, globalObject, adapter);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSC::JSUint8Array* view;
+    if (hasBYOBRequest) {
+        view = byobView;
+        adapter->m_pendingView.set(vm, adapter, view);
+    } else {
+        view = nativeGetInternalBuffer(vm, globalObject, adapter);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
 
     MarkedArgumentBuffer pullArgs;
     pullArgs.append(view);
@@ -663,6 +740,7 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
+        adapter->m_pendingIsBYOB = hasBYOBRequest;
         auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onNativePullFulfilled(), runtime->onNativePullRejected(), jsUndefined(), adapter);
         return pullPromise;
@@ -670,7 +748,7 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
 
     bool isClosed = nativeCloserFlag(vm, globalObject, adapter);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, result, view, isClosed);
+    JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, result, view, isClosed, hasBYOBRequest);
     RETURN_IF_EXCEPTION(scope, nullptr);
     nativeStorePendingView(vm, adapter, newView);
     if (adapter->m_closed)
@@ -678,7 +756,7 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
     return nullptr;
 }
 
-JSPromise* nativeSourcePull(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
+JSPromise* nativeSourcePull(JSGlobalObject* globalObject, JSReadableByteStreamController* controller)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -701,7 +779,7 @@ JSPromise* nativeSourcePull(JSGlobalObject* globalObject, JSReadableStreamDefaul
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
-JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue reason)
+JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableByteStreamController* controller, JSValue reason)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -741,7 +819,7 @@ static void nativeSourceOnDrain(JSGlobalObject* globalObject, JSNativeStreamSour
     auto* controller = adapter->m_controller.get();
     if (!controller)
         return;
-    readableStreamDefaultControllerEnqueue(globalObject, controller, chunk);
+    nativeByteControllerEnqueue(globalObject, controller, chunk);
 }
 
 // The [bound-convention] native-initiated onClose body.
@@ -762,7 +840,9 @@ static void nativeSourcePullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject,
         view = uncheckedDowncast<JSC::JSUint8Array>(pendingObject);
     bool isClosed = nativeCloserFlag(vm, globalObject, adapter);
     RETURN_IF_EXCEPTION(scope, );
-    JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, result, view, isClosed);
+    const bool hasBYOBRequest = adapter->m_pendingIsBYOB;
+    adapter->m_pendingIsBYOB = false;
+    JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, result, view, isClosed, hasBYOBRequest);
     RETURN_IF_EXCEPTION(scope, );
     nativeStorePendingView(vm, adapter, newView);
     if (adapter->m_closed)
@@ -773,11 +853,12 @@ static void nativeSourcePullRejected(JSC::VM& vm, JSGlobalObject* globalObject, 
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     adapter->m_pendingView.clear();
+    adapter->m_pendingIsBYOB = false;
     adapter->m_closed = true;
     auto* controller = adapter->m_controller.get();
     adapter->m_controller.clear();
     if (controller) {
-        readableStreamDefaultControllerError(globalObject, controller, error);
+        readableByteStreamControllerError(globalObject, controller, error);
         RETURN_IF_EXCEPTION(scope, );
     }
     nativeSourceSever(globalObject, adapter);
@@ -1556,7 +1637,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNativePullFulfilled, (JSGlobalObj
     // Boundary: an internal decode failure errors the stream instead of escaping.
     if (!thrown.isEmpty()) {
         if (auto* controller = adapter->m_controller.get()) {
-            readableStreamDefaultControllerError(globalObject, controller, thrown);
+            readableByteStreamControllerError(globalObject, controller, thrown);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }

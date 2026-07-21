@@ -6,8 +6,11 @@
 // artifacts.resolveArtifacts). spec.ts stays pure data; the URL
 // construction is code in artifacts.ts, but its OUTPUT is hashed here, so
 // editing a URL template re-bakes exactly like editing a version does.
-// Other code (bootstrap, agent.mjs) is never hashed; see spec.epoch for
-// how a code change reaches the images.
+// The RECIPE — the code that produces the image (bootstrap, components,
+// ops, packer template, machine.ts) — is also hashed, scoped per OS via
+// recipe.ts, so a code change renames exactly the images it can affect and
+// reuse can never mask a bake that should have happened. spec.epoch stays
+// the lever for changes the hash can't see (a floating base image moved).
 //
 // The same name is used for the AWS AMI and the Azure gallery image
 // definition, and robobun launches CI machines by looking that exact name
@@ -15,6 +18,7 @@
 
 import { createHash } from "node:crypto";
 import { resolveArtifacts } from "./components/registry.ts";
+import { recipeHash } from "./recipe.ts";
 import { epoch, images } from "./spec.ts";
 import type { Arch, Image } from "./types.ts";
 
@@ -42,7 +46,19 @@ export function canonicalJson(value: unknown): string {
  * (+ epoch). */
 export function imageHash(entry: Image): string {
   return createHash("sha256")
-    .update(canonicalJson({ epoch, image: entry, artifacts: resolveArtifacts(entry) }))
+    .update(
+      canonicalJson({
+        epoch,
+        image: entry,
+        artifacts: resolveArtifacts(entry),
+        // The code that produces the image (recipe.ts) — so a change to
+        // bootstrap/components/packer/machine renames the images it can
+        // affect, and no build can reuse an image the current code
+        // wouldn't have produced. Reuse is a mechanical consequence, never a
+        // thing to remember to force.
+        recipe: recipeHash(entry.os),
+      }),
+    )
     .digest("hex")
     .slice(0, HASH_LENGTH);
 }

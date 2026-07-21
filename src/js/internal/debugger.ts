@@ -169,6 +169,9 @@ function unescapeUnixSocketUrl(href: string) {
 
 class Debugger {
   #url?: URL;
+  // Hostname the user passed to --inspect; the Host-header allowlist must accept this
+  // name even after #url!.hostname is rewritten to the numeric bound address.
+  #requestedHostname?: string;
   #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
 
   constructor(
@@ -233,6 +236,7 @@ class Debugger {
 
   #listen(): void {
     const { protocol, hostname, port, pathname } = this.#url!;
+    this.#requestedHostname = hostname;
 
     if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
       const server = Bun.serve({
@@ -247,8 +251,9 @@ class Debugger {
       // binds 127.0.0.1:port. server.hostname echoes the requested name; print the bound address instead
       // so the banner URL routes to this process rather than whoever holds the other loopback family.
       const addr = (server as { address?: { address?: string; family?: string } }).address;
-      if (addr && typeof addr === "object" && typeof addr.address === "string" && addr.address) {
-        this.#url!.hostname = addr.family === "IPv6" ? `[${addr.address}]` : addr.address;
+      const { address: boundIp, family } = typeof addr === "object" && addr ? addr : {};
+      if (typeof boundIp === "string" && boundIp) {
+        this.#url!.hostname = family === "IPv6" ? `[${boundIp}]` : boundIp;
       } else {
         this.#url!.hostname = server.hostname;
       }
@@ -347,7 +352,7 @@ class Debugger {
     }
 
     const isUnix = this.#url!.protocol.includes("unix");
-    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#url!.hostname)) {
+    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#requestedHostname ?? this.#url!.hostname)) {
       return new Response(null, {
         status: 400, // Bad Request
       });

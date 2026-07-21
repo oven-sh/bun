@@ -12,7 +12,7 @@ static ULONG_PTR NTAPI Hook_NtAddAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAddAtom, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAddAtom(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAddAtom(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -25,7 +25,7 @@ static ULONG_PTR NTAPI Hook_NtAddAtomEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtAddAtomEx, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAddAtomEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAddAtomEx(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -38,7 +38,7 @@ static ULONG_PTR NTAPI Hook_NtDeleteAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteAtom, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteAtom(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeleteAtom(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -51,7 +51,7 @@ static ULONG_PTR NTAPI Hook_NtFindAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtFindAtom, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFindAtom(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFindAtom(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -64,7 +64,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationAtom(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationAtom, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationAtom(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationAtom(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -77,7 +77,7 @@ static ULONG_PTR NTAPI Hook_NtCreateProfile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtCreateProfile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateProfile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -90,7 +90,7 @@ static ULONG_PTR NTAPI Hook_NtCreateProfileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtCreateProfileEx, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateProfileEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateProfileEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -103,7 +103,7 @@ static ULONG_PTR NTAPI Hook_NtDebugActiveProcess(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtDebugActiveProcess, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDebugActiveProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDebugActiveProcess(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -116,7 +116,7 @@ static ULONG_PTR NTAPI Hook_NtDebugContinue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtDebugContinue, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDebugContinue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDebugContinue(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -129,7 +129,7 @@ static ULONG_PTR NTAPI Hook_NtQueryDebugFilterState(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryDebugFilterState, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDebugFilterState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryDebugFilterState(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -142,7 +142,7 @@ static ULONG_PTR NTAPI Hook_NtQueryIntervalProfile(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryIntervalProfile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryIntervalProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryIntervalProfile(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -155,7 +155,7 @@ static ULONG_PTR NTAPI Hook_NtQueryPerformanceCounter(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryPerformanceCounter, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryPerformanceCounter(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryPerformanceCounter(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -168,7 +168,7 @@ static ULONG_PTR NTAPI Hook_NtRegisterThreadTerminatePort(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtRegisterThreadTerminatePort, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRegisterThreadTerminatePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRegisterThreadTerminatePort(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -181,7 +181,7 @@ static ULONG_PTR NTAPI Hook_NtRemoveProcessDebug(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRemoveProcessDebug, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRemoveProcessDebug(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRemoveProcessDebug(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -194,7 +194,7 @@ static ULONG_PTR NTAPI Hook_NtSetDebugFilterState(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetDebugFilterState, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetDebugFilterState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetDebugFilterState(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -207,7 +207,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationDebugObject(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetInformationDebugObject, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationDebugObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationDebugObject(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -220,7 +220,7 @@ static ULONG_PTR NTAPI Hook_NtSetIntervalProfile(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetIntervalProfile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetIntervalProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetIntervalProfile(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -233,7 +233,7 @@ static ULONG_PTR NTAPI Hook_NtStartProfile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtStartProfile, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtStartProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtStartProfile(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -246,7 +246,7 @@ static ULONG_PTR NTAPI Hook_NtStopProfile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtStopProfile, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtStopProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtStopProfile(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -259,7 +259,7 @@ static ULONG_PTR NTAPI Hook_NtSystemDebugControl(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSystemDebugControl, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSystemDebugControl(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSystemDebugControl(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -272,7 +272,7 @@ static ULONG_PTR NTAPI Hook_NtTraceControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtTraceControl, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTraceControl(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtTraceControl(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -285,7 +285,7 @@ static ULONG_PTR NTAPI Hook_NtWaitForDebugEvent(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtWaitForDebugEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForDebugEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWaitForDebugEvent(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -298,7 +298,7 @@ static ULONG_PTR NTAPI Hook_NtAddBootEntry(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAddBootEntry, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAddBootEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAddBootEntry(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -311,7 +311,7 @@ static ULONG_PTR NTAPI Hook_NtAddDriverEntry(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAddDriverEntry, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAddDriverEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAddDriverEntry(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -324,7 +324,7 @@ static ULONG_PTR NTAPI Hook_NtCancelDeviceWakeupRequest(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtCancelDeviceWakeupRequest, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelDeviceWakeupRequest(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCancelDeviceWakeupRequest(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -337,7 +337,7 @@ static ULONG_PTR NTAPI Hook_NtDeleteBootEntry(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteBootEntry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteBootEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeleteBootEntry(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -350,7 +350,7 @@ static ULONG_PTR NTAPI Hook_NtDeleteDriverEntry(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteDriverEntry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteDriverEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeleteDriverEntry(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -389,7 +389,7 @@ static ULONG_PTR NTAPI Hook_NtEnumerateBootEntries(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtEnumerateBootEntries, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateBootEntries(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtEnumerateBootEntries(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -402,7 +402,7 @@ static ULONG_PTR NTAPI Hook_NtEnumerateDriverEntries(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtEnumerateDriverEntries, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateDriverEntries(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtEnumerateDriverEntries(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -415,7 +415,7 @@ static ULONG_PTR NTAPI Hook_NtGetDevicePowerState(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtGetDevicePowerState, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetDevicePowerState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetDevicePowerState(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -428,7 +428,7 @@ static ULONG_PTR NTAPI Hook_NtGetPlugPlayEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtGetPlugPlayEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetPlugPlayEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetPlugPlayEvent(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -441,7 +441,7 @@ static ULONG_PTR NTAPI Hook_NtInitiatePowerAction(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtInitiatePowerAction, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtInitiatePowerAction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtInitiatePowerAction(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -454,7 +454,7 @@ static ULONG_PTR NTAPI Hook_NtLoadDriver(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtLoadDriver, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadDriver(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLoadDriver(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -467,7 +467,7 @@ static ULONG_PTR NTAPI Hook_NtModifyBootEntry(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtModifyBootEntry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtModifyBootEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtModifyBootEntry(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -480,7 +480,7 @@ static ULONG_PTR NTAPI Hook_NtModifyDriverEntry(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtModifyDriverEntry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtModifyDriverEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtModifyDriverEntry(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -493,7 +493,7 @@ static ULONG_PTR NTAPI Hook_NtPlugPlayControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtPlugPlayControl, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPlugPlayControl(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPlugPlayControl(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -506,7 +506,7 @@ static ULONG_PTR NTAPI Hook_NtPowerInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtPowerInformation, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPowerInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPowerInformation(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -519,7 +519,7 @@ static ULONG_PTR NTAPI Hook_NtQueryBootEntryOrder(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryBootEntryOrder, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryBootEntryOrder(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryBootEntryOrder(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -532,7 +532,7 @@ static ULONG_PTR NTAPI Hook_NtQueryBootOptions(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryBootOptions, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryBootOptions(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryBootOptions(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -545,7 +545,7 @@ static ULONG_PTR NTAPI Hook_NtQueryDriverEntryOrder(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryDriverEntryOrder, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDriverEntryOrder(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryDriverEntryOrder(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -558,7 +558,7 @@ static ULONG_PTR NTAPI Hook_NtReplacePartitionUnit(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtReplacePartitionUnit, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplacePartitionUnit(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReplacePartitionUnit(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -571,7 +571,7 @@ static ULONG_PTR NTAPI Hook_NtRequestDeviceWakeup(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtRequestDeviceWakeup, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRequestDeviceWakeup(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRequestDeviceWakeup(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -584,7 +584,7 @@ static ULONG_PTR NTAPI Hook_NtRequestWakeupLatency(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtRequestWakeupLatency, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRequestWakeupLatency(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRequestWakeupLatency(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -610,7 +610,7 @@ static ULONG_PTR NTAPI Hook_NtSetBootEntryOrder(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetBootEntryOrder, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetBootEntryOrder(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetBootEntryOrder(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -623,7 +623,7 @@ static ULONG_PTR NTAPI Hook_NtSetBootOptions(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetBootOptions, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetBootOptions(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetBootOptions(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -636,7 +636,7 @@ static ULONG_PTR NTAPI Hook_NtSetDriverEntryOrder(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetDriverEntryOrder, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetDriverEntryOrder(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetDriverEntryOrder(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -649,7 +649,7 @@ static ULONG_PTR NTAPI Hook_NtSetSystemPowerState(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetSystemPowerState, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSystemPowerState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetSystemPowerState(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -662,7 +662,7 @@ static ULONG_PTR NTAPI Hook_NtSetThreadExecutionState(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetThreadExecutionState, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetThreadExecutionState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetThreadExecutionState(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -675,7 +675,7 @@ static ULONG_PTR NTAPI Hook_NtUnloadDriver(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtUnloadDriver, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnloadDriver(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUnloadDriver(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -688,7 +688,7 @@ static ULONG_PTR NTAPI Hook_NtVdmControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtVdmControl, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtVdmControl(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtVdmControl(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -701,7 +701,7 @@ static ULONG_PTR NTAPI Hook_NtCreateCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateCpuPartition, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateCpuPartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateCpuPartition(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -714,7 +714,7 @@ static ULONG_PTR NTAPI Hook_NtEnumerateSystemEnvironmentValuesEx(ULONG_PTR a0, U
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtEnumerateSystemEnvironmentValuesEx, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateSystemEnvironmentValuesEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtEnumerateSystemEnvironmentValuesEx(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -740,7 +740,7 @@ static ULONG_PTR NTAPI Hook_NtGetCurrentProcessorNumberEx(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtGetCurrentProcessorNumberEx, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetCurrentProcessorNumberEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetCurrentProcessorNumberEx(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -766,7 +766,7 @@ static ULONG_PTR NTAPI Hook_NtOpenCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenCpuPartition, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenCpuPartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenCpuPartition(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -779,7 +779,7 @@ static ULONG_PTR NTAPI Hook_NtQueryDefaultLocale(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryDefaultLocale, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDefaultLocale(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryDefaultLocale(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -792,7 +792,7 @@ static ULONG_PTR NTAPI Hook_NtQueryDefaultUILanguage(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtQueryDefaultUILanguage, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDefaultUILanguage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryDefaultUILanguage(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -805,7 +805,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationCpuPartition(ULONG_PTR a0, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationCpuPartition, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationCpuPartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationCpuPartition(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -818,7 +818,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInstallUILanguage(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtQueryInstallUILanguage, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInstallUILanguage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInstallUILanguage(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -831,7 +831,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySystemEnvironmentValue(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtQuerySystemEnvironmentValue, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySystemEnvironmentValue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySystemEnvironmentValue(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -844,7 +844,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySystemEnvironmentValueEx(ULONG_PTR a0, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQuerySystemEnvironmentValueEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySystemEnvironmentValueEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySystemEnvironmentValueEx(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -857,7 +857,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySystemInformation(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtQuerySystemInformation, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySystemInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySystemInformation(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -870,7 +870,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySystemInformationEx(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQuerySystemInformationEx, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySystemInformationEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySystemInformationEx(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -883,7 +883,7 @@ static ULONG_PTR NTAPI Hook_NtSetDefaultLocale(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetDefaultLocale, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetDefaultLocale(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetDefaultLocale(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -896,7 +896,7 @@ static ULONG_PTR NTAPI Hook_NtSetDefaultUILanguage(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetDefaultUILanguage, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetDefaultUILanguage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetDefaultUILanguage(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -909,7 +909,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationCpuPartition(ULONG_PTR a0, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtSetInformationCpuPartition, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationCpuPartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationCpuPartition(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -922,7 +922,7 @@ static ULONG_PTR NTAPI Hook_NtSetSystemEnvironmentValue(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetSystemEnvironmentValue, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSystemEnvironmentValue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetSystemEnvironmentValue(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -935,7 +935,7 @@ static ULONG_PTR NTAPI Hook_NtSetSystemEnvironmentValueEx(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetSystemEnvironmentValueEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSystemEnvironmentValueEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetSystemEnvironmentValueEx(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -948,7 +948,7 @@ static ULONG_PTR NTAPI Hook_NtSetSystemInformation(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetSystemInformation, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSystemInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetSystemInformation(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -974,7 +974,7 @@ static ULONG_PTR NTAPI Hook_NtWow64GetCurrentProcessorNumberEx(ULONG_PTR a0, ULO
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWow64GetCurrentProcessorNumberEx, (uintptr_t)_ReturnAddress(), args, 1);
   if (false) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64GetCurrentProcessorNumberEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64GetCurrentProcessorNumberEx(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -987,7 +987,7 @@ static ULONG_PTR NTAPI Hook_NtAreMappedFilesTheSame(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAreMappedFilesTheSame, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAreMappedFilesTheSame(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAreMappedFilesTheSame(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1000,7 +1000,7 @@ static ULONG_PTR NTAPI Hook_NtAssociateWaitCompletionPacket(ULONG_PTR a0, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtAssociateWaitCompletionPacket, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAssociateWaitCompletionPacket(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAssociateWaitCompletionPacket(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1013,7 +1013,7 @@ static ULONG_PTR NTAPI Hook_NtCancelIoFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCancelIoFile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelIoFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCancelIoFile(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1026,7 +1026,7 @@ static ULONG_PTR NTAPI Hook_NtCancelIoFileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCancelIoFileEx, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelIoFileEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCancelIoFileEx(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1039,7 +1039,7 @@ static ULONG_PTR NTAPI Hook_NtCancelSynchronousIoFile(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCancelSynchronousIoFile, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelSynchronousIoFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCancelSynchronousIoFile(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1052,7 +1052,7 @@ static ULONG_PTR NTAPI Hook_NtCancelWaitCompletionPacket(ULONG_PTR a0, ULONG_PTR
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCancelWaitCompletionPacket, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelWaitCompletionPacket(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCancelWaitCompletionPacket(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1065,7 +1065,7 @@ static ULONG_PTR NTAPI Hook_NtClose(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, UL
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtClose, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtClose(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtClose(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1078,7 +1078,7 @@ static ULONG_PTR NTAPI Hook_NtCopyFileChunk(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtCopyFileChunk, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCopyFileChunk(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCopyFileChunk(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1091,7 +1091,7 @@ static ULONG_PTR NTAPI Hook_NtCreateFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtCreateFile, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1104,7 +1104,7 @@ static ULONG_PTR NTAPI Hook_NtCreateIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateIoCompletion, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateIoCompletion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateIoCompletion(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1117,7 +1117,7 @@ static ULONG_PTR NTAPI Hook_NtCreateMailslotFile(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtCreateMailslotFile, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateMailslotFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateMailslotFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1130,7 +1130,7 @@ static ULONG_PTR NTAPI Hook_NtCreateNamedPipeFile(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13};
   CallCtx ctx(SYS_NtCreateNamedPipeFile, (uintptr_t)_ReturnAddress(), args, 14);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateNamedPipeFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateNamedPipeFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11], args[12], args[13], a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1143,7 +1143,7 @@ static ULONG_PTR NTAPI Hook_NtCreatePagingFile(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreatePagingFile, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreatePagingFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreatePagingFile(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1156,7 +1156,7 @@ static ULONG_PTR NTAPI Hook_NtCreateWaitCompletionPacket(ULONG_PTR a0, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCreateWaitCompletionPacket, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateWaitCompletionPacket(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateWaitCompletionPacket(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1169,7 +1169,7 @@ static ULONG_PTR NTAPI Hook_NtDeleteFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteFile, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeleteFile(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1182,7 +1182,7 @@ static ULONG_PTR NTAPI Hook_NtDeviceIoControlFile(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtDeviceIoControlFile, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeviceIoControlFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeviceIoControlFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1195,7 +1195,7 @@ static ULONG_PTR NTAPI Hook_NtFlushBuffersFile(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtFlushBuffersFile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushBuffersFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFlushBuffersFile(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1208,7 +1208,7 @@ static ULONG_PTR NTAPI Hook_NtFlushBuffersFileEx(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtFlushBuffersFileEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushBuffersFileEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFlushBuffersFileEx(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1221,7 +1221,7 @@ static ULONG_PTR NTAPI Hook_NtFsControlFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtFsControlFile, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFsControlFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFsControlFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1234,7 +1234,7 @@ static ULONG_PTR NTAPI Hook_NtLockFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtLockFile, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLockFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLockFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1247,7 +1247,7 @@ static ULONG_PTR NTAPI Hook_NtNotifyChangeDirectoryFile(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtNotifyChangeDirectoryFile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtNotifyChangeDirectoryFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtNotifyChangeDirectoryFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1260,7 +1260,7 @@ static ULONG_PTR NTAPI Hook_NtOpenFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtOpenFile, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenFile(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1273,7 +1273,7 @@ static ULONG_PTR NTAPI Hook_NtOpenIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenIoCompletion, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenIoCompletion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenIoCompletion(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1286,7 +1286,7 @@ static ULONG_PTR NTAPI Hook_NtQueryAttributesFile(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryAttributesFile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryAttributesFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryAttributesFile(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1299,7 +1299,7 @@ static ULONG_PTR NTAPI Hook_NtQueryDirectoryFile(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtQueryDirectoryFile, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDirectoryFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryDirectoryFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1312,7 +1312,7 @@ static ULONG_PTR NTAPI Hook_NtQueryDirectoryFileEx(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtQueryDirectoryFileEx, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDirectoryFileEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryDirectoryFileEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1325,7 +1325,7 @@ static ULONG_PTR NTAPI Hook_NtQueryEaFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtQueryEaFile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryEaFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryEaFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1338,7 +1338,7 @@ static ULONG_PTR NTAPI Hook_NtQueryFullAttributesFile(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryFullAttributesFile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryFullAttributesFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryFullAttributesFile(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1351,7 +1351,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationByName(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationByName, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationByName(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationByName(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1364,7 +1364,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationFile(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationFile, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationFile(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1377,7 +1377,7 @@ static ULONG_PTR NTAPI Hook_NtQueryIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryIoCompletion, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryIoCompletion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryIoCompletion(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1403,7 +1403,7 @@ static ULONG_PTR NTAPI Hook_NtQueryQuotaInformationFile(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtQueryQuotaInformationFile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryQuotaInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryQuotaInformationFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1416,7 +1416,7 @@ static ULONG_PTR NTAPI Hook_NtQueryVolumeInformationFile(ULONG_PTR a0, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryVolumeInformationFile, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryVolumeInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryVolumeInformationFile(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1429,7 +1429,7 @@ static ULONG_PTR NTAPI Hook_NtReadFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtReadFile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReadFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1442,7 +1442,7 @@ static ULONG_PTR NTAPI Hook_NtReadFileScatter(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtReadFileScatter, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadFileScatter(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReadFileScatter(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1455,7 +1455,7 @@ static ULONG_PTR NTAPI Hook_NtRemoveIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtRemoveIoCompletion, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRemoveIoCompletion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRemoveIoCompletion(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1468,7 +1468,7 @@ static ULONG_PTR NTAPI Hook_NtRemoveIoCompletionEx(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtRemoveIoCompletionEx, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRemoveIoCompletionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRemoveIoCompletionEx(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1481,7 +1481,7 @@ static ULONG_PTR NTAPI Hook_NtSetEaFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetEaFile, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetEaFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetEaFile(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1494,7 +1494,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetInformationFile, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationFile(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1507,7 +1507,7 @@ static ULONG_PTR NTAPI Hook_NtSetIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetIoCompletion, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetIoCompletion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetIoCompletion(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1520,7 +1520,7 @@ static ULONG_PTR NTAPI Hook_NtSetIoCompletionEx(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSetIoCompletionEx, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetIoCompletionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetIoCompletionEx(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1533,7 +1533,7 @@ static ULONG_PTR NTAPI Hook_NtSetQuotaInformationFile(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetQuotaInformationFile, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetQuotaInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetQuotaInformationFile(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1546,7 +1546,7 @@ static ULONG_PTR NTAPI Hook_NtSetVolumeInformationFile(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetVolumeInformationFile, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetVolumeInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetVolumeInformationFile(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1559,7 +1559,7 @@ static ULONG_PTR NTAPI Hook_NtTranslateFilePath(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtTranslateFilePath, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTranslateFilePath(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtTranslateFilePath(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1572,7 +1572,7 @@ static ULONG_PTR NTAPI Hook_NtUnlockFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtUnlockFile, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnlockFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUnlockFile(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1585,7 +1585,7 @@ static ULONG_PTR NTAPI Hook_NtWriteFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtWriteFile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWriteFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWriteFile(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1598,7 +1598,7 @@ static ULONG_PTR NTAPI Hook_NtWriteFileGather(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtWriteFileGather, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWriteFileGather(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWriteFileGather(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1611,7 +1611,7 @@ static ULONG_PTR NTAPI Hook_NtCreateIoRing(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateIoRing, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateIoRing(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateIoRing(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1624,7 +1624,7 @@ static ULONG_PTR NTAPI Hook_NtQueryIoRingCapabilities(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryIoRingCapabilities, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryIoRingCapabilities(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryIoRingCapabilities(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1637,7 +1637,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationIoRing(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationIoRing, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationIoRing(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationIoRing(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1650,7 +1650,7 @@ static ULONG_PTR NTAPI Hook_NtSubmitIoRing(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSubmitIoRing, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSubmitIoRing(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSubmitIoRing(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1663,7 +1663,7 @@ static ULONG_PTR NTAPI Hook_NtAssignProcessToJobObject(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAssignProcessToJobObject, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAssignProcessToJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAssignProcessToJobObject(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1676,7 +1676,7 @@ static ULONG_PTR NTAPI Hook_NtCreateJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCreateJobObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateJobObject(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1689,7 +1689,7 @@ static ULONG_PTR NTAPI Hook_NtCreateJobSet(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCreateJobSet, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateJobSet(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateJobSet(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1702,7 +1702,7 @@ static ULONG_PTR NTAPI Hook_NtIsProcessInJob(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtIsProcessInJob, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtIsProcessInJob(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtIsProcessInJob(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1715,7 +1715,7 @@ static ULONG_PTR NTAPI Hook_NtOpenJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenJobObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenJobObject(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1728,7 +1728,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationJobObject(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationJobObject, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationJobObject(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1741,7 +1741,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationJobObject(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationJobObject, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationJobObject(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1754,7 +1754,7 @@ static ULONG_PTR NTAPI Hook_NtTerminateJobObject(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtTerminateJobObject, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTerminateJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtTerminateJobObject(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1767,7 +1767,7 @@ static ULONG_PTR NTAPI Hook_NtAcceptConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAcceptConnectPort, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAcceptConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAcceptConnectPort(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1780,7 +1780,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcAcceptConnectPort(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtAlpcAcceptConnectPort, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcAcceptConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcAcceptConnectPort(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1793,7 +1793,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcCancelMessage(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcCancelMessage, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCancelMessage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcCancelMessage(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1806,7 +1806,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtAlpcConnectPort, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcConnectPort(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1819,7 +1819,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcConnectPortEx(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtAlpcConnectPortEx, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcConnectPortEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcConnectPortEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1832,7 +1832,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcCreatePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcCreatePort, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCreatePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcCreatePort(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1845,7 +1845,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcCreatePortSection(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAlpcCreatePortSection, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCreatePortSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcCreatePortSection(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1858,7 +1858,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcCreateResourceReserve(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtAlpcCreateResourceReserve, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCreateResourceReserve(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcCreateResourceReserve(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1871,7 +1871,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcCreateSectionView(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcCreateSectionView, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCreateSectionView(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcCreateSectionView(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1884,7 +1884,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcCreateSecurityContext(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcCreateSecurityContext, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCreateSecurityContext(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcCreateSecurityContext(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1897,7 +1897,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcDeletePortSection(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcDeletePortSection, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcDeletePortSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcDeletePortSection(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1910,7 +1910,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcDeleteResourceReserve(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcDeleteResourceReserve, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcDeleteResourceReserve(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcDeleteResourceReserve(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1923,7 +1923,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcDeleteSectionView(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcDeleteSectionView, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcDeleteSectionView(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcDeleteSectionView(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1936,7 +1936,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcDeleteSecurityContext(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcDeleteSecurityContext, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcDeleteSecurityContext(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcDeleteSecurityContext(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1949,7 +1949,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcDisconnectPort(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAlpcDisconnectPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcDisconnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcDisconnectPort(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1962,7 +1962,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcImpersonateClientContainerOfPort(ULONG_PTR a0,
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcImpersonateClientContainerOfPort, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcImpersonateClientContainerOfPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcImpersonateClientContainerOfPort(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1975,7 +1975,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcImpersonateClientOfPort(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcImpersonateClientOfPort, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcImpersonateClientOfPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcImpersonateClientOfPort(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1988,7 +1988,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcOpenSenderProcess(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAlpcOpenSenderProcess, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcOpenSenderProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcOpenSenderProcess(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2001,7 +2001,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcOpenSenderThread(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAlpcOpenSenderThread, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcOpenSenderThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcOpenSenderThread(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2014,7 +2014,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcQueryInformation(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtAlpcQueryInformation, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcQueryInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcQueryInformation(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2027,7 +2027,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcQueryInformationMessage(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAlpcQueryInformationMessage, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcQueryInformationMessage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcQueryInformationMessage(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2040,7 +2040,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcRevokeSecurityContext(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcRevokeSecurityContext, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcRevokeSecurityContext(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcRevokeSecurityContext(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2053,7 +2053,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcSendWaitReceivePort(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtAlpcSendWaitReceivePort, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcSendWaitReceivePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcSendWaitReceivePort(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2066,7 +2066,7 @@ static ULONG_PTR NTAPI Hook_NtAlpcSetInformation(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtAlpcSetInformation, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcSetInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlpcSetInformation(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2079,7 +2079,7 @@ static ULONG_PTR NTAPI Hook_NtCompleteConnectPort(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtCompleteConnectPort, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompleteConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCompleteConnectPort(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2092,7 +2092,7 @@ static ULONG_PTR NTAPI Hook_NtConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtConnectPort, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtConnectPort(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2105,7 +2105,7 @@ static ULONG_PTR NTAPI Hook_NtCreateChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCreateChannel, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateChannel(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2118,7 +2118,7 @@ static ULONG_PTR NTAPI Hook_NtCreatePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreatePort, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreatePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreatePort(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2131,7 +2131,7 @@ static ULONG_PTR NTAPI Hook_NtCreateWaitablePort(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateWaitablePort, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateWaitablePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateWaitablePort(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2144,7 +2144,7 @@ static ULONG_PTR NTAPI Hook_NtImpersonateClientOfPort(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtImpersonateClientOfPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtImpersonateClientOfPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtImpersonateClientOfPort(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2157,7 +2157,7 @@ static ULONG_PTR NTAPI Hook_NtListenChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtListenChannel, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtListenChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtListenChannel(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2170,7 +2170,7 @@ static ULONG_PTR NTAPI Hook_NtListenPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtListenPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtListenPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtListenPort(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2183,7 +2183,7 @@ static ULONG_PTR NTAPI Hook_NtOpenChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtOpenChannel, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenChannel(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2196,7 +2196,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationPort(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationPort, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationPort(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2222,7 +2222,7 @@ static ULONG_PTR NTAPI Hook_NtReadRequestData(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtReadRequestData, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadRequestData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReadRequestData(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2235,7 +2235,7 @@ static ULONG_PTR NTAPI Hook_NtReplyPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtReplyPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplyPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReplyPort(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2248,7 +2248,7 @@ static ULONG_PTR NTAPI Hook_NtReplyWaitReceivePort(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtReplyWaitReceivePort, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplyWaitReceivePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReplyWaitReceivePort(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2261,7 +2261,7 @@ static ULONG_PTR NTAPI Hook_NtReplyWaitReceivePortEx(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtReplyWaitReceivePortEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplyWaitReceivePortEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReplyWaitReceivePortEx(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2274,7 +2274,7 @@ static ULONG_PTR NTAPI Hook_NtReplyWaitReplyPort(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtReplyWaitReplyPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplyWaitReplyPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReplyWaitReplyPort(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2287,7 +2287,7 @@ static ULONG_PTR NTAPI Hook_NtReplyWaitSendChannel(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtReplyWaitSendChannel, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplyWaitSendChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReplyWaitSendChannel(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2300,7 +2300,7 @@ static ULONG_PTR NTAPI Hook_NtRequestPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRequestPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRequestPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRequestPort(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2313,7 +2313,7 @@ static ULONG_PTR NTAPI Hook_NtRequestWaitReplyPort(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtRequestWaitReplyPort, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRequestWaitReplyPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRequestWaitReplyPort(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2326,7 +2326,7 @@ static ULONG_PTR NTAPI Hook_NtSecureConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtSecureConnectPort, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSecureConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSecureConnectPort(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2339,7 +2339,7 @@ static ULONG_PTR NTAPI Hook_NtSendWaitReplyChannel(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSendWaitReplyChannel, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSendWaitReplyChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSendWaitReplyChannel(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2352,7 +2352,7 @@ static ULONG_PTR NTAPI Hook_NtSetContextChannel(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetContextChannel, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetContextChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetContextChannel(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2365,7 +2365,7 @@ static ULONG_PTR NTAPI Hook_NtWriteRequestData(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtWriteRequestData, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWriteRequestData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWriteRequestData(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2378,7 +2378,7 @@ static ULONG_PTR NTAPI Hook_NtAllocateUserPhysicalPages(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAllocateUserPhysicalPages, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateUserPhysicalPages(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAllocateUserPhysicalPages(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2391,7 +2391,7 @@ static ULONG_PTR NTAPI Hook_NtAllocateUserPhysicalPagesEx(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtAllocateUserPhysicalPagesEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateUserPhysicalPagesEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAllocateUserPhysicalPagesEx(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2404,7 +2404,7 @@ static ULONG_PTR NTAPI Hook_NtAllocateVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAllocateVirtualMemory, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAllocateVirtualMemory(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2417,7 +2417,7 @@ static ULONG_PTR NTAPI Hook_NtAllocateVirtualMemoryEx(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtAllocateVirtualMemoryEx, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateVirtualMemoryEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAllocateVirtualMemoryEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2430,7 +2430,7 @@ static ULONG_PTR NTAPI Hook_NtCreateEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtCreateEnclave, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateEnclave(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateEnclave(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2443,7 +2443,7 @@ static ULONG_PTR NTAPI Hook_NtCreatePartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreatePartition, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreatePartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreatePartition(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2456,7 +2456,7 @@ static ULONG_PTR NTAPI Hook_NtCreateSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtCreateSection, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateSection(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2469,7 +2469,7 @@ static ULONG_PTR NTAPI Hook_NtCreateSectionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtCreateSectionEx, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateSectionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateSectionEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2482,7 +2482,7 @@ static ULONG_PTR NTAPI Hook_NtExtendSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtExtendSection, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtExtendSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtExtendSection(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2495,7 +2495,7 @@ static ULONG_PTR NTAPI Hook_NtFlushInstructionCache(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtFlushInstructionCache, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushInstructionCache(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFlushInstructionCache(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2521,7 +2521,7 @@ static ULONG_PTR NTAPI Hook_NtFlushVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtFlushVirtualMemory, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFlushVirtualMemory(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2547,7 +2547,7 @@ static ULONG_PTR NTAPI Hook_NtFreeUserPhysicalPages(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtFreeUserPhysicalPages, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFreeUserPhysicalPages(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFreeUserPhysicalPages(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2560,7 +2560,7 @@ static ULONG_PTR NTAPI Hook_NtFreeVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtFreeVirtualMemory, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFreeVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFreeVirtualMemory(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2573,7 +2573,7 @@ static ULONG_PTR NTAPI Hook_NtGetWriteWatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtGetWriteWatch, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetWriteWatch(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetWriteWatch(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2586,7 +2586,7 @@ static ULONG_PTR NTAPI Hook_NtInitializeEnclave(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtInitializeEnclave, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtInitializeEnclave(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtInitializeEnclave(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2599,7 +2599,7 @@ static ULONG_PTR NTAPI Hook_NtLoadEnclaveData(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtLoadEnclaveData, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadEnclaveData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLoadEnclaveData(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2612,7 +2612,7 @@ static ULONG_PTR NTAPI Hook_NtLockVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtLockVirtualMemory, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLockVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLockVirtualMemory(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2625,7 +2625,7 @@ static ULONG_PTR NTAPI Hook_NtManagePartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtManagePartition, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtManagePartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtManagePartition(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2638,7 +2638,7 @@ static ULONG_PTR NTAPI Hook_NtMapUserPhysicalPages(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtMapUserPhysicalPages, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMapUserPhysicalPages(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtMapUserPhysicalPages(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2651,7 +2651,7 @@ static ULONG_PTR NTAPI Hook_NtMapUserPhysicalPagesScatter(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtMapUserPhysicalPagesScatter, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMapUserPhysicalPagesScatter(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtMapUserPhysicalPagesScatter(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2664,7 +2664,7 @@ static ULONG_PTR NTAPI Hook_NtMapViewOfSection(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtMapViewOfSection, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMapViewOfSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtMapViewOfSection(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2677,7 +2677,7 @@ static ULONG_PTR NTAPI Hook_NtMapViewOfSectionEx(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtMapViewOfSectionEx, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMapViewOfSectionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtMapViewOfSectionEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2690,7 +2690,7 @@ static ULONG_PTR NTAPI Hook_NtOpenPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenPartition, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenPartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenPartition(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2703,7 +2703,7 @@ static ULONG_PTR NTAPI Hook_NtOpenSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenSection, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenSection(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2716,7 +2716,7 @@ static ULONG_PTR NTAPI Hook_NtPssCaptureVaSpaceBulk(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtPssCaptureVaSpaceBulk, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPssCaptureVaSpaceBulk(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPssCaptureVaSpaceBulk(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2729,7 +2729,7 @@ static ULONG_PTR NTAPI Hook_NtProtectVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtProtectVirtualMemory, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtProtectVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtProtectVirtualMemory(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2742,7 +2742,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQuerySection, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySection(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2755,7 +2755,7 @@ static ULONG_PTR NTAPI Hook_NtQueryVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQueryVirtualMemory, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryVirtualMemory(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2768,7 +2768,7 @@ static ULONG_PTR NTAPI Hook_NtReadVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtReadVirtualMemory, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReadVirtualMemory(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2781,7 +2781,7 @@ static ULONG_PTR NTAPI Hook_NtReadVirtualMemoryEx(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtReadVirtualMemoryEx, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadVirtualMemoryEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReadVirtualMemoryEx(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2794,7 +2794,7 @@ static ULONG_PTR NTAPI Hook_NtResetWriteWatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtResetWriteWatch, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtResetWriteWatch(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtResetWriteWatch(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2807,7 +2807,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationVirtualMemory(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSetInformationVirtualMemory, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationVirtualMemory(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2820,7 +2820,7 @@ static ULONG_PTR NTAPI Hook_NtUnlockVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtUnlockVirtualMemory, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnlockVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUnlockVirtualMemory(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2833,7 +2833,7 @@ static ULONG_PTR NTAPI Hook_NtUnmapViewOfSection(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtUnmapViewOfSection, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnmapViewOfSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUnmapViewOfSection(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2846,7 +2846,7 @@ static ULONG_PTR NTAPI Hook_NtUnmapViewOfSectionEx(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtUnmapViewOfSectionEx, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnmapViewOfSectionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUnmapViewOfSectionEx(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2859,7 +2859,7 @@ static ULONG_PTR NTAPI Hook_NtWriteVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWriteVirtualMemory, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWriteVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWriteVirtualMemory(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2872,7 +2872,7 @@ static ULONG_PTR NTAPI Hook_NtAllocateReserveObject(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAllocateReserveObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateReserveObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAllocateReserveObject(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2885,7 +2885,7 @@ static ULONG_PTR NTAPI Hook_NtCompareObjects(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCompareObjects, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompareObjects(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCompareObjects(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2898,7 +2898,7 @@ static ULONG_PTR NTAPI Hook_NtCreateDebugObject(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateDebugObject, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateDebugObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateDebugObject(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2911,7 +2911,7 @@ static ULONG_PTR NTAPI Hook_NtCreateDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCreateDirectoryObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateDirectoryObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateDirectoryObject(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2924,7 +2924,7 @@ static ULONG_PTR NTAPI Hook_NtCreateDirectoryObjectEx(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateDirectoryObjectEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateDirectoryObjectEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateDirectoryObjectEx(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2937,7 +2937,7 @@ static ULONG_PTR NTAPI Hook_NtCreatePrivateNamespace(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreatePrivateNamespace, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreatePrivateNamespace(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreatePrivateNamespace(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2950,7 +2950,7 @@ static ULONG_PTR NTAPI Hook_NtCreateSymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateSymbolicLinkObject, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateSymbolicLinkObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateSymbolicLinkObject(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2963,7 +2963,7 @@ static ULONG_PTR NTAPI Hook_NtDeletePrivateNamespace(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeletePrivateNamespace, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeletePrivateNamespace(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeletePrivateNamespace(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2976,7 +2976,7 @@ static ULONG_PTR NTAPI Hook_NtDuplicateObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtDuplicateObject, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDuplicateObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDuplicateObject(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2989,7 +2989,7 @@ static ULONG_PTR NTAPI Hook_NtMakePermanentObject(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtMakePermanentObject, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMakePermanentObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtMakePermanentObject(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3002,7 +3002,7 @@ static ULONG_PTR NTAPI Hook_NtMakeTemporaryObject(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtMakeTemporaryObject, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMakeTemporaryObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtMakeTemporaryObject(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3015,7 +3015,7 @@ static ULONG_PTR NTAPI Hook_NtOpenDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenDirectoryObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenDirectoryObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenDirectoryObject(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3028,7 +3028,7 @@ static ULONG_PTR NTAPI Hook_NtOpenObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11};
   CallCtx ctx(SYS_NtOpenObjectAuditAlarm, (uintptr_t)_ReturnAddress(), args, 12);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenObjectAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenObjectAuditAlarm(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11], a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3041,7 +3041,7 @@ static ULONG_PTR NTAPI Hook_NtOpenPrivateNamespace(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenPrivateNamespace, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenPrivateNamespace(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenPrivateNamespace(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3054,7 +3054,7 @@ static ULONG_PTR NTAPI Hook_NtOpenSymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenSymbolicLinkObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenSymbolicLinkObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenSymbolicLinkObject(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3067,7 +3067,7 @@ static ULONG_PTR NTAPI Hook_NtQueryDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtQueryDirectoryObject, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDirectoryObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryDirectoryObject(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3080,7 +3080,7 @@ static ULONG_PTR NTAPI Hook_NtQueryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryObject, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryObject(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3093,7 +3093,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtQuerySymbolicLinkObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySymbolicLinkObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySymbolicLinkObject(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3106,7 +3106,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationObject(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationObject, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationObject(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3119,7 +3119,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationSymbolicLink(ULONG_PTR a0, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationSymbolicLink, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationSymbolicLink(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationSymbolicLink(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3132,7 +3132,7 @@ static ULONG_PTR NTAPI Hook_NtAcquireCMFViewOwnership(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAcquireCMFViewOwnership, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAcquireCMFViewOwnership(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAcquireCMFViewOwnership(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3145,7 +3145,7 @@ static ULONG_PTR NTAPI Hook_NtAllocateLocallyUniqueId(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtAllocateLocallyUniqueId, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateLocallyUniqueId(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAllocateLocallyUniqueId(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3158,7 +3158,7 @@ static ULONG_PTR NTAPI Hook_NtAllocateUuids(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtAllocateUuids, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateUuids(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAllocateUuids(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3169,7 +3169,7 @@ static const uint8_t NtCallbackReturn_dirs[] = {128, 0, 0};
 static ULONG_PTR (NTAPI *Real_NtCallbackReturn)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtCallbackReturn(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   LogEntryOnly(SYS_NtCallbackReturn, (uintptr_t)_ReturnAddress());
-  return Real_NtCallbackReturn(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  return Real_NtCallbackReturn(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Other] NTSTATUS NtCallEnclave(4 args)
@@ -3181,7 +3181,7 @@ static ULONG_PTR NTAPI Hook_NtCallEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCallEnclave, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCallEnclave(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCallEnclave(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3207,7 +3207,7 @@ static ULONG_PTR NTAPI Hook_NtDirectGraphicsCall(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtDirectGraphicsCall, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDirectGraphicsCall(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDirectGraphicsCall(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3220,7 +3220,7 @@ static ULONG_PTR NTAPI Hook_NtDisplayString(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDisplayString, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDisplayString(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDisplayString(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3233,7 +3233,7 @@ static ULONG_PTR NTAPI Hook_NtDrawText(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDrawText, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDrawText(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDrawText(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3246,7 +3246,7 @@ static ULONG_PTR NTAPI Hook_NtFlushInstallUILanguage(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtFlushInstallUILanguage, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushInstallUILanguage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFlushInstallUILanguage(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3259,7 +3259,7 @@ static ULONG_PTR NTAPI Hook_NtGetMUIRegistryInfo(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtGetMUIRegistryInfo, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetMUIRegistryInfo(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetMUIRegistryInfo(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3272,7 +3272,7 @@ static ULONG_PTR NTAPI Hook_NtGetNlsSectionPtr(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtGetNlsSectionPtr, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetNlsSectionPtr(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetNlsSectionPtr(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3298,7 +3298,7 @@ static ULONG_PTR NTAPI Hook_NtInitializeNlsFiles(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtInitializeNlsFiles, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtInitializeNlsFiles(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtInitializeNlsFiles(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3324,7 +3324,7 @@ static ULONG_PTR NTAPI Hook_NtLoadHotPatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtLoadHotPatch, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadHotPatch(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLoadHotPatch(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3337,7 +3337,7 @@ static ULONG_PTR NTAPI Hook_NtLockProductActivationKeys(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtLockProductActivationKeys, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLockProductActivationKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLockProductActivationKeys(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3350,7 +3350,7 @@ static ULONG_PTR NTAPI Hook_NtManageHotPatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtManageHotPatch, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtManageHotPatch(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtManageHotPatch(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3363,7 +3363,7 @@ static ULONG_PTR NTAPI Hook_NtMapCMFModule(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtMapCMFModule, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMapCMFModule(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtMapCMFModule(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3376,7 +3376,7 @@ static ULONG_PTR NTAPI Hook_NtNotifyChangeSession(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtNotifyChangeSession, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtNotifyChangeSession(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtNotifyChangeSession(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3389,7 +3389,7 @@ static ULONG_PTR NTAPI Hook_NtOpenSession(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenSession, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenSession(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenSession(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3402,7 +3402,7 @@ static ULONG_PTR NTAPI Hook_NtQueryLicenseValue(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryLicenseValue, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryLicenseValue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryLicenseValue(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3441,7 +3441,7 @@ static ULONG_PTR NTAPI Hook_NtSetLdtEntries(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSetLdtEntries, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetLdtEntries(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetLdtEntries(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3454,7 +3454,7 @@ static ULONG_PTR NTAPI Hook_NtSetUuidSeed(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetUuidSeed, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetUuidSeed(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetUuidSeed(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3467,7 +3467,7 @@ static ULONG_PTR NTAPI Hook_NtShutdownSystem(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtShutdownSystem, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtShutdownSystem(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtShutdownSystem(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3480,7 +3480,7 @@ static ULONG_PTR NTAPI Hook_NtTerminateEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtTerminateEnclave, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTerminateEnclave(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtTerminateEnclave(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3493,7 +3493,7 @@ static ULONG_PTR NTAPI Hook_NtAcquireProcessActivityReference(ULONG_PTR a0, ULON
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAcquireProcessActivityReference, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAcquireProcessActivityReference(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAcquireProcessActivityReference(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3506,7 +3506,7 @@ static ULONG_PTR NTAPI Hook_NtAlertMultipleThreadByThreadId(ULONG_PTR a0, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtAlertMultipleThreadByThreadId, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlertMultipleThreadByThreadId(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlertMultipleThreadByThreadId(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3519,7 +3519,7 @@ static ULONG_PTR NTAPI Hook_NtAlertResumeThread(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAlertResumeThread, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlertResumeThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlertResumeThread(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3532,7 +3532,7 @@ static ULONG_PTR NTAPI Hook_NtAlertThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtAlertThread, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlertThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlertThread(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3545,7 +3545,7 @@ static ULONG_PTR NTAPI Hook_NtAlertThreadByThreadIdEx(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAlertThreadByThreadIdEx, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlertThreadByThreadIdEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlertThreadByThreadIdEx(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3558,7 +3558,7 @@ static ULONG_PTR NTAPI Hook_NtAlertThreadByThreadId(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtAlertThreadByThreadId, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlertThreadByThreadId(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAlertThreadByThreadId(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3571,7 +3571,7 @@ static ULONG_PTR NTAPI Hook_NtApphelpCacheControl(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtApphelpCacheControl, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtApphelpCacheControl(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtApphelpCacheControl(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3584,7 +3584,7 @@ static ULONG_PTR NTAPI Hook_NtChangeProcessState(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtChangeProcessState, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtChangeProcessState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtChangeProcessState(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3597,7 +3597,7 @@ static ULONG_PTR NTAPI Hook_NtChangeThreadState(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtChangeThreadState, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtChangeThreadState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtChangeThreadState(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3608,7 +3608,7 @@ static const uint8_t NtContinue_dirs[] = {0, 0};
 static ULONG_PTR (NTAPI *Real_NtContinue)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtContinue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   LogEntryOnly(SYS_NtContinue, (uintptr_t)_ReturnAddress());
-  return Real_NtContinue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  return Real_NtContinue(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtContinueEx(2 args)
@@ -3620,7 +3620,7 @@ static ULONG_PTR NTAPI Hook_NtContinueEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtContinueEx, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtContinueEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtContinueEx(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3633,7 +3633,7 @@ static ULONG_PTR NTAPI Hook_NtCreateProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtCreateProcess, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateProcess(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3646,7 +3646,7 @@ static ULONG_PTR NTAPI Hook_NtCreateProcessEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtCreateProcessEx, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateProcessEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateProcessEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3659,7 +3659,7 @@ static ULONG_PTR NTAPI Hook_NtCreateProcessStateChange(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateProcessStateChange, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateProcessStateChange(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateProcessStateChange(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3672,7 +3672,7 @@ static ULONG_PTR NTAPI Hook_NtCreateThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtCreateThread, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateThread(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3685,7 +3685,7 @@ static ULONG_PTR NTAPI Hook_NtCreateThreadEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtCreateThreadEx, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateThreadEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateThreadEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3698,7 +3698,7 @@ static ULONG_PTR NTAPI Hook_NtCreateThreadStateChange(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateThreadStateChange, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateThreadStateChange(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateThreadStateChange(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3711,7 +3711,7 @@ static ULONG_PTR NTAPI Hook_NtCreateUserProcess(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtCreateUserProcess, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateUserProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateUserProcess(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3724,7 +3724,7 @@ static ULONG_PTR NTAPI Hook_NtCreateWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtCreateWorkerFactory, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateWorkerFactory(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3737,7 +3737,7 @@ static ULONG_PTR NTAPI Hook_NtDelayExecution(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtDelayExecution, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDelayExecution(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDelayExecution(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3750,7 +3750,7 @@ static ULONG_PTR NTAPI Hook_NtGetContextThread(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtGetContextThread, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetContextThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetContextThread(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3763,7 +3763,7 @@ static ULONG_PTR NTAPI Hook_NtGetNextProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtGetNextProcess, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetNextProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetNextProcess(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3776,7 +3776,7 @@ static ULONG_PTR NTAPI Hook_NtGetNextThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtGetNextThread, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetNextThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetNextThread(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3789,7 +3789,7 @@ static ULONG_PTR NTAPI Hook_NtOpenProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenProcess, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenProcess(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3802,7 +3802,7 @@ static ULONG_PTR NTAPI Hook_NtOpenThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenThread, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenThread(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3815,7 +3815,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationProcess(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationProcess, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationProcess(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3828,7 +3828,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationThread(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationThread, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationThread(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3841,7 +3841,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationWorkerFactory(ULONG_PTR a0, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationWorkerFactory, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationWorkerFactory(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3854,7 +3854,7 @@ static ULONG_PTR NTAPI Hook_NtQueueApcThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueueApcThread, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueueApcThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueueApcThread(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3867,7 +3867,7 @@ static ULONG_PTR NTAPI Hook_NtQueueApcThreadEx(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQueueApcThreadEx, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueueApcThreadEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueueApcThreadEx(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3880,7 +3880,7 @@ static ULONG_PTR NTAPI Hook_NtQueueApcThreadEx2(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtQueueApcThreadEx2, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueueApcThreadEx2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueueApcThreadEx2(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3891,7 +3891,7 @@ static const uint8_t NtRaiseException_dirs[] = {0, 0, 0};
 static ULONG_PTR (NTAPI *Real_NtRaiseException)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtRaiseException(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   LogEntryOnly(SYS_NtRaiseException, (uintptr_t)_ReturnAddress());
-  return Real_NtRaiseException(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  return Real_NtRaiseException(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtRaiseHardError(6 args)
@@ -3903,7 +3903,7 @@ static ULONG_PTR NTAPI Hook_NtRaiseHardError(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtRaiseHardError, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRaiseHardError(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRaiseHardError(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3916,7 +3916,7 @@ static ULONG_PTR NTAPI Hook_NtReleaseWorkerFactoryWorker(ULONG_PTR a0, ULONG_PTR
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtReleaseWorkerFactoryWorker, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReleaseWorkerFactoryWorker(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReleaseWorkerFactoryWorker(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3929,7 +3929,7 @@ static ULONG_PTR NTAPI Hook_NtResumeProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtResumeProcess, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtResumeProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtResumeProcess(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3942,7 +3942,7 @@ static ULONG_PTR NTAPI Hook_NtResumeThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtResumeThread, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtResumeThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtResumeThread(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3955,7 +3955,7 @@ static ULONG_PTR NTAPI Hook_NtSetContextThread(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetContextThread, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetContextThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetContextThread(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3968,7 +3968,7 @@ static ULONG_PTR NTAPI Hook_NtSetDefaultHardErrorPort(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetDefaultHardErrorPort, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetDefaultHardErrorPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetDefaultHardErrorPort(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3981,7 +3981,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationProcess(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationProcess, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationProcess(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3994,7 +3994,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationThread(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationThread, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationThread(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4007,7 +4007,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationWorkerFactory(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationWorkerFactory, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationWorkerFactory(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4020,7 +4020,7 @@ static ULONG_PTR NTAPI Hook_NtShutdownWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtShutdownWorkerFactory, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtShutdownWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtShutdownWorkerFactory(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4033,7 +4033,7 @@ static ULONG_PTR NTAPI Hook_NtSuspendProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSuspendProcess, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSuspendProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSuspendProcess(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4046,7 +4046,7 @@ static ULONG_PTR NTAPI Hook_NtSuspendThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSuspendThread, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSuspendThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSuspendThread(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4057,7 +4057,7 @@ static const uint8_t NtTerminateProcess_dirs[] = {0, 0};
 static ULONG_PTR (NTAPI *Real_NtTerminateProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtTerminateProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   LogEntryOnly(SYS_NtTerminateProcess, (uintptr_t)_ReturnAddress());
-  return Real_NtTerminateProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  return Real_NtTerminateProcess(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtTerminateThread(2 args)
@@ -4067,7 +4067,7 @@ static const uint8_t NtTerminateThread_dirs[] = {0, 0};
 static ULONG_PTR (NTAPI *Real_NtTerminateThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtTerminateThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   LogEntryOnly(SYS_NtTerminateThread, (uintptr_t)_ReturnAddress());
-  return Real_NtTerminateThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  return Real_NtTerminateThread(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtTestAlert(0 args)
@@ -4092,7 +4092,7 @@ static ULONG_PTR NTAPI Hook_NtUmsThreadYield(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtUmsThreadYield, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUmsThreadYield(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUmsThreadYield(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4105,7 +4105,7 @@ static ULONG_PTR NTAPI Hook_NtWaitForAlertByThreadId(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtWaitForAlertByThreadId, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForAlertByThreadId(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWaitForAlertByThreadId(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4118,7 +4118,7 @@ static ULONG_PTR NTAPI Hook_NtWaitForWorkViaWorkerFactory(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtWaitForWorkViaWorkerFactory, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForWorkViaWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWaitForWorkViaWorkerFactory(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4131,7 +4131,7 @@ static ULONG_PTR NTAPI Hook_NtWorkerFactoryWorkerReady(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWorkerFactoryWorkerReady, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWorkerFactoryWorkerReady(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWorkerFactoryWorkerReady(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4157,7 +4157,7 @@ static ULONG_PTR NTAPI Hook_NtCommitRegistryTransaction(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCommitRegistryTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCommitRegistryTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCommitRegistryTransaction(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4170,7 +4170,7 @@ static ULONG_PTR NTAPI Hook_NtCompactKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCompactKeys, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompactKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCompactKeys(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4183,7 +4183,7 @@ static ULONG_PTR NTAPI Hook_NtCompressKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtCompressKey, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompressKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCompressKey(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4196,7 +4196,7 @@ static ULONG_PTR NTAPI Hook_NtCreateKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtCreateKey, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateKey(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4209,7 +4209,7 @@ static ULONG_PTR NTAPI Hook_NtCreateKeyTransacted(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtCreateKeyTransacted, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateKeyTransacted(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateKeyTransacted(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4222,7 +4222,7 @@ static ULONG_PTR NTAPI Hook_NtCreateRegistryTransaction(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateRegistryTransaction, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateRegistryTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateRegistryTransaction(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4235,7 +4235,7 @@ static ULONG_PTR NTAPI Hook_NtDeleteKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteKey, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeleteKey(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4248,7 +4248,7 @@ static ULONG_PTR NTAPI Hook_NtDeleteValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtDeleteValueKey, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteValueKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeleteValueKey(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4261,7 +4261,7 @@ static ULONG_PTR NTAPI Hook_NtEnumerateKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtEnumerateKey, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtEnumerateKey(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4274,7 +4274,7 @@ static ULONG_PTR NTAPI Hook_NtEnumerateValueKey(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtEnumerateValueKey, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateValueKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtEnumerateValueKey(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4287,7 +4287,7 @@ static ULONG_PTR NTAPI Hook_NtFlushKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtFlushKey, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFlushKey(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4300,7 +4300,7 @@ static ULONG_PTR NTAPI Hook_NtFreezeRegistry(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtFreezeRegistry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFreezeRegistry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFreezeRegistry(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4313,7 +4313,7 @@ static ULONG_PTR NTAPI Hook_NtInitializeRegistry(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtInitializeRegistry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtInitializeRegistry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtInitializeRegistry(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4326,7 +4326,7 @@ static ULONG_PTR NTAPI Hook_NtLoadKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtLoadKey, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLoadKey(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4339,7 +4339,7 @@ static ULONG_PTR NTAPI Hook_NtLoadKey2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtLoadKey2, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadKey2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLoadKey2(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4352,7 +4352,7 @@ static ULONG_PTR NTAPI Hook_NtLoadKey3(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtLoadKey3, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadKey3(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLoadKey3(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4365,7 +4365,7 @@ static ULONG_PTR NTAPI Hook_NtLoadKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtLoadKeyEx, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadKeyEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLoadKeyEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4378,7 +4378,7 @@ static ULONG_PTR NTAPI Hook_NtLockRegistryKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtLockRegistryKey, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLockRegistryKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtLockRegistryKey(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4391,7 +4391,7 @@ static ULONG_PTR NTAPI Hook_NtNotifyChangeKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtNotifyChangeKey, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtNotifyChangeKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtNotifyChangeKey(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4404,7 +4404,7 @@ static ULONG_PTR NTAPI Hook_NtNotifyChangeMultipleKeys(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11};
   CallCtx ctx(SYS_NtNotifyChangeMultipleKeys, (uintptr_t)_ReturnAddress(), args, 12);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtNotifyChangeMultipleKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtNotifyChangeMultipleKeys(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11], a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4417,7 +4417,7 @@ static ULONG_PTR NTAPI Hook_NtOpenKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenKey, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenKey(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4430,7 +4430,7 @@ static ULONG_PTR NTAPI Hook_NtOpenKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenKeyEx, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenKeyEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenKeyEx(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4443,7 +4443,7 @@ static ULONG_PTR NTAPI Hook_NtOpenKeyTransacted(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenKeyTransacted, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenKeyTransacted(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenKeyTransacted(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4456,7 +4456,7 @@ static ULONG_PTR NTAPI Hook_NtOpenKeyTransactedEx(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtOpenKeyTransactedEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenKeyTransactedEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenKeyTransactedEx(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4469,7 +4469,7 @@ static ULONG_PTR NTAPI Hook_NtOpenRegistryTransaction(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenRegistryTransaction, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenRegistryTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenRegistryTransaction(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4482,7 +4482,7 @@ static ULONG_PTR NTAPI Hook_NtQueryKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryKey, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryKey(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4495,7 +4495,7 @@ static ULONG_PTR NTAPI Hook_NtQueryMultipleValueKey(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQueryMultipleValueKey, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryMultipleValueKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryMultipleValueKey(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4508,7 +4508,7 @@ static ULONG_PTR NTAPI Hook_NtQueryOpenSubKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryOpenSubKeys, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryOpenSubKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryOpenSubKeys(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4521,7 +4521,7 @@ static ULONG_PTR NTAPI Hook_NtQueryOpenSubKeysEx(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtQueryOpenSubKeysEx, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryOpenSubKeysEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryOpenSubKeysEx(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4534,7 +4534,7 @@ static ULONG_PTR NTAPI Hook_NtQueryValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQueryValueKey, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryValueKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryValueKey(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4547,7 +4547,7 @@ static ULONG_PTR NTAPI Hook_NtRenameKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRenameKey, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRenameKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRenameKey(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4560,7 +4560,7 @@ static ULONG_PTR NTAPI Hook_NtReplaceKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtReplaceKey, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplaceKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReplaceKey(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4573,7 +4573,7 @@ static ULONG_PTR NTAPI Hook_NtRestoreKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtRestoreKey, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRestoreKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRestoreKey(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4586,7 +4586,7 @@ static ULONG_PTR NTAPI Hook_NtRollbackRegistryTransaction(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollbackRegistryTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollbackRegistryTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRollbackRegistryTransaction(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4599,7 +4599,7 @@ static ULONG_PTR NTAPI Hook_NtSaveKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSaveKey, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSaveKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSaveKey(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4612,7 +4612,7 @@ static ULONG_PTR NTAPI Hook_NtSaveKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSaveKeyEx, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSaveKeyEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSaveKeyEx(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4625,7 +4625,7 @@ static ULONG_PTR NTAPI Hook_NtSaveMergedKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSaveMergedKeys, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSaveMergedKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSaveMergedKeys(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4638,7 +4638,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationKey(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationKey, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationKey(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4651,7 +4651,7 @@ static ULONG_PTR NTAPI Hook_NtSetValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSetValueKey, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetValueKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetValueKey(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4677,7 +4677,7 @@ static ULONG_PTR NTAPI Hook_NtUnloadKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtUnloadKey, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnloadKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUnloadKey(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4690,7 +4690,7 @@ static ULONG_PTR NTAPI Hook_NtUnloadKey2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtUnloadKey2, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnloadKey2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUnloadKey2(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4703,7 +4703,7 @@ static ULONG_PTR NTAPI Hook_NtUnloadKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtUnloadKeyEx, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnloadKeyEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUnloadKeyEx(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4716,7 +4716,7 @@ static ULONG_PTR NTAPI Hook_NtAccessCheck(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtAccessCheck, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheck(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAccessCheck(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4729,7 +4729,7 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckAndAuditAlarm(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtAccessCheckAndAuditAlarm, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckAndAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAccessCheckAndAuditAlarm(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4742,7 +4742,7 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckByType(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtAccessCheckByType, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckByType(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAccessCheckByType(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4755,7 +4755,7 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeAndAuditAlarm(ULONG_PTR a0, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15};
   CallCtx ctx(SYS_NtAccessCheckByTypeAndAuditAlarm, (uintptr_t)_ReturnAddress(), args, 16);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckByTypeAndAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAccessCheckByTypeAndAuditAlarm(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11], args[12], args[13], args[14], args[15], a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4768,7 +4768,7 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultList(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtAccessCheckByTypeResultList, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckByTypeResultList(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAccessCheckByTypeResultList(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4781,7 +4781,7 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultListAndAuditAlarm(ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15};
   CallCtx ctx(SYS_NtAccessCheckByTypeResultListAndAuditAlarm, (uintptr_t)_ReturnAddress(), args, 16);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckByTypeResultListAndAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAccessCheckByTypeResultListAndAuditAlarm(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11], args[12], args[13], args[14], args[15], a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4794,7 +4794,7 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultListAndAuditAlarmByHandle(U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16};
   CallCtx ctx(SYS_NtAccessCheckByTypeResultListAndAuditAlarmByHandle, (uintptr_t)_ReturnAddress(), args, 17);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckByTypeResultListAndAuditAlarmByHandle(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAccessCheckByTypeResultListAndAuditAlarmByHandle(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11], args[12], args[13], args[14], args[15], args[16], a17);
   return ctx.Exit(r);
 }
 
@@ -4807,7 +4807,7 @@ static ULONG_PTR NTAPI Hook_NtAdjustGroupsToken(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAdjustGroupsToken, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAdjustGroupsToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAdjustGroupsToken(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4820,7 +4820,7 @@ static ULONG_PTR NTAPI Hook_NtAdjustPrivilegesToken(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAdjustPrivilegesToken, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAdjustPrivilegesToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAdjustPrivilegesToken(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4833,7 +4833,7 @@ static ULONG_PTR NTAPI Hook_NtAdjustTokenClaimsAndDeviceGroups(ULONG_PTR a0, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15};
   CallCtx ctx(SYS_NtAdjustTokenClaimsAndDeviceGroups, (uintptr_t)_ReturnAddress(), args, 16);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAdjustTokenClaimsAndDeviceGroups(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAdjustTokenClaimsAndDeviceGroups(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11], args[12], args[13], args[14], args[15], a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4846,7 +4846,7 @@ static ULONG_PTR NTAPI Hook_NtCloseObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCloseObjectAuditAlarm, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCloseObjectAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCloseObjectAuditAlarm(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4859,7 +4859,7 @@ static ULONG_PTR NTAPI Hook_NtCompareSigningLevels(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCompareSigningLevels, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompareSigningLevels(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCompareSigningLevels(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4872,7 +4872,7 @@ static ULONG_PTR NTAPI Hook_NtCompareTokens(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCompareTokens, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompareTokens(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCompareTokens(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4885,7 +4885,7 @@ static ULONG_PTR NTAPI Hook_NtCreateLowBoxToken(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtCreateLowBoxToken, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateLowBoxToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateLowBoxToken(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4898,7 +4898,7 @@ static ULONG_PTR NTAPI Hook_NtCreateToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12};
   CallCtx ctx(SYS_NtCreateToken, (uintptr_t)_ReturnAddress(), args, 13);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateToken(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11], args[12], a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4911,7 +4911,7 @@ static ULONG_PTR NTAPI Hook_NtCreateTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16};
   CallCtx ctx(SYS_NtCreateTokenEx, (uintptr_t)_ReturnAddress(), args, 17);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateTokenEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateTokenEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11], args[12], args[13], args[14], args[15], args[16], a17);
   return ctx.Exit(r);
 }
 
@@ -4924,7 +4924,7 @@ static ULONG_PTR NTAPI Hook_NtDeleteObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtDeleteObjectAuditAlarm, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteObjectAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeleteObjectAuditAlarm(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4937,7 +4937,7 @@ static ULONG_PTR NTAPI Hook_NtDuplicateToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtDuplicateToken, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDuplicateToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDuplicateToken(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4950,7 +4950,7 @@ static ULONG_PTR NTAPI Hook_NtFilterBootOption(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtFilterBootOption, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFilterBootOption(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFilterBootOption(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4963,7 +4963,7 @@ static ULONG_PTR NTAPI Hook_NtFilterToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtFilterToken, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFilterToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFilterToken(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4976,7 +4976,7 @@ static ULONG_PTR NTAPI Hook_NtFilterTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13};
   CallCtx ctx(SYS_NtFilterTokenEx, (uintptr_t)_ReturnAddress(), args, 14);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFilterTokenEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFilterTokenEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11], args[12], args[13], a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4989,7 +4989,7 @@ static ULONG_PTR NTAPI Hook_NtGetCachedSigningLevel(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtGetCachedSigningLevel, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetCachedSigningLevel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetCachedSigningLevel(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5002,7 +5002,7 @@ static ULONG_PTR NTAPI Hook_NtImpersonateAnonymousToken(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtImpersonateAnonymousToken, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtImpersonateAnonymousToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtImpersonateAnonymousToken(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5015,7 +5015,7 @@ static ULONG_PTR NTAPI Hook_NtImpersonateThread(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtImpersonateThread, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtImpersonateThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtImpersonateThread(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5028,7 +5028,7 @@ static ULONG_PTR NTAPI Hook_NtOpenProcessToken(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenProcessToken, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenProcessToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenProcessToken(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5041,7 +5041,7 @@ static ULONG_PTR NTAPI Hook_NtOpenProcessTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenProcessTokenEx, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenProcessTokenEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenProcessTokenEx(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5054,7 +5054,7 @@ static ULONG_PTR NTAPI Hook_NtOpenThreadToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenThreadToken, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenThreadToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenThreadToken(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5067,7 +5067,7 @@ static ULONG_PTR NTAPI Hook_NtOpenThreadTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtOpenThreadTokenEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenThreadTokenEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenThreadTokenEx(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5080,7 +5080,7 @@ static ULONG_PTR NTAPI Hook_NtPrivilegeCheck(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtPrivilegeCheck, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrivilegeCheck(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPrivilegeCheck(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5093,7 +5093,7 @@ static ULONG_PTR NTAPI Hook_NtPrivilegeObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtPrivilegeObjectAuditAlarm, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrivilegeObjectAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPrivilegeObjectAuditAlarm(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5106,7 +5106,7 @@ static ULONG_PTR NTAPI Hook_NtPrivilegedServiceAuditAlarm(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtPrivilegedServiceAuditAlarm, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrivilegedServiceAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPrivilegedServiceAuditAlarm(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5119,7 +5119,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationToken(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationToken, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationToken(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5132,7 +5132,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySecurityAttributesToken(ULONG_PTR a0, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQuerySecurityAttributesToken, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySecurityAttributesToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySecurityAttributesToken(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5145,7 +5145,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySecurityObject(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQuerySecurityObject, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySecurityObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySecurityObject(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5158,7 +5158,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySecurityPolicy(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQuerySecurityPolicy, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySecurityPolicy(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySecurityPolicy(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5171,7 +5171,7 @@ static ULONG_PTR NTAPI Hook_NtSetCachedSigningLevel(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetCachedSigningLevel, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetCachedSigningLevel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetCachedSigningLevel(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5184,7 +5184,7 @@ static ULONG_PTR NTAPI Hook_NtSetCachedSigningLevel2(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSetCachedSigningLevel2, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetCachedSigningLevel2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetCachedSigningLevel2(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5197,7 +5197,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationToken(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationToken, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationToken(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5210,7 +5210,7 @@ static ULONG_PTR NTAPI Hook_NtSetSecurityObject(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetSecurityObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSecurityObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetSecurityObject(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5223,7 +5223,7 @@ static ULONG_PTR NTAPI Hook_NtAcquireCrossVmMutant(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAcquireCrossVmMutant, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAcquireCrossVmMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtAcquireCrossVmMutant(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5236,7 +5236,7 @@ static ULONG_PTR NTAPI Hook_NtClearEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtClearEvent, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtClearEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtClearEvent(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5249,7 +5249,7 @@ static ULONG_PTR NTAPI Hook_NtCreateCrossVmEvent(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtCreateCrossVmEvent, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateCrossVmEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateCrossVmEvent(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5262,7 +5262,7 @@ static ULONG_PTR NTAPI Hook_NtCreateCrossVmMutant(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtCreateCrossVmMutant, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateCrossVmMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateCrossVmMutant(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5275,7 +5275,7 @@ static ULONG_PTR NTAPI Hook_NtCreateEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateEvent, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateEvent(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5288,7 +5288,7 @@ static ULONG_PTR NTAPI Hook_NtCreateEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCreateEventPair, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateEventPair(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5301,7 +5301,7 @@ static ULONG_PTR NTAPI Hook_NtCreateKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateKeyedEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateKeyedEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateKeyedEvent(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5314,7 +5314,7 @@ static ULONG_PTR NTAPI Hook_NtCreateMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateMutant, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateMutant(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5327,7 +5327,7 @@ static ULONG_PTR NTAPI Hook_NtCreateSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateSemaphore, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateSemaphore(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateSemaphore(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5340,7 +5340,7 @@ static ULONG_PTR NTAPI Hook_NtOpenEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenEvent, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenEvent(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5353,7 +5353,7 @@ static ULONG_PTR NTAPI Hook_NtOpenEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenEventPair, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenEventPair(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5366,7 +5366,7 @@ static ULONG_PTR NTAPI Hook_NtOpenKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenKeyedEvent, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenKeyedEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenKeyedEvent(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5379,7 +5379,7 @@ static ULONG_PTR NTAPI Hook_NtOpenMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenMutant, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenMutant(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5392,7 +5392,7 @@ static ULONG_PTR NTAPI Hook_NtOpenSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenSemaphore, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenSemaphore(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenSemaphore(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5405,7 +5405,7 @@ static ULONG_PTR NTAPI Hook_NtPulseEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtPulseEvent, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPulseEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPulseEvent(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5418,7 +5418,7 @@ static ULONG_PTR NTAPI Hook_NtQueryEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryEvent, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryEvent(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5431,7 +5431,7 @@ static ULONG_PTR NTAPI Hook_NtQueryMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryMutant, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryMutant(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5444,7 +5444,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQuerySemaphore, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySemaphore(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySemaphore(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5457,7 +5457,7 @@ static ULONG_PTR NTAPI Hook_NtReleaseKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtReleaseKeyedEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReleaseKeyedEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReleaseKeyedEvent(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5470,7 +5470,7 @@ static ULONG_PTR NTAPI Hook_NtReleaseMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtReleaseMutant, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReleaseMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReleaseMutant(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5483,7 +5483,7 @@ static ULONG_PTR NTAPI Hook_NtReleaseSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtReleaseSemaphore, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReleaseSemaphore(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReleaseSemaphore(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5496,7 +5496,7 @@ static ULONG_PTR NTAPI Hook_NtResetEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtResetEvent, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtResetEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtResetEvent(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5509,7 +5509,7 @@ static ULONG_PTR NTAPI Hook_NtSetEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetEvent, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetEvent(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5522,7 +5522,7 @@ static ULONG_PTR NTAPI Hook_NtSetEventEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetEventEx, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetEventEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetEventEx(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5535,7 +5535,7 @@ static ULONG_PTR NTAPI Hook_NtSetEventBoostPriority(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetEventBoostPriority, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetEventBoostPriority(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetEventBoostPriority(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5548,7 +5548,7 @@ static ULONG_PTR NTAPI Hook_NtSetHighEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetHighEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetHighEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetHighEventPair(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5561,7 +5561,7 @@ static ULONG_PTR NTAPI Hook_NtSetHighWaitLowEventPair(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetHighWaitLowEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetHighWaitLowEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetHighWaitLowEventPair(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5587,7 +5587,7 @@ static ULONG_PTR NTAPI Hook_NtSetLowEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetLowEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetLowEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetLowEventPair(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5600,7 +5600,7 @@ static ULONG_PTR NTAPI Hook_NtSetLowWaitHighEventPair(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetLowWaitHighEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetLowWaitHighEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetLowWaitHighEventPair(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5626,7 +5626,7 @@ static ULONG_PTR NTAPI Hook_NtSignalAndWaitForSingleObject(ULONG_PTR a0, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSignalAndWaitForSingleObject, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSignalAndWaitForSingleObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSignalAndWaitForSingleObject(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5639,7 +5639,7 @@ static ULONG_PTR NTAPI Hook_NtTraceEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtTraceEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTraceEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtTraceEvent(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5652,7 +5652,7 @@ static ULONG_PTR NTAPI Hook_NtWaitForKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtWaitForKeyedEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForKeyedEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWaitForKeyedEvent(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5665,7 +5665,7 @@ static ULONG_PTR NTAPI Hook_NtWaitForMultipleObjects(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWaitForMultipleObjects, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForMultipleObjects(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWaitForMultipleObjects(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5678,7 +5678,7 @@ static ULONG_PTR NTAPI Hook_NtWaitForMultipleObjects32(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWaitForMultipleObjects32, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForMultipleObjects32(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWaitForMultipleObjects32(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5691,7 +5691,7 @@ static ULONG_PTR NTAPI Hook_NtWaitForSingleObject(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtWaitForSingleObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForSingleObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWaitForSingleObject(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5704,7 +5704,7 @@ static ULONG_PTR NTAPI Hook_NtWaitHighEventPair(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWaitHighEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitHighEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWaitHighEventPair(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5717,7 +5717,7 @@ static ULONG_PTR NTAPI Hook_NtWaitLowEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWaitLowEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitLowEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWaitLowEventPair(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5730,7 +5730,7 @@ static ULONG_PTR NTAPI Hook_NtCancelTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCancelTimer, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCancelTimer(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5743,7 +5743,7 @@ static ULONG_PTR NTAPI Hook_NtCancelTimer2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCancelTimer2, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelTimer2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCancelTimer2(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5756,7 +5756,7 @@ static ULONG_PTR NTAPI Hook_NtConvertBetweenAuxiliaryCounterAndPerformanceCounte
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5769,7 +5769,7 @@ static ULONG_PTR NTAPI Hook_NtCreateIRTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCreateIRTimer, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateIRTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateIRTimer(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5782,7 +5782,7 @@ static ULONG_PTR NTAPI Hook_NtCreateTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateTimer, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateTimer(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5795,7 +5795,7 @@ static ULONG_PTR NTAPI Hook_NtCreateTimer2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateTimer2, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateTimer2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateTimer2(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5808,7 +5808,7 @@ static ULONG_PTR NTAPI Hook_NtOpenTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenTimer, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenTimer(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5821,7 +5821,7 @@ static ULONG_PTR NTAPI Hook_NtQueryAuxiliaryCounterFrequency(ULONG_PTR a0, ULONG
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtQueryAuxiliaryCounterFrequency, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryAuxiliaryCounterFrequency(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryAuxiliaryCounterFrequency(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5834,7 +5834,7 @@ static ULONG_PTR NTAPI Hook_NtQuerySystemTime(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtQuerySystemTime, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySystemTime(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQuerySystemTime(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5847,7 +5847,7 @@ static ULONG_PTR NTAPI Hook_NtQueryTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryTimer, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryTimer(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5860,7 +5860,7 @@ static ULONG_PTR NTAPI Hook_NtQueryTimerResolution(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtQueryTimerResolution, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryTimerResolution(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryTimerResolution(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5873,7 +5873,7 @@ static ULONG_PTR NTAPI Hook_NtSetIRTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetIRTimer, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetIRTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetIRTimer(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5886,7 +5886,7 @@ static ULONG_PTR NTAPI Hook_NtSetSystemTime(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetSystemTime, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSystemTime(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetSystemTime(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5899,7 +5899,7 @@ static ULONG_PTR NTAPI Hook_NtSetTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtSetTimer, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetTimer(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5912,7 +5912,7 @@ static ULONG_PTR NTAPI Hook_NtSetTimer2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetTimer2, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetTimer2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetTimer2(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5925,7 +5925,7 @@ static ULONG_PTR NTAPI Hook_NtSetTimerEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetTimerEx, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetTimerEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetTimerEx(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5938,7 +5938,7 @@ static ULONG_PTR NTAPI Hook_NtSetTimerResolution(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetTimerResolution, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetTimerResolution(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetTimerResolution(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5951,7 +5951,7 @@ static ULONG_PTR NTAPI Hook_NtClearAllSavepointsTransaction(ULONG_PTR a0, ULONG_
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtClearAllSavepointsTransaction, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtClearAllSavepointsTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtClearAllSavepointsTransaction(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5964,7 +5964,7 @@ static ULONG_PTR NTAPI Hook_NtClearSavepointTransaction(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtClearSavepointTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtClearSavepointTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtClearSavepointTransaction(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5977,7 +5977,7 @@ static ULONG_PTR NTAPI Hook_NtCommitComplete(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCommitComplete, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCommitComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCommitComplete(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5990,7 +5990,7 @@ static ULONG_PTR NTAPI Hook_NtCommitEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCommitEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCommitEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCommitEnlistment(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6003,7 +6003,7 @@ static ULONG_PTR NTAPI Hook_NtCommitTransaction(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCommitTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCommitTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCommitTransaction(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6016,7 +6016,7 @@ static ULONG_PTR NTAPI Hook_NtCreateEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtCreateEnlistment, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateEnlistment(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6029,7 +6029,7 @@ static ULONG_PTR NTAPI Hook_NtCreateResourceManager(ULONG_PTR a0, ULONG_PTR a1, 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtCreateResourceManager, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateResourceManager(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6042,7 +6042,7 @@ static ULONG_PTR NTAPI Hook_NtCreateTransaction(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtCreateTransaction, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateTransaction(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6055,7 +6055,7 @@ static ULONG_PTR NTAPI Hook_NtCreateTransactionManager(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtCreateTransactionManager, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateTransactionManager(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6068,7 +6068,7 @@ static ULONG_PTR NTAPI Hook_NtEnumerateTransactionObject(ULONG_PTR a0, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtEnumerateTransactionObject, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateTransactionObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtEnumerateTransactionObject(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6081,7 +6081,7 @@ static ULONG_PTR NTAPI Hook_NtFreezeTransactions(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtFreezeTransactions, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFreezeTransactions(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtFreezeTransactions(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6094,7 +6094,7 @@ static ULONG_PTR NTAPI Hook_NtGetNotificationResourceManager(ULONG_PTR a0, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtGetNotificationResourceManager, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetNotificationResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetNotificationResourceManager(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6133,7 +6133,7 @@ static ULONG_PTR NTAPI Hook_NtOpenEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtOpenEnlistment, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenEnlistment(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6146,7 +6146,7 @@ static ULONG_PTR NTAPI Hook_NtOpenResourceManager(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtOpenResourceManager, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenResourceManager(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6159,7 +6159,7 @@ static ULONG_PTR NTAPI Hook_NtOpenTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtOpenTransaction, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenTransaction(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6172,7 +6172,7 @@ static ULONG_PTR NTAPI Hook_NtOpenTransactionManager(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtOpenTransactionManager, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtOpenTransactionManager(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6185,7 +6185,7 @@ static ULONG_PTR NTAPI Hook_NtPrePrepareComplete(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtPrePrepareComplete, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrePrepareComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPrePrepareComplete(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6198,7 +6198,7 @@ static ULONG_PTR NTAPI Hook_NtPrePrepareEnlistment(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtPrePrepareEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrePrepareEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPrePrepareEnlistment(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6211,7 +6211,7 @@ static ULONG_PTR NTAPI Hook_NtPrepareComplete(ULONG_PTR a0, ULONG_PTR a1, ULONG_
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtPrepareComplete, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrepareComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPrepareComplete(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6224,7 +6224,7 @@ static ULONG_PTR NTAPI Hook_NtPrepareEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtPrepareEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrepareEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPrepareEnlistment(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6237,7 +6237,7 @@ static ULONG_PTR NTAPI Hook_NtPropagationComplete(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtPropagationComplete, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPropagationComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPropagationComplete(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6250,7 +6250,7 @@ static ULONG_PTR NTAPI Hook_NtPropagationFailed(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtPropagationFailed, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPropagationFailed(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtPropagationFailed(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6276,7 +6276,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationEnlistment(ULONG_PTR a0, ULONG_PTR
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationEnlistment, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationEnlistment(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6289,7 +6289,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationResourceManager(ULONG_PTR a0, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationResourceManager, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationResourceManager(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6302,7 +6302,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationTransaction(ULONG_PTR a0, ULONG_PT
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationTransaction, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationTransaction(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6315,7 +6315,7 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationTransactionManager(ULONG_PTR a0, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationTransactionManager, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryInformationTransactionManager(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6328,7 +6328,7 @@ static ULONG_PTR NTAPI Hook_NtReadOnlyEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtReadOnlyEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadOnlyEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtReadOnlyEnlistment(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6341,7 +6341,7 @@ static ULONG_PTR NTAPI Hook_NtRecoverEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRecoverEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRecoverEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRecoverEnlistment(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6354,7 +6354,7 @@ static ULONG_PTR NTAPI Hook_NtRecoverResourceManager(ULONG_PTR a0, ULONG_PTR a1,
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtRecoverResourceManager, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRecoverResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRecoverResourceManager(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6367,7 +6367,7 @@ static ULONG_PTR NTAPI Hook_NtRecoverTransactionManager(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtRecoverTransactionManager, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRecoverTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRecoverTransactionManager(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6380,7 +6380,7 @@ static ULONG_PTR NTAPI Hook_NtRegisterProtocolAddressInformation(ULONG_PTR a0, U
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtRegisterProtocolAddressInformation, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRegisterProtocolAddressInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRegisterProtocolAddressInformation(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6393,7 +6393,7 @@ static ULONG_PTR NTAPI Hook_NtRenameTransactionManager(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRenameTransactionManager, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRenameTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRenameTransactionManager(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6406,7 +6406,7 @@ static ULONG_PTR NTAPI Hook_NtRollbackComplete(ULONG_PTR a0, ULONG_PTR a1, ULONG
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollbackComplete, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollbackComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRollbackComplete(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6419,7 +6419,7 @@ static ULONG_PTR NTAPI Hook_NtRollbackEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollbackEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollbackEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRollbackEnlistment(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6432,7 +6432,7 @@ static ULONG_PTR NTAPI Hook_NtRollbackSavepointTransaction(ULONG_PTR a0, ULONG_P
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollbackSavepointTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollbackSavepointTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRollbackSavepointTransaction(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6445,7 +6445,7 @@ static ULONG_PTR NTAPI Hook_NtRollbackTransaction(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollbackTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollbackTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRollbackTransaction(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6458,7 +6458,7 @@ static ULONG_PTR NTAPI Hook_NtRollforwardTransactionManager(ULONG_PTR a0, ULONG_
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollforwardTransactionManager, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollforwardTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtRollforwardTransactionManager(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6471,7 +6471,7 @@ static ULONG_PTR NTAPI Hook_NtSavepointComplete(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSavepointComplete, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSavepointComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSavepointComplete(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6484,7 +6484,7 @@ static ULONG_PTR NTAPI Hook_NtSavepointTransaction(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSavepointTransaction, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSavepointTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSavepointTransaction(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6497,7 +6497,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationEnlistment(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationEnlistment, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationEnlistment(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6510,7 +6510,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationResourceManager(ULONG_PTR a0, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationResourceManager, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationResourceManager(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6523,7 +6523,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationTransaction(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationTransaction, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationTransaction(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6536,7 +6536,7 @@ static ULONG_PTR NTAPI Hook_NtSetInformationTransactionManager(ULONG_PTR a0, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationTransactionManager, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetInformationTransactionManager(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6549,7 +6549,7 @@ static ULONG_PTR NTAPI Hook_NtSinglePhaseReject(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSinglePhaseReject, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSinglePhaseReject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSinglePhaseReject(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6588,7 +6588,7 @@ static ULONG_PTR NTAPI Hook_NtCreateWnfStateName(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtCreateWnfStateName, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateWnfStateName(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtCreateWnfStateName(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6601,7 +6601,7 @@ static ULONG_PTR NTAPI Hook_NtDeleteWnfStateData(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtDeleteWnfStateData, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteWnfStateData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeleteWnfStateData(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6614,7 +6614,7 @@ static ULONG_PTR NTAPI Hook_NtDeleteWnfStateName(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteWnfStateName, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteWnfStateName(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtDeleteWnfStateName(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6627,7 +6627,7 @@ static ULONG_PTR NTAPI Hook_NtGetCompleteWnfStateSubscription(ULONG_PTR a0, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtGetCompleteWnfStateSubscription, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetCompleteWnfStateSubscription(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtGetCompleteWnfStateSubscription(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6640,7 +6640,7 @@ static ULONG_PTR NTAPI Hook_NtQueryWnfStateData(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQueryWnfStateData, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryWnfStateData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryWnfStateData(args[0], args[1], args[2], args[3], args[4], args[5], a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6653,7 +6653,7 @@ static ULONG_PTR NTAPI Hook_NtQueryWnfStateNameInformation(ULONG_PTR a0, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryWnfStateNameInformation, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryWnfStateNameInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtQueryWnfStateNameInformation(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6666,7 +6666,7 @@ static ULONG_PTR NTAPI Hook_NtSetWnfProcessNotificationEvent(ULONG_PTR a0, ULONG
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetWnfProcessNotificationEvent, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetWnfProcessNotificationEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSetWnfProcessNotificationEvent(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6679,7 +6679,7 @@ static ULONG_PTR NTAPI Hook_NtSubscribeWnfStateChange(ULONG_PTR a0, ULONG_PTR a1
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSubscribeWnfStateChange, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSubscribeWnfStateChange(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtSubscribeWnfStateChange(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6692,7 +6692,7 @@ static ULONG_PTR NTAPI Hook_NtUnsubscribeWnfStateChange(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtUnsubscribeWnfStateChange, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnsubscribeWnfStateChange(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUnsubscribeWnfStateChange(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6705,7 +6705,7 @@ static ULONG_PTR NTAPI Hook_NtUpdateWnfStateData(ULONG_PTR a0, ULONG_PTR a1, ULO
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtUpdateWnfStateData, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUpdateWnfStateData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtUpdateWnfStateData(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6718,7 +6718,7 @@ static ULONG_PTR NTAPI Hook_NtWow64AllocateVirtualMemory64(ULONG_PTR a0, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtWow64AllocateVirtualMemory64, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64AllocateVirtualMemory64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64AllocateVirtualMemory64(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6731,7 +6731,7 @@ static ULONG_PTR NTAPI Hook_NtWow64CallFunction64(ULONG_PTR a0, ULONG_PTR a1, UL
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtWow64CallFunction64, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CallFunction64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64CallFunction64(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6744,7 +6744,7 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrAllocateCaptureBuffer(ULONG_PTR a0, ULONG_
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtWow64CsrAllocateCaptureBuffer, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrAllocateCaptureBuffer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64CsrAllocateCaptureBuffer(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6757,7 +6757,7 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrAllocateMessagePointer(ULONG_PTR a0, ULONG
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtWow64CsrAllocateMessagePointer, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrAllocateMessagePointer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64CsrAllocateMessagePointer(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6770,7 +6770,7 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrCaptureMessageBuffer(ULONG_PTR a0, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtWow64CsrCaptureMessageBuffer, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrCaptureMessageBuffer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64CsrCaptureMessageBuffer(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6783,7 +6783,7 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrCaptureMessageString(ULONG_PTR a0, ULONG_P
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWow64CsrCaptureMessageString, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrCaptureMessageString(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64CsrCaptureMessageString(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6796,7 +6796,7 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrClientCallServer(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtWow64CsrClientCallServer, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrClientCallServer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64CsrClientCallServer(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6809,7 +6809,7 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrClientConnectToServer(ULONG_PTR a0, ULONG_
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWow64CsrClientConnectToServer, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrClientConnectToServer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64CsrClientConnectToServer(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6822,7 +6822,7 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrFreeCaptureBuffer(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWow64CsrFreeCaptureBuffer, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrFreeCaptureBuffer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64CsrFreeCaptureBuffer(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6861,7 +6861,7 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrVerifyRegion(ULONG_PTR a0, ULONG_PTR a1, U
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtWow64CsrVerifyRegion, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrVerifyRegion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64CsrVerifyRegion(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6874,7 +6874,7 @@ static ULONG_PTR NTAPI Hook_NtWow64DebuggerCall(ULONG_PTR a0, ULONG_PTR a1, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWow64DebuggerCall, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64DebuggerCall(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64DebuggerCall(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6887,7 +6887,7 @@ static ULONG_PTR NTAPI Hook_NtWow64GetNativeSystemInformation(ULONG_PTR a0, ULON
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtWow64GetNativeSystemInformation, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64GetNativeSystemInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64GetNativeSystemInformation(args[0], args[1], args[2], args[3], a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6900,7 +6900,7 @@ static ULONG_PTR NTAPI Hook_NtWow64InterlockedPopEntrySList(ULONG_PTR a0, ULONG_
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWow64InterlockedPopEntrySList, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64InterlockedPopEntrySList(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64InterlockedPopEntrySList(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6913,7 +6913,7 @@ static ULONG_PTR NTAPI Hook_NtWow64IsProcessorFeaturePresent(ULONG_PTR a0, ULONG
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWow64IsProcessorFeaturePresent, (uintptr_t)_ReturnAddress(), args, 1);
   if (false) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64IsProcessorFeaturePresent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64IsProcessorFeaturePresent(args[0], a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6926,7 +6926,7 @@ static ULONG_PTR NTAPI Hook_NtWow64QueryInformationProcess64(ULONG_PTR a0, ULONG
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWow64QueryInformationProcess64, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64QueryInformationProcess64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64QueryInformationProcess64(args[0], args[1], args[2], args[3], args[4], a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6939,7 +6939,7 @@ static ULONG_PTR NTAPI Hook_NtWow64QueryVirtualMemory64(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtWow64QueryVirtualMemory64, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64QueryVirtualMemory64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64QueryVirtualMemory64(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6952,7 +6952,7 @@ static ULONG_PTR NTAPI Hook_NtWow64ReadVirtualMemory64(ULONG_PTR a0, ULONG_PTR a
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtWow64ReadVirtualMemory64, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64ReadVirtualMemory64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64ReadVirtualMemory64(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6965,7 +6965,7 @@ static ULONG_PTR NTAPI Hook_NtWow64WriteVirtualMemory64(ULONG_PTR a0, ULONG_PTR 
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtWow64WriteVirtualMemory64, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64WriteVirtualMemory64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  ULONG_PTR r = Real_NtWow64WriteVirtualMemory64(args[0], args[1], args[2], args[3], args[4], args[5], args[6], a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 

@@ -406,7 +406,7 @@ void LogEntryOnly(uint32_t sysId, uintptr_t retAddr) {
 
 // --- CallCtx ---------------------------------------------------------------
 
-CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, const ULONG_PTR* args, int argc)
+CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, ULONG_PTR* args, int argc)
     : sys_(sysId), args_(args), argc_(argc) {
   intptr_t d = Depth();
   live_ = g_ready && d == 0;
@@ -459,6 +459,19 @@ bool CallCtx::PreFault() {
     fault_ = r.mode;
     mangle_ = r.mangle;
     injected_ = r.status;
+    if (fault_ == Fault::Mangle && mangle_ == MangleKind::Short) {
+      // Realistic short transfer: shrink the requested Length BEFORE the
+      // call so the kernel really moves fewer bytes - the file offset,
+      // the buffer and IO_STATUS_BLOCK.Information all agree, exactly as
+      // with a genuine short read/write. (Fudging Information after a full
+      // transfer would leave the offset advanced past unread bytes: an
+      // unrealistic lie a correct read loop cannot survive by design.)
+      int8_t li = kHooks[sys_].lengthIndex;
+      if (li >= 0 && li < argc_ && args_[li] > 1) {
+        args_[li] = args_[li] / 2;
+        shrunk_ = true;
+      }
+    }
     if (fault_ == Fault::Pre) {
       // Real call is skipped: log the exit record here.
       char rvas[64];
@@ -516,12 +529,14 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
       tag = " !M";
       // Only a synchronous success has a filled IO_STATUS_BLOCK to mangle;
       // a pending async op's IOSB is written by the kernel later.
+      // A shrunk-Length short transfer is already coherent; only the
+      // no-Length-arg fallback and mangle:zero touch the IOSB here.
       int8_t idx = kHooks[sys_].iosbIndex;
-      if ((ULONG)ret == 0 && idx >= 0 && idx < argc_) {
+      if (!shrunk_ && (ULONG)ret == 0 && idx >= 0 && idx < argc_) {
         auto* iosb = (IO_STATUS_BLOCK*)args_[idx];
         if (iosb) {
           if (mangle_ == MangleKind::Zero) iosb->Information = 0;
-          else if (iosb->Information > 1) iosb->Information /= 2; // short
+          else if (iosb->Information > 1) iosb->Information /= 2; // short (fallback)
         }
       }
     }
@@ -663,6 +678,33 @@ bool RuntimeInit() {
   g_kbEnd = g_kbBase + ImageSize(kb);
   LogLine("# base ntdll %llx\n", (unsigned long long)g_ntBase);
   LogLine("# base kernelbase %llx\n", (unsigned long long)g_kbBase);
+
+  // Module map: every loaded module's base and size, so a driver can name
+  // any 'o:'-tagged key or absolute frame offline ("o:7ffc...26b" ->
+  // "mswsock+0x1026b"), which is exactly what decides whether a fault
+  // fired inside a system DLL's own machinery or on bun's behalf.
+  {
+    HMODULE mods[256];
+    DWORD needed = 0;
+    typedef BOOL(WINAPI * EnumFn)(HANDLE, HMODULE*, DWORD, LPDWORD);
+    typedef DWORD(WINAPI * NameFn)(HANDLE, HMODULE, LPSTR, DWORD);
+    HMODULE kb = GetModuleHandleA("kernelbase.dll");
+    HMODULE k32 = GetModuleHandleA("kernel32.dll");
+    auto enumFn = (EnumFn)GetProcAddress(kb ? kb : k32, "K32EnumProcessModules");
+    if (!enumFn && k32) enumFn = (EnumFn)GetProcAddress(k32, "K32EnumProcessModules");
+    auto nameFn = (NameFn)GetProcAddress(kb ? kb : k32, "K32GetModuleBaseNameA");
+    if (!nameFn && k32) nameFn = (NameFn)GetProcAddress(k32, "K32GetModuleBaseNameA");
+    if (enumFn && nameFn && enumFn(GetCurrentProcess(), mods, sizeof mods, &needed)) {
+      DWORD count = needed / sizeof(HMODULE);
+      if (count > 256) count = 256;
+      for (DWORD i = 0; i < count; i++) {
+        char nm[64] = "?";
+        nameFn(GetCurrentProcess(), mods[i], nm, sizeof nm);
+        LogLine("# mod %llx %llx %s\n", (unsigned long long)(uintptr_t)mods[i],
+                (unsigned long long)ImageSize(mods[i]), nm);
+      }
+    }
+  }
 
   if (EnvA("WSF_SCHEDULE", tmp, sizeof tmp)) LoadSchedule(tmp);
 

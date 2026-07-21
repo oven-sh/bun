@@ -75,18 +75,40 @@ export interface Trace {
   bunBase: string;
   cleanEnd: boolean;
   attached: number;
+  modules: { base: bigint; size: bigint; name: string }[]; // '# mod' map for o:-key naming
+}
+
+// Name the module an absolute address (an 'o:' key or a frame) falls in.
+export function moduleAt(t: Trace, addrHex: string): string {
+  try {
+    const a = BigInt("0x" + addrHex);
+    for (const m of t.modules) if (a >= m.base && a < m.base + m.size) return `${m.name}+0x${(a - m.base).toString(16)}`;
+  } catch {}
+  return `o:${addrHex}`;
+}
+
+// Human name for a coordinate key: b:/k:/n: are self-describing, o: goes
+// through the module map ("o:7ffcc836026b" -> "MSWSOCK.dll+0x1026b").
+export function keyName(t: Trace, key: string): string {
+  if (key.startsWith("b:")) return `bun+0x${key.slice(2)}`;
+  if (key.startsWith("k:")) return `kernelbase+0x${key.slice(2)}`;
+  if (key.startsWith("n:")) return `ntdll+0x${key.slice(2)}`;
+  if (key.startsWith("o:")) return moduleAt(t, key.slice(2));
+  return key;
 }
 
 // faultsOnly: materialize only records carrying a fault marker (still
 // counting all). Injection runs need "did it fire, and where" - not a
 // 200k-record array for a 20MB trace of a big test file.
 export function parseTrace(text: string, faultsOnly = false): Trace {
-  const t: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: false, attached: 0 };
+  const t: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: false, attached: 0, modules: [] };
   const bySeq = new Map<number, Rec>();
   for (const line of text.split("\n")) {
     if (!line) continue;
     if (line.startsWith("#")) {
       t.notes.push(line);
+      const md = /^# mod ([0-9a-f]+) ([0-9a-f]+) (.+)$/.exec(line);
+      if (md) t.modules.push({ base: BigInt("0x" + md[1]), size: BigInt("0x" + md[2]), name: md[3] });
       const b = /^# base bun ([0-9a-f]+)/.exec(line);
       if (b) t.bunBase = b[1];
       if (line.startsWith("# end")) t.cleanEnd = true;
@@ -234,7 +256,7 @@ export async function readTraceDir(dir: string, opts: { faultsOnly?: boolean } =
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir).filter(f => f.startsWith("wsf-") && f.endsWith(".log"));
   if (!files.length) return null;
-  const merged: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: true, attached: 0 };
+  const merged: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: true, attached: 0, modules: [] };
   for (const f of files) {
     let t: Trace;
     try {
@@ -250,6 +272,7 @@ export async function readTraceDir(dir: string, opts: { faultsOnly?: boolean } =
     for (const n of t.notes) merged.notes.push(n); // no spread: 100k+ args overflow the stack
     for (const r of t.recs) merged.recs.push(r);
     merged.recCount += t.recCount;
+    for (const m of t.modules) merged.modules.push(m);
     if (merged.bunBase === "0") merged.bunBase = t.bunBase;
     merged.cleanEnd = merged.cleanEnd && t.cleanEnd;
     merged.attached = Math.max(merged.attached, t.attached);

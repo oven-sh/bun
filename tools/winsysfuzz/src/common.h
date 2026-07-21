@@ -38,7 +38,7 @@ enum class MangleKind : uint8_t {
 // fault decision and writes the trace record at exit.
 class CallCtx {
  public:
-  CallCtx(uint32_t sysId, uintptr_t retAddr, const ULONG_PTR* args, int argc);
+  CallCtx(uint32_t sysId, uintptr_t retAddr, ULONG_PTR* args, int argc);
   // Balances the reentrancy depth on every exit path, including the
   // pre-fault early return that never reaches Exit().
   ~CallCtx();
@@ -64,8 +64,9 @@ class CallCtx {
   ULONG_PTR injected_ = 0;
   Fault fault_ = Fault::None;
   MangleKind mangle_ = MangleKind::Short;
-  const ULONG_PTR* args_;
+  ULONG_PTR* args_; // mutable: pre-call arg mutation (mangle:short shrinks Length)
   int argc_;
+  bool shrunk_ = false; // mangle:short realized by shrinking the requested Length
   uintptr_t frames_[kMaxFrames];
   uintptr_t bunFrame_ = 0; // first frame within bun.exe's image, else 0
 };

@@ -19,6 +19,7 @@ import {
   classifySym,
   digestStacks,
   ensureDir,
+  keyName,
   lastStage,
   moduleOf,
   nameOf,
@@ -194,10 +195,9 @@ const ownerFrame = (c: Coord): string => {
   for (const rva of c.repRvas) if (classifySym(syms.get(rva)) === mod) return `${symText(rva)} (bun+0x${rva})`;
   const first = c.repRvas[0];
   if (first) return `${symText(first)} (bun+0x${first})`;
-  // No bun frame at all: name the wrapper module the key lives in.
-  if (c.key.startsWith("k:")) return `kernelbase+0x${c.key.slice(2)}`;
-  if (c.key.startsWith("n:")) return `ntdll+0x${c.key.slice(2)}`;
-  return c.key;
+  // No bun frame at all: name the module the key's caller lives in
+  // (kernelbase / ntdll wrapper, or an o:-key resolved through the map).
+  return keyName(baseTrace!, c.key);
 };
 
 let candidates = [...coords.values()];
@@ -467,6 +467,8 @@ if (findings.length) {
     const v = verdicts.get(f);
     md.push(`## [${v?.verdict ?? "?"}] ${f.outcome} - ${f.job.coord.sysName} (${f.job.mode} ${f.job.status}) [${f.job.expect}]`);
     md.push(`- **where the fault fired**: \`${ownerFrame(f.job.coord)}\` [${coordModule(f.job.coord)}]`);
+    if (!f.job.coord.key.startsWith("b:"))
+      md.push(`- **immediate caller** (key ${f.job.coord.key}): \`${keyName(baseTrace!, f.job.coord.key)}\``);
     // The scraped nearest frame can be an unrelated stack leftover (a
     // mimalloc/CRT frame in front of a threadpool call), so show the
     // distinct candidate frames too rather than betting on one.

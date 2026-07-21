@@ -159,11 +159,14 @@ C.push("namespace wsf {");
 C.push("");
 const dirCode: Record<Dir, number> = { in: 0, out: 1, inout: 2 };
 const fwdParams = Array.from({ length: FWD }, (_, k) => `ULONG_PTR a${k}`).join(", ");
-const fwdCall = Array.from({ length: FWD }, (_, k) => `a${k}`).join(", ");
 for (const s of syscalls) {
   const n = s.args.length;
   const params = fwdParams;
-  const call = fwdCall;
+  // Declared args are forwarded THROUGH the args[] array (the runtime may
+  // mutate them pre-call - mangle:short shrinks the requested Length so the
+  // kernel performs a genuinely short transfer, offset and count coherent);
+  // extra forwarding slots beyond the declared count pass straight through.
+  const call = Array.from({ length: FWD }, (_, k) => (k < n ? `args[${k}]` : `a${k}`)).join(", ");
   const argsArr = n ? `{${Array.from({ length: n }, (_, k) => `a${k}`).join(", ")}}` : "{}";
   const isNt = s.ret === "NTSTATUS";
   C.push(`// ${s.category ? "[" + s.category + "] " : ""}${s.ret} ${s.name}(${n} args)`);

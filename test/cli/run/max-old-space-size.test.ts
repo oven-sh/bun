@@ -76,7 +76,6 @@ test.concurrent("space-separated value of the underscore alias stays in process.
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
-    stderr: "pipe",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   // The value must be kept with the flag, or children spawned with the default

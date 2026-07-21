@@ -451,9 +451,9 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" size_t Bun__reported_memory_size;
 
-// executionContextId: -1 for main thread
+// executionContextId: 1 for the main thread (see VirtualMachine::init)
 // executionContextId: maxInt32 for macros
-// executionContextId: >-1 for workers
+// executionContextId: >1 for workers
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;

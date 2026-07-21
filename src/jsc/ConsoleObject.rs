@@ -454,7 +454,8 @@ fn message_with_type_and_level_(
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same
     // time. We do this the slightly annoying way to avoid assigning a pointer.
     let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
-        || message_type == MessageType::Assert;
+        || message_type == MessageType::Assert
+        || message_type == MessageType::Trace;
     let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
 
     if message_type == MessageType::Clear {
@@ -477,7 +478,9 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+    let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error)
+        || message_type == MessageType::Trace
+    {
         Output::enable_ansi_colors_stderr()
     } else {
         Output::enable_ansi_colors_stdout()
@@ -496,7 +499,9 @@ fn message_with_type_and_level_(
     // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
     // arm below.
     let raw_writer: &mut bun_core::io::Writer = unsafe {
-        if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+        if matches!(level, MessageLevel::Warning | MessageLevel::Error)
+            || message_type == MessageType::Trace
+        {
             (*console).error_writer()
         } else {
             (*console).writer()

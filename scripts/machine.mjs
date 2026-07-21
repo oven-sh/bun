@@ -1165,11 +1165,43 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
     headers: { Authorization: `Bearer ${token}` },
   });
   if (existing.ok) {
-    const body = await existing.json().catch(() => ({}));
-    if (body?.properties?.provisioningState === "Succeeded") {
+    const body = await existing.json();
+    const state = body?.properties?.provisioningState;
+    if (state === "Succeeded") {
       console.log(`[packer] ${imageName} already exists and Succeeded; reusing (nothing to bake)`);
       return;
     }
+    if (state === "Creating" || state === "Updating") {
+      // Another bake of this exact recipe is in flight (same hash from a
+      // sibling run). Racing it would collide on the version PUT; the other
+      // run will produce the identical image, so stop cleanly.
+      throw new Error(`[packer] ${imageName} is already being baked (state ${state}); not racing it`);
+    }
+    // Failed / Canceled / anything else: a dead version that would 409 the
+    // publish. Remove it so this bake can produce the version fresh.
+    console.log(`[packer] ${imageName} exists in state "${state}"; deleting it before re-baking`);
+    const del = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (del.status === 202) {
+      const op = del.headers.get("Azure-AsyncOperation") ?? del.headers.get("Location");
+      for (let i = 0; op && i < 120; i++) {
+        await new Promise(resolve => setTimeout(resolve, 10_000));
+        const poll = await fetch(op, { headers: { Authorization: `Bearer ${token}` } });
+        const pollBody = await poll.json();
+        if (pollBody.status === "Succeeded") break;
+        if (pollBody.status === "Failed") {
+          throw new Error(`Delete of ${versionPath} failed: ${JSON.stringify(pollBody)}`);
+        }
+      }
+    } else if (!del.ok && del.status !== 404) {
+      throw new Error(`Failed to delete stale gallery image version: ${del.status} ${await del.text()}`);
+    }
+  } else if (existing.status !== 404) {
+    // Anything but "not found" is an auth/API problem — don't read it as
+    // "doesn't exist" and quietly kick off a full re-bake.
+    throw new Error(`[packer] Gallery version probe failed: ${existing.status} ${await existing.text()}`);
   }
 
   console.log(`[packer] Ensuring gallery image definition: ${imageName}`);

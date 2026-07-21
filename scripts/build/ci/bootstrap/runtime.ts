@@ -276,7 +276,16 @@ function execute(command: string[], options: RunOptions): Promise<RunResult> {
       child.stdin!.end(options.stdin);
     }
     child.on("error", error => {
-      reject(new CommandError(command, options, { exitCode: -1, stdout, stderr: `${stderr}\n${error}` }));
+      // The command could not start at all (ENOENT: binary missing, EACCES).
+      // A best-effort step (allowFailure) treats that like any other
+      // failure — a warn-and-continue, not a thrown exception.
+      const result = { exitCode: -1, stdout, stderr: `${stderr}\n${error}` };
+      if (options.allowFailure) {
+        log(`command could not start (${error.message}); allowFailure — continuing`);
+        resolve(result);
+      } else {
+        reject(new CommandError(command, options, result));
+      }
     });
     child.on("close", exitCode => {
       const result = { exitCode: exitCode ?? -1, stdout, stderr };

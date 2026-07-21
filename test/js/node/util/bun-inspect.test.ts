@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import stripAnsi from "strip-ansi";
 import { bunEnv, bunExe } from "harness";
+import stripAnsi from "strip-ansi";
 
 describe("Bun.inspect", () => {
   it("reports error instead of [native code]", () => {

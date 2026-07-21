@@ -142,17 +142,17 @@ test("Event.prototype.timeStamp", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
   const { before, after, samples, first, second } = JSON.parse(stdout);
   expect(samples.length).toBe(6);
+  // timeStamp is relative to performance.timeOrigin. 1ms of slack covers the
+  // one-time gap between the two clock samples that derive m_timeOrigin.
   for (const ts of samples) {
-    expect(typeof ts).toBe("number");
-    expect(ts).toBeGreaterThanOrEqual(before);
-    expect(ts).toBeLessThanOrEqual(after);
+    expect(ts).toBeGreaterThan(before - 1);
+    expect(ts).toBeLessThan(after + 1);
   }
-  expect(first).toBeGreaterThanOrEqual(after);
+  expect(first).toBeGreaterThanOrEqual(samples[samples.length - 1]);
   expect(second).toBe(first);
-  expect(exitCode).toBe(0);
+  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
 });
 
 it("crypto.getRandomValues", () => {

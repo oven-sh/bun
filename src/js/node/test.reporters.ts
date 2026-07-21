@@ -1,7 +1,7 @@
 // Hardcoded module "node:test/reporters" — port of Node.js v26.3.0's
 // lib/test/reporters.js + lib/internal/test_runner/reporter/*. Reporters
 // consume the event stream; spec/lcov are Transforms, the rest generators.
-const { inspect } = require("node:util");
+const { inspect, types: utilTypes } = require("node:util");
 const { relative } = require("node:path");
 const { Transform } = require("node:stream");
 const { hostname } = require("node:os");
@@ -218,13 +218,13 @@ function jsToYaml(indentation: string, name, value, seen?: Set<unknown>) {
 
   seen!.add(value);
   const entries = Object.entries(value);
-  const isErrorObj = value instanceof Error;
+  const isErrorObj = Error.isError(value);
   let propsIndent = indentation;
   let result = "";
 
   if (name != null) {
     result += prefix;
-    if (value instanceof Date) {
+    if (utilTypes.isDate(value)) {
       result += " " + value.toISOString();
     }
     result += "\n";

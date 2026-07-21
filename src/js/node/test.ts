@@ -2674,21 +2674,30 @@ function attributeProcessError(err: unknown, failureType: string): void {
     entry.fail(wrapper as Error);
     return;
   }
-  // No active test. Outside an active run (an isolation:'none' run already
-  // restored its state) these listeners must not pre-empt the caller's own
-  // error handling; let the runtime's default/user handlers take over.
-  if (!runEventsEnabled()) return;
-  // node's fatal path — print and exit 1 (kGenericUserError).
+  // No active test: node's fatal path — print and exit 1 (kGenericUserError).
   console.error((err as Error)?.stack ?? err);
   process.exit(1);
 }
+
+const attributeUncaught = (err: unknown) => attributeProcessError(err, "uncaughtException");
+const attributeUnhandled = (err: unknown) => attributeProcessError(err, "unhandledRejection");
 
 function installProcessErrorAttribution() {
   if (processErrorAttributionInstalled) return;
   processErrorAttributionInstalled = true;
   getTestContextStorage();
-  process.on("uncaughtException", err => attributeProcessError(err, "uncaughtException"));
-  process.on("unhandledRejection", err => attributeProcessError(err, "unhandledRejection"));
+  process.on("uncaughtException", attributeUncaught);
+  process.on("unhandledRejection", attributeUnhandled);
+}
+
+// Listeners latch for the process; remove them when an in-process run hands
+// control back to a caller whose own uncaughtException handling must not be
+// swallowed (the listener's presence alone suppresses the default print+exit).
+function uninstallProcessErrorAttribution() {
+  if (!processErrorAttributionInstalled) return;
+  processErrorAttributionInstalled = false;
+  process.off("uncaughtException", attributeUncaught);
+  process.off("unhandledRejection", attributeUnhandled);
 }
 
 async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
@@ -3144,6 +3153,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
   const callerEntries = standaloneQueue.splice(0, standaloneQueue.length);
   const wasStandaloneActive = standaloneActive;
   const wasScheduled = standaloneScheduled;
+  const hadAttribution = processErrorAttributionInstalled;
   // The root node is a process singleton outside `bun test`; its per-run fields
   // are snapshotted so a second run (or the caller's own beforeExit pass) starts
   // clean and does not re-fire this run's root after() hooks.
@@ -3214,13 +3224,12 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       currentImportFile = null;
     }
 
-    const filters = opts.testTagFilterExpressions as string[] | null;
-    const applyOnly = standaloneQueueHasOnly(standaloneQueue);
     // Pruning walks standaloneChildren, which an async describe body may still
     // be appending to; node awaits Suite.buildPromise before consulting them.
-    if ((filters !== null && filters.length > 0) || applyOnly) {
-      await awaitSuiteBuilds(standaloneQueue);
-    }
+    // Awaited unconditionally: a late it.only() would otherwise be invisible
+    // to the only-scan itself, and the helper is near-free with no builds.
+    await awaitSuiteBuilds(standaloneQueue);
+    const filters = opts.testTagFilterExpressions as string[] | null;
     if (filters !== null && filters.length > 0) {
       const pruned = pruneStandaloneEntries(standaloneQueue, filters);
       standaloneQueue.length = 0;
@@ -3229,7 +3238,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
 
     // node honors `only` in the shared process: when any registration carries
     // it, everything outside the only-marked branches is dropped silently.
-    if (applyOnly || standaloneQueueHasOnly(standaloneQueue)) {
+    if (standaloneQueueHasOnly(standaloneQueue)) {
       const pruned = pruneToOnly(standaloneQueue);
       standaloneQueue.length = 0;
       standaloneQueue.push(...pruned);
@@ -3279,6 +3288,9 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     standaloneQueue.push(...callerEntries);
     standaloneActive = wasStandaloneActive || callerEntries.length > 0;
     standaloneScheduled = wasScheduled;
+    // Remove listeners this run installed so the caller's own (or the default)
+    // uncaughtException/unhandledRejection handling is not suppressed.
+    if (!hadAttribution) uninstallProcessErrorAttribution();
   }
 }
 

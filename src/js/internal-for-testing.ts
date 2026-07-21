@@ -105,6 +105,10 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   rootError: () => void;
   outOfMemory: () => void;
   raiseIgnoringPanicHandler: () => void;
+  // Regression helper for https://github.com/oven-sh/bun/issues/30861:
+  // returns `true` iff `BoundedArray::resize(grow)` is refused (post-fix);
+  // returns `false` if the pre-fix behavior (unsound grow) is in effect.
+  boundedArrayResizeGrowReturnsErr: () => boolean;
 };
 
 export const upgrade_test_helpers = $rust("upgrade_command.rs", "upgrade_js_bindings.generate") as {

@@ -2797,7 +2797,12 @@ mod draft {
                     core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u16>(), cap)
                 };
                 let encoded_len = strings::convert_utf8_to_utf16_in_buffer(init, url).len();
-                let _ = cmd_line.resize(cmd_line.len() + encoded_len);
+                // SAFETY: `spare[0..encoded_len]` was written by
+                // `convert_utf8_to_utf16_in_buffer` above (and the rest was
+                // zero-filled), so `buffer[old_len .. old_len + encoded_len]`
+                // contains initialized `u16`s. `old_len + encoded_len` is within
+                // capacity because `encoded_len <= cap = 4096 - old_len`.
+                unsafe { cmd_line.set_len_unchecked(cmd_line.len() + encoded_len) };
             }
             if cmd_line
                 .append_slice(bun_core::w!("/ack'|out-null}catch{}\""))

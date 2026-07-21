@@ -96,14 +96,45 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         unsafe { &*(&raw const self.buffer[0..len] as *const [T]) }
     }
 
-    /// Adjust the slice's length to `len`.
-    /// Does not initialize added items if any.
+    /// Shrink the slice's length to `len`.
+    ///
+    /// Returns `Overflow` if `len` is greater than the current length, because growing
+    /// would expose uninitialized elements as `T` through the safe `slice`/`const_slice`
+    /// views — that's unsound. To grow the slice, use one of the safe growth helpers
+    /// (`append`, `append_slice`, `append_n_times`, `add_one`), one of the `unsafe`
+    /// uninit-returning helpers (`add_many_as_array`, `add_many_as_slice`), or
+    /// `unused_capacity_slice` + [`Self::set_len_unchecked`] for a raw
+    /// write-then-commit pattern.
+    //
+    // PORT NOTE: the Zig original was unchecked-grow (`self.len = len`). Keeping the
+    // same name + safe signature but refusing to grow matches the rest of the module's
+    // design — the uninit-returning helpers are the only growth path that doesn't
+    // violate the `[0..len]` initialization invariant.
     pub fn resize(&mut self, len: usize) -> Result<(), OverflowError> {
-        if len > BUFFER_CAPACITY {
+        let old_len = self.len;
+        if len > old_len {
             return Err(OverflowError::Overflow);
         }
         self.len = len;
+        // SAFETY: `[len..old_len]` is initialized; `len` reset first so a panicking Drop
+        // can't double-drop (same pattern as `clear`).
+        unsafe {
+            core::ptr::drop_in_place(&raw mut self.buffer[len..old_len] as *mut [T]);
+        }
         Ok(())
+    }
+
+    /// Set `len` directly without touching the buffer. UB to read the slice afterward
+    /// unless `[0..len]` has been initialized first (e.g. via `unused_capacity_slice`
+    /// followed by `MaybeUninit::write` for each new slot).
+    ///
+    /// # Safety
+    /// - `len <= BUFFER_CAPACITY`
+    /// - Elements at indices `[old_len .. len]` have been initialized with a valid `T`
+    ///   before any subsequent read through the safe slice views.
+    pub unsafe fn set_len_unchecked(&mut self, len: usize) {
+        debug_assert!(len <= BUFFER_CAPACITY);
+        self.len = len;
     }
 
     /// Remove all elements from the slice.
@@ -171,26 +202,56 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         unsafe { &mut *self.buffer[i].as_mut_ptr() }
     }
 
-    /// Resize the slice, adding `n` new elements, which have `undefined` values.
-    /// The return value is a pointer to the array of uninitialized elements.
-    pub fn add_many_as_array<const N: usize>(&mut self) -> Result<&mut [T; N], OverflowError> {
+    /// Grow the slice by `N` uninitialized slots and return a `MaybeUninit` view
+    /// of them. `len` is committed to `old_len + N` BEFORE the caller writes, so
+    /// this function is `unsafe`: if the caller drops the returned reference
+    /// without fully initializing every slot, a subsequent safe read
+    /// (`as_slice` / `const_slice` / `Deref`) observes uninitialized memory as
+    /// `T` — UB for any `T` with validity requirements.
+    ///
+    /// # Safety
+    /// - Caller must initialize every returned slot with a valid `T` before
+    ///   dropping the returned reference or calling any method on `self` that
+    ///   reads `[0..len]` through a safe view.
+    pub unsafe fn add_many_as_array<const N: usize>(
+        &mut self,
+    ) -> Result<&mut [MaybeUninit<T>; N], OverflowError> {
         let prev_len = self.len;
-        self.resize(self.len + N)?;
-        let ptr = self.buffer[prev_len..][..N].as_mut_ptr().cast::<[T; N]>();
-        // SAFETY: `[prev_len .. prev_len+N]` is within capacity after resize; caller must
-        // initialize before reading.
+        let new_len = prev_len.checked_add(N).ok_or(OverflowError::Overflow)?;
+        if new_len > BUFFER_CAPACITY {
+            return Err(OverflowError::Overflow);
+        }
+        // SAFETY: `new_len <= BUFFER_CAPACITY`. Initialization obligation is forwarded to
+        // our caller by this function's own `unsafe` marker.
+        unsafe { self.set_len_unchecked(new_len) };
+        let ptr = self.buffer[prev_len..][..N]
+            .as_mut_ptr()
+            .cast::<[MaybeUninit<T>; N]>();
+        // SAFETY: `ptr` is non-null, properly aligned (same alignment as
+        // `[MaybeUninit<T>; N]` because the source is `[MaybeUninit<T>; ...]`),
+        // and points at exactly `N` slots inside `self.buffer`, which outlives
+        // the returned borrow.
         Ok(unsafe { &mut *ptr })
     }
 
-    /// Resize the slice, adding `n` new elements, which have `undefined` values.
-    /// The return value is a slice pointing to the uninitialized elements.
-    pub fn add_many_as_slice(&mut self, n: usize) -> Result<&mut [T], OverflowError> {
+    /// Grow the slice by `n` uninitialized slots and return a `MaybeUninit`
+    /// view of them. See [`Self::add_many_as_array`] for the full contract.
+    ///
+    /// # Safety
+    /// Same as [`Self::add_many_as_array`].
+    pub unsafe fn add_many_as_slice(
+        &mut self,
+        n: usize,
+    ) -> Result<&mut [MaybeUninit<T>], OverflowError> {
         let prev_len = self.len;
-        self.resize(self.len + n)?;
-        let s = &mut self.buffer[prev_len..][..n];
-        // SAFETY: `[prev_len .. prev_len+n]` is within capacity after resize; caller must
-        // initialize before reading.
-        Ok(unsafe { &mut *(std::ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) })
+        let new_len = prev_len.checked_add(n).ok_or(OverflowError::Overflow)?;
+        if new_len > BUFFER_CAPACITY {
+            return Err(OverflowError::Overflow);
+        }
+        // SAFETY: `new_len <= BUFFER_CAPACITY`. Initialization obligation is forwarded to
+        // our caller by this function's own `unsafe` marker.
+        unsafe { self.set_len_unchecked(new_len) };
+        Ok(&mut self.buffer[prev_len..][..n])
     }
 
     /// Remove and return the last element from the slice, or return `None` if the slice is empty.
@@ -206,8 +267,9 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
 
     /// Return a slice of only the extra capacity after items.
     /// This can be useful for writing directly into it.
-    /// Note that such an operation must be followed up with a
-    /// call to `resize()`
+    /// Note that such an operation must be followed up with a call to
+    /// [`Self::set_len_unchecked`] to commit the new length; `resize` is
+    /// shrink-only so it cannot be used here.
     pub fn unused_capacity_slice(&mut self) -> &mut [MaybeUninit<T>] {
         &mut self.buffer[self.len..]
     }
@@ -380,9 +442,18 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         T: Copy,
     {
         let old_len = self.len;
-        self.resize(old_len + n)?;
-        let end = self.len;
-        self.slice()[old_len..end].fill(value);
+        let new_len = old_len.checked_add(n).ok_or(OverflowError::Overflow)?;
+        if new_len > BUFFER_CAPACITY {
+            return Err(OverflowError::Overflow);
+        }
+        // Initialize every new slot before committing the length — keeps the
+        // `[0..len]` invariant true at every observable point.
+        for slot in &mut self.buffer[old_len..new_len] {
+            slot.write(value);
+        }
+        // SAFETY: the preceding loop wrote a valid `T` into each slot in
+        // `[old_len .. new_len]`, and `new_len <= BUFFER_CAPACITY`.
+        unsafe { self.set_len_unchecked(new_len) };
         Ok(())
     }
 

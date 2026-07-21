@@ -152,13 +152,16 @@ Callsites are `bun+0xRVA`; resolve any of them by hand with
 These fell out of proving the tool. They are starting points for you to
 confirm or dismiss — the instrument reported them, nobody triaged them:
 
-- **Thread-creation failure -> hang (recurring, strongest lead).**
-  `NtCreateThreadEx` -> `STATUS_INSUFFICIENT_RESOURCES` hangs bun, reproduced
-  independently from the fs-async workload (during `await writeFile`) AND the
-  real `test/js/node/fs/fs-birthtime-linux.test.ts` (confirmed 3/3). The
-  fs threadpool worker is never created, the queued work never runs, the
-  promise never settles, and the event loop waits (`uv_run` in the IOCP
-  wait). An error path for threadpool init failure appears to be missing.
+- **The retracted lead - and why keys were redesigned.** An earlier hunt
+  reported `NtCreateThreadEx` -> `STATUS_INSUFFICIENT_RESOURCES` hanging bun,
+  "confirmed" across seven test targets. A second look on a quiet box could
+  NOT reproduce it (no-fire): its key frame `__ascii_strnicmp+0xba` was a
+  stack leftover, not a caller, so the coordinate fired only when load shaped
+  the stack. That is why the schedule key is now the syscall's immediate
+  return address (module-tagged) rather than a scraped frame - see
+  README. Any thread-creation-failure lead must be re-derived under the new
+  keys before it is believed; the pre-redesign roll-ups (`C:\wsfhunt` runs
+  before 2026-07-22) use unstable keys and should not be triaged.
 
 - Socket poll setup: fault `NtCreateFile` at libuv's `uv__msafd_poll` (the
   AFD-device open for fast-poll) during `http-serve-and-fetch`, or

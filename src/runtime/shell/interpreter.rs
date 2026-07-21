@@ -588,6 +588,7 @@ impl Interpreter {
                 __cwd: cwd_arr,
                 cwd_fd,
                 async_pids: SmolList::default(),
+                exit_requested: None,
             }),
             root_io: JsCell::new(IO {
                 stdin: crate::shell::io::InKind::Fd(stdin_reader),
@@ -1793,6 +1794,10 @@ pub struct ShellExecEnv {
     pub __cwd: Vec<u8>,
     pub cwd_fd: Fd,
     pub async_pids: SmolList<PidT, 4>,
+    /// Status the `exit` builtin asked this execution context to end with.
+    /// Nodes sharing this env stop running children. A subshell, command
+    /// substitution, or pipeline element gets its own env, which scopes `exit`.
+    pub exit_requested: Option<ExitCode>,
 }
 
 pub enum Bufio {
@@ -1958,6 +1963,8 @@ impl ShellExecEnv {
             __cwd: self.__cwd.clone(),
             cwd_fd: dupedfd,
             async_pids: SmolList::default(),
+            // Fresh execution context: `exit` neither carries in nor escapes.
+            exit_requested: None,
         });
         Ok(bun_core::heap::into_raw(duped))
     }

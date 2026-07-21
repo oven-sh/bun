@@ -166,3 +166,22 @@ test("mocking a builtin", async () => {
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
 });
+
+test("mocking a builtin applies to require() the same as import()", () => {
+  mock.module("node:querystring", () => ({
+    stringify: () => "MOCKED",
+    default: { stringify: () => "MOCKED" },
+  }));
+
+  expect(require("node:querystring").stringify({})).toBe("MOCKED");
+  expect(require("querystring").stringify({})).toBe("MOCKED");
+});
+
+test("mocking a builtin with __esModule returns default for require()", () => {
+  mock.module("node:punycode", () => ({
+    __esModule: true,
+    default: { encode: () => "MOCKED-DEFAULT" },
+  }));
+
+  expect(require("node:punycode").encode("x")).toBe("MOCKED-DEFAULT");
+});

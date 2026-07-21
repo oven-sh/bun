@@ -1343,6 +1343,36 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     res.success = false;
     memset(&res.result, 0, sizeof res.result);
     BunString specifierStr = Bun::toString(specifier);
+
+    // Under `bun test`, let mock.module() override builtin modules for require()
+    // the same way fetchCommonJSModule/fetchESMSourceCode do for the non-fast-path.
+    if (isBunTest && globalObject->onLoadPlugins.hasVirtualModules()) {
+        bool wasModuleMock = false;
+        JSC::JSValue mocked = Bun::runVirtualModule(globalObject, &specifierStr, wasModuleMock);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (mocked && wasModuleMock) {
+            if (auto* promise = dynamicDowncast<JSC::JSPromise>(mocked)) {
+                if (promise->status() == JSC::JSPromise::Status::Rejected) {
+                    promise->markAsHandled();
+                    return throwVMError(globalObject, throwScope, promise->result());
+                }
+                return throwVMTypeError(globalObject, throwScope, makeString("require() async module \""_s, specifier, "\" is unsupported. use \"await import()\" instead."_s));
+            }
+            if (auto* object = mocked.getObject()) {
+                auto esModuleValue = object->getIfPropertyExists(globalObject, vm.propertyNames->__esModule);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
+                    auto defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    if (defaultValue && !defaultValue.isUndefined()) {
+                        return JSValue::encode(defaultValue);
+                    }
+                }
+            }
+            return JSValue::encode(mocked);
+        }
+    }
+
     auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (result) {

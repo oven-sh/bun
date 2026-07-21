@@ -132,15 +132,14 @@ export function findPackageManager(os: OS): PackageManager {
     return { exe: bunPath, installArgs: ["install", "--frozen-lockfile"], lockfile: "bun.lock" };
   }
 
-  // Only bun.lock is checked in, so the non-bun fallbacks resolve from
-  // package.json rather than running a frozen install. --no-save keeps the
-  // tree clean of a generated package-lock.json.
+  // Only bun.lock is checked in; npm resolves from package.json. Disable
+  // lockfile writes so the checkout stays clean.
   const npm = findTool({
     names: ["npm"],
     required: true,
     hint: "No package manager found (tried bun, npm). Install Node.js, which bundles npm.",
   })!;
-  return { exe: npm.path, installArgs: ["install", "--no-save"], lockfile: "package-lock.json" };
+  return { exe: npm.path, installArgs: ["install", "--no-save", "--no-package-lock"], lockfile: "package-lock.json" };
 }
 
 /**
@@ -223,7 +222,7 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
   // Windows ships shims like npm.cmd with no .exe; probe PATHEXT, not just .exe.
   const exeSuffixes =
     process.platform === "win32"
-      ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";").map(s => s.toLowerCase())
+      ? (process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";").map(s => s.toLowerCase())
       : [""];
   const searchPaths = [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
   const versionArg = spec.versionArg ?? "--version";

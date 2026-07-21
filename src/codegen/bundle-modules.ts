@@ -264,15 +264,22 @@ const outputs = new Map();
 
 for (const entrypoint of bundledEntryPoints) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
-  const output = fs
-    .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
-    .replace(/^(?:\/\/[^\n]*\n)+/, "")
-    // esbuild's keepNames `__name` reads user-overridable Object.defineProperty
-    // and trusts its return value as the binding; neutralize both.
-    .replace(
-      /var __name = .*;$/m,
+  let output = fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8").replace(/^(?:\/\/[^\n]*\n)+/, "");
+  // esbuild's keepNames `__name` reads user-overridable Object.defineProperty
+  // and trusts its return value as the binding; neutralize both.
+  if (output.includes("__name(")) {
+    const hits = output.match(/^var __name = .*;$/gm);
+    if (hits?.length !== 1) {
+      throw new Error(
+        `Builtin Bundler: expected exactly one 'var __name = ...;' helper in ${file_path} ` +
+          `(found ${hits?.length ?? 0}); esbuild's keepNames output shape changed.`,
+      );
+    }
+    output = output.replace(
+      hits[0],
       'var __name = (t, v) => { try { __defProp(t, "name", { __proto__: null, value: v, configurable: !0 }); } catch {} return t; };',
     );
+  }
   // Trailing newline before `})` is load-bearing: esbuild preserves `//!`
   // legal comments, and a `//!` on the final line would swallow the wrapper
   // close.

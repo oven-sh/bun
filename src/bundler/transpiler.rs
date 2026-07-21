@@ -789,12 +789,37 @@ impl<'a> Transpiler<'a> {
                 // `--env-file` list is bounded (CLI args), not hot-path.
                 let env_files: Vec<&[u8]> = self.options.env.files.iter().map(|f| &**f).collect();
 
+                // Own the NODE_ENV value so a `Custom(&[u8])` suffix doesn't
+                // hold a borrow into `env.map` across the `&mut` `env.load`.
+                let node_env: Option<Vec<u8>> = env.get_node_env().map(|v| v.to_vec());
                 let suffix = if self.options.is_test() || env.is_test() {
                     dot_env::DotEnvFileSuffix::Test
                 } else if self.options.production {
                     dot_env::DotEnvFileSuffix::Production
                 } else {
-                    dot_env::DotEnvFileSuffix::Development
+                    // An explicit NODE_ENV outside {development, production,
+                    // test} must not fall through to the development files;
+                    // load `.env.{mode}` instead. The canonical names are
+                    // matched case-insensitively so mixed-case spellings route
+                    // to the built-in arms (the byte-exact `is_production()`/
+                    // `is_test()` above would miss them). Empty or the literal
+                    // string `"undefined"` still default to development.
+                    match node_env.as_deref() {
+                        Some(m) if m.eq_ignore_ascii_case(b"production") => {
+                            dot_env::DotEnvFileSuffix::Production
+                        }
+                        Some(m) if m.eq_ignore_ascii_case(b"test") => {
+                            dot_env::DotEnvFileSuffix::Test
+                        }
+                        Some(m)
+                            if !m.is_empty()
+                                && !m.eq_ignore_ascii_case(b"development")
+                                && !m.eq_ignore_ascii_case(b"undefined") =>
+                        {
+                            dot_env::DotEnvFileSuffix::Custom(m)
+                        }
+                        _ => dot_env::DotEnvFileSuffix::Development,
+                    }
                 };
                 env.load(dir, &env_files, suffix, skip_default_env)?;
             }

@@ -873,6 +873,10 @@ impl bun_dotenv::DirEntryProbe for DirEntry {
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         DirEntry::has_comptime_query(self, query_lower)
     }
+    #[inline]
+    fn has_query(&self, query_lower: &[u8]) -> bool {
+        self.data.contains_key(query_lower)
+    }
 }
 
 /// Compat re-exports for callers that named the seam-type aliases.

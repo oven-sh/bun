@@ -10,8 +10,11 @@ Bun reads your `.env` files automatically and provides idiomatic ways to read an
 Bun reads the following files automatically (listed in order of increasing precedence).
 
 - `.env`
-- `.env.production`, `.env.development`, `.env.test` (depending on the value of `NODE_ENV`)
+- `.env.{NODE_ENV}` (such as `.env.production`, `.env.development`, `.env.test`, or `.env.staging`)
 - `.env.local`
+- `.env.{NODE_ENV}.local`
+
+When `NODE_ENV` is unset, Bun treats it as `development`. When `NODE_ENV` is `test`, `.env.local` is skipped.
 
 ```ini .env icon="settings"
 FOO=hello

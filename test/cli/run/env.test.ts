@@ -105,6 +105,47 @@ describe(".env file is loaded", () => {
     const { stdout } = bunRun(`${dir}/index.ts`, {});
     expect(stdout).toBe("bar baz true");
   });
+  test(".env.{NODE_ENV} loaded for custom NODE_ENV; development files skipped", () => {
+    const dir = tempDirWithFiles("dotenv", {
+      ".env": "MODE=base\n",
+      ".env.development": "MODE=dev\nSECRET=DEV\n",
+      ".env.development.local": "MODE=devlocal\nSECRET=DEVLOCAL\n",
+      ".env.production": "MODE=production\nSECRET=PROD\n",
+      ".env.staging": "MODE=staging\nSECRET=STAGING\n",
+      ".env.staging.local": "MODE=staging.local\n",
+      "index.ts": "console.log(process.env.NODE_ENV, process.env.MODE, process.env.SECRET);",
+    });
+    // NODE_ENV outside {development, production, test} loads .env.{NODE_ENV}
+    // and .env.{NODE_ENV}.local, never the development files.
+    const { stdout: staging } = bunRun(`${dir}/index.ts`, { NODE_ENV: "staging" });
+    expect(staging).toBe("staging staging.local STAGING");
+    // A custom NODE_ENV with no matching file still must not leak dev secrets.
+    const { stdout: preview } = bunRun(`${dir}/index.ts`, { NODE_ENV: "preview" });
+    expect(preview).toBe("preview base undefined");
+    // sanity: production still works
+    const { stdout: prod } = bunRun(`${dir}/index.ts`, { NODE_ENV: "production" });
+    expect(prod).toBe("production production PROD");
+  });
+  test("custom NODE_ENV precedence: .env.{mode}.local > .env.local > .env.{mode} > .env", () => {
+    const dir = tempDirWithFiles("dotenv", {
+      ".env": "A=.env\nB=.env\nC=.env\nD=.env\n",
+      ".env.staging": "A=.env.staging\nB=.env.staging\nC=.env.staging\n",
+      ".env.local": "A=.env.local\nB=.env.local\n",
+      ".env.staging.local": "A=.env.staging.local\n",
+      "index.ts": "console.log(process.env.A, process.env.B, process.env.C, process.env.D);",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`, { NODE_ENV: "staging" });
+    expect(stdout).toBe(".env.staging.local .env.local .env.staging .env");
+  });
+  test("BUN_ENV with custom value skips development files", () => {
+    const dir = tempDirWithFiles("dotenv", {
+      ".env.development.local": "SECRET=DEVLOCAL\n",
+      ".env.qa": "SECRET=QA\n",
+      "index.ts": "console.log(process.env.SECRET);",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`, { BUN_ENV: "qa" });
+    expect(stdout).toBe("QA");
+  });
   test(".env and .env.test used in testing", () => {
     const dir = tempDirWithFiles("dotenv", {
       ".env": "A=a\n",

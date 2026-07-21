@@ -8,7 +8,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { createGzip, gzipSync } from "node:zlib";
@@ -324,6 +324,138 @@ describe("streaming tarball extraction", () => {
     const { stderr, exitCode } = await runInstall(String(dir));
     expect(stderr).toContain("Integrity check failed");
     expect(exitCode).not.toBe(0);
+  });
+
+  // Below the threshold no drain is scheduled, so nothing lands in the
+  // extraction temp dir; crossing it schedules one drain that writes
+  // package.json while later entries stay absent until the body resumes.
+  test.each([
+    ["default", 256 * 1024, {}],
+    ["override", 1024 * 1024, { BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: String(1024 * 1024) }],
+  ] as const)("drain threshold holds off extraction until enough bytes arrive (%s)", async (_, threshold, extraEnv) => {
+    const belowThreshold = threshold >> 1;
+    const aboveThreshold = threshold + 128 * 1024;
+    expect(aboveThreshold).toBeLessThan(tgz.length);
+
+    const phase1 = Promise.withResolvers<void>();
+    const gate1 = Promise.withResolvers<void>();
+    const phase2 = Promise.withResolvers<void>();
+    const gate2 = Promise.withResolvers<void>();
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith("/stream-pkg")) {
+          return Response.json({
+            name: "stream-pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "stream-pkg",
+                version: "1.0.0",
+                dist: { shasum, integrity, tarball: `${server.url}stream-pkg/-/stream-pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith("stream-pkg-1.0.0.tgz")) {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(c) {
+                for (let i = 0; i < belowThreshold; i += 8 * 1024) {
+                  c.write(tgz.subarray(i, i + 8 * 1024));
+                  await c.flush();
+                }
+                phase1.resolve();
+                await gate1.promise;
+                for (let i = belowThreshold; i < aboveThreshold; i += 8 * 1024) {
+                  c.write(tgz.subarray(i, i + 8 * 1024));
+                  await c.flush();
+                }
+                phase2.resolve();
+                await gate2.promise;
+                c.write(tgz.subarray(aboveThreshold));
+                await c.flush();
+                c.close();
+              },
+            }),
+            { headers: { "content-type": "application/octet-stream" } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("streaming-extract-threshold", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\n`,
+    });
+    const tmp = join(String(dir), "bun-tmp");
+    const cache = join(String(dir), "bun-cache");
+    mkdirSync(tmp, { recursive: true });
+    mkdirSync(cache, { recursive: true });
+
+    const findExtracted = (name: string) => {
+      for (const d of readdirSync(tmp, { withFileTypes: true })) {
+        if (d.isDirectory() && existsSync(join(tmp, d.name, name))) return join(tmp, d.name, name);
+      }
+      return null;
+    };
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+        BUN_INSTALL_CACHE_DIR: cache,
+        ...extraEnv,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutP = proc.stdout.text();
+    const stderrP = proc.stderr.text();
+    let gated = true;
+    const earlyExit = proc.exited.then(async code => {
+      if (gated) throw new Error(`bun install exited (${code}) before reaching a phase gate\n${await stderrP}`);
+    });
+    earlyExit.catch(() => {});
+
+    // Phase 1: server has sent < threshold. No drain is scheduled, so the
+    // temp dir stays empty; there is no "drain did not run" event to await
+    // from outside the child, so poll a bounded window.
+    await Promise.race([phase1.promise, earlyExit]);
+    for (let i = 0; i < 25; i++) {
+      expect(findExtracted("package.json")).toBeNull();
+      await Bun.sleep(10);
+    }
+
+    // Phase 2: send past the threshold. The first drain runs and writes
+    // package.json; the last data entry is still missing bytes.
+    gate1.resolve();
+    await Promise.race([phase2.promise, earlyExit]);
+    let extractedPkgJson: string | null = null;
+    for (let i = 0; i < 1000 && !(extractedPkgJson = findExtracted("package.json")); i++) await Bun.sleep(10);
+    expect(extractedPkgJson).not.toBeNull();
+    expect(findExtracted(join("data", "chunk-47.bin"))).toBeNull();
+
+    // Finish.
+    gated = false;
+    gate2.resolve();
+    const [stdout, stderr, exitCode] = await Promise.all([stdoutP, stderrP, proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Streamed ");
+    expect({ stdout, exitCode }).toMatchObject({ exitCode: 0 });
+
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    for (const { path, body } of entries) {
+      const got = readFileSync(join(pkgRoot, path));
+      expect([path, got.equals(body)]).toEqual([path, true]);
+    }
   });
 });
 

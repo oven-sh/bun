@@ -6710,7 +6710,6 @@ impl NodeFS {
             sys::WindowsOpenDirOptions {
                 no_follow: true,
                 iterable: true,
-                read_only: true,
                 ..Default::default()
             },
         );
@@ -7108,7 +7107,6 @@ impl NodeFS {
             path.as_bytes(),
             sys::WindowsOpenDirOptions {
                 iterable: true,
-                read_only: true,
                 ..Default::default()
             },
         );

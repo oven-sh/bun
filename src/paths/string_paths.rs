@@ -414,9 +414,7 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
     // remove duplicate slashes in the file path
     let base = without_trailing_slash(input);
     let mut buf = vec![0u8; base.len() + 2];
-    if cfg!(debug_assertions) {
-        debug_assert!(!base.is_empty());
-    }
+    debug_assert!(!base.is_empty());
     if base[0] == crate::SEP {
         buf[0] = crate::SEP;
     }
@@ -475,11 +473,9 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
         path = &path[..path.len() - 1];
     }
 
-    if cfg!(debug_assertions) {
-        debug_assert!(
-            !crate::is_absolute(path) || !is_windows_absolute_path_missing_drive_letter::<u8>(path)
-        );
-    }
+    debug_assert!(
+        !crate::is_absolute(path) || !is_windows_absolute_path_missing_drive_letter::<u8>(path)
+    );
 
     path
 }

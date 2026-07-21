@@ -18,7 +18,11 @@ import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
 import { MACOS_SDK_VERSION, macosSdkCachePath, resolveMacosSdkPath } from "../../scripts/build/macos-sdk.ts";
 import { rustTarget } from "../../scripts/build/rust.ts";
-import { machoEntitlementsPlist, machoPostlinkCommand } from "../../scripts/build/shims.ts";
+import {
+  elfDebugCompressPostlinkCommand,
+  machoEntitlementsPlist,
+  machoPostlinkCommand,
+} from "../../scripts/build/shims.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -210,6 +214,32 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     const x64 = webkit.source(resolveDarwin({ arch: "x64" }));
     if (x64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${x64.kind}`);
     expect(x64.url).toContain("bun-webkit-macos-amd64.tar.gz");
+  });
+
+  test("rust-lld links compress ELF debug sections post-link, not at link time", () => {
+    // rust-lld (built without LLVM_ENABLE_ZLIB) can't take
+    // --compress-debug-sections=zlib, so when the crosslang-LTO swap picks it
+    // the flag is dropped and llvm-objcopy compresses after the link instead.
+    // Uncompressed DWARF roughly doubles bun-profile, which every `--compile`
+    // test copies — the size is a CI-timeout regression, not just cosmetic.
+    const rustLld = "/fake/rust/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld/ld.lld";
+    const linux = { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", linuxSysroot: "/fake" } as const;
+    const withRustLld = resolveConfig(
+      { ...linux, lto: true },
+      mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined, rustLld }),
+    );
+    expect(withRustLld.ld).toBe(rustLld);
+    expect(computeFlags(withRustLld).ldflags).not.toContain("-Wl,--compress-debug-sections=zlib");
+    expect(elfDebugCompressPostlinkCommand(withRustLld)).toContain("--compress-debug-sections=zlib $out");
+
+    // System lld (no swap): compress at link time, no postlink pass.
+    const systemLld = resolveConfig(
+      linux,
+      mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined, rustLld }),
+    );
+    expect(systemLld.ld).toBe("/fake/llvm/bin/ld.lld");
+    expect(computeFlags(systemLld).ldflags).toContain("-Wl,--compress-debug-sections=zlib");
+    expect(elfDebugCompressPostlinkCommand(systemLld)).toBe("");
   });
 
   test("linux configs don't pick up darwin cross machinery", () => {

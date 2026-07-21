@@ -113,7 +113,8 @@ export const workarounds: Workaround[] = [
     issue: "https://rustc-dev-guide.rust-lang.org/backend/updating-llvm.html",
     description:
       "rustc's bundled LLVM is newer than clang's, so clang's ld.lld can't read " +
-      "-Clinker-plugin-lto bitcode (forward-compatible only). Link with rust-lld instead.",
+      "-Clinker-plugin-lto bitcode (forward-compatible only). Link with rust-lld instead " +
+      "(and compress ELF debug sections post-link via llvm-objcopy, since rust-lld lacks zlib).",
     applies: cfg => cfg.crossLangLto && cfg.rustLlvmVersion !== undefined && cfg.clangVersion !== undefined,
     expectedToBeFixed: cfg => {
       // Obsolete once clang's LLVM major catches up to (or passes) rustc's —

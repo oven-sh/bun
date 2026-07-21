@@ -1362,13 +1362,13 @@ export const linkerFlags: Flag[] = [
     //   LLVM_ENABLE_ZLIB or did not find zlib at build time`.
     // We only fall onto rust-lld for cross-language LTO when rustc's LLVM is
     // newer than the system clang/lld (see config.ts `cfg.ld` selection); in
-    // that case, drop the flag rather than fail the link. Larger debug
-    // sections in `bun-profile` is a build-size cost, not a correctness one —
-    // and only on agents where the LLVM versions diverge. The system lld path
-    // (linux/freebsd llvm-* packages) keeps compressing.
+    // that case the link-time flag is dropped and llvm-objcopy compresses
+    // post-link instead (shims.ts elfDebugCompressPostlinkCommand) — an
+    // uncompressed bun-profile is ~2x larger and every `--compile` test
+    // copies it, so leaving it uncompressed times CI out.
     flag: "-Wl,--compress-debug-sections=zlib",
     when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
-    desc: "Compress ELF debug sections (skipped with rust-lld — built without zlib)",
+    desc: "Compress ELF debug sections (post-link via llvm-objcopy with rust-lld — built without zlib)",
   },
   {
     flag: "-Wl,--gc-sections",

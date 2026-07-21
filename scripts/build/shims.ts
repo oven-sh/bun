@@ -96,6 +96,30 @@ export function machoPostlinkImplicitInputs(cfg: Config): string[] {
 }
 
 /**
+ * ELF + rust-lld: rust-lang/llvm-project builds lld without LLVM_ENABLE_ZLIB,
+ * so `-Wl,--compress-debug-sections=zlib` is dropped when the crosslang-LTO
+ * rust-lld swap is active (flags.ts). Uncompressed DWARF makes bun-profile
+ * ~2x larger (~900MB), and every `bun build --compile` in the test suite
+ * copies the running binary, so the size shows up as CI test timeouts, not
+ * just artifact bloat. Compress after the link with llvm-objcopy instead —
+ * same tool the musl CRT decompress shim already relies on.
+ */
+export function needsElfDebugCompressPostlink(cfg: Config): boolean {
+  return (cfg.linux || cfg.freebsd) && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld;
+}
+
+/**
+ * Command suffix for the link rule: `... -o $out && llvm-objcopy
+ * --compress-debug-sections=zlib $out`. Empty when not needed so callers
+ * can append unconditionally (mutually exclusive with machoPostlinkCommand).
+ */
+export function elfDebugCompressPostlinkCommand(cfg: Config): string {
+  if (!needsElfDebugCompressPostlink(cfg)) return "";
+  const llvmObjcopy = resolve(dirname(cfg.cc), "llvm-objcopy");
+  return ` && ${quote(existsSync(llvmObjcopy) ? llvmObjcopy : "llvm-objcopy", false)} --compress-debug-sections=zlib $out`;
+}
+
+/**
  * macOS-from-Linux cross links resolve compiler-rt builtins from the SDK's
  * libSystem reexport (libcompiler_rt.tbd), which covers the generic builtins
  * (__divti3 …) but NOT the x86 `__builtin_cpu_supports` support globals

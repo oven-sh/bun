@@ -191,8 +191,8 @@ fn key_for(state: &CacheState, filename: &[u8], is_cjs: bool) -> u32 {
         if !rel.is_empty() && !bun_paths::is_absolute(rel) {
             cclog!(
                 "[compile cache] using relative path {} from {}\n",
-                String::from_utf8_lossy(rel),
-                String::from_utf8_lossy(&state.dir)
+                rel.as_bstr(),
+                state.dir.as_bstr()
             );
             return cache_key(rel, is_cjs);
         }

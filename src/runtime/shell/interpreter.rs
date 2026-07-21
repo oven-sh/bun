@@ -2252,23 +2252,9 @@ fn append_hostname(out: &mut Vec<u8>) {
 
 #[cfg(windows)]
 fn append_hostname(out: &mut Vec<u8>) {
-    use bun_sys::windows::{GetHostNameW, ws2_32};
     let mut buf = [0u16; 256];
-    // `GetHostNameW` is winsock and fails with WSANOTINITIALISED before
-    // `WSAStartup`; mirror `node_os::hostname` and retry once after init.
-    // SAFETY: `buf` is valid for `len - 1` writes (NUL reserved).
-    let mut rc = unsafe { GetHostNameW(buf.as_mut_ptr(), (buf.len() - 1) as _) };
-    if rc != 0 {
-        let mut wsa: ws2_32::WSADATA = bun_core::ffi::zeroed();
-        // SAFETY: valid out-pointer.
-        if unsafe { ws2_32::WSAStartup(0x202, &mut wsa) } == 0 {
-            // SAFETY: as above.
-            rc = unsafe { GetHostNameW(buf.as_mut_ptr(), (buf.len() - 1) as _) };
-        }
-    }
-    if rc == 0 {
-        let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-        bun_core::strings::convert_utf16_to_utf8_append(out, &buf[..end]);
+    if let Some(name) = bun_sys::windows::gethostname_w(&mut buf) {
+        bun_core::strings::to_utf8_append_to_list(out, name);
     }
 }
 

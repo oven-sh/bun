@@ -120,3 +120,108 @@ test.skipIf(isDebug)(
   },
   15_000,
 );
+
+// A suspension parks the sink (+1), the rewritable unit's JS wrapper (+1), a
+// Strong on the output Response, and the boxed lol-html rewriter. All of it is
+// owned by the handler's promise reaction, so it is released only when that
+// promise settles. A general canary for the settle path.
+test("suspended rewrites release their parked state once the handler settles", async () => {
+  const suspendingRewrites = async (count: number) => {
+    for (let i = 0; i < count; i++) {
+      await new HTMLRewriter()
+        .on("p", {
+          async element(element) {
+            await new Promise(r => setTimeout(r, 0));
+            element.setInnerContent("x");
+          },
+        })
+        .transform(new Response("<p>y</p>"))
+        .text();
+    }
+  };
+
+  const counts = () => {
+    Bun.gc(true);
+    const { objectTypeCounts, protectedObjectTypeCounts } = heapStats();
+    return {
+      responses: objectTypeCounts.Response ?? 0,
+      functions: protectedObjectTypeCounts.Function ?? 0,
+    };
+  };
+
+  await suspendingRewrites(40);
+  const before = counts();
+  await suspendingRewrites(120);
+  const after = counts();
+
+  expect(after.responses - before.responses).toBeLessThan(30);
+  expect(after.functions - before.functions).toBeLessThan(30);
+});
+
+// The abandon path: a handler awaiting a promise nothing will ever resolve.
+// The promise is collected unsettled, its GC-managed reaction context goes with
+// it, and `SuspensionContext::abandon` fails the body and releases the parked
+// wrapper / Strong / sink.
+//
+// This is the only guard for that mechanism, so it has to assert the release,
+// not just the rejection. Poll for the rejections rather than forcing exactly N
+// GCs, so a slow ASAN lane doesn't turn a pass into a 5s hang.
+test("never-settling handler promises are abandoned and release their parked state", async () => {
+  const N = 60;
+
+  const abandonAll = async (count: number) => {
+    const bodies = [];
+    for (let i = 0; i < count; i++) {
+      bodies.push(
+        new HTMLRewriter()
+          .on("p", {
+            async element() {
+              await new Promise(() => {});
+            },
+          })
+          .transform(new Response("<p>x</p>"))
+          .text()
+          .then(
+            () => "resolved",
+            e => e.message,
+          ),
+      );
+    }
+    // The handler promises are unreachable now; collect until every body has
+    // been abandoned, rather than guessing a GC count.
+    const settled: string[] = [];
+    for (let i = 0; i < 100 && settled.length < count; i++) {
+      Bun.gc(true);
+      await new Promise(r => setTimeout(r, 1));
+      settled.length = 0;
+      settled.push(
+        ...(await Promise.all(bodies.map(b => Promise.race([b, Promise.resolve(undefined)])))).filter(Boolean),
+      );
+    }
+    return await Promise.all(bodies);
+  };
+
+  const counts = () => {
+    Bun.gc(true);
+    const { objectTypeCounts, protectedObjectTypeCounts } = heapStats();
+    return {
+      responses: objectTypeCounts.Response ?? 0,
+      functions: protectedObjectTypeCounts.Function ?? 0,
+    };
+  };
+
+  // Warm up so one-time allocations don't land in the measured delta.
+  const warm = await abandonAll(10);
+  expect(warm.every(m => m.includes("will never settle"))).toBe(true);
+
+  const before = counts();
+  const results = await abandonAll(N);
+  const after = counts();
+
+  // Every one was abandoned with the real reason...
+  expect(results.every(m => m.includes("will never settle"))).toBe(true);
+  // ...and nothing it parked is still pinned. A regression that keeps rejecting
+  // the body but stops releasing would show up as ~N leaked Responses.
+  expect(after.responses - before.responses).toBeLessThan(N / 4);
+  expect(after.functions - before.functions).toBeLessThan(N / 4);
+});

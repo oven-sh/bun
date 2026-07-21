@@ -33,6 +33,15 @@ export const lolhtml: Dependency = {
     commit: LOLHTML_COMMIT,
   }),
 
+  // Content-handler suspension: a handler can return
+  // `Err(SuspensionRequest)` to park the current rewritable unit on the
+  // heap and exit `write()`/`end()` with the non-poisoning
+  // `RewritingError::Suspended`; `HtmlRewriter::resume()` continues from
+  // there. HTMLRewriter needs this so an `async` JS content handler can
+  // suspend the rewrite and resume it from a promise reaction instead of
+  // spinning a nested event loop inside lol-html's `write()`.
+  patches: ["patches/lolhtml/content-handler-suspension.patch"],
+
   // No separate build — compiled as part of the workspace cargo build via
   // `bun_runtime`/`bun_bundler`'s path dep on `vendor/lolhtml`.
   build: () => ({ kind: "none" }),

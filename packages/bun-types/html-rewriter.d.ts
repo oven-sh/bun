@@ -163,20 +163,35 @@ declare class HTMLRewriter {
 
   /**
    * Transform HTML content
+   *
+   * Returns immediately; the rewrite continues in the background. An error
+   * thrown by a content handler (or a Promise it returns that rejects) rejects
+   * the returned response's body rather than throwing from `transform()`.
+   *
    * @param input - The HTML to transform
    * @returns A new {@link Response} with the transformed HTML
    */
-  transform(input: Response | Blob | Bun.BufferSource): Response;
+  transform(input: Response): Response;
   /**
    * Transform HTML content
+   *
    * @param input - The HTML string to transform
    * @returns The transformed HTML as a string
+   * @throws {TypeError} If a content handler returns a Promise that needs the
+   * event loop to turn (a timer, I/O, a `fetch`). The result has to be produced
+   * synchronously, so pass a {@link Response} and await its body instead.
    */
   transform(input: string): string;
   /**
    * Transform HTML content
-   * @param input - The HTML to transform as a {@link ArrayBuffer}
+   *
+   * Every {@link Bun.BufferSource} (a TypedArray, DataView, or ArrayBuffer)
+   * produces an `ArrayBuffer`, not a `Response`.
+   *
+   * @param input - The HTML to transform as bytes
    * @returns A new {@link ArrayBuffer} with the transformed HTML
+   * @throws {TypeError} If a content handler returns a Promise that needs the
+   * event loop to turn. See {@link transform} for `string` inputs.
    */
-  transform(input: ArrayBuffer): ArrayBuffer;
+  transform(input: Bun.BufferSource): ArrayBuffer;
 }

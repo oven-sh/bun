@@ -412,8 +412,10 @@ public:
         Bun__HTTPRequestContextDebugH3__onRejectStream,
         Bun__HTTPRequestContextDebugH3__onResolve,
         Bun__HTTPRequestContextDebugH3__onResolveStream,
+        Bun__HTMLRewriter__onHandlerResolve,
+        Bun__HTMLRewriter__onHandlerReject,
     };
-    static constexpr size_t promiseFunctionsSize = 42;
+    static constexpr size_t promiseFunctionsSize = 44;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 

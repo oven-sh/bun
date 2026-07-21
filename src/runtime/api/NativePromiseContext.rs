@@ -56,10 +56,11 @@ pub enum Tag {
     BodyValueBufferer,
     HTTPSServerH3RequestContext,
     DebugHTTPSServerH3RequestContext,
+    HTMLRewriterSuspension,
 }
 
 impl Tag {
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -71,6 +72,7 @@ impl Tag {
             4 => Tag::BodyValueBufferer,
             5 => Tag::HTTPSServerH3RequestContext,
             6 => Tag::DebugHTTPSServerH3RequestContext,
+            7 => Tag::HTMLRewriterSuspension,
             _ => unreachable!(),
         }
     }
@@ -105,6 +107,9 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> NativePromise
 }
 impl NativePromiseContextType for body::ValueBufferer<'_> {
     const TAG: Tag = Tag::BodyValueBufferer;
+}
+impl NativePromiseContextType for html_rewriter::SuspensionContext {
+    const TAG: Tag = Tag::HTMLRewriterSuspension;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -230,6 +235,14 @@ impl DeferredDerefTask {
                 Tag::DebugHTTPSServerH3RequestContext => {
                     (*ctx.cast::<DebugHTTPSServerH3RequestContext>()).deref()
                 }
+                Tag::HTMLRewriterSuspension => {
+                    // The handler's promise was collected without settling, so
+                    // the rewrite can never continue: fail the output body and
+                    // drop everything the suspension parked.
+                    html_rewriter::SuspensionContext::abandon(
+                        ctx.cast::<html_rewriter::SuspensionContext>(),
+                    );
+                }
             }
         }
     }
@@ -248,3 +261,6 @@ const _: () =
     assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
 const _: () =
     assert!(core::mem::align_of::<body::ValueBufferer<'_>>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<html_rewriter::SuspensionContext>() > DeferredDerefTask::TAG_MASK
+);

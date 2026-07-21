@@ -1991,7 +1991,12 @@ where
     pub(crate) fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
         // SAFETY: caller upholds the fn-level contract — `this` is the
         // `*mut RequestContext` previously registered as `lock.task`.
-        Self::do_render_with_body(unsafe { bun_ptr::callback_ctx::<Self>(this) }, value, None);
+        let this = unsafe { bun_ptr::callback_ctx::<Self>(this) };
+        // Release the +1 the `on_receive_value` registration in
+        // `do_render_with_body` took, once the render below returns (it may
+        // itself end the request and drop another ref).
+        let _pending_ref = RequestContextRef(std::ptr::from_mut::<Self>(this));
+        Self::do_render_with_body(this, value, None);
     }
 
     fn render_with_blob_from_body_value(&mut self) {
@@ -3299,7 +3304,15 @@ where
                     return;
                 }
 
-                // when there's no stream, we need to
+                // No stream and no other consumer: wait for whoever owns the
+                // `Locked` body (e.g. a suspended `HTMLRewriter` transform) to
+                // deliver its value through `Value::resolve`. The registered
+                // callback owns a +1 on `this` (released by
+                // `do_render_with_body_locked`), and `has_marked_pending`
+                // keeps `should_render_missing` from 404-ing (and
+                // deinit-ing) a request that is merely waiting for its body.
+                this.ref_();
+                this.flags.set_has_marked_pending(true);
                 lock.on_receive_value =
                     Some(|ctx, value| Self::do_render_with_body_locked(ctx, value));
                 lock.task = Some(std::ptr::from_mut::<Self>(this).cast::<c_void>());

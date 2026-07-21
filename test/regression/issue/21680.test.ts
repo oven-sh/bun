@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 
-test("HTMLRewriter should not crash when element handler throws an exception - issue #21680", () => {
+test("HTMLRewriter should not crash when element handler throws an exception - issue #21680", async () => {
   // The most important test: ensure the original crashing case from the GitHub issue doesn't crash
   // This was the exact case from the issue that caused "ASSERTION FAILED: Unexpected exception observed"
 
@@ -20,15 +20,15 @@ test("HTMLRewriter should not crash when element handler throws an exception - i
     rewriter.transform(new Response(Bun.file(`${dir}/min.html`)));
   }).not.toThrow(); // The important thing is it doesn't crash, we're ok with it silently failing
 
-  // Test with Response containing string content
-  expect(() => {
-    const rewriter = new HTMLRewriter().on("script", {
-      element(a) {
-        throw new Error("response test");
-      },
-    });
-    rewriter.transform(new Response("<script></script>"));
-  }).toThrow("response test");
+  // Test with Response containing string content. A `Response` input surfaces
+  // the handler's error on the output body rather than throwing from
+  // `transform()`; the point of this test is that neither crashes.
+  const rewriter = new HTMLRewriter().on("script", {
+    element(a) {
+      throw new Error("response test");
+    },
+  });
+  await expect(rewriter.transform(new Response("<script></script>")).text()).rejects.toThrow("response test");
 });
 
 test("HTMLRewriter exception handling should not break normal operation", () => {

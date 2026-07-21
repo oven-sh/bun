@@ -1,0 +1,3106 @@
+--- a/src/base/bytes.rs
++++ b/src/base/bytes.rs
+@@ -59,6 +59,16 @@ impl<'b> BytesCow<'b> {
+         BytesCow(Cow::Owned(self.0.into_owned()))
+     }
+ 
++    /// Detaches the bytes from the input buffer they may borrow, leaving an
++    /// empty value behind. Used when a token has to outlive the parser's
++    /// input buffer (handler suspension).
++    #[inline]
++    pub(crate) fn take_owned(&mut self) -> BytesCow<'static> {
++        BytesCow(Cow::Owned(
++            std::mem::replace(&mut self.0, Cow::Borrowed(&[])).into_owned(),
++        ))
++    }
++
+     #[inline]
+     pub(crate) fn as_ref(&self) -> Bytes<'_> {
+         Bytes(&self.0)
+@@ -75,7 +85,7 @@ impl<'b> BytesCow<'b> {
+ 
+ impl<'b> Bytes<'b> {
+     #[inline]
+-    pub(crate) fn new(bytes: &'b [u8]) -> Self {
++    pub(crate) const fn new(bytes: &'b [u8]) -> Self {
+         Self(bytes)
+     }
+ 
+--- a/src/base/spanned.rs
++++ b/src/base/spanned.rs
+@@ -48,9 +48,13 @@ pub(crate) struct Spanned<B> {
+     source_location_byte_start: usize,
+ }
+ 
+-#[derive(Debug, Copy, Clone)]
++#[derive(Debug, Clone)]
+ pub(crate) enum RawBytes<'input> {
+     Original(&'input [u8]),
++    /// Raw bytes copied out of the input buffer so that they can outlive it.
++    /// Produced by [`SpannedRawBytes::take_owned`] when a token is detached
++    /// from the parser (handler suspension).
++    Owned(Box<[u8]>),
+     /// Keeps the len of the original
+     Modified(usize),
+ }
+@@ -58,9 +62,10 @@ pub(crate) enum RawBytes<'input> {
+ impl<'input> SpannedRawBytes<'input> {
+     #[inline]
+     pub fn len(&self) -> usize {
+-        match self.bytes {
++        match &self.bytes {
+             RawBytes::Original(s) => s.len(),
+-            RawBytes::Modified(l) => l,
++            RawBytes::Owned(s) => s.len(),
++            RawBytes::Modified(l) => *l,
+         }
+     }
+ 
+@@ -71,13 +76,30 @@ impl<'input> SpannedRawBytes<'input> {
+     }
+ 
+     #[inline]
+-    pub fn original(&self) -> Option<&'input [u8]> {
+-        match self.bytes {
++    pub fn original(&self) -> Option<&[u8]> {
++        match &self.bytes {
+             RawBytes::Original(s) => Some(s),
++            RawBytes::Owned(s) => Some(s),
+             RawBytes::Modified(_) => None,
+         }
+     }
+ 
++    /// Detaches the raw bytes from the input buffer, leaving `self` behind as
++    /// `Modified(len)` (the source is abandoned after a `take_owned`, so the
++    /// leftover only has to keep `len()`/`source_location()` correct).
++    pub(crate) fn take_owned(&mut self) -> SpannedRawBytes<'static> {
++        let len = self.len();
++        let bytes = match std::mem::replace(&mut self.bytes, RawBytes::Modified(len)) {
++            RawBytes::Original(s) => RawBytes::Owned(s.into()),
++            RawBytes::Owned(s) => RawBytes::Owned(s),
++            RawBytes::Modified(l) => RawBytes::Modified(l),
++        };
++        Spanned {
++            bytes,
++            source_location_byte_start: self.source_location_byte_start,
++        }
++    }
++
+     #[inline]
+     pub fn source_location(&self) -> SourceLocation {
+         SourceLocation::from_start_len(self.source_location_byte_start, self.len())
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -43,8 +43,8 @@ use cfg_if::cfg_if;
+ pub use self::rewriter::{
+     AsciiCompatibleEncoding, CommentHandler, DoctypeHandler, DocumentContentHandlers,
+     ElementContentHandlers, ElementHandler, EndHandler, EndTagHandler, HandlerResult, HandlerTypes,
+-    HtmlRewriter, LocalHandlerTypes, MemorySettings, RewriteStrSettings, Settings, TextHandler,
+-    rewrite_str,
++    HtmlRewriter, LocalHandlerTypes, MemorySettings, RewriteStrSettings, Settings,
++    SuspensionRequest, TextHandler, rewrite_str,
+ };
+ pub use self::selectors_vm::Selector;
+ pub use self::transform_stream::OutputSink;
+@@ -88,7 +88,7 @@ pub mod errors {
+     pub use super::rewritable_units::{
+         AttributeNameError, CommentTextError, TagNameError, Utf8Error,
+     };
+-    pub use super::rewriter::RewritingError;
++    pub use super::rewriter::{RewritingError, SuspensionRequest};
+     pub use super::selectors_vm::SelectorError;
+ }
+ 
+--- a/src/memory/arena.rs
++++ b/src/memory/arena.rs
+@@ -6,6 +6,9 @@ use super::{MemoryLimitExceededError, SharedMemoryLimiter};
+ pub(crate) struct Arena {
+     limiter: SharedMemoryLimiter,
+     data: Vec<u8>,
++    /// Offset of the live region within `data`. `shift` only advances this;
++    /// the dead prefix is reclaimed lazily by the next `append`.
++    start: usize,
+ }
+ 
+ impl Arena {
+@@ -23,10 +26,28 @@ impl Arena {
+             "Total preallocated memory size should be less than `MemorySettings::max_allowed_memory_usage`."
+         );
+ 
+-        Self { limiter, data }
++        Self {
++            limiter,
++            data,
++            start: 0,
++        }
++    }
++
++    /// Reclaim the dead prefix left behind by `shift`, in one memmove.
++    fn compact(&mut self) {
++        if self.start > 0 {
++            self.data.copy_within(self.start.., 0);
++            let live = self.data.len() - self.start;
++            self.data.truncate(live);
++            self.start = 0;
++        }
+     }
+ 
+     pub fn append(&mut self, slice: &[u8]) -> Result<(), MemoryLimitExceededError> {
++        // Only the multi-write streaming path appends after a `shift`, and it
++        // is the only place the dead prefix has to go away.
++        self.compact();
++
+         // this specific form of capacity check optimizes out redundant resizing in extend_from_slice
+         if self.data.capacity() - self.data.len() < slice.len() {
+             let additional = slice.len() + self.data.len() - self.data.capacity();
+@@ -51,16 +72,20 @@ impl Arena {
+ 
+     pub fn init_with(&mut self, slice: &[u8]) -> Result<(), MemoryLimitExceededError> {
+         self.data.clear();
++        self.start = 0;
+         self.append(slice)
+     }
+ 
++    /// O(1): advances the live-region start instead of memmoving the tail.
++    /// A suspended rewrite resumes by re-feeding the unconsumed tail, so this
++    /// runs once per suspension — memmoving there is O(suspensions × tail).
+     pub fn shift(&mut self, byte_count: usize) {
+-        self.data.copy_within(byte_count.., 0);
+-        self.data.truncate(self.data.len() - byte_count);
++        debug_assert!(byte_count <= self.data.len() - self.start);
++        self.start += byte_count;
+     }
+ 
+     pub fn bytes(&self) -> &[u8] {
+-        &self.data
++        &self.data[self.start..]
+     }
+ }
+ 
+@@ -140,4 +165,23 @@ mod tests {
+         assert_eq!(arena.bytes(), &[2, 3, 4, 5]);
+         assert_eq!(limiter.current_usage(), 5);
+     }
++
++    // A suspended rewrite shifts once per resume with no append in between;
++    // the dead prefix must accumulate and then be reclaimed by the next append.
++    #[test]
++    fn consecutive_shifts_without_append() {
++        let limiter = SharedMemoryLimiter::new(10);
++        let mut arena = Arena::new(limiter.clone(), 0);
++
++        arena.append(&[0, 1, 2, 3, 4]).unwrap();
++        arena.shift(1);
++        arena.shift(2);
++        assert_eq!(arena.bytes(), &[3, 4]);
++
++        arena.shift(2);
++        assert!(arena.bytes().is_empty());
++
++        arena.append(&[9]).unwrap();
++        assert_eq!(arena.bytes(), &[9]);
++    }
+ }
+--- a/src/parser/lexer/actions.rs
++++ b/src/parser/lexer/actions.rs
+@@ -19,6 +19,10 @@ macro_rules! get_token_part_range {
+ 
+ impl<S: LexemeSink> Lexer<S> {
+     fn emit_eof(&mut self, context: &mut ParserContext<S>, input: &[u8]) -> ActionResult {
++        // The EOF ends the final text node; flush its pending last chunk
++        // before the lexeme exists so a suspension can simply re-lex the EOF.
++        self.flush_pending_text(context)?;
++
+         let lexeme = self.create_lexeme_with_raw_exclusive(
+             context.previously_consumed_byte_count,
+             input,
+@@ -61,6 +65,11 @@ impl<S: LexemeSink> StateMachineActions for Lexer<S> {
+ 
+     #[inline(never)]
+     fn emit_current_token(&mut self, context: &mut ParserContext<S>, input: &[u8]) -> ActionResult {
++        // A comment/doctype ends the preceding text node; flush its pending
++        // last chunk before the lexeme exists so a suspension can simply
++        // re-lex the comment/doctype (`lexeme_start` still points at it).
++        self.flush_pending_text(context)?;
++
+         let token = self.current_non_tag_content_token.take();
+         let lexeme = self.create_lexeme_with_raw_inclusive(
+             context.previously_consumed_byte_count,
+@@ -73,6 +82,14 @@ impl<S: LexemeSink> StateMachineActions for Lexer<S> {
+ 
+     #[inline(never)]
+     fn emit_tag(&mut self, context: &mut ParserContext<S>, input: &[u8]) -> ActionResult {
++        // A tag ends the preceding text node. Flush its pending last chunk
++        // *before* building the lexeme or applying tree-builder feedback: a
++        // text handler that suspends here leaves no live lexeme above it,
++        // the tree-builder simulator untouched, and `last_text_type` at the
++        // pre-tag value, so the resume just re-lexes the tag from
++        // `lexeme_start` (which still points at its `<`).
++        self.flush_pending_text(context)?;
++
+         let token = self
+             .current_tag_token
+             .take()
+@@ -120,6 +137,11 @@ impl<S: LexemeSink> StateMachineActions for Lexer<S> {
+         context: &mut ParserContext<S>,
+         input: &[u8],
+     ) -> ActionResult {
++        // As in `emit_current_token`: the comment/doctype ends the preceding
++        // text node, so flush its pending last chunk before the lexeme is
++        // built. `emit_eof` below then finds nothing left to flush.
++        self.flush_pending_text(context)?;
++
+         let token = self.current_non_tag_content_token.take();
+         let lexeme = self.create_lexeme_with_raw_exclusive(
+             context.previously_consumed_byte_count,
+@@ -138,6 +160,9 @@ impl<S: LexemeSink> StateMachineActions for Lexer<S> {
+         context: &mut ParserContext<S>,
+         input: &[u8],
+     ) -> ActionResult {
++        // A CDATA marker ends the preceding text node (see `emit_tag`).
++        self.flush_pending_text(context)?;
++
+         let lexeme = self.create_lexeme_with_raw_inclusive(
+             context.previously_consumed_byte_count,
+             input,
+@@ -153,6 +178,12 @@ impl<S: LexemeSink> StateMachineActions for Lexer<S> {
+         context: &mut ParserContext<S>,
+         input: &[u8],
+     ) -> ActionResult {
++        // As in `emit_raw_without_token`. This lexeme carries no token, so
++        // nothing is dispatched between here and `emit_eof`'s own flush, but
++        // keeping the hoist uniform means every suspension point sees the
++        // in-flight lexeme either fully consumed or not yet built.
++        self.flush_pending_text(context)?;
++
+         // NOTE: since we are at EOF we use exclusive range for token's raw.
+         let lexeme = self.create_lexeme_with_raw_exclusive(
+             context.previously_consumed_byte_count,
+--- a/src/parser/lexer/mod.rs
++++ b/src/parser/lexer/mod.rs
+@@ -7,12 +7,22 @@ mod lexeme;
+ pub(crate) use self::lexeme::*;
+ use crate::base::{Align, Bytes, Range};
+ use crate::html::{LocalNameHash, Namespace, TextType};
+-use crate::parser::state_machine::{ActionResult, FeedbackDirective, StateMachine, StateResult};
++use crate::parser::state_machine::{
++    ActionError, ActionResult, FeedbackDirective, StateMachine, StateResult,
++};
+ use crate::parser::{ParserContext, ParserDirective, ParsingAmbiguityError, TreeBuilderFeedback};
++use crate::rewriter::RewritingError;
+ 
+ pub(crate) trait LexemeSink {
+     fn handle_tag(&mut self, lexeme: &TagLexeme<'_>) -> ActionResult<ParserDirective>;
+     fn handle_non_tag_content(&mut self, lexeme: &NonTagContentLexeme<'_>) -> ActionResult;
++    /// Flushes the pending captured-text chunk: the one the text decoder
++    /// could not mark `last_in_text_node` until it knew the next lexeme
++    /// would not be text. The lexer calls this *before* it builds each
++    /// non-text lexeme, so a text handler that suspends here has no live
++    /// lexeme above it on the stack and the tag/comment/... can simply be
++    /// re-lexed from the suspension bookmark.
++    fn flush_pending_text(&mut self) -> ActionResult;
+ }
+ 
+ pub(crate) type State<S> = fn(&mut Lexer<S>, context: &mut ParserContext<S>, &[u8]) -> StateResult;
+@@ -97,6 +107,40 @@ impl<S: LexemeSink> Lexer<S> {
+         }
+     }
+ 
++    /// Converts a handler suspension (`RewritingError::Suspended` escaping a
++    /// dispatch) into the lexer-level [`ActionError::Suspended`]. Captures
++    /// the bookmark needed to continue lexing at `lexeme_start` once the
++    /// parked dispatch is resumed and rebases the lexer's input-relative
++    /// state, because the unconsumed tail gets re-buffered at offset 0.
++    #[cold]
++    fn map_suspension<T>(&mut self, res: ActionResult<T>) -> ActionResult<T> {
++        match res {
++            Err(e) if matches!(*e, ActionError::RewritingError(RewritingError::Suspended)) => {
++                let consumed_byte_count = self.lexeme_start;
++                // Unconditionally: unlike `break_on_end_of_input` this runs
++                // even on the last input, because the resume always re-feeds
++                // the tail.
++                self.adjust_for_next_input();
++                let bookmark = self.create_bookmark(0, FeedbackDirective::None);
++                Err(Box::new(ActionError::Suspended {
++                    consumed_byte_count,
++                    bookmark,
++                }))
++            }
++            other => other,
++        }
++    }
++
++    /// Flush the pending captured-text chunk before a non-text lexeme is
++    /// built. At this point `lexeme_start` is still the position of that
++    /// upcoming lexeme, so a suspension here makes the resume re-lex it from
++    /// scratch (with no stale tree-builder feedback: none was applied yet).
++    #[inline]
++    fn flush_pending_text(&mut self, context: &mut ParserContext<S>) -> ActionResult {
++        let res = context.output_sink.flush_pending_text();
++        self.map_suspension(res)
++    }
++
+     #[inline]
+     fn emit_lexeme(
+         &mut self,
+@@ -107,8 +151,8 @@ impl<S: LexemeSink> Lexer<S> {
+ 
+         self.lexeme_start = lexeme.raw_range().end;
+ 
+-        context.output_sink.handle_non_tag_content(lexeme)?;
+-        Ok(())
++        let res = context.output_sink.handle_non_tag_content(lexeme);
++        self.map_suspension(res)
+     }
+ 
+     #[inline]
+@@ -121,7 +165,8 @@ impl<S: LexemeSink> Lexer<S> {
+ 
+         self.lexeme_start = lexeme.raw_range().end;
+ 
+-        context.output_sink.handle_tag(lexeme)
++        let res = context.output_sink.handle_tag(lexeme);
++        self.map_suspension(res)
+     }
+ 
+     #[inline]
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -10,8 +10,8 @@ pub(crate) use self::lexer::{
+     AttributeBuffer, AttributeOutline, Lexeme, LexemeSink, NonTagContentLexeme,
+     NonTagContentTokenOutline, TagLexeme, TagTokenOutline,
+ };
+-use self::state_machine::StateMachine;
+ pub(crate) use self::state_machine::{ActionError, ActionResult};
++use self::state_machine::{ParseResult, StateMachine, StateMachineBookmark};
+ pub(crate) use self::tag_scanner::TagHintSink;
+ use self::tag_scanner::TagScanner;
+ pub use self::tree_builder_simulator::ParsingAmbiguityError;
+@@ -45,6 +45,11 @@ pub struct Parser<S> {
+     tag_scanner: TagScanner<S>,
+     current_directive: ParserDirective,
+     context: ParserContext<S>,
++    /// Set when a content handler suspended the dispatch mid-parse (see
++    /// [`RewritingError::Suspended`]). Holds the state-machine bookmark
++    /// (positions relative to the re-buffered unconsumed tail) that
++    /// [`Self::resume`] continues from.
++    suspension: Option<StateMachineBookmark>,
+ }
+ 
+ // public only for integration tests
+@@ -64,6 +69,7 @@ impl<S: ParserOutputSink> Parser<S> {
+             tag_scanner: TagScanner::new(),
+             current_directive: initial_directive,
+             context,
++            suspension: None,
+         }
+     }
+ 
+@@ -72,7 +78,9 @@ impl<S: ParserOutputSink> Parser<S> {
+     // It's better to outline it, and let its callers be inlined.
+     #[inline(never)]
+     pub fn parse(&mut self, input: &[u8], last: bool) -> Result<usize, RewritingError> {
+-        let mut parse_result = match self.current_directive {
++        debug_assert!(self.suspension.is_none());
++
++        let parse_result = match self.current_directive {
+             ParserDirective::WherePossibleScanForTagsOnly => {
+                 self.tag_scanner
+                     .run_parsing_loop(&mut self.context, input, last)
+@@ -80,6 +88,58 @@ impl<S: ParserOutputSink> Parser<S> {
+             ParserDirective::Lex => self.lexer.run_parsing_loop(&mut self.context, input, last),
+         };
+ 
++        self.handle_parse_result(parse_result, input, last)
++    }
++
++    /// `true` if the last `parse`/`resume` call was suspended by a content
++    /// handler. The number of bytes it reported as consumed is final; the
++    /// rest of the input must be buffered and handed back to [`Self::resume`].
++    #[inline]
++    pub const fn is_suspended(&self) -> bool {
++        self.suspension.is_some()
++    }
++
++    /// Continues a suspended parse over the re-buffered unconsumed tail.
++    /// Must only be called once the suspended dispatch itself has been
++    /// resumed (see `Dispatcher::resume_dispatch`). `directive`, when given,
++    /// is the one the suspended `handle_tag` never got to return.
++    #[inline(never)]
++    pub fn resume(
++        &mut self,
++        input: &[u8],
++        last: bool,
++        directive: Option<ParserDirective>,
++    ) -> Result<usize, RewritingError> {
++        let bookmark = self
++            .suspension
++            .take()
++            .expect("Parser::resume called without a suspension");
++
++        if let Some(directive) = directive {
++            self.current_directive = directive;
++        }
++
++        trace!(@continue_from_bookmark bookmark, self.current_directive, input);
++
++        let parse_result = match self.current_directive {
++            ParserDirective::WherePossibleScanForTagsOnly => self
++                .tag_scanner
++                .continue_from_bookmark(&mut self.context, input, last, bookmark),
++            ParserDirective::Lex => {
++                self.lexer
++                    .continue_from_bookmark(&mut self.context, input, last, bookmark)
++            }
++        };
++
++        self.handle_parse_result(parse_result, input, last)
++    }
++
++    fn handle_parse_result(
++        &mut self,
++        mut parse_result: ParseResult,
++        input: &[u8],
++        last: bool,
++    ) -> Result<usize, RewritingError> {
+         loop {
+             let unboxed = match parse_result {
+                 Ok(unreachable) => match unreachable {},
+@@ -92,6 +152,14 @@ impl<S: ParserOutputSink> Parser<S> {
+                     self.context.previously_consumed_byte_count += consumed_byte_count;
+                     return Ok(consumed_byte_count);
+                 }
++                ActionError::Suspended {
++                    consumed_byte_count,
++                    bookmark,
++                } => {
++                    self.context.previously_consumed_byte_count += consumed_byte_count;
++                    self.suspension = Some(bookmark);
++                    return Ok(consumed_byte_count);
++                }
+                 ActionError::ParserDirectiveChangeRequired(new_directive, sm_bookmark) => {
+                     self.current_directive = new_directive;
+ 
+--- a/src/parser/state_machine/mod.rs
++++ b/src/parser/state_machine/mod.rs
+@@ -51,7 +51,19 @@ pub(crate) struct StateMachineBookmark {
+ pub(crate) enum ActionError {
+     RewritingError(RewritingError),
+     ParserDirectiveChangeRequired(ParserDirective, StateMachineBookmark),
+-    EndOfInput { consumed_byte_count: usize },
++    EndOfInput {
++        consumed_byte_count: usize,
++    },
++    /// A content handler requested suspension (see
++    /// [`crate::SuspensionRequest`]). The first `consumed_byte_count` bytes
++    /// of the current input are fully processed; the rest must be buffered
++    /// and re-fed on resume. `bookmark` (with `pos` relative to that re-fed
++    /// tail, always `0`) restores the state machine once the parked dispatch
++    /// completes.
++    Suspended {
++        consumed_byte_count: usize,
++        bookmark: StateMachineBookmark,
++    },
+     Internal(&'static str),
+ }
+ 
+--- a/src/rewritable_units/document_end.rs
++++ b/src/rewritable_units/document_end.rs
+@@ -1,5 +1,8 @@
++use super::mutations::{DynamicString, StringChunk};
+ use super::{ContentType, StreamingHandlerSink};
++use crate::errors::RewritingError;
+ use encoding_rs::Encoding;
++use std::marker::PhantomData;
+ 
+ use crate::transform_stream::OutputSink;
+ 
+@@ -8,21 +11,47 @@ use crate::transform_stream::OutputSink;
+ /// This exposes the [append](#method.append) function that can be used to append content at the
+ /// end of the document. The content will only be appended after the rewriter has finished processing
+ /// the final chunk.
++// Note: appended content is buffered (as a `DynamicString`, like every other
++// mutation) and flushed to the output sink once all the document-end handlers
++// have run. This is what lets the unit own all of its state, which in turn
++// lets a handler suspend on it. The lifetime parameter is kept for backward
++// compatibility with the `DocumentEnd<'_>` spelling; the type owns everything.
+ pub struct DocumentEnd<'a> {
+-    output_sink: &'a mut dyn OutputSink,
++    appended: DynamicString,
+     encoding: &'static Encoding,
++    _lifetime: PhantomData<&'a ()>,
+ }
+ 
+ impl<'a> DocumentEnd<'a> {
+     #[inline]
+     #[must_use]
+-    pub(crate) fn new(output_sink: &'a mut dyn OutputSink, encoding: &'static Encoding) -> Self {
++    pub(crate) fn new(encoding: &'static Encoding) -> Self {
+         DocumentEnd {
+-            output_sink,
++            appended: DynamicString::new(),
+             encoding,
++            _lifetime: PhantomData,
+         }
+     }
+ 
++    /// Detaches the unit so it can outlive the current `end()` call (handler
++    /// suspension). Leaves `self` behind empty; the caller abandons it.
++    pub(crate) fn take_owned(&mut self) -> DocumentEnd<'static> {
++        DocumentEnd {
++            appended: std::mem::take(&mut self.appended),
++            encoding: self.encoding,
++            _lifetime: PhantomData,
++        }
++    }
++
++    /// Encodes the buffered appends into `output_sink`. Consumes the unit.
++    pub(crate) fn flush_into(self, output_sink: &mut dyn OutputSink) -> Result<(), RewritingError> {
++        let mut handle_chunk = |c: &[u8]| output_sink.handle_chunk(c);
++        let mut sink = StreamingHandlerSink::new(self.encoding, &mut handle_chunk);
++        self.appended
++            .encode(&mut sink)
++            .map_err(RewritingError::ContentHandlerError)
++    }
++
+     /// Appends `content` at the end of the document.
+     ///
+     /// Subsequent calls to this method append `content` to the previously inserted content.
+@@ -49,10 +78,8 @@ impl<'a> DocumentEnd<'a> {
+     /// ```
+     #[inline]
+     pub fn append(&mut self, content: &str, content_type: ContentType) {
+-        StreamingHandlerSink::new(self.encoding, &mut |c| {
+-            self.output_sink.handle_chunk(c);
+-        })
+-        .write_str(content, content_type);
++        self.appended
++            .push_back(StringChunk::from_str(content, content_type));
+     }
+ }
+ 
+--- a/src/rewritable_units/element.rs
++++ b/src/rewritable_units/element.rs
+@@ -37,18 +37,26 @@ pub enum TagNameError {
+     UnencodableCharacter,
+ }
+ 
++/// Either a borrow of the `StartTag` living in the dispatcher's stack-local
++/// [`Token`], or — once the element has been detached by a handler suspension
++/// — an owned, heap-allocated copy of it.
++enum StartTagRef<'rewriter, 'input_token> {
++    Borrowed(&'rewriter mut StartTag<'input_token>),
++    Owned(Box<StartTag<'input_token>>),
++}
++
+ /// An HTML element rewritable unit.
+ ///
+ /// Exposes API for examination and modification of a parsed HTML element.
+ pub struct Element<'rewriter, 'input_token, H: HandlerTypes = LocalHandlerTypes> {
+-    start_tag: &'rewriter mut StartTag<'input_token>,
++    start_tag: StartTagRef<'rewriter, 'input_token>,
+     end_tag_mutations: Option<Mutations>,
+     modified_end_tag_name: Option<Box<[u8]>>,
+     end_tag_handlers: Vec<H::EndTagHandler<'static>>,
+     can_have_content: bool,
+     should_remove_content: bool,
+     encoding: &'static Encoding,
+-    user_data: Box<dyn Any>,
++    user_data: Box<dyn Any + Send>,
+ }
+ 
+ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token, H> {
+@@ -61,7 +69,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+         let encoding = start_tag.encoding();
+ 
+         Element {
+-            start_tag,
++            start_tag: StartTagRef::Borrowed(start_tag),
+             end_tag_mutations: None,
+             modified_end_tag_name: None,
+             end_tag_handlers: Vec::new(),
+@@ -72,6 +80,44 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+         }
+     }
+ 
++    #[inline]
++    fn tag(&self) -> &StartTag<'input_token> {
++        match &self.start_tag {
++            StartTagRef::Borrowed(t) => t,
++            StartTagRef::Owned(t) => t,
++        }
++    }
++
++    #[inline]
++    fn tag_mut(&mut self) -> &mut StartTag<'input_token> {
++        match &mut self.start_tag {
++            StartTagRef::Borrowed(t) => t,
++            StartTagRef::Owned(t) => t,
++        }
++    }
++
++    /// Detaches the element from the parser's stack-local [`Token`] so it can
++    /// outlive the current `write()` call (handler suspension). The start tag
++    /// (and every byte slice it borrows from the input buffer) is deep-copied
++    /// onto the heap.
++    pub(crate) fn into_suspended(self) -> Element<'static, 'static, H> {
++        let start_tag = Box::new(match self.start_tag {
++            StartTagRef::Borrowed(t) => t.take_owned(),
++            StartTagRef::Owned(mut t) => t.take_owned(),
++        });
++
++        Element {
++            start_tag: StartTagRef::Owned(start_tag),
++            end_tag_mutations: self.end_tag_mutations,
++            modified_end_tag_name: self.modified_end_tag_name,
++            end_tag_handlers: self.end_tag_handlers,
++            can_have_content: self.can_have_content,
++            should_remove_content: self.should_remove_content,
++            encoding: self.encoding,
++            user_data: self.user_data,
++        }
++    }
++
+     fn tag_name_bytes_from_str(&self, name: &str) -> Result<BytesCow<'static>, TagNameError> {
+         match name.as_bytes().first() {
+             Some(ch) if !ch.is_ascii_alphabetic() => Err(TagNameError::InvalidFirstCharacter),
+@@ -98,7 +144,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+ 
+     #[inline]
+     fn remove_content(&mut self) {
+-        self.start_tag.mutations.mutate().content_after.clear();
++        self.tag_mut().mutations.mutate().content_after.clear();
+         if let Some(end) = self.end_tag_mutations.as_mut().and_then(|m| m.if_mutated()) {
+             end.content_before.clear();
+         }
+@@ -116,14 +162,14 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     #[inline]
+     #[must_use]
+     pub fn tag_name(&self) -> String {
+-        self.start_tag.name()
++        self.tag().name()
+     }
+ 
+     /// Returns the tag name of the element, preserving its case.
+     #[inline]
+     #[must_use]
+     pub fn tag_name_preserve_case(&self) -> String {
+-        self.start_tag.name_preserve_case()
++        self.tag().name_preserve_case()
+     }
+ 
+     /// Sets the tag name of the element.
+@@ -139,7 +185,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+             self.modified_end_tag_name = Some((*name).into());
+         }
+ 
+-        self.start_tag.set_name_raw(name);
++        self.tag_mut().set_name_raw(name);
+ 
+         Ok(())
+     }
+@@ -158,7 +204,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     #[inline]
+     #[must_use]
+     pub fn is_self_closing(&self) -> bool {
+-        self.start_tag.self_closing()
++        self.tag().self_closing()
+     }
+ 
+     /// Whether the element can have inner content.
+@@ -181,14 +227,14 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     #[inline]
+     #[must_use]
+     pub fn namespace_uri(&self) -> &'static str {
+-        self.start_tag.namespace_uri()
++        self.tag().namespace_uri()
+     }
+ 
+     /// Returns an immutable collection of element's attributes.
+     #[inline]
+     #[must_use]
+     pub fn attributes(&self) -> &[Attribute<'input_token>] {
+-        self.start_tag.attributes()
++        self.tag().attributes()
+     }
+ 
+     /// Returns the value of an attribute with the `name`. The value may have HTML/XML entities.
+@@ -225,13 +271,13 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     /// to the element with `name` and `value`.
+     #[inline]
+     pub fn set_attribute(&mut self, name: &str, value: &str) -> Result<(), AttributeNameError> {
+-        self.start_tag.set_attribute(name, value)
++        self.tag_mut().set_attribute(name, value)
+     }
+ 
+     /// Removes an attribute with the `name` if it is present.
+     #[inline]
+     pub fn remove_attribute(&mut self, name: &str) {
+-        self.start_tag.remove_attribute(name);
++        self.tag_mut().remove_attribute(name);
+     }
+ 
+     /// Inserts `content` before the element.
+@@ -264,7 +310,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     /// ```
+     #[inline]
+     pub fn before(&mut self, content: &str, content_type: ContentType) {
+-        self.start_tag
++        self.tag_mut()
+             .mutations
+             .mutate()
+             .content_before
+@@ -277,7 +323,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     ///
+     /// Use the [`streaming!`] macro to make a `StreamingHandler` from a closure.
+     pub fn streaming_before(&mut self, string_writer: Box<dyn StreamingHandler + Send + 'static>) {
+-        self.start_tag
++        self.tag_mut()
+             .mutations
+             .mutate()
+             .content_before
+@@ -321,7 +367,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+         if self.can_have_content {
+             &mut self.end_tag_mutations_mut().content_after
+         } else {
+-            &mut self.start_tag.mutations.mutate().content_after
++            &mut self.tag_mut().mutations.mutate().content_after
+         }
+         .push_front(chunk);
+     }
+@@ -378,12 +424,9 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+ 
+     fn prepend_chunk(&mut self, chunk: StringChunk) {
+         if self.can_have_content {
+-            self.start_tag.set_self_closing_syntax(false);
+-            self.start_tag
+-                .mutations
+-                .mutate()
+-                .content_after
+-                .push_front(chunk);
++            let tag = self.tag_mut();
++            tag.set_self_closing_syntax(false);
++            tag.mutations.mutate().content_after.push_front(chunk);
+         }
+     }
+ 
+@@ -443,7 +486,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+ 
+     fn append_chunk(&mut self, chunk: StringChunk) {
+         if self.can_have_content {
+-            self.start_tag.set_self_closing_syntax(false);
++            self.tag_mut().set_self_closing_syntax(false);
+             self.end_tag_mutations_mut().content_before.push_back(chunk);
+         }
+     }
+@@ -502,9 +545,9 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+ 
+     fn set_inner_content_chunk(&mut self, chunk: StringChunk) {
+         if self.can_have_content {
+-            self.start_tag.set_self_closing_syntax(false);
++            self.tag_mut().set_self_closing_syntax(false);
+             self.remove_content();
+-            self.start_tag
++            self.tag_mut()
+                 .mutations
+                 .mutate()
+                 .content_after
+@@ -561,7 +604,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     }
+ 
+     fn replace_chunk(&mut self, chunk: StringChunk) {
+-        self.start_tag.mutations.mutate().replace(chunk);
++        self.tag_mut().mutations.mutate().replace(chunk);
+ 
+         if self.can_have_content {
+             self.remove_content();
+@@ -582,7 +625,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     /// Removes the element and its inner content.
+     #[inline]
+     pub fn remove(&mut self) {
+-        self.start_tag.mutations.mutate().remove();
++        self.tag_mut().mutations.mutate().remove();
+ 
+         if self.can_have_content {
+             self.remove_content();
+@@ -615,7 +658,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     /// ```
+     #[inline]
+     pub fn remove_and_keep_content(&mut self) {
+-        self.start_tag.remove();
++        self.tag_mut().remove();
+ 
+         if self.can_have_content {
+             self.end_tag_mutations_mut().remove();
+@@ -626,7 +669,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     #[inline]
+     #[must_use]
+     pub fn removed(&self) -> bool {
+-        self.start_tag.mutations.removed()
++        self.tag().mutations.removed()
+     }
+ 
+     #[inline]
+@@ -637,7 +680,7 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     /// Returns the start tag.
+     #[inline]
+     pub fn start_tag(&mut self) -> &mut StartTag<'input_token> {
+-        self.start_tag
++        self.tag_mut()
+     }
+ 
+     /// Returns the handlers that will run when the end tag is reached.
+@@ -701,10 +744,18 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+     }
+ 
+     pub(crate) fn into_end_tag_handler(self) -> Option<H::EndTagHandler<'static>> {
+-        let end_tag_mutations = self.end_tag_mutations;
+-        let modified_end_tag_name = self.modified_end_tag_name;
+-        let mut end_tag_handlers = self.end_tag_handlers;
+-
++        Self::make_end_tag_handler(
++            self.end_tag_mutations,
++            self.modified_end_tag_name,
++            self.end_tag_handlers,
++        )
++    }
++
++    fn make_end_tag_handler(
++        end_tag_mutations: Option<Mutations>,
++        modified_end_tag_name: Option<Box<[u8]>>,
++        mut end_tag_handlers: Vec<H::EndTagHandler<'static>>,
++    ) -> Option<H::EndTagHandler<'static>> {
+         if end_tag_mutations.is_some()
+             || modified_end_tag_name.is_some()
+             || !end_tag_handlers.is_empty()
+@@ -730,19 +781,41 @@ impl<'rewriter, 'input_token, H: HandlerTypes> Element<'rewriter, 'input_token,
+         }
+     }
+ 
++    /// Splits a suspended (owned) element back into the start tag it captured
++    /// plus the bookkeeping `ContentHandlersDispatcher::handle_start_tag`
++    /// applies after the handlers run. Only valid once `into_suspended` has
++    /// detached the element.
++    pub(crate) fn into_owned_parts(
++        self,
++    ) -> (
++        Box<StartTag<'input_token>>,
++        bool,
++        Option<H::EndTagHandler<'static>>,
++    ) {
++        let StartTagRef::Owned(start_tag) = self.start_tag else {
++            unreachable!("into_owned_parts called on an element that still borrows its start tag");
++        };
++        let handler = Self::make_end_tag_handler(
++            self.end_tag_mutations,
++            self.modified_end_tag_name,
++            self.end_tag_handlers,
++        );
++        (start_tag, self.should_remove_content, handler)
++    }
++
+     /// Position of this element's start tag in the source document, before any rewriting
+     ///
+     /// The end of this element hasn't been parsed yet. To find it, use [`Element::end_tag_handlers`].
+     #[must_use]
+     pub fn source_location(&self) -> SourceLocation {
+-        self.start_tag.source_location()
++        self.tag().source_location()
+     }
+ 
+     /// [Self::namespace_uri], but as a `CStr`
+     #[inline]
+     #[must_use]
+     pub fn namespace_uri_c_str(&self) -> &'static std::ffi::CStr {
+-        self.start_tag.namespace_uri_c_str()
++        self.tag().namespace_uri_c_str()
+     }
+ }
+ 
+--- a/src/rewritable_units/mod.rs
++++ b/src/rewritable_units/mod.rs
+@@ -60,7 +60,10 @@ pub trait UserData {
+     /// Returns a mutable reference to the attached user data.
+     fn user_data_mut(&mut self) -> &mut dyn Any;
+     /// Attaches user data to a rewritable unit.
+-    fn set_user_data(&mut self, data: impl Any);
++    ///
++    /// The data must be [`Send`] so that a rewritable unit detached by a
++    /// handler suspension doesn't strip [`Send`] from a `send::HtmlRewriter`.
++    fn set_user_data(&mut self, data: impl Any + Send);
+ }
+ 
+ macro_rules! impl_user_data {
+@@ -77,7 +80,7 @@ macro_rules! impl_user_data {
+             }
+ 
+             #[inline]
+-            fn set_user_data(&mut self, data: impl Any){
++            fn set_user_data(&mut self, data: impl Any + Send){
+                 self.user_data = Box::new(data);
+             }
+         }
+--- a/src/rewritable_units/text_decoder.rs
++++ b/src/rewritable_units/text_decoder.rs
+@@ -9,6 +9,24 @@ pub(crate) struct TextDecoder {
+     pending_source_location_bytes_start: usize,
+     pending_text_streaming_decoder: Option<Decoder>,
+     text_buffer: String,
++    /// Where the current `feed_text` call was when a text handler suspended
++    /// (`None` otherwise). Recorded *only* on the error path so the success
++    /// path pays nothing.
++    suspended: Option<TextFeedSuspension>,
++}
++
++/// Where a [`TextDecoder::feed_text`] call was when the text handler for one
++/// of its chunks suspended. Lets [`TextDecoder::resume_feed`] finish decoding
++/// the rest of that text lexeme once the parked chunk completes. The
++/// undecoded tail is copied because it pointed into the `write()` call's
++/// input buffer, which is gone by the time the resume runs.
++pub(crate) struct TextFeedSuspension {
++    remaining: Vec<u8>,
++    next_source_location_bytes_start: usize,
++    last_in_text_node: bool,
++    /// `true` if the chunk that suspended was this feed's final one; the
++    /// resume then only has to run the loop's epilogue.
++    finished: bool,
+ }
+ 
+ pub(crate) type OutputHandlerCallback<'tmp> =
+@@ -25,6 +43,7 @@ impl TextDecoder {
+             // this will be later initialized to DEFAULT_BUFFER_LEN,
+             // because encoding_rs wants a slice
+             text_buffer: String::new(),
++            suspended: None,
+         }
+     }
+ 
+@@ -43,6 +62,39 @@ impl TextDecoder {
+         Ok(())
+     }
+ 
++    /// The feed state recorded when a text handler suspended, if any.
++    #[inline]
++    pub fn take_suspended(&mut self) -> Option<TextFeedSuspension> {
++        self.suspended.take()
++    }
++
++    /// Continues a `feed_text` call that a text handler suspended, starting
++    /// right after the chunk that suspended.
++    pub fn resume_feed(
++        &mut self,
++        suspension: TextFeedSuspension,
++        output_handler: &mut OutputHandlerCallback<'_>,
++    ) -> Result<(), RewritingError> {
++        if suspension.finished {
++            // The chunk that suspended was this feed's final one: only the
++            // loop epilogue is left.
++            if suspension.last_in_text_node {
++                self.pending_text_streaming_decoder = None;
++            } else {
++                self.pending_source_location_bytes_start =
++                    suspension.next_source_location_bytes_start;
++            }
++            return Ok(());
++        }
++
++        self.feed_decoder_loop(
++            &suspension.remaining,
++            suspension.next_source_location_bytes_start,
++            suspension.last_in_text_node,
++            output_handler,
++        )
++    }
++
+     #[inline(never)]
+     pub fn feed_text(
+         &mut self,
+@@ -63,7 +115,16 @@ impl TextDecoder {
+                 SourceLocation::from_start_len(next_source_location_bytes_start, utf8_text.len());
+             next_source_location_bytes_start = source_location.bytes().end;
+ 
+-            (output_handler)(utf8_text, really_last, encoding, source_location)?;
++            let res = (output_handler)(utf8_text, really_last, encoding, source_location);
++            if res.is_err() {
++                self.suspended = Some(TextFeedSuspension {
++                    remaining: rest.to_vec(),
++                    next_source_location_bytes_start,
++                    last_in_text_node,
++                    finished: really_last,
++                });
++            }
++            res?;
+ 
+             if really_last {
+                 debug_assert!(self.pending_text_streaming_decoder.is_none());
+@@ -71,6 +132,25 @@ impl TextDecoder {
+             }
+         }
+ 
++        self.feed_decoder_loop(
++            raw_input,
++            next_source_location_bytes_start,
++            last_in_text_node,
++            output_handler,
++        )
++    }
++
++    /// The streaming-decoder tail of [`Self::feed_text`], also the re-entry
++    /// point for [`Self::resume_feed`].
++    fn feed_decoder_loop(
++        &mut self,
++        mut raw_input: &[u8],
++        mut next_source_location_bytes_start: usize,
++        last_in_text_node: bool,
++        output_handler: &mut OutputHandlerCallback<'_>,
++    ) -> Result<(), RewritingError> {
++        let encoding = self.encoding.get();
++
+         if self.pending_text_streaming_decoder.is_none() && self.text_buffer.is_empty() {
+             // repeat() avoids utf8 check comapred to `String::from_utf8(vec![0; len])`
+             self.text_buffer = "\0".repeat(DEFAULT_BUFFER_LEN);
+@@ -94,13 +174,22 @@ impl TextDecoder {
+                 // but only one call to output_handler can be *the* last one.
+                 let really_last = last_in_text_node && finished_decoding;
+ 
+-                (output_handler)(
++                let res = (output_handler)(
+                     // this will always be in bounds, but unwrap_or_default optimizes better
+                     buffer.get(..written).unwrap_or_default(),
+                     really_last,
+                     encoding,
+                     source_location,
+-                )?;
++                );
++                if res.is_err() {
++                    self.suspended = Some(TextFeedSuspension {
++                        remaining: raw_input.get(read..).unwrap_or_default().to_vec(),
++                        next_source_location_bytes_start,
++                        last_in_text_node,
++                        finished: finished_decoding,
++                    });
++                }
++                res?;
+             }
+ 
+             if finished_decoding {
+--- a/src/rewritable_units/tokens/attributes.rs
++++ b/src/rewritable_units/tokens/attributes.rs
+@@ -39,7 +39,7 @@ pub enum AttributeNameError {
+ pub struct Attribute<'i> {
+     name: BytesCow<'i>,
+     value: BytesCow<'i>,
+-    raw: Option<Bytes<'i>>,
++    raw: Option<BytesCow<'i>>,
+     encoding: &'static Encoding,
+ }
+ 
+@@ -49,7 +49,7 @@ impl<'i> Attribute<'i> {
+     const fn new(
+         name: BytesCow<'i>,
+         value: BytesCow<'i>,
+-        raw: Bytes<'i>,
++        raw: BytesCow<'i>,
+         encoding: &'static Encoding,
+     ) -> Self {
+         Attribute {
+@@ -60,6 +60,16 @@ impl<'i> Attribute<'i> {
+         }
+     }
+ 
++    /// Detaches the attribute from the input buffer it may borrow.
++    fn into_owned(self) -> Attribute<'static> {
++        Attribute {
++            name: self.name.into_owned(),
++            value: self.value.into_owned(),
++            raw: self.raw.map(BytesCow::into_owned),
++            encoding: self.encoding,
++        }
++    }
++
+     #[inline]
+     fn name_from_str(
+         name: &str,
+@@ -242,7 +252,8 @@ impl<'i> Attributes<'i> {
+                         .into(),
+                     self.input
+                         .opt_slice(Some(a.raw_range))
+-                        .unwrap_or_else(cant_fail),
++                        .unwrap_or_else(cant_fail)
++                        .into(),
+                     self.encoding,
+                 )
+             })
+@@ -264,12 +275,45 @@ impl<'i> Attributes<'i> {
+         self.items.get_mut().unwrap_or_else(|| unreachable!())
+     }
+ 
++    /// Detaches the collection from the lexeme's input buffer, leaving an
++    /// empty collection behind. The lazy `items` vec is forced *while the
++    /// backing lexeme is still alive* and every attribute is deep-copied, so
++    /// the result owns all of its bytes.
++    pub(crate) fn take_owned(&mut self) -> Attributes<'static> {
++        // Ensure `items` is materialized from `input`/`attribute_buffer`
++        // before those references go away.
++        let _ = self.as_mut_vec();
++        let items: Vec<Attribute<'static>> = self
++            .items
++            .take()
++            .unwrap_or_default()
++            .into_iter()
++            .map(Attribute::into_owned)
++            .collect();
++
++        let cell = OnceCell::new();
++        let _ = cell.set(items);
++
++        Attributes {
++            input: &EMPTY_INPUT,
++            attribute_buffer: &EMPTY_ATTRIBUTE_BUFFER,
++            items: cell,
++            encoding: self.encoding,
++        }
++    }
++
+     #[cfg(test)]
+     pub(crate) const fn raw_attributes(&self) -> (&'i Bytes<'i>, &'i AttributeBuffer) {
+         (self.input, self.attribute_buffer)
+     }
+ }
+ 
++// Placeholder backing for an owned `Attributes`. Once `take_owned` has
++// materialized `items`, `input`/`attribute_buffer` are never read again
++// (`is_empty` and `as_mut_vec` both short-circuit on an initialized cell).
++static EMPTY_INPUT: Bytes<'static> = Bytes::new(&[]);
++static EMPTY_ATTRIBUTE_BUFFER: AttributeBuffer = Vec::new();
++
+ impl Serialize for &mut Attributes<'_> {
+     #[inline]
+     fn into_bytes(self, output_handler: &mut dyn FnMut(&[u8])) -> Result<(), RewritingError> {
+--- a/src/rewritable_units/tokens/comment.rs
++++ b/src/rewritable_units/tokens/comment.rs
+@@ -33,7 +33,7 @@ pub struct Comment<'i> {
+     raw: SpannedRawBytes<'i>,
+     encoding: &'static Encoding,
+     mutations: Mutations,
+-    user_data: Box<dyn Any>,
++    user_data: Box<dyn Any + Send>,
+ }
+ 
+ impl<'i> Comment<'i> {
+@@ -242,6 +242,19 @@ impl<'i> Comment<'i> {
+         self.mutations.removed()
+     }
+ 
++    /// Detaches the comment from the parser's input buffer so it can outlive
++    /// the current `write()` call (handler suspension). Leaves `self` behind
++    /// in a drained state; the caller abandons it.
++    pub(crate) fn take_owned(&mut self) -> Comment<'static> {
++        Comment {
++            text: self.text.take_owned(),
++            raw: self.raw.take_owned(),
++            encoding: self.encoding,
++            mutations: std::mem::replace(&mut self.mutations, Mutations::new()),
++            user_data: std::mem::replace(&mut self.user_data, Box::new(())),
++        }
++    }
++
+     #[inline]
+     fn serialize_self(&self, sink: &mut StreamingHandlerSink<'_>) -> Result<(), RewritingError> {
+         let output_handler = sink.output_handler();
+--- a/src/rewritable_units/tokens/doctype.rs
++++ b/src/rewritable_units/tokens/doctype.rs
+@@ -1,5 +1,5 @@
+ use crate::base::Bytes;
+-use crate::base::Spanned;
++use crate::base::{BytesCow, Spanned, SpannedRawBytes};
+ use crate::errors::RewritingError;
+ use crate::html_content::SourceLocation;
+ use crate::rewritable_units::{Serialize, Token};
+@@ -35,14 +35,14 @@ use std::fmt::{self, Debug};
+ ///
+ /// [document type declaration]: https://developer.mozilla.org/en-US/docs/Glossary/Doctype
+ pub struct Doctype<'i> {
+-    name: Option<Bytes<'i>>,
+-    public_id: Option<Bytes<'i>>,
+-    system_id: Option<Bytes<'i>>,
++    name: Option<BytesCow<'i>>,
++    public_id: Option<BytesCow<'i>>,
++    system_id: Option<BytesCow<'i>>,
+     force_quirks: bool,
+     removed: bool,
+-    raw: Spanned<Bytes<'i>>,
++    raw: SpannedRawBytes<'i>,
+     encoding: &'static Encoding,
+-    user_data: Box<dyn Any>,
++    user_data: Box<dyn Any + Send>,
+ }
+ 
+ impl<'i> Doctype<'i> {
+@@ -58,17 +58,33 @@ impl<'i> Doctype<'i> {
+         encoding: &'static Encoding,
+     ) -> Token<'i> {
+         Token::Doctype(Doctype {
+-            name,
+-            public_id,
+-            system_id,
++            name: name.map(Into::into),
++            public_id: public_id.map(Into::into),
++            system_id: system_id.map(Into::into),
+             force_quirks,
+             removed,
+-            raw,
++            raw: raw.into(),
+             encoding,
+             user_data: Box::new(()),
+         })
+     }
+ 
++    /// Detaches the doctype from the parser's input buffer so it can outlive
++    /// the current `write()` call (handler suspension). Leaves `self` behind
++    /// in a drained state; the caller abandons it.
++    pub(crate) fn take_owned(&mut self) -> Doctype<'static> {
++        Doctype {
++            name: self.name.as_mut().map(BytesCow::take_owned),
++            public_id: self.public_id.as_mut().map(BytesCow::take_owned),
++            system_id: self.system_id.as_mut().map(BytesCow::take_owned),
++            force_quirks: self.force_quirks,
++            removed: self.removed,
++            raw: self.raw.take_owned(),
++            encoding: self.encoding,
++            user_data: std::mem::replace(&mut self.user_data, Box::new(())),
++        }
++    }
++
+     /// The name of the doctype.
+     #[inline]
+     #[must_use]
+@@ -125,7 +141,9 @@ impl Serialize for &Doctype<'_> {
+     #[inline]
+     fn into_bytes(self, output_handler: &mut dyn FnMut(&[u8])) -> Result<(), RewritingError> {
+         if !self.removed() {
+-            output_handler(self.raw.as_slice());
++            // A doctype is never mutated, so its raw bytes are always present
++            // (`Original` from the lexeme, or `Owned` after a suspension).
++            output_handler(self.raw.original().unwrap_or_default());
+         }
+         Ok(())
+     }
+--- a/src/rewritable_units/tokens/end_tag.rs
++++ b/src/rewritable_units/tokens/end_tag.rs
+@@ -160,6 +160,18 @@ impl<'i> EndTag<'i> {
+         self.mutations.removed()
+     }
+ 
++    /// Detaches the tag from the parser's input buffer so it can outlive the
++    /// current `write()` call (handler suspension). Leaves `self` behind in a
++    /// drained state; the caller abandons it.
++    pub(crate) fn take_owned(&mut self) -> EndTag<'static> {
++        EndTag {
++            name: self.name.take_owned(),
++            raw: self.raw.take_owned(),
++            encoding: self.encoding,
++            mutations: std::mem::replace(&mut self.mutations, Mutations::new()),
++        }
++    }
++
+     #[inline]
+     fn serialize_self(&self, sink: &mut StreamingHandlerSink<'_>) -> Result<(), RewritingError> {
+         let output_handler = sink.output_handler();
+--- a/src/rewritable_units/tokens/start_tag.rs
++++ b/src/rewritable_units/tokens/start_tag.rs
+@@ -215,6 +215,20 @@ impl<'input_token> StartTag<'input_token> {
+         self.mutations.mutate().remove();
+     }
+ 
++    /// Detaches the tag from the parser's input buffer so it can outlive the
++    /// current `write()` call (handler suspension). Leaves `self` behind in a
++    /// drained state; the caller abandons it.
++    pub(crate) fn take_owned(&mut self) -> StartTag<'static> {
++        StartTag {
++            name: self.name.take_owned(),
++            attributes: self.attributes.take_owned(),
++            ns: self.ns,
++            self_closing: self.self_closing,
++            raw: self.raw.take_owned(),
++            mutations: std::mem::replace(&mut self.mutations, Mutations::new()),
++        }
++    }
++
+     fn serialize_self(
+         &mut self,
+         sink: &mut StreamingHandlerSink<'_>,
+--- a/src/rewritable_units/tokens/text_chunk.rs
++++ b/src/rewritable_units/tokens/text_chunk.rs
+@@ -78,7 +78,7 @@ pub struct TextChunk<'i> {
+     last_in_text_node: bool,
+     encoding: &'static Encoding,
+     mutations: Mutations,
+-    user_data: Box<dyn Any>,
++    user_data: Box<dyn Any + Send>,
+     source_location: SourceLocation,
+ }
+ 
+@@ -108,6 +108,21 @@ impl<'i> TextChunk<'i> {
+         self.encoding
+     }
+ 
++    /// Detaches the chunk from the parser's text buffer so it can outlive the
++    /// current `write()` call (handler suspension). Leaves `self` behind in a
++    /// drained state; the caller abandons it.
++    pub(crate) fn take_owned(&mut self) -> TextChunk<'static> {
++        TextChunk {
++            text: Cow::Owned(std::mem::take(&mut self.text).into_owned()),
++            text_type: self.text_type,
++            last_in_text_node: self.last_in_text_node,
++            encoding: self.encoding,
++            mutations: std::mem::replace(&mut self.mutations, Mutations::new()),
++            user_data: std::mem::replace(&mut self.user_data, Box::new(())),
++            source_location: self.source_location.clone(),
++        }
++    }
++
+     /// Returns the content of the chunk, which [`may not be a complete text node`](TextChunk).
+     ///
+     /// It may contain markup, such as HTML/XML entities. See [`TextChunk::text_type`].
+--- a/src/rewriter/handlers_dispatcher.rs
++++ b/src/rewriter/handlers_dispatcher.rs
+@@ -1,8 +1,36 @@
+ use super::ElementDescriptor;
++use super::is_suspension_request;
+ use super::settings::*;
+-use crate::rewritable_units::{DocumentEnd, Element, StartTag, Token, TokenCaptureFlags};
++use crate::rewritable_units::{
++    Comment, Doctype, DocumentEnd, Element, EndTag, StartTag, TextChunk, Token, TokenCaptureFlags,
++};
+ use crate::selectors_vm::MatchInfo;
+ 
++/// A rewritable unit detached from the parser's stack by a handler
++/// suspension. Boxed so its address stays stable across `resume` calls: an
++/// embedder may hold a raw pointer to it for the whole suspension.
++pub(crate) enum SuspendedToken<H: HandlerTypes> {
++    Element {
++        element: Box<Element<'static, 'static, H>>,
++        /// Index of the first element handler not yet run for this token.
++        next_handler_idx: usize,
++    },
++    EndTag(Box<EndTag<'static>>),
++    TextChunk {
++        chunk: Box<TextChunk<'static>>,
++        next_handler_idx: usize,
++    },
++    Comment {
++        comment: Box<Comment<'static>>,
++        next_handler_idx: usize,
++    },
++    Doctype {
++        doctype: Box<Doctype<'static>>,
++        next_handler_idx: usize,
++    },
++    DocumentEnd(Box<DocumentEnd<'static>>),
++}
++
+ #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
+ pub(crate) struct SelectorHandlersLocator {
+     pub element_handler_idx: Option<usize>,
+@@ -73,33 +101,53 @@ impl<H> HandlerVec<H> {
+         self.user_count > 0
+     }
+ 
++    /// Runs `cb` for every active item starting from `start_idx`. `*next_idx`
++    /// is kept pointed past the item currently being invoked, so a handler
++    /// that suspends (returns `Err`) can be resumed from the following item.
+     #[inline]
+-    pub fn for_each_active(
++    pub fn for_each_active_from(
+         &mut self,
++        start_idx: usize,
++        next_idx: &mut usize,
+         mut cb: impl FnMut(&mut H) -> HandlerResult,
+     ) -> HandlerResult {
+-        for item in &mut self.items {
+-            if item.user_count > 0 {
+-                cb(&mut item.handler)?;
++        for i in start_idx..self.items.len() {
++            if self.items[i].user_count > 0 {
++                *next_idx = i + 1;
++                cb(&mut self.items[i].handler)?;
+             }
+         }
+ 
++        *next_idx = self.items.len();
+         Ok(())
+     }
+ 
++    /// Like [`Self::for_each_active_from`], but each visited item is
++    /// deactivated. Deactivation happens *before* an error is propagated, so
++    /// a handler that suspends is not re-run when the loop is resumed from
++    /// `*next_idx`.
+     #[inline]
+-    pub fn do_for_each_active_and_deactivate(
++    pub fn do_for_each_active_and_deactivate_from(
+         &mut self,
++        start_idx: usize,
++        next_idx: &mut usize,
+         mut cb: impl FnMut(&mut H) -> HandlerResult,
+     ) -> HandlerResult {
+-        for item in &mut self.items {
+-            if item.user_count > 0 {
+-                cb(&mut item.handler)?;
++        for i in start_idx..self.items.len() {
++            if self.items[i].user_count > 0 {
++                *next_idx = i + 1;
++
++                let item = &mut self.items[i];
++                let res = cb(&mut item.handler);
++
+                 self.user_count -= item.user_count;
+                 item.user_count = 0;
++
++                res?;
+             }
+         }
+ 
++        *next_idx = self.items.len();
+         Ok(())
+     }
+ 
+@@ -131,6 +179,9 @@ pub(crate) struct ContentHandlersDispatcher<'h, H: HandlerTypes> {
+     end_handlers: HandlerVec<H::EndHandler<'h>>,
+     next_element_can_have_content: bool,
+     matched_elements_with_removed_content: usize,
++    /// The rewritable unit a handler suspended on, if any. See
++    /// [`crate::SuspensionRequest`].
++    suspended: Option<SuspendedToken<H>>,
+ }
+ 
+ impl<H: HandlerTypes> Default for ContentHandlersDispatcher<'_, H> {
+@@ -144,6 +195,7 @@ impl<H: HandlerTypes> Default for ContentHandlersDispatcher<'_, H> {
+             end_handlers: Default::default(),
+             next_element_can_have_content: false,
+             matched_elements_with_removed_content: 0,
++            suspended: None,
+         }
+     }
+ }
+@@ -236,35 +288,63 @@ impl<'h, H: HandlerTypes> ContentHandlersDispatcher<'h, H> {
+         }
+     }
+ 
+-    pub fn handle_start_tag(
++    /// The post-handler bookkeeping for an element: mark its descriptor on
++    /// the open-element stack with the `remove()`/end-tag state the handlers
++    /// accumulated. Shared by the normal and the resume path.
++    fn apply_element_result(
+         &mut self,
+-        start_tag: &mut StartTag<'_>,
++        should_remove_content: bool,
++        end_tag_handler: Option<H::EndTagHandler<'static>>,
+         current_element_data: Option<&mut ElementDescriptor>,
+-    ) -> HandlerResult {
+-        if self.matched_elements_with_removed_content > 0 {
+-            start_tag.remove();
+-        }
+-
+-        let mut element = Element::new(start_tag, self.next_element_can_have_content);
+-
+-        self.element_handlers
+-            .do_for_each_active_and_deactivate(|h| h(&mut element))?;
+-
++    ) {
+         if self.next_element_can_have_content {
+             if let Some(elem_desc) = current_element_data {
+-                if element.should_remove_content() {
++                if should_remove_content {
+                     elem_desc.remove_content = true;
+                     self.matched_elements_with_removed_content += 1;
+                 }
+ 
+-                debug_assert!(element.can_have_content());
+-                if let Some(handler) = element.into_end_tag_handler() {
++                if let Some(handler) = end_tag_handler {
+                     elem_desc.end_tag_handler_idx = Some(self.end_tag_handlers.len());
+ 
+                     self.end_tag_handlers.push(handler, false);
+                 }
+             }
+         }
++    }
++
++    pub fn handle_start_tag(
++        &mut self,
++        start_tag: &mut StartTag<'_>,
++        current_element_data: Option<&mut ElementDescriptor>,
++    ) -> HandlerResult {
++        if self.matched_elements_with_removed_content > 0 {
++            start_tag.remove();
++        }
++
++        let mut element = Element::new(start_tag, self.next_element_can_have_content);
++
++        let mut next_handler_idx = 0;
++        if let Err(e) = self
++            .element_handlers
++            .do_for_each_active_and_deactivate_from(0, &mut next_handler_idx, |h| h(&mut element))
++        {
++            if is_suspension_request(&*e) {
++                // Deep-copy the element (and the stack-local start tag it
++                // borrows) onto the heap so it survives the unwind out of
++                // `write()`.
++                self.suspended = Some(SuspendedToken::Element {
++                    element: Box::new(element.into_suspended()),
++                    next_handler_idx,
++                });
++            }
++            return Err(e);
++        }
++
++        debug_assert!(!self.next_element_can_have_content || element.can_have_content());
++        let should_remove_content = element.should_remove_content();
++        let end_tag_handler = element.into_end_tag_handler();
++        self.apply_element_result(should_remove_content, end_tag_handler, current_element_data);
+ 
+         Ok(())
+     }
+@@ -274,20 +354,240 @@ impl<'h, H: HandlerTypes> ContentHandlersDispatcher<'h, H> {
+         token: &mut Token<'_>,
+         current_element_data: Option<&mut ElementDescriptor>,
+     ) -> HandlerResult {
++        debug_assert!(
++            self.suspended.is_none(),
++            "a token was dispatched while a suspension is pending"
++        );
++
+         match token {
+-            Token::Doctype(doctype) => self.doctype_handlers.for_each_active(|h| h(doctype)),
+-            Token::StartTag(start_tag) => self.handle_start_tag(start_tag, current_element_data),
+-            Token::EndTag(end_tag) => self
+-                .end_tag_handlers
+-                .do_for_each_active_and_remove(|h| h(end_tag)),
+-            Token::TextChunk(text) => self.text_handlers.for_each_active(|h| h(text)),
+-            Token::Comment(comment) => self.comment_handlers.for_each_active(|h| h(comment)),
++            Token::StartTag(start_tag) => {
++                return self.handle_start_tag(start_tag, current_element_data);
++            }
++            Token::EndTag(end_tag) => {
++                let res = self
++                    .end_tag_handlers
++                    .do_for_each_active_and_remove(|h| h(end_tag));
++                if let Err(e) = res {
++                    if is_suspension_request(&*e) {
++                        self.suspended =
++                            Some(SuspendedToken::EndTag(Box::new(end_tag.take_owned())));
++                    }
++                    return Err(e);
++                }
++            }
++            Token::Doctype(doctype) => {
++                let mut next_handler_idx = 0;
++                let res =
++                    self.doctype_handlers
++                        .for_each_active_from(0, &mut next_handler_idx, |h| h(doctype));
++                if let Err(e) = res {
++                    if is_suspension_request(&*e) {
++                        self.suspended = Some(SuspendedToken::Doctype {
++                            doctype: Box::new(doctype.take_owned()),
++                            next_handler_idx,
++                        });
++                    }
++                    return Err(e);
++                }
++            }
++            Token::TextChunk(text) => {
++                let mut next_handler_idx = 0;
++                let res = self
++                    .text_handlers
++                    .for_each_active_from(0, &mut next_handler_idx, |h| h(text));
++                if let Err(e) = res {
++                    if is_suspension_request(&*e) {
++                        self.suspended = Some(SuspendedToken::TextChunk {
++                            chunk: Box::new(text.take_owned()),
++                            next_handler_idx,
++                        });
++                    }
++                    return Err(e);
++                }
++            }
++            Token::Comment(comment) => {
++                let mut next_handler_idx = 0;
++                let res =
++                    self.comment_handlers
++                        .for_each_active_from(0, &mut next_handler_idx, |h| h(comment));
++                if let Err(e) = res {
++                    if is_suspension_request(&*e) {
++                        self.suspended = Some(SuspendedToken::Comment {
++                            comment: Box::new(comment.take_owned()),
++                            next_handler_idx,
++                        });
++                    }
++                    return Err(e);
++                }
++            }
+         }
++
++        Ok(())
+     }
+ 
+     pub fn handle_end(&mut self, document_end: &mut DocumentEnd<'_>) -> HandlerResult {
+-        self.end_handlers
+-            .do_for_each_active_and_remove(|h| h(document_end))
++        let res = self
++            .end_handlers
++            .do_for_each_active_and_remove(|h| h(document_end));
++        if let Err(e) = res {
++            if is_suspension_request(&*e) {
++                self.suspended = Some(SuspendedToken::DocumentEnd(Box::new(
++                    document_end.take_owned(),
++                )));
++            }
++            return Err(e);
++        }
++        Ok(())
++    }
++
++    /// The unit a handler is suspended on, if any. The returned reference is
++    /// into a `Box`, so its address is stable until the token completes.
++    #[inline]
++    pub fn suspended_token_mut(&mut self) -> Option<&mut SuspendedToken<H>> {
++        self.suspended.as_mut()
++    }
++
++    /// Runs the handlers that had not yet run for the parked token and hands
++    /// the completed token back for serialization. If another handler
++    /// suspends, the (already owned) unit is re-parked at its *same* heap
++    /// address and the suspension error propagates.
++    ///
++    /// Must not be called for a parked `DocumentEnd`; use
++    /// [`Self::resume_suspended_document_end`].
++    pub fn resume_suspended_token(
++        &mut self,
++        current_element_data: Option<&mut ElementDescriptor>,
++    ) -> Result<Token<'static>, Box<dyn std::error::Error + Send + Sync>> {
++        match self
++            .suspended
++            .take()
++            .expect("resume_suspended_token called without a pending suspension")
++        {
++            SuspendedToken::Element {
++                mut element,
++                next_handler_idx,
++            } => {
++                let mut next = next_handler_idx;
++                if let Err(e) = self
++                    .element_handlers
++                    .do_for_each_active_and_deactivate_from(next_handler_idx, &mut next, |h| {
++                        h(&mut element)
++                    })
++                {
++                    if is_suspension_request(&*e) {
++                        self.suspended = Some(SuspendedToken::Element {
++                            element,
++                            next_handler_idx: next,
++                        });
++                    }
++                    return Err(e);
++                }
++
++                debug_assert!(!self.next_element_can_have_content || element.can_have_content());
++                let (start_tag, should_remove_content, end_tag_handler) =
++                    element.into_owned_parts();
++                self.apply_element_result(
++                    should_remove_content,
++                    end_tag_handler,
++                    current_element_data,
++                );
++                Ok(Token::StartTag(*start_tag))
++            }
++            SuspendedToken::EndTag(mut end_tag) => {
++                if let Err(e) = self
++                    .end_tag_handlers
++                    .do_for_each_active_and_remove(|h| h(&mut end_tag))
++                {
++                    if is_suspension_request(&*e) {
++                        self.suspended = Some(SuspendedToken::EndTag(end_tag));
++                    }
++                    return Err(e);
++                }
++                Ok(Token::EndTag(*end_tag))
++            }
++            SuspendedToken::TextChunk {
++                mut chunk,
++                next_handler_idx,
++            } => {
++                let mut next = next_handler_idx;
++                if let Err(e) =
++                    self.text_handlers
++                        .for_each_active_from(next_handler_idx, &mut next, |h| h(&mut chunk))
++                {
++                    if is_suspension_request(&*e) {
++                        self.suspended = Some(SuspendedToken::TextChunk {
++                            chunk,
++                            next_handler_idx: next,
++                        });
++                    }
++                    return Err(e);
++                }
++                Ok(Token::TextChunk(*chunk))
++            }
++            SuspendedToken::Comment {
++                mut comment,
++                next_handler_idx,
++            } => {
++                let mut next = next_handler_idx;
++                if let Err(e) =
++                    self.comment_handlers
++                        .for_each_active_from(next_handler_idx, &mut next, |h| h(&mut comment))
++                {
++                    if is_suspension_request(&*e) {
++                        self.suspended = Some(SuspendedToken::Comment {
++                            comment,
++                            next_handler_idx: next,
++                        });
++                    }
++                    return Err(e);
++                }
++                Ok(Token::Comment(*comment))
++            }
++            SuspendedToken::Doctype {
++                mut doctype,
++                next_handler_idx,
++            } => {
++                let mut next = next_handler_idx;
++                if let Err(e) =
++                    self.doctype_handlers
++                        .for_each_active_from(next_handler_idx, &mut next, |h| h(&mut doctype))
++                {
++                    if is_suspension_request(&*e) {
++                        self.suspended = Some(SuspendedToken::Doctype {
++                            doctype,
++                            next_handler_idx: next,
++                        });
++                    }
++                    return Err(e);
++                }
++                Ok(Token::Doctype(*doctype))
++            }
++            SuspendedToken::DocumentEnd(_) => {
++                unreachable!("a DocumentEnd suspension is resumed through resume_finish")
++            }
++        }
++    }
++
++    /// Runs the remaining document-end handlers for the parked
++    /// [`DocumentEnd`]. See [`Self::resume_suspended_token`].
++    pub fn resume_suspended_document_end(
++        &mut self,
++    ) -> Result<DocumentEnd<'static>, Box<dyn std::error::Error + Send + Sync>> {
++        let Some(SuspendedToken::DocumentEnd(mut document_end)) = self.suspended.take() else {
++            unreachable!("resume_suspended_document_end called without a parked DocumentEnd")
++        };
++
++        if let Err(e) = self
++            .end_handlers
++            .do_for_each_active_and_remove(|h| h(&mut document_end))
++        {
++            if is_suspension_request(&*e) {
++                self.suspended = Some(SuspendedToken::DocumentEnd(document_end));
++            }
++            return Err(e);
++        }
++
++        Ok(*document_end)
+     }
+ 
+     #[inline]
+--- a/src/rewriter/mod.rs
++++ b/src/rewriter/mod.rs
+@@ -4,12 +4,13 @@ mod rewrite_controller;
+ #[macro_use]
+ pub(crate) mod settings;
+ 
++use self::handlers_dispatcher::SuspendedToken;
+ use self::rewrite_controller::{ElementDescriptor, HtmlRewriteController};
+ pub use self::settings::*;
+ use crate::base::SharedEncoding;
+ use crate::memory::{MemoryLimitExceededError, SharedMemoryLimiter};
+ use crate::parser::ParsingAmbiguityError;
+-use crate::rewritable_units::Element;
++use crate::rewritable_units::{Comment, Doctype, DocumentEnd, Element, EndTag, TextChunk};
+ use crate::transform_stream::*;
+ use encoding_rs::Encoding;
+ use mime::Mime;
+@@ -58,11 +59,30 @@ impl TryFrom<&'static Encoding> for AsciiCompatibleEncoding {
+     }
+ }
+ 
++/// Returned from a content handler (as `Err(Box::new(SuspensionRequest))`) to
++/// make the rewriter park the current rewritable unit and exit `write()`/
++/// `end()` with [`RewritingError::Suspended`] instead of running the rest of
++/// the handlers for it.
++///
++/// Unlike every other handler error, a suspension does **not** poison the
++/// rewriter. The parked unit stays alive (reachable through the
++/// `HtmlRewriter::suspended_*` accessors) until [`HtmlRewriter::resume`] is
++/// called, which runs the remaining handlers for it and continues the
++/// document.
++///
++/// This is the hook an embedder with asynchronous content handlers uses to
++/// get out of `write()` without nesting an event loop inside it: park, return
++/// to the real event loop, and `resume()` once the handler's pending work has
++/// settled.
++#[derive(Error, Debug)]
++#[error("the content handler requested suspension")]
++pub struct SuspensionRequest;
++
+ /// A compound error type that can be returned by [`write`] and [`end`] methods of the rewriter.
+ ///
+ /// # Note
+-/// This error is unrecoverable. The rewriter instance will panic on attempt to use it after such an
+-/// error.
++/// This error is unrecoverable (except for [`Suspended`](Self::Suspended)).
++/// The rewriter instance will panic on attempt to use it after such an error.
+ ///
+ /// [`write`]: ../struct.HtmlRewriter.html#method.write
+ /// [`end`]: ../struct.HtmlRewriter.html#method.end
+@@ -83,6 +103,33 @@ pub enum RewritingError {
+     /// An error that was propagated from one of the content handlers.
+     #[error("{0}")]
+     ContentHandlerError(Box<dyn StdError + Send + Sync + 'static>),
++
++    /// A content handler returned [`SuspensionRequest`]. The rewriter parked
++    /// its state and returned early; it is **not** poisoned. Call
++    /// [`HtmlRewriter::resume`] to continue.
++    #[error("the rewriter is suspended on a content handler")]
++    Suspended,
++}
++
++/// Maps a content handler's error onto [`RewritingError`], turning the
++/// [`SuspensionRequest`] sentinel into [`RewritingError::Suspended`] so the
++/// rest of the pipeline can match on the variant instead of downcasting.
++#[inline]
++pub(crate) fn content_handler_error(
++    e: Box<dyn StdError + Send + Sync + 'static>,
++) -> RewritingError {
++    if e.is::<SuspensionRequest>() {
++        RewritingError::Suspended
++    } else {
++        RewritingError::ContentHandlerError(e)
++    }
++}
++
++/// `true` for the [`SuspensionRequest`] sentinel a content handler returns to
++/// suspend the rewriter.
++#[inline]
++pub(crate) fn is_suspension_request(e: &(dyn StdError + Send + Sync + 'static)) -> bool {
++    e.is::<SuspensionRequest>()
+ }
+ 
+ /// A streaming HTML rewriter.
+@@ -139,8 +186,12 @@ macro_rules! guarded {
+ 
+         let res = $expr;
+ 
+-        if res.is_err() {
+-            $self.poisoned = true;
++        // `Suspended` is the one non-fatal escape: the rewriter parked its
++        // state and expects `resume()` to be called.
++        if let Err(e) = &res {
++            if !matches!(e, RewritingError::Suspended) {
++                $self.poisoned = true;
++            }
+         }
+ 
+         res
+@@ -210,8 +261,87 @@ impl<'h, O: OutputSink, H: HandlerTypes> HtmlRewriter<'h, O, H> {
+     /// [`write`]: struct.HtmlRewriter.html#method.write
+     #[inline]
+     pub fn end(mut self) -> Result<(), RewritingError> {
++        self.end_mut()
++    }
++
++    /// Same as [`end`](Self::end), but keeps the rewriter alive. Required
++    /// when content handlers can suspend: the rewriter must survive an
++    /// `Err(RewritingError::Suspended)` so [`resume`](Self::resume) can be
++    /// called on it. No further `write` may follow.
++    #[inline]
++    pub fn end_mut(&mut self) -> Result<(), RewritingError> {
+         guarded!(self, self.stream.end())
+     }
++
++    /// `true` if a content handler returned [`SuspensionRequest`] during the
++    /// last `write()`/`end_mut()`/`resume()` call and the rewriter is
++    /// waiting for [`resume`](Self::resume).
++    #[inline]
++    pub fn is_suspended(&self) -> bool {
++        self.stream.is_suspended()
++    }
++
++    /// Continues a rewrite that a content handler suspended (see
++    /// [`SuspensionRequest`]): runs the remaining handlers for the parked
++    /// rewritable unit, serializes it, and keeps going until the suspended
++    /// operation (`write` or `end_mut`) completes or another handler
++    /// suspends.
++    ///
++    /// If the suspension happened during `write()`, the caller still has to
++    /// call [`end_mut`](Self::end_mut) once this returns `Ok`.
++    #[inline]
++    pub fn resume(&mut self) -> Result<(), RewritingError> {
++        guarded!(self, self.stream.resume())
++    }
++
++    /// The [`Element`] a handler is suspended on, if any. Its address is
++    /// stable until the element's handlers all complete.
++    pub fn suspended_element(&mut self) -> Option<&mut Element<'static, 'static, H>> {
++        match self.stream.controller_mut().suspended_token_mut()? {
++            SuspendedToken::Element { element, .. } => Some(element),
++            _ => None,
++        }
++    }
++
++    /// The [`EndTag`] a handler is suspended on, if any.
++    pub fn suspended_end_tag(&mut self) -> Option<&mut EndTag<'static>> {
++        match self.stream.controller_mut().suspended_token_mut()? {
++            SuspendedToken::EndTag(end_tag) => Some(end_tag),
++            _ => None,
++        }
++    }
++
++    /// The [`TextChunk`] a handler is suspended on, if any.
++    pub fn suspended_text_chunk(&mut self) -> Option<&mut TextChunk<'static>> {
++        match self.stream.controller_mut().suspended_token_mut()? {
++            SuspendedToken::TextChunk { chunk, .. } => Some(chunk),
++            _ => None,
++        }
++    }
++
++    /// The [`Comment`] a handler is suspended on, if any.
++    pub fn suspended_comment(&mut self) -> Option<&mut Comment<'static>> {
++        match self.stream.controller_mut().suspended_token_mut()? {
++            SuspendedToken::Comment { comment, .. } => Some(comment),
++            _ => None,
++        }
++    }
++
++    /// The [`Doctype`] a handler is suspended on, if any.
++    pub fn suspended_doctype(&mut self) -> Option<&mut Doctype<'static>> {
++        match self.stream.controller_mut().suspended_token_mut()? {
++            SuspendedToken::Doctype { doctype, .. } => Some(doctype),
++            _ => None,
++        }
++    }
++
++    /// The [`DocumentEnd`] a handler is suspended on, if any.
++    pub fn suspended_document_end(&mut self) -> Option<&mut DocumentEnd<'static>> {
++        match self.stream.controller_mut().suspended_token_mut()? {
++            SuspendedToken::DocumentEnd(document_end) => Some(document_end),
++            _ => None,
++        }
++    }
+ }
+ 
+ // NOTE: this opaque Debug implementation is required to make
+@@ -992,4 +1122,608 @@ mod tests {
+             );
+         }
+     }
++
++    /// Content-handler suspension (see [`SuspensionRequest`]).
++    mod suspension {
++        use super::*;
++        use std::cell::{Cell, RefCell};
++        use std::rc::Rc;
++
++        type TestSink = Box<dyn FnMut(&[u8])>;
++
++        /// Drives `write(chunk)*` + `end_mut()` to completion, invoking
++        /// `on_suspend(&mut rewriter)` after every suspension and then
++        /// `resume()`-ing. Returns the output and the suspension count.
++        fn drive<'h>(
++            chunks: &[&str],
++            settings: Settings<'h, '_>,
++            mut on_suspend: impl FnMut(&mut HtmlRewriter<'h, TestSink>),
++        ) -> (String, usize) {
++            let out = Rc::new(RefCell::new(Vec::<u8>::new()));
++            let out_in_sink = Rc::clone(&out);
++            let sink: TestSink = Box::new(move |c: &[u8]| {
++                out_in_sink.borrow_mut().extend_from_slice(c);
++            });
++
++            let mut rewriter = HtmlRewriter::new(settings, sink);
++            let mut suspensions = 0;
++
++            let mut pump = |rewriter: &mut HtmlRewriter<'h, TestSink>,
++                            mut res: Result<(), RewritingError>| {
++                loop {
++                    match res {
++                        Ok(()) => return,
++                        Err(RewritingError::Suspended) => {
++                            assert!(rewriter.is_suspended());
++                            suspensions += 1;
++                            on_suspend(rewriter);
++                            res = rewriter.resume();
++                        }
++                        Err(e) => panic!("unexpected rewriting error: {e}"),
++                    }
++                }
++            };
++
++            for chunk in chunks {
++                let res = rewriter.write(chunk.as_bytes());
++                pump(&mut rewriter, res);
++            }
++            let res = rewriter.end_mut();
++            pump(&mut rewriter, res);
++
++            assert!(!rewriter.is_suspended());
++            drop(rewriter);
++
++            let out = Rc::try_unwrap(out).unwrap().into_inner();
++            (String::from_utf8(out).unwrap(), suspensions)
++        }
++
++        const SUSPEND: fn() -> HandlerResult = || Err(SuspensionRequest.into());
++
++        #[test]
++        fn element_identity() {
++            // A handler that only ever suspends must not change the output.
++            let (out, n) = drive(
++                &[r#"a<div id="x">b<span>c</span></div>d"#],
++                Settings {
++                    element_content_handlers: vec![element!("div, span", |_| SUSPEND())],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(out, r#"a<div id="x">b<span>c</span></div>d"#);
++            assert_eq!(n, 2);
++        }
++
++        #[test]
++        fn element_mutations_before_and_after_suspension() {
++            let (out, n) = drive(
++                &["<div>content</div><div>two</div>"],
++                Settings {
++                    element_content_handlers: vec![element!("div", |el| {
++                        // Mutations made *before* suspending must survive it.
++                        el.set_attribute("pre", "1")?;
++                        el.before("[", ContentType::Text);
++                        SUSPEND()
++                    })],
++                    ..Settings::new()
++                },
++                |rewriter| {
++                    // Mutations made *during* the suspension, through the
++                    // parked (heap-allocated) element.
++                    let el = rewriter.suspended_element().unwrap();
++                    el.set_attribute("post", "2").unwrap();
++                    el.set_inner_content("REPLACED", ContentType::Text);
++                },
++            );
++            assert_eq!(
++                out,
++                r#"[<div pre="1" post="2">REPLACED</div>[<div pre="1" post="2">REPLACED</div>"#
++            );
++            assert_eq!(n, 2);
++        }
++
++        #[test]
++        fn later_element_handlers_run_after_resume() {
++            let order = Rc::new(RefCell::new(Vec::new()));
++            let (o1, o2, o3) = (order.clone(), order.clone(), order.clone());
++            let (out, n) = drive(
++                &["<div></div>"],
++                Settings {
++                    element_content_handlers: vec![
++                        element!("div", move |el| {
++                            o1.borrow_mut().push("a");
++                            el.set_attribute("a", "")?;
++                            SUSPEND()
++                        }),
++                        element!("div", move |el| {
++                            o2.borrow_mut().push("b");
++                            el.set_attribute("b", "")?;
++                            SUSPEND()
++                        }),
++                        element!("div", move |el| {
++                            o3.borrow_mut().push("c");
++                            el.set_attribute("c", "")?;
++                            Ok(())
++                        }),
++                    ],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(*order.borrow(), ["a", "b", "c"]);
++            assert_eq!(out, r#"<div a="" b="" c=""></div>"#);
++            assert_eq!(n, 2);
++        }
++
++        #[test]
++        fn remove_across_suspension() {
++            // `el.remove()` affects the parser's emission gating through the
++            // `handle_tag` epilogue, which the suspension skips and the
++            // resume has to replay.
++            let (out, n) = drive(
++                &["a<div>gone<span>too</span></div>b"],
++                Settings {
++                    element_content_handlers: vec![element!("div", |el| {
++                        el.remove();
++                        SUSPEND()
++                    })],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(out, "ab");
++            assert_eq!(n, 1);
++        }
++
++        #[test]
++        fn remove_during_suspension() {
++            // Same, but `remove()` is called on the parked element.
++            let (out, n) = drive(
++                &["a<div>gone<span>too</span></div>b"],
++                Settings {
++                    element_content_handlers: vec![element!("div", |_| SUSPEND())],
++                    ..Settings::new()
++                },
++                |rewriter| rewriter.suspended_element().unwrap().remove(),
++            );
++            assert_eq!(out, "ab");
++            assert_eq!(n, 1);
++        }
++
++        #[test]
++        fn set_tag_name_and_end_tag_handler_across_suspension() {
++            let (out, n) = drive(
++                &["<div>x</div>"],
++                Settings {
++                    element_content_handlers: vec![element!("div", |el: &mut Element<'_, '_>| {
++                        el.set_tag_name("section").unwrap();
++                        el.end_tag_handlers().unwrap().push(Box::new(|end| {
++                            end.before("!", ContentType::Text);
++                            Ok(())
++                        }));
++                        SUSPEND()
++                    })],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(out, "<section>x!</section>");
++            assert_eq!(n, 1);
++        }
++
++        #[test]
++        fn end_tag_handler_suspension() {
++            let (out, n) = drive(
++                &["<div>x</div>y"],
++                Settings {
++                    element_content_handlers: vec![element!("div", |el: &mut Element<'_, '_>| {
++                        el.end_tag_handlers().unwrap().push(Box::new(|_| SUSPEND()));
++                        Ok(())
++                    })],
++                    ..Settings::new()
++                },
++                |rewriter| {
++                    rewriter
++                        .suspended_end_tag()
++                        .unwrap()
++                        .after("#", ContentType::Text);
++                },
++            );
++            assert_eq!(out, "<div>x</div>#y");
++            assert_eq!(n, 1);
++        }
++
++        #[test]
++        fn text_suspension() {
++            // Suspends on every text chunk, including the empty
++            // `last_in_text_node` one fired just before the closing tag.
++            let seen = Rc::new(RefCell::new(Vec::new()));
++            let seen2 = seen.clone();
++            let (out, n) = drive(
++                &["<div>hello</div>"],
++                Settings {
++                    element_content_handlers: vec![text!("div", move |t| {
++                        seen2
++                            .borrow_mut()
++                            .push((t.as_str().to_owned(), t.last_in_text_node()));
++                        SUSPEND()
++                    })],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(out, "<div>hello</div>");
++            assert_eq!(
++                *seen.borrow(),
++                [("hello".to_owned(), false), (String::new(), true)]
++            );
++            assert_eq!(n, 2);
++        }
++
++        #[test]
++        fn text_suspension_replace_during() {
++            let (out, n) = drive(
++                &["<div>hello</div>"],
++                Settings {
++                    element_content_handlers: vec![text!("div", |t| {
++                        if t.last_in_text_node() {
++                            Ok(())
++                        } else {
++                            SUSPEND()
++                        }
++                    })],
++                    ..Settings::new()
++                },
++                |rewriter| {
++                    let chunk = rewriter.suspended_text_chunk().unwrap();
++                    assert_eq!(chunk.as_str(), "hello");
++                    chunk.replace("goodbye", ContentType::Text);
++                },
++            );
++            assert_eq!(out, "<div>goodbye</div>");
++            assert_eq!(n, 1);
++        }
++
++        #[test]
++        fn last_text_chunk_suspension_does_not_drop_the_following_element() {
++            // The `last_in_text_node` chunk is flushed from inside the
++            // lexer action that is about to emit the *next* lexeme.
++            // Suspending there must not lose that lexeme: it gets re-lexed
++            // from the suspension bookmark on resume.
++            let (out, n) = drive(
++                &["<div>text<span>inner</span>tail<!--c--></div>"],
++                Settings {
++                    element_content_handlers: vec![
++                        (
++                            Cow::Owned("div".parse().unwrap()),
++                            ElementContentHandlers::default().text(|t: &mut TextChunk<'_>| {
++                                if t.last_in_text_node() {
++                                    SUSPEND()
++                                } else {
++                                    Ok(())
++                                }
++                            }),
++                        ),
++                        element!("span", |el| {
++                            el.set_attribute("hit", "")?;
++                            Ok(())
++                        }),
++                        comments!("div", |c| {
++                            c.set_text("seen").unwrap();
++                            Ok(())
++                        }),
++                    ],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(
++                out,
++                r#"<div>text<span hit="">inner</span>tail<!--seen--></div>"#
++            );
++            // `<span>`, `</span>`, and `<!--c-->` each end a text node
++            // (there's no text between `-->` and `</div>`, so that flush
++            // is a no-op).
++            assert_eq!(n, 3);
++        }
++
++        #[test]
++        fn comment_suspension() {
++            let (out, n) = drive(
++                &["<div><!--a--></div><!--b-->"],
++                Settings {
++                    element_content_handlers: vec![comments!("div", |_| SUSPEND())],
++                    document_content_handlers: vec![doc_comments!(|_| SUSPEND())],
++                    ..Settings::new()
++                },
++                |rewriter| {
++                    let comment = rewriter.suspended_comment().unwrap();
++                    let text = comment.text();
++                    comment.set_text(&format!("{text}{text}")).unwrap();
++                },
++            );
++            // `<!--a-->` is matched by both the element and the document
++            // handler, so it suspends (and gets doubled) twice.
++            assert_eq!(out, "<div><!--aaaa--></div><!--bb-->");
++            assert_eq!(n, 3);
++        }
++
++        #[test]
++        fn doctype_suspension() {
++            let (out, n) = drive(
++                &["<!DOCTYPE html><p>x</p>"],
++                Settings {
++                    document_content_handlers: vec![doctype!(|_| SUSPEND())],
++                    ..Settings::new()
++                },
++                |rewriter| {
++                    let doctype = rewriter.suspended_doctype().unwrap();
++                    assert_eq!(doctype.name(), Some("html".into()));
++                },
++            );
++            assert_eq!(out, "<!DOCTYPE html><p>x</p>");
++            assert_eq!(n, 1);
++        }
++
++        #[test]
++        fn document_end_suspension() {
++            let (out, n) = drive(
++                &["<div></div>"],
++                Settings {
++                    document_content_handlers: vec![end!(|end| {
++                        end.append("<early>", ContentType::Html);
++                        SUSPEND()
++                    })],
++                    ..Settings::new()
++                },
++                |rewriter| {
++                    rewriter
++                        .suspended_document_end()
++                        .unwrap()
++                        .append("<late>", ContentType::Html);
++                },
++            );
++            assert_eq!(out, "<div></div><early><late>");
++            assert_eq!(n, 1);
++        }
++
++        #[test]
++        fn script_content_model_survives_suspension() {
++            // `<b>` inside `<script>` must stay raw text after the resume,
++            // i.e. the bookmark restores the ScriptData text type the
++            // tree-builder feedback set before the handler ran.
++            let (out, n) = drive(
++                &["<script>a<b>c</script><b>d</b>"],
++                Settings {
++                    element_content_handlers: vec![element!("script, b", |el| {
++                        el.set_attribute("hit", "")?;
++                        SUSPEND()
++                    })],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            // Only `<script>` and the *real* `<b>` match; the one inside the
++            // script is raw text.
++            assert_eq!(out, r#"<script hit="">a<b>c</script><b hit="">d</b>"#);
++            assert_eq!(n, 2);
++        }
++
++        #[test]
++        fn multi_chunk_input() {
++            for chunk_size in [1, 2, 3, 7] {
++                let html = r#"pre<div id="a">in<span>ner</span></div><!--c-->post"#;
++                let chunks: Vec<String> = html
++                    .as_bytes()
++                    .chunks(chunk_size)
++                    .map(|c| String::from_utf8(c.to_vec()).unwrap())
++                    .collect();
++                let chunks: Vec<&str> = chunks.iter().map(String::as_str).collect();
++
++                let (out, n) = drive(
++                    &chunks,
++                    Settings {
++                        element_content_handlers: vec![element!("div, span", |el| {
++                            el.set_attribute("hit", "")?;
++                            SUSPEND()
++                        })],
++                        document_content_handlers: vec![doc_comments!(|_| SUSPEND())],
++                        ..Settings::new()
++                    },
++                    |_| {},
++                );
++                assert_eq!(
++                    out, r#"pre<div id="a" hit="">in<span hit="">ner</span></div><!--c-->post"#,
++                    "chunk_size={chunk_size}"
++                );
++                assert_eq!(n, 3, "chunk_size={chunk_size}");
++            }
++        }
++
++        #[test]
++        fn suspension_does_not_poison() {
++            let mut rewriter = HtmlRewriter::new(
++                Settings {
++                    element_content_handlers: vec![element!("div", |_| SUSPEND())],
++                    encoding: AsciiCompatibleEncoding::utf_8(),
++                    ..Settings::new()
++                },
++                |_: &[u8]| {},
++            );
++
++            assert!(matches!(
++                rewriter.write(b"<div>"),
++                Err(RewritingError::Suspended)
++            ));
++            // A poisoned rewriter would panic here.
++            rewriter.resume().unwrap();
++            rewriter.end_mut().unwrap();
++        }
++
++        #[test]
++        fn real_handler_error_still_poisons() {
++            let mut rewriter = HtmlRewriter::new(
++                Settings {
++                    element_content_handlers: vec![element!("div", |_| Err("boom".into()))],
++                    encoding: AsciiCompatibleEncoding::utf_8(),
++                    ..Settings::new()
++                },
++                |_: &[u8]| {},
++            );
++
++            assert!(matches!(
++                rewriter.write(b"<div>"),
++                Err(RewritingError::ContentHandlerError(_))
++            ));
++            assert!(!rewriter.is_suspended());
++            assert!(
++                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++                    let _ = rewriter.write(b"x");
++                }))
++                .is_err()
++            );
++        }
++
++        /// Records the order handlers fire in, plus the serialized output.
++        fn eof_order(input: &str) -> (Vec<&'static str>, String) {
++            let order = Rc::new(RefCell::new(Vec::new()));
++            let (o_text, o_comment, o_doctype) = (order.clone(), order.clone(), order.clone());
++            let (out, _) = drive(
++                &[input],
++                Settings {
++                    document_content_handlers: vec![
++                        doc_text!(move |t| {
++                            if t.last_in_text_node() {
++                                o_text.borrow_mut().push("text-last");
++                            }
++                            Ok(())
++                        }),
++                        doc_comments!(move |_| {
++                            o_comment.borrow_mut().push("comment");
++                            Ok(())
++                        }),
++                        doctype!(move |_| {
++                            o_doctype.borrow_mut().push("doctype");
++                            Ok(())
++                        }),
++                    ],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            let order = order.borrow().clone();
++            (order, out)
++        }
++
++        // `emit_current_token_and_eof` must flush the pending last text chunk
++        // before the comment/doctype lexeme it builds, exactly like the
++        // non-EOF `emit_current_token` does. Otherwise an input that ends
++        // inside a comment (a truncated upstream body) dispatches the comment
++        // first, inverting both handler order and output byte order.
++        #[test]
++        fn pending_text_flushes_before_unterminated_comment_at_eof() {
++            let (order, out) = eof_order("hello<!-- unterminated");
++            assert_eq!(order, ["text-last", "comment"]);
++            assert_eq!(out, "hello<!-- unterminated");
++        }
++
++        #[test]
++        fn pending_text_flushes_before_unterminated_doctype_at_eof() {
++            let (order, out) = eof_order("hello<!doctype html");
++            assert_eq!(order, ["text-last", "doctype"]);
++            assert_eq!(out, "hello<!doctype html");
++        }
++
++        // The same hoist, on the `emit_raw_without_token_and_eof` path: an
++        // input that ends inside an unterminated tag.
++        #[test]
++        fn pending_text_flushes_before_unterminated_tag_at_eof() {
++            let (order, out) = eof_order("hello<div attr");
++            assert_eq!(order, ["text-last"]);
++            assert_eq!(out, "hello<div attr");
++        }
++
++        // `resume_dispatch` step 2 re-serializes the parked token, but only
++        // when emission is enabled. A handler suspending inside content an
++        // outer handler removed must not resurrect that content.
++        #[test]
++        fn suspension_inside_removed_content_emits_nothing() {
++            let (out, n) = drive(
++                &["a<div>b<span>c</span>d</div>e"],
++                Settings {
++                    element_content_handlers: vec![
++                        element!("div", |el| {
++                            el.remove();
++                            Ok(())
++                        }),
++                        // Runs against content that is being removed.
++                        element!("span", |_| SUSPEND()),
++                    ],
++                    document_content_handlers: vec![doc_text!(|_| SUSPEND())],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(out, "ae");
++            assert!(n > 0, "the handlers must actually have suspended");
++        }
++
++        // `emit_raw_without_token`'s flush hoist: `<![CDATA[` in foreign
++        // content is the only lexeme that reaches it.
++        #[test]
++        fn text_suspension_around_cdata() {
++            let chunks = Rc::new(RefCell::new(Vec::new()));
++            let c = chunks.clone();
++            let (out, n) = drive(
++                &["<svg><foo>a<![CDATA[b]]>c</foo></svg>"],
++                Settings {
++                    document_content_handlers: vec![doc_text!(move |t| {
++                        c.borrow_mut().push(t.as_str().to_owned());
++                        SUSPEND()
++                    })],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(out, "<svg><foo>a<![CDATA[b]]>c</foo></svg>");
++            assert!(n > 0);
++            assert!(
++                chunks.borrow().iter().any(|t| t == "a"),
++                "expected a text chunk 'a' before the CDATA, got {:?}",
++                chunks.borrow()
++            );
++        }
++
++        // A text handler that suspends on the last chunk, flushed from inside
++        // the composite EOF action: the resume must still emit the comment.
++        #[test]
++        fn text_suspension_at_unterminated_comment_eof() {
++            let order = Rc::new(RefCell::new(Vec::new()));
++            let (o_text, o_comment) = (order.clone(), order.clone());
++            let (out, n) = drive(
++                &["hello<!-- unterminated"],
++                Settings {
++                    document_content_handlers: vec![
++                        doc_text!(move |t| {
++                            if t.last_in_text_node() {
++                                o_text.borrow_mut().push("text-last");
++                                return SUSPEND();
++                            }
++                            Ok(())
++                        }),
++                        doc_comments!(move |_| {
++                            o_comment.borrow_mut().push("comment");
++                            Ok(())
++                        }),
++                    ],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(*order.borrow(), ["text-last", "comment"]);
++            assert_eq!(out, "hello<!-- unterminated");
++            assert_eq!(n, 1);
++        }
++    }
+ }
+--- a/src/rewriter/rewrite_controller.rs
++++ b/src/rewriter/rewrite_controller.rs
+@@ -1,5 +1,5 @@
+ use super::handlers_dispatcher::{ContentHandlersDispatcher, SelectorHandlersLocator};
+-use super::{HandlerTypes, RewritingError, Settings};
++use super::{HandlerTypes, RewritingError, Settings, content_handler_error};
+ use crate::base::SharedEncoding;
+ use crate::html::{LocalName, Namespace};
+ use crate::memory::SharedMemoryLimiter;
+@@ -9,6 +9,8 @@ use crate::selectors_vm::{AuxStartTagInfoRequest, ElementData, SelectorMatchingV
+ use crate::transform_stream::{DispatcherError, StartTagHandlingResult, TransformController};
+ use hashbrown::{DefaultHashBuilder, HashSet};
+ 
++pub(crate) use super::handlers_dispatcher::SuspendedToken;
++
+ pub(crate) struct ElementDescriptor {
+     pub matched_content_handlers: HashSet<SelectorHandlersLocator>,
+     pub end_tag_handler_idx: Option<usize>,
+@@ -123,6 +125,12 @@ impl<H: HandlerTypes> HtmlRewriteController<'_, H> {
+     fn get_capture_flags(&self) -> TokenCaptureFlags {
+         self.handlers_dispatcher.get_token_capture_flags()
+     }
++
++    /// The rewritable unit a handler is currently suspended on, if any.
++    #[inline]
++    pub(crate) fn suspended_token_mut(&mut self) -> Option<&mut SuspendedToken<H>> {
++        self.handlers_dispatcher.suspended_token_mut()
++    }
+ }
+ 
+ impl<H: HandlerTypes> TransformController for HtmlRewriteController<'_, H> {
+@@ -173,13 +181,30 @@ impl<H: HandlerTypes> TransformController for HtmlRewriteController<'_, H> {
+ 
+         self.handlers_dispatcher
+             .handle_token(token, current_element_data)
+-            .map_err(RewritingError::ContentHandlerError)
++            .map_err(content_handler_error)
+     }
+ 
+     fn handle_end(&mut self, document_end: &mut DocumentEnd<'_>) -> Result<(), RewritingError> {
+         self.handlers_dispatcher
+             .handle_end(document_end)
+-            .map_err(RewritingError::ContentHandlerError)
++            .map_err(content_handler_error)
++    }
++
++    fn resume_suspended_token(&mut self) -> Result<Token<'static>, RewritingError> {
++        let current_element_data = self
++            .selector_matching_vm
++            .as_mut()
++            .and_then(SelectorMatchingVm::current_element_data_mut);
++
++        self.handlers_dispatcher
++            .resume_suspended_token(current_element_data)
++            .map_err(content_handler_error)
++    }
++
++    fn resume_suspended_document_end(&mut self) -> Result<DocumentEnd<'static>, RewritingError> {
++        self.handlers_dispatcher
++            .resume_suspended_document_end()
++            .map_err(content_handler_error)
+     }
+ 
+     #[inline]
+--- a/src/transform_stream/dispatcher.rs
++++ b/src/transform_stream/dispatcher.rs
+@@ -3,8 +3,7 @@ use crate::html::{LocalName, Namespace};
+ use crate::html_content::{TextChunk, TextType};
+ use crate::parser::{
+     ActionError, ActionResult, AttributeBuffer, Lexeme, LexemeSink, NonTagContentLexeme,
+-    NonTagContentTokenOutline, ParserDirective, ParserOutputSink, TagHintSink, TagLexeme,
+-    TagTokenOutline,
++    ParserDirective, ParserOutputSink, TagHintSink, TagLexeme, TagTokenOutline,
+ };
+ use crate::rewritable_units::TextDecoder;
+ use crate::rewritable_units::ToTokenResult;
+@@ -43,6 +42,40 @@ pub trait TransformController: Sized {
+     fn handle_token(&mut self, token: &mut Token<'_>) -> Result<(), RewritingError>;
+     fn handle_end(&mut self, document_end: &mut DocumentEnd<'_>) -> Result<(), RewritingError>;
+     fn should_emit_content(&self) -> bool;
++
++    /// Runs the handlers that had not yet run for the token a previous
++    /// `handle_token` parked (see [`RewritingError::Suspended`]) and returns
++    /// the completed, owned token for serialization. May suspend again.
++    ///
++    /// Only called after `handle_token` returned `RewritingError::Suspended`.
++    fn resume_suspended_token(&mut self) -> Result<Token<'static>, RewritingError> {
++        unreachable!("this TransformController does not support suspension")
++    }
++
++    /// Same as [`Self::resume_suspended_token`], for a [`DocumentEnd`] that
++    /// `handle_end` parked.
++    fn resume_suspended_document_end(&mut self) -> Result<DocumentEnd<'static>, RewritingError> {
++        unreachable!("this TransformController does not support suspension")
++    }
++}
++
++/// Where in the dispatch pipeline a suspension escaped from. Decides which
++/// epilogue [`Dispatcher::resume_dispatch`] has to replay.
++#[derive(Copy, Clone)]
++enum SuspensionSite {
++    /// `handle_tag`'s `try_produce_token_from_lexeme`: the tag's own token.
++    /// The `emission_enabled` update and the returned `ParserDirective` were
++    /// skipped and must be recomputed on resume.
++    Tag,
++    /// `handle_non_tag_content` or the pre-lexeme `flush_pending_text`:
++    /// neither has an epilogue, and the parser directive doesn't change.
++    NonTag,
++}
++
++/// `true` iff `e` is the non-fatal suspension escape.
++#[inline]
++fn is_suspension(e: &ActionError) -> bool {
++    matches!(e, ActionError::RewritingError(RewritingError::Suspended))
+ }
+ 
+ /// Defines an interface for the [`HtmlRewriter`]'s output.
+@@ -74,6 +107,9 @@ pub struct Dispatcher<C, O> {
+     got_flags_from_hint: bool,
+     pending_element_aux_info_req: Option<AuxStartTagInfoRequest<C>>,
+     encoding: SharedEncoding,
++    /// `Some` while a content handler has the dispatch suspended. The parked
++    /// token itself lives on the transform controller.
++    suspended_at: Option<SuspensionSite>,
+ }
+ 
+ /// Fields split out of `Dispatcher` for borrow checking of event handlers
+@@ -107,10 +143,18 @@ where
+     fn finish(&mut self, encoding: &'static Encoding, input: &[u8]) -> Result<(), RewritingError> {
+         self.flush_remaining_input(input, input.len());
+ 
+-        let mut document_end = DocumentEnd::new(&mut self.output_sink, encoding);
++        let mut document_end = DocumentEnd::new(encoding);
+ 
+         self.transform_controller.handle_end(&mut document_end)?;
+ 
++        self.flush_document_end(document_end)
++    }
++
++    /// Encode the buffered document-end appends to the output sink and emit
++    /// the zero-length finalizing chunk.
++    fn flush_document_end(&mut self, document_end: DocumentEnd<'_>) -> Result<(), RewritingError> {
++        document_end.flush_into(&mut self.output_sink)?;
++
+         // NOTE: output the finalizing chunk.
+         self.output_sink.handle_chunk(&[]);
+ 
+@@ -200,6 +244,7 @@ where
+             encoding,
+             got_flags_from_hint: false,
+             pending_element_aux_info_req: None,
++            suspended_at: None,
+         }
+     }
+ 
+@@ -350,6 +395,85 @@ where
+     pub fn finish(&mut self, input: &[u8]) -> Result<(), RewritingError> {
+         self.delegate.finish(self.encoding.get(), input)
+     }
++
++    /// The transform controller, for reaching the parked token of a
++    /// suspension from the embedder.
++    pub(crate) const fn transform_controller_mut(&mut self) -> &mut C {
++        &mut self.delegate.transform_controller
++    }
++
++    /// Completes a dispatch that a content handler suspended: runs the
++    /// remaining handlers for the parked token, serializes it, drains the
++    /// rest of the text lexeme it may have come from, and replays the
++    /// `handle_tag` epilogue the suspension skipped.
++    ///
++    /// Returns the `ParserDirective` that `handle_tag` never got to return,
++    /// or `None` when the suspension was not on a tag lexeme's own token (the
++    /// directive is then unchanged).
++    ///
++    /// If a later handler suspends, the new token is parked (the dispatcher
++    /// stays suspended) and `RewritingError::Suspended` is returned; call
++    /// again once it settles.
++    pub(crate) fn resume_dispatch(&mut self) -> Result<Option<ParserDirective>, RewritingError> {
++        let site = *self
++            .suspended_at
++            .as_ref()
++            .expect("resume_dispatch called without a pending suspension");
++
++        // 1. The handlers that had not yet run for the parked token.
++        let token = self
++            .delegate
++            .transform_controller
++            .resume_suspended_token()?;
++
++        // 2. The serialization step `token_produced`/`text_token_produced`
++        //    never reached.
++        if self.delegate.emission_enabled {
++            token.into_bytes(&mut |c| self.delegate.output_sink.handle_chunk(c))?;
++        }
++
++        // 3. If the token was a chunk of a partially-decoded text lexeme,
++        //    keep feeding the decoder. Every produced chunk goes through
++        //    `text_token_produced` and can suspend again (re-recording the
++        //    decoder's state), so loop until the feed runs dry.
++        while let Some(feed) = self.text_decoder.take_suspended() {
++            self.text_decoder.resume_feed(
++                feed,
++                &mut |text, is_last, encoding, source_location| {
++                    self.delegate.text_token_produced(
++                        text,
++                        encoding,
++                        self.last_text_type,
++                        is_last,
++                        source_location,
++                    )
++                },
++            )?;
++        }
++
++        self.suspended_at = None;
++
++        match site {
++            SuspensionSite::Tag => {
++                // The epilogue of `handle_tag`.
++                self.delegate.emission_enabled =
++                    self.delegate.transform_controller.should_emit_content();
++
++                Ok(Some(self.get_next_parser_directive()))
++            }
++            SuspensionSite::NonTag => Ok(None),
++        }
++    }
++
++    /// Completes a `finish` that a document-end handler suspended.
++    pub(crate) fn resume_finish(&mut self) -> Result<(), RewritingError> {
++        let document_end = self
++            .delegate
++            .transform_controller
++            .resume_suspended_document_end()?;
++
++        self.delegate.flush_document_end(document_end)
++    }
+ }
+ 
+ impl<C, O> LexemeSink for Dispatcher<C, O>
+@@ -358,13 +482,9 @@ where
+     O: OutputSink,
+ {
+     fn handle_tag(&mut self, lexeme: &TagLexeme<'_>) -> ActionResult<ParserDirective> {
+-        // NOTE: flush pending text before reporting tag to the transform controller.
+-        // Otherwise, transform controller can enable or disable text handlers too early.
+-        // In case of start tag, newly matched element text handlers
+-        // will receive leftovers from the previous match. And, in case of end tag,
+-        // handlers will be disabled before the receive the finalizing chunk.
+-        self.flush_pending_captured_text()?;
+-
++        // NOTE: the pending captured text is flushed by the lexer *before*
++        // this lexeme was built (see `Lexer::emit_tag`), so by now the
++        // transform controller can safely enable/disable text handlers.
+         if self.got_flags_from_hint {
+             self.got_flags_from_hint = false;
+         } else {
+@@ -378,7 +498,13 @@ where
+             }
+         }
+ 
+-        self.try_produce_token_from_lexeme(lexeme)?;
++        if let Err(e) = self.try_produce_token_from_lexeme(lexeme) {
++            if is_suspension(&e) {
++                self.suspended_at = Some(SuspensionSite::Tag);
++            }
++            return Err(e);
++        }
++
+         self.delegate.emission_enabled = self.delegate.transform_controller.should_emit_content();
+ 
+         Ok(self.get_next_parser_directive())
+@@ -386,12 +512,26 @@ where
+ 
+     #[inline]
+     fn handle_non_tag_content(&mut self, lexeme: &NonTagContentLexeme<'_>) -> ActionResult {
+-        match lexeme.token_outline() {
+-            Some(NonTagContentTokenOutline::Text(_)) => {}
+-            // when it's None, it still needs a flush for CDATA
+-            _ => self.flush_pending_captured_text()?,
++        // NOTE: for non-text lexemes the pending captured text was already
++        // flushed by the lexer (see `Lexer::emit_current_token` & friends).
++        if let Err(e) = self.try_produce_token_from_lexeme(lexeme) {
++            if is_suspension(&e) {
++                self.suspended_at = Some(SuspensionSite::NonTag);
++            }
++            return Err(e);
+         }
+-        self.try_produce_token_from_lexeme(lexeme)
++        Ok(())
++    }
++
++    fn flush_pending_text(&mut self) -> ActionResult {
++        if let Err(e) = self.flush_pending_captured_text() {
++            let e: Box<ActionError> = e.into();
++            if is_suspension(&e) {
++                self.suspended_at = Some(SuspensionSite::NonTag);
++            }
++            return Err(e);
++        }
++        Ok(())
+     }
+ }
+ 
+--- a/src/transform_stream/mod.rs
++++ b/src/transform_stream/mod.rs
+@@ -23,6 +23,19 @@ where
+     pub strict: bool,
+ }
+ 
++/// Which stage of the rewrite a content handler suspended, if any.
++#[derive(Copy, Clone, PartialEq, Eq)]
++enum SuspendedPhase {
++    /// Not suspended.
++    None,
++    /// `write()`'s parse suspended.
++    Write,
++    /// `end()`'s (final) parse suspended.
++    EndParse,
++    /// `end()`'s parse completed but a document-end handler suspended.
++    Finish,
++}
++
+ // Pub only for integration tests
+ pub struct TransformStream<C, O>
+ where
+@@ -32,6 +45,7 @@ where
+     parser: Parser<Dispatcher<C, O>>,
+     buffer: Arena,
+     has_buffered_data: bool,
++    suspended: SuspendedPhase,
+ }
+ 
+ impl<C, O> TransformStream<C, O>
+@@ -67,11 +81,13 @@ where
+             parser,
+             buffer,
+             has_buffered_data: false,
++            suspended: SuspendedPhase::None,
+         }
+     }
+ 
+     pub fn write(&mut self, data: &[u8]) -> Result<(), RewritingError> {
+         trace!(@write data);
++        debug_assert!(self.suspended == SuspendedPhase::None);
+ 
+         let chunk = if self.has_buffered_data {
+             self.buffer
+@@ -107,11 +123,20 @@ where
+             self.has_buffered_data = false;
+         }
+ 
++        // NOTE: a suspension reports `consumed_byte_count` exactly like an
++        // end-of-input, so the tail bookkeeping above already saved the
++        // unconsumed rest of the chunk for `resume`.
++        if self.parser.is_suspended() {
++            self.suspended = SuspendedPhase::Write;
++            return Err(RewritingError::Suspended);
++        }
++
+         Ok(())
+     }
+ 
+     pub fn end(&mut self) -> Result<(), RewritingError> {
+         trace!(@end);
++        debug_assert!(self.suspended == SuspendedPhase::None);
+ 
+         let chunk = if self.has_buffered_data {
+             self.buffer.bytes()
+@@ -121,8 +146,123 @@ where
+ 
+         trace!(@chunk chunk);
+ 
+-        self.parser.parse(chunk, true)?;
+-        self.parser.get_dispatcher().finish(chunk)
++        let total = chunk.len();
++        let consumed_byte_count = self.parser.parse(chunk, true)?;
++
++        if self.parser.is_suspended() {
++            // `finish` (which flushes the raw tail) won't run; emit the
++            // consumed part now and keep the rest for `resume`.
++            self.parser
++                .get_dispatcher()
++                .flush_remaining_input(chunk, consumed_byte_count);
++
++            if consumed_byte_count < total {
++                self.buffer.shift(consumed_byte_count);
++            } else {
++                self.has_buffered_data = false;
++            }
++
++            self.suspended = SuspendedPhase::EndParse;
++            return Err(RewritingError::Suspended);
++        }
++
++        match self.parser.get_dispatcher().finish(chunk) {
++            Err(RewritingError::Suspended) => {
++                self.suspended = SuspendedPhase::Finish;
++                Err(RewritingError::Suspended)
++            }
++            res => res,
++        }
++    }
++
++    /// `true` if a content handler suspended the last `write()`/`end()`/
++    /// `resume()` call.
++    pub const fn is_suspended(&self) -> bool {
++        !matches!(self.suspended, SuspendedPhase::None)
++    }
++
++    /// Continues a rewrite that a content handler suspended.
++    ///
++    /// Returns `Err(RewritingError::Suspended)` again if another handler
++    /// suspends. If the suspension happened during `write()`, the caller
++    /// still has to call `end()` once this returns `Ok`.
++    pub fn resume(&mut self) -> Result<(), RewritingError> {
++        match self.suspended {
++            SuspendedPhase::None => {
++                debug_assert!(false, "TransformStream::resume without a suspension");
++                Ok(())
++            }
++            SuspendedPhase::Write | SuspendedPhase::EndParse => {
++                let last = self.suspended == SuspendedPhase::EndParse;
++
++                // 1. Complete the parked dispatch. If another handler
++                //    suspends here, the parser bookmark and the buffered
++                //    tail are untouched; the phase stays as-is.
++                let directive = self.parser.get_dispatcher().resume_dispatch()?;
++
++                // 2. Continue the parse over the tail that was buffered at
++                //    suspension time (positions in the bookmark are
++                //    relative to it).
++                let chunk: &[u8] = if self.has_buffered_data {
++                    self.buffer.bytes()
++                } else {
++                    &[]
++                };
++
++                trace!(@chunk chunk);
++
++                let total = chunk.len();
++                let consumed_byte_count = self.parser.resume(chunk, last, directive)?;
++
++                self.parser
++                    .get_dispatcher()
++                    .flush_remaining_input(chunk, consumed_byte_count);
++
++                if consumed_byte_count < total {
++                    self.buffer.shift(consumed_byte_count);
++                } else {
++                    self.has_buffered_data = false;
++                }
++
++                if self.parser.is_suspended() {
++                    return Err(RewritingError::Suspended);
++                }
++
++                self.suspended = SuspendedPhase::None;
++
++                if !last {
++                    return Ok(());
++                }
++
++                // The final parse is done; run the document-end handlers.
++                let chunk: &[u8] = if self.has_buffered_data {
++                    self.buffer.bytes()
++                } else {
++                    &[]
++                };
++
++                match self.parser.get_dispatcher().finish(chunk) {
++                    Err(RewritingError::Suspended) => {
++                        self.suspended = SuspendedPhase::Finish;
++                        Err(RewritingError::Suspended)
++                    }
++                    res => res,
++                }
++            }
++            SuspendedPhase::Finish => match self.parser.get_dispatcher().resume_finish() {
++                Err(RewritingError::Suspended) => Err(RewritingError::Suspended),
++                res => {
++                    self.suspended = SuspendedPhase::None;
++                    res
++                }
++            },
++        }
++    }
++
++    /// The transform controller, for reaching the parked token of a
++    /// suspension from the embedder.
++    pub(crate) fn controller_mut(&mut self) -> &mut C {
++        self.parser.get_dispatcher().transform_controller_mut()
+     }
+ 
+     #[cfg(feature = "integration_test")]

@@ -113,16 +113,60 @@ rewriter.on("div.content", {
 });
 ```
 
-Handlers can be asynchronous and return a Promise. Async operations block the transformation until they complete:
+Handlers can be asynchronous and return a Promise. The transformation pauses on
+that element until the Promise settles, so handlers still run one at a time, in
+document order:
 
 ```ts
 rewriter.on("div", {
   async element(element) {
-    await Bun.sleep(1000);
-    element.setInnerContent("<span>replace</span>", { html: true });
+    const fragment = await fetch("https://example.com/fragment").then(r => r.text());
+    element.setInnerContent(fragment, { html: true });
   },
 });
 ```
+
+`transform(response)` returns immediately; the rewrite continues in the
+background and you read the result off the returned `Response`. Because the
+rewrite outlives `transform()`, an error thrown by an async handler (or a
+Promise it returns that rejects) rejects the response body instead of throwing
+from `transform()`:
+
+```ts
+try {
+  const output = await rewriter.transform(new Response(html)).text();
+} catch (error) {
+  console.error("a handler failed:", error);
+}
+```
+
+`transform()` on a `string` or `ArrayBuffer` has to return its result
+synchronously, so it cannot wait for a handler that needs the event loop to turn
+(a timer, I/O, a `fetch`). Such a handler makes `transform()` throw a
+`TypeError`, and the rewrite fails without running any further handlers:
+
+```ts
+new HTMLRewriter()
+  .on("div", {
+    async element(element) {
+      await Bun.sleep(1000); // needs a timer
+    },
+  })
+  .transform("<div></div>");
+// TypeError: HTMLRewriter.transform() cannot synchronously return a string
+// because a content handler returned a Promise that did not resolve within a
+// microtask. Pass a Response instead and await its body
+```
+
+A handler whose Promise settles within a microtask checkpoint (anything that
+does not need the event loop, including `process.nextTick` and already-resolved
+Promises) still works with `transform(string)`. Pass a `Response` whenever a
+handler might await real work.
+
+<Warning>
+  `.clone()` of the returned `Response` does not work yet while the rewrite is still in progress: both branches hang.
+  Buffer the output first (for example with `.arrayBuffer()`) if you need two consumers.
+</Warning>
 
 ### CSS Selector Support
 
@@ -306,25 +350,44 @@ When transforming a Response:
 
 ## Error Handling
 
-HTMLRewriter operations can throw errors in several cases:
+Which channel an error takes is decided by the overload you called, never by
+timing. `transform()` itself throws for:
 
-- Invalid selector syntax in `on()` method
-- Invalid HTML content in transformation methods
-- Stream errors when processing Response bodies
-- Memory allocation failures
+- Invalid selector syntax in the `on()` method
 - Invalid input types (for example, passing a Symbol)
-- Body already used errors
-
-Catch and handle these errors:
+- Body already used errors, and input bodies that have already failed or aborted
+- Anything a content handler raises on a `string` / `ArrayBuffer` input, since
+  those have to produce their result before `transform()` returns — including a
+  handler that needs the event loop (see [Element Handlers](#element-handlers))
 
 ```ts
 try {
-  const result = rewriter.transform(input);
-  // Process result
+  const result = rewriter.transform("<div></div>");
 } catch (error) {
   console.error("HTMLRewriter error:", error);
 }
 ```
+
+For a `Response` input, `transform()` returns before the rewrite finishes, so
+everything the rewrite discovers surfaces on the output body instead:
+
+- An error thrown by a content handler, or a rejected Promise one returned
+- Malformed or truncated input
+- Stream errors reading the input body
+- Memory allocation failures
+
+```ts
+try {
+  const output = await rewriter.transform(new Response(html)).text();
+} catch (error) {
+  console.error("the rewrite failed:", error);
+}
+```
+
+A rejection from a Promise a handler creates but neither returns nor awaits
+reaches neither channel: like any detached rejection, it goes to the
+process-global `unhandledRejection` path. Earlier versions of Bun could surface
+it from `transform()` itself.
 
 ---
 

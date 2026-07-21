@@ -1,0 +1,73 @@
+name: lol-html
+
+permissions:
+  contents: read
+
+# The vendored lol-html carries a substantial fork (`patches/lolhtml/*.patch`),
+# and its own test suite is the only thing that guards the fork's invariants —
+# nothing in the Bun test suite reaches, for example, the parser's suspension
+# bookkeeping or `Arena::compact()`. Run it whenever the patch, the pinned
+# commit, or this workflow changes.
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "patches/lolhtml/**"
+      - "scripts/build/deps/lolhtml.ts"
+      - ".github/workflows/lolhtml.yml"
+  merge_group:
+
+env:
+  BUN_VERSION: "1.3.2"
+  LLVM_VERSION_MAJOR: "21"
+  # Keep in sync with `channel` in rust-toolchain.toml.
+  RUSTUP_TOOLCHAIN: nightly-2026-05-06
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Setup system deps
+        # cmake/ninja/clang for `--configure-only`, which is what generates the
+        # ninja edge that fetches + patches the vendored source.
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake ninja-build clang-${{ env.LLVM_VERSION_MAJOR }} lld-${{ env.LLVM_VERSION_MAJOR }} llvm-${{ env.LLVM_VERSION_MAJOR }}
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup override set "$RUSTUP_TOOLCHAIN"
+          echo "::add-matcher::.github/rust-matcher.json"
+
+      - name: Fetch and patch lol-html
+        # `clone-lolhtml` extracts the pinned `cloudflare/lol-html` archive into
+        # `vendor/lolhtml/` and applies `patches/lolhtml/*.patch`. A patch that
+        # no longer applies fails right here.
+        run: |
+          bun install --frozen-lockfile
+          bun scripts/build.ts --configure-only
+          ninja -C build/debug clone-lolhtml
+
+      - name: cargo test
+        # `lol_html` is a path dependency, not a workspace member (it carries
+        # dev-dependencies the Bun workspace does not), so run it in place.
+        working-directory: vendor/lolhtml
+        run: cargo test

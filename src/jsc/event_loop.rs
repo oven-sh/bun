@@ -149,6 +149,22 @@ unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
 }
 
+impl JSGlobalObject {
+    /// Run one microtask checkpoint: `process.nextTick` callbacks, then the
+    /// JSC microtask queue, and nothing else. No timers, no I/O, no deferred
+    /// tasks, so this cannot re-enter the event loop.
+    ///
+    /// `Err` means JS was terminated; a termination exception is left pending.
+    pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), JsTerminated> {
+        jsc::mark_binding();
+        match JSC__JSGlobalObject__drainMicrotasks(self) {
+            drain_result::SUCCESS => Ok(()),
+            drain_result::JS_TERMINATED => Err(JsTerminated::JSTerminated),
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum JsTerminated {
     #[error("JSTerminated")]

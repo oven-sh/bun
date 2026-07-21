@@ -4054,6 +4054,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolve;
     } else if (handler == Bun__HTTPRequestContextDebugH3__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolveStream;
+    } else if (handler == Bun__HTMLRewriter__onHandlerResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onHandlerResolve;
+    } else if (handler == Bun__HTMLRewriter__onHandlerReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onHandlerReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

@@ -185,6 +185,17 @@ pub struct VirtualMachine {
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
+    /// LAYERING: the real type is `bun_runtime`'s
+    /// `html_rewriter::BufferOutputSink` (a forward dep), stored type-erased.
+    ///
+    /// The HTMLRewriter sink whose lol-html `write()`/`end()`/`resume()` call
+    /// is currently on this VM's native stack, if any. Content handlers reach
+    /// their sink through it (to record a thrown exception, and to park the JS
+    /// wrapper + pending promise when an async handler suspends the rewrite).
+    /// Saved and restored LIFO around every lol-html call, so a handler body
+    /// that synchronously starts a nested `transform()` nests correctly.
+    /// All-zero bytes decode as `None` (null niche).
+    pub html_rewriter_active_sink: Option<core::ptr::NonNull<c_void>>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
     // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait

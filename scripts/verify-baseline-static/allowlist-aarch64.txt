@@ -108,6 +108,7 @@ _ZN3bun6N_SVE246IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh          [S
 _ZN3bun6N_SVE249IndexOfInterestingCharacterInMultilineCommentImplEPKhm        [SVE]
 _ZN3bun6N_SVE249IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh       [SVE]
 _ZN3bun9N_SVE_25610MemMemImplEPKhmS2_m                                        [SVE]
+_ZN3bun9N_SVE_25613JsonIndexImplEPKhmmPjPmS4_S3_                              [SVE]
 _ZN3bun9N_SVE_25614DecodeHex8ImplEPKhPhm                                      [SVE]
 _ZN3bun9N_SVE_25614LowerAsciiImplEPKhmPh                                      [SVE]
 _ZN3bun9N_SVE_25615CopyU16ToU8ImplEPKtmPh                                     [SVE]
@@ -262,6 +263,29 @@ _ZN9bun_image10N_SVE2_128L13Rotate180ImplEPKhmmPh                             [S
 _ZN9bun_image10N_SVE2_128L8VertPassEPKhmmPhmPKNS_4SpanEPKsm                   [SVE]
 _ZN9bun_image10N_SVE2_128L9FlipHImplEPKhmmPh                                  [SVE]
 _ZN9bun_image10N_SVE2_128L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm                  [SVE]
+_ZN9bun_image5N_SVEL12ModulateImplEPhmff                                      [SVE]
+_ZN9bun_image5N_SVEL13Rotate180ImplEPKhmmPh                                   [SVE]
+_ZN9bun_image5N_SVEL8VertPassEPKhmmPhmPKNS_4SpanEPKsm                         [SVE]
+_ZN9bun_image5N_SVEL9FlipHImplEPKhmmPh                                        [SVE]
+_ZN9bun_image5N_SVEL9HorizPassEPKhmmPhmPKNS_4SpanEPKsm                        [SVE]
+_ZN9bun_image6N_SVE2L12ModulateImplEPhmff                                     [SVE]
+_ZN9bun_image6N_SVE2L13Rotate180ImplEPKhmmPh                                  [SVE]
+_ZN9bun_image6N_SVE2L8VertPassEPKhmmPhmPKNS_4SpanEPKsm                        [SVE]
+_ZN9bun_image6N_SVE2L9FlipHImplEPKhmmPh                                       [SVE]
+_ZN9bun_image6N_SVE2L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm                       [SVE]
+_ZN9bun_image9N_SVE_256L12ModulateImplEPhmff                                  [SVE]
+_ZN9bun_image9N_SVE_256L13Rotate180ImplEPKhmmPh                               [SVE]
+_ZN9bun_image9N_SVE_256L8VertPassEPKhmmPhmPKNS_4SpanEPKsm                     [SVE]
+_ZN9bun_image9N_SVE_256L9FlipHImplEPKhmmPh                                    [SVE]
+_ZN9bun_image9N_SVE_256L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm                    [SVE]
+
+
+# ----------------------------------------------------------------------------
+# Bun Highway NEON_BF16 target (highway_strings.cpp). clang >= 22 makes
+# NEON_BF16 attainable; the DotProd lanes it uses are gated by
+# hwy::SupportedTargets() via getauxval(AT_HWCAP).
+# ----------------------------------------------------------------------------
+_ZN3bun11N_NEON_BF1633VisibleLatin1WidthExcludeANSIImplEPKhm                  [DotProd]
 
 
 # ----------------------------------------------------------------------------

@@ -1196,11 +1196,9 @@ install_llvm() {
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		# apt.llvm.org stopped publishing focal arm64 binaries for the 22
 		# release (binary-arm64 has only the Architecture:all packages); no CI
-		# lane runs bootstrap.sh on focal arm64 (that path goes through
-		# .buildkite/Dockerfile, which has the full bullseye-repo workaround),
-		# so fail clearly here rather than carry a half-working copy of it.
+		# lane runs bootstrap.sh on focal arm64, so fail clearly here.
 		if [ "$arch" = "aarch64" ] && [ "$release" = "20.04" ]; then
-			error "apt.llvm.org has no focal arm64 packages for LLVM $(llvm_version). Use a newer Ubuntu (22.04+) on arm64, or see .buildkite/Dockerfile for the bullseye-repo workaround."
+			error "apt.llvm.org has no focal arm64 packages for LLVM $(llvm_version). Use a newer Ubuntu (22.04+) on arm64."
 		fi
 		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 

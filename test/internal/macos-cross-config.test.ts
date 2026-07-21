@@ -226,7 +226,7 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     const linux = { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", linuxSysroot: "/fake" } as const;
     const withRustLld = resolveConfig(
       { ...linux, lto: true },
-      mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined, rustLld }),
+      mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined, rustLld, rustLlvmVersion: "23.1.0" }),
     );
     expect(withRustLld.ld).toBe(rustLld);
     expect(computeFlags(withRustLld).ldflags).not.toContain("-Wl,--compress-debug-sections=zlib");

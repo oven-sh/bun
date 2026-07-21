@@ -2305,7 +2305,12 @@ pub mod parse_worker {
         }
         *step = Step::Parse;
 
-        let entry_contents: &[u8] = entry.contents.as_slice();
+        // File readers keep a leading UTF-8 BOM in the buffer so JS/TS source
+        // maps stay byte-exact with the on-disk file. Loaders that do not emit
+        // source maps (text, json, html, toml, css, ...) have no use for it and
+        // several of them treat the BOM as a syntax error, so strip it here.
+        let entry_contents: &[u8] =
+            loader.without_utf8_bom_unless_source_mapped(entry.contents.as_slice());
         let is_empty = strings::is_all_whitespace(entry_contents);
 
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the

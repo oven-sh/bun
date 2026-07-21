@@ -187,6 +187,17 @@ impl Loader {
         matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
     }
 
+    /// Keep a leading UTF-8 BOM for source-map-capable loaders (byte-exact
+    /// `sourcesContent` and line-1 columns); strip it for everything else.
+    #[inline]
+    pub fn without_utf8_bom_unless_source_mapped(self, contents: &[u8]) -> &[u8] {
+        if self.can_have_source_map() {
+            contents
+        } else {
+            bun_core::strings::without_utf8_bom(contents)
+        }
+    }
+
     pub fn can_be_run_by_bun(self) -> bool {
         matches!(
             self,

@@ -1514,6 +1514,10 @@ impl<'a> Transpiler<'a> {
             // the erasure.
             let contents: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
+            // File readers keep a leading UTF-8 BOM so JS/TS source maps stay
+            // byte-exact with disk; strip it for loaders that do not emit
+            // source maps (text, json, html, toml, css, ...).
+            let contents = loader.without_utf8_bom_unless_source_mapped(contents);
             match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair { path, contents })
             {
                 Ok(s) => break 'brk s,
@@ -3182,7 +3186,7 @@ impl<'a> Transpiler<'a> {
 
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,
-            entry.contents(),
+            strings::without_utf8_bom(entry.contents()),
             opts,
             None,
             bun_ast::Index::INVALID,

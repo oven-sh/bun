@@ -1900,23 +1900,22 @@ fn arena_alloc_uninit_bytes(arena: &bun_alloc::Arena, len: usize) -> &mut [u8] {
     unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) }
 }
 
-/// Strip BOM in-place (UTF-8) or via a fresh arena copy (UTF-16), write the
+/// Transcode UTF-16 BOM-prefixed input via a fresh arena copy, write the
 /// trailing NUL, and return `(ptr, len)`. `buf.len() >= total + 1`.
 #[inline]
 fn finish_arena_contents(
     arena: &bun_alloc::Arena,
     buf: &mut [u8],
-    mut total: usize,
+    total: usize,
 ) -> (core::ptr::NonNull<u8>, usize) {
     if let Some(bom) = BOM::detect(&buf[..total]) {
-        debug!("Convert {} BOM", bom.tag_name());
         match bom {
-            BOM::Utf8 => {
-                let n = BOM::UTF8_BYTES.len();
-                buf.copy_within(n..total, 0);
-                total -= n;
-            }
+            // Keep a UTF-8 BOM in `Source.contents` so source-map columns on
+            // line 1 and `sourcesContent` stay byte-exact with the on-disk
+            // file. The JS lexer treats U+FEFF as whitespace (matches esbuild).
+            BOM::Utf8 => {}
             other => {
+                debug!("Convert {} BOM", other.tag_name());
                 // Rare path (UTF-16 source on the concurrent transpiler) —
                 // re-encode via the global-heap helper, then copy into the
                 // arena so the *retained* bytes still land there.
@@ -2039,14 +2038,19 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         // `file_contents_len == shared_buffer.list.len()` here (set by `truncate` in
         // the read loop above); borrow the Vec directly so the slice ends before the
         // `&mut shared_buffer.list` reborrow inside the BOM branch.
-        if let Some(bom) = BOM::detect(&shared_buffer.list[..file_contents_len]) {
-            debug!("Convert {} BOM", bom.tag_name());
-            // We pre-set `list.len` to the un-BOM'd payload length so the helper sees the
-            // correct logical size (the read loop above truncated to `file_contents_len`).
-            shared_buffer.list.truncate(file_contents_len);
-            let converted = bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list);
-            file_contents_ptr = converted.as_ptr();
-            file_contents_len = converted.len();
+        match BOM::detect(&shared_buffer.list[..file_contents_len]) {
+            // Keep a UTF-8 BOM in `Source.contents`; see `finish_arena_contents`.
+            None | Some(BOM::Utf8) => {}
+            Some(bom) => {
+                debug!("Convert {} BOM", bom.tag_name());
+                // We pre-set `list.len` to the un-BOM'd payload length so the helper sees the
+                // correct logical size (the read loop above truncated to `file_contents_len`).
+                shared_buffer.list.truncate(file_contents_len);
+                let converted =
+                    bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list);
+                file_contents_ptr = converted.as_ptr();
+                file_contents_len = converted.len();
+            }
         }
     } else {
         let mut initial_buf = [0u8; 16384];
@@ -2068,9 +2072,13 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
                 allocation.push(0);
                 allocation.truncate(read_count);
 
-                if let Some(bom) = BOM::detect(&allocation) {
-                    debug!("Convert {} BOM", bom.tag_name());
-                    allocation = bom.remove_and_convert_to_utf8_and_free(allocation);
+                match BOM::detect(&allocation) {
+                    // Keep a UTF-8 BOM in `Source.contents`; see `finish_arena_contents`.
+                    None | Some(BOM::Utf8) => {}
+                    Some(bom) => {
+                        debug!("Convert {} BOM", bom.tag_name());
+                        allocation = bom.remove_and_convert_to_utf8_and_free(allocation);
+                    }
                 }
 
                 return Ok(PathContentsPair {
@@ -2121,9 +2129,13 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         // `read_all` above.
         unsafe { buf.set_len(total) };
 
-        if let Some(bom) = BOM::detect(&buf) {
-            debug!("Convert {} BOM", bom.tag_name());
-            buf = bom.remove_and_convert_to_utf8_and_free(buf);
+        match BOM::detect(&buf) {
+            // Keep a UTF-8 BOM in `Source.contents`; see `finish_arena_contents`.
+            None | Some(BOM::Utf8) => {}
+            Some(bom) => {
+                debug!("Convert {} BOM", bom.tag_name());
+                buf = bom.remove_and_convert_to_utf8_and_free(buf);
+            }
         }
 
         return Ok(PathContentsPair {

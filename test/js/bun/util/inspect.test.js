@@ -397,6 +397,38 @@ it("jsx with circular props in test diff formatter", () => {
   expect(exitCode).toBe(0);
 });
 
+it("deeply nested Proxy chain does not crash", () => {
+  // Without the fix, print_proxy recurses on the target without a stack-safety
+  // check and segfaults; run in a subprocess so a regression fails the suite
+  // instead of killing the runner.
+  const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let p = { ok: 1 };
+        for (let i = 0; i < 100000; i++) p = new Proxy(p, {});
+        console.log(Bun.inspect(p));
+        console.log(p);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(stderr.toString()).toBe("");
+  expect(normalizeBunSnapshot(stdout.toString())).toMatchInlineSnapshot(`
+    "{
+      ok: 1,
+    }
+    {
+      ok: 1,
+    }"
+  `);
+  expect(signalCode).toBeFalsy();
+  expect(exitCode).toBe(0);
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

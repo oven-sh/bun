@@ -3388,16 +3388,15 @@ pub mod formatter {
             if self.global_this.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }
-            if !can_circ {
-                return Ok(true);
-            }
-
             if !self.stack_check.is_safe_to_recurse() {
                 self.failed = true;
                 if self.can_throw_stack_overflow {
                     return Err(self.global_this.throw_stack_overflow());
                 }
                 return Ok(false);
+            }
+            if !can_circ {
+                return Ok(true);
             }
 
             if self.map_node.is_none() {
@@ -3653,18 +3652,20 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let target = value.get_proxy_internal_field(jsc::ProxyField::Target);
+            let mut target = value.get_proxy_internal_field(jsc::ProxyField::Target);
             // Proxy does not allow non-objects here.
             debug_assert!(target.is_cell());
             // TODO: if (options.showProxy), print like
             // `Proxy { target: ..., handlers: ... }` — this is default off so
             // it is not used.
-            self.format::<C>(
-                Tag::get(target, self.global_this)?,
-                writer_,
-                target,
-                self.global_this,
-            )
+            loop {
+                let tag = Tag::get(target, self.global_this)?;
+                if !matches!(tag.tag.tag(), Tag::Proxy) {
+                    return self.format::<C>(tag, writer_, target, self.global_this);
+                }
+                target = target.get_proxy_internal_field(jsc::ProxyField::Target);
+                debug_assert!(target.is_cell());
+            }
         }
 
         #[inline(never)]

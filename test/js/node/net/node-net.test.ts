@@ -1644,8 +1644,7 @@ it("onread: a callback that throws is an uncaught exception", async () => {
   expect(stderr).toContain("onread-boom");
   // Only the slice that threw was delivered, and the throw was not converted
   // into a socket 'error' the way a caught throw would be.
-  expect(stdout).toContain("calls:abcd");
-  expect(stdout).not.toContain("socket-error");
+  expect(stdout.trim()).toBe("calls:abcd");
   expect(exitCode).not.toBe(0);
 });
 

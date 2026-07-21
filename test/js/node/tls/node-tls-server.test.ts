@@ -2083,4 +2083,30 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
       server.close();
     }
   });
+
+  // Node normalizes with `options.requestCert === true`, so a truthy non-true
+  // value behaves like `false`: no CertificateRequest is sent and the
+  // anonymous client is accepted. The per-socket flag must agree with that
+  // normalization or the handshake handler rejects a connection the native
+  // listener never asked for a certificate on.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367
+  it("treats a truthy-but-not-true requestCert like false and accepts the anonymous client", async () => {
+    const server = createServer({ ...COMMON_CERT, requestCert: 1 as unknown as boolean });
+    const outcome = Promise.withResolvers<string>();
+    server.on("secureConnection", socket => {
+      outcome.resolve("accepted");
+      socket.end();
+    });
+    server.on("tlsClientError", err => outcome.resolve((err as Error & { code?: string }).code ?? "rejected"));
+    try {
+      const port = await listen(server);
+      expect((server as unknown as { _requestCert: unknown })._requestCert).toBeUndefined();
+      const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      client.on("error", () => {});
+      expect(await outcome.promise).toBe("accepted");
+      client.destroy();
+    } finally {
+      server.close();
+    }
+  });
 });

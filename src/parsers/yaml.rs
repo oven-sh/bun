@@ -3898,12 +3898,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let Some(anchor) = anchor else {
             return Ok(None);
         };
+        let name = Enc::key_bytes(anchor.slice(self.input));
+        if self.anchors.get(name).is_some() {
+            // Redefinition: an alias inside this body should keep resolving
+            // to the previous definition (matching the pre-self-reference
+            // behaviour). The post-body put still overwrites for later
+            // aliases.
+            return Ok(None);
+        }
         let placeholder = match kind {
             AnchorPlaceholder::Array => Expr::init(E::Array::default(), loc),
             AnchorPlaceholder::Object => Expr::init(E::Object::default(), loc),
         };
-        self.anchors
-            .put(Enc::key_bytes(anchor.slice(self.input)), placeholder)?;
+        self.anchors.put(name, placeholder)?;
         if let Some(ptr) = Self::collection_ptr(&placeholder) {
             self.open_anchors.push(ptr);
         }

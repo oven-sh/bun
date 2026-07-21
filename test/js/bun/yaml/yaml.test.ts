@@ -619,6 +619,19 @@ parent: &ref
         );
       });
 
+      test("an alias inside a redefined anchor's body resolves to the previous definition", () => {
+        // Pre-registration would clobber the previous &shared before the body
+        // runs; skipping pre-registration on redefinition preserves the
+        // existing resolution order.
+        const result = YAML.parse("base: &shared\n  x: 1\noverride: &shared\n  <<: *shared\n  y: 2\n");
+        expect(result).toEqual({ base: { x: 1 }, override: { x: 1, y: 2 } });
+
+        const result2 = YAML.parse("a: &x {v: 1}\nb: &x {ref: *x}\nc: *x\n");
+        expect(result2.b.ref).toEqual({ v: 1 });
+        expect(result2.b.ref).toBe(result2.a);
+        expect(result2.c).toBe(result2.b);
+      });
+
       test("a merge key can alias a fully-parsed cyclic mapping", () => {
         const result = YAML.parse("a: &a\n  self: *a\n  k: 1\nb:\n  <<: *a\n  extra: 2\n");
         expect(Object.keys(result.b).sort()).toEqual(["extra", "k", "self"]);

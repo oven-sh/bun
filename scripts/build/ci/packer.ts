@@ -132,7 +132,11 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
     source: { "azure-arm": { windows: source } },
     build: {
       sources: ["source.azure-arm.windows"],
-      provisioner: [
+      // Provisioners are HCL labeled blocks (`provisioner "file" { ... }`);
+      // in JSON template mode the label is the object KEY wrapping the body,
+      // not a "type" field. hclProvisioners() re-shapes the readable
+      // {type, ...body} entries below into that encoding.
+      provisioner: hclProvisioners([
         // Step 1: upload the bootstrap sources (spec + bootstrap modules).
         {
           type: "file",
@@ -216,7 +220,22 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
             "Write-Output '>>> Sysprep complete.'",
           ],
         },
-      ],
+      ]),
     },
   };
+}
+
+/**
+ * Encode provisioners for Packer's JSON template mode. HCL block
+ * `provisioner "TYPE" { body }` is written as `{ "TYPE": { body } }` — the
+ * label is the wrapping key. Each entry here is authored as
+ * `{ type, ...body }` for readability and re-shaped into that form.
+ */
+function hclProvisioners(
+  provisioners: readonly ({ type: string } & Record<string, unknown>)[],
+): Record<string, unknown>[] {
+  return provisioners.map(provisioner => {
+    const { type, ...body } = provisioner;
+    return { [type]: body };
+  });
 }

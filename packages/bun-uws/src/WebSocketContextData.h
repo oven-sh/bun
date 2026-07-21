@@ -88,7 +88,25 @@ public:
             margin = (unsigned short) (margin << 1);
         }
         idleTimeoutComponents = {
-            idleTimeout - (sendPingsAutomatically ? margin : 0), /* reduce normal idleTimeout if it is extended by ping-timeout */
+            /* idleTimeout == 0 is an intentional, distinct "off" value, not
+             * an ordinary small timeout: App.h's ws() validation terminates
+             * with "Error: idleTimeout must be either 0 or greater than 8!"
+             * if a caller passes anything in (0, 8) (see App.h:414-416),
+             * and Bun's own WebSocketServerContext.rs config-translation
+             * layer explicitly exempts 0 from its "round up to 8" clamp for
+             * the same reason. Special-case it rather than let it fall into
+             * the subtraction below: idleTimeout - margin
+             * underflows the unsigned short (0 - 4 == 65532), which
+             * us_socket_timeout would then treat as a very real ~252-second
+             * timeout (65532 seconds, tick-wheel-rounded) instead of no
+             * timeout at all. us_socket_timeout(s, 0) already means
+             * "disabled" (see socket.c), so pass 0 straight through.
+             * Only .first (the idle-detection arm) is affected: .second
+             * keeps its normal margin value below unchanged, since it also
+             * doubles as the post-end() force-close grace period (see
+             * WebSocket.h's end()), which is unrelated to idle-timeout and
+             * must keep firing regardless of idleTimeout. */
+            idleTimeout == 0 ? 0 : idleTimeout - (sendPingsAutomatically ? margin : 0), /* reduce normal idleTimeout if it is extended by ping-timeout */
             margin /* ping-timeout - also used for end() timeout */
         };
     }

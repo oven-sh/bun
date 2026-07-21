@@ -1,5 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
+import { websocketIdleTimeoutComponentsForTesting } from "bun:internal-for-testing";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isWindows } from "harness";
 import net, { isIP } from "node:net";
@@ -1528,6 +1529,199 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
       });
     });
   });
+});
+
+// Regression coverage for `websocket: { idleTimeout: 0 }`.
+//
+// The bug: uWS's WebSocketContextData::calculateIdleTimeoutComponents(0)
+// computed `idleTimeout - margin` (0 - 4) on an `unsigned short`, which
+// underflows to 65532. uSockets' tick wheel (4-second granularity, `% 240`
+// slots -- see packages/bun-usockets/src/socket.c's us_socket_timeout) turned
+// that into a *real* ~252-second timeout instead of "disabled": every
+// `idleTimeout: 0` websocket got a ping at ~248s and, if unanswered, a
+// force-close with ERR_WEBSOCKET_TIMEOUT four seconds later -- instead of
+// never timing out. `idleTimeout: 0` is an intentional, distinct "off"
+// value, not an ordinary small timeout: App.h's ws() validation terminates
+// with "Error: idleTimeout must be either 0 or greater than 8!" for anything
+// in (0, 8) (see App.h:414-416), and the "uws does not allow idleTimeout to
+// be between (0, 8)" comment in WebSocketServerContext.rs exempts 0 from its
+// "round up to 8" clamp for the same reason.
+//
+// The regression guard for the actual underflow is the "unit:
+// calculateIdleTimeoutComponents" test just below: it drives
+// WebSocketContextData::calculateIdleTimeoutComponents directly (via
+// `websocketIdleTimeoutComponentsForTesting`, backed by
+// websocket_idle_timeout_testing.cpp, exposed through
+// bun:internal-for-testing) and asserts idleTimeout: 0 produces
+// idle-detection component 0, not 65532 (the unsigned-short underflow of
+// 0 - 4) -- deterministically, with no socket, timer, or wall-clock wait.
+// That test fails on an unfixed build and passes on this one: the true
+// red-before/green-after contrast this bug needed, which a bounded-wait
+// socket test cannot provide (see below).
+//
+// The two `it.concurrent` tests below the unit test are NOT redundant with
+// it and are deliberately kept: they are end-to-end wiring coverage, proving
+// the fixed arithmetic actually reaches a real socket through Bun.serve ->
+// uWS -> uSockets, against a deliberately unresponsive raw-socket client:
+//   1) a small nonzero idleTimeout (8s -- uWS's minimum granularity, same as
+//      the "should allow use of custom timeout" test in
+//      test/js/bun/http/serve.test.ts:2598) still pings and
+//      then force-closes an idle connection, within a bounded window -- i.e.
+//      the ping/close mechanism itself functions;
+//   2) idleTimeout: 0, under the exact same conditions, produces neither a
+//      ping nor a close within that same bounded window.
+// By construction this pair cannot distinguish "genuinely disabled" from
+// "still broken but with some timeout longer than our wait window" -- the
+// historical bug's real symptom is ~252s, far past any window a test suite
+// should wait -- which is exactly why the unit test above exists to give the
+// definitive answer. This pair's job is instead to catch a *class* of future
+// regression in the wiring itself -- e.g. the ping/close mechanism breaking,
+// or idleTimeout: 0 no longer reaching calculateIdleTimeoutComponents at all
+// -- not to re-derive the original forensic timing measurement.
+describe.concurrent("websocket idleTimeout: 0", () => {
+  it("unit: calculateIdleTimeoutComponents(0, ...) yields idle-detection component 0, not 65532", () => {
+    // Drives WebSocketContextData::calculateIdleTimeoutComponents directly,
+    // with no socket, timer, or wall-clock wait -- see
+    // src/jsc/bindings/websocket_idle_timeout_testing.cpp. On an unfixed
+    // build, idleTimeout: 0 underflows the unsigned short (0 - margin) to
+    // 65532 here; on the fixed build it's 0. The second (ping/end()-grace)
+    // component is unaffected by the fix and stays at the margin (4, uWS's
+    // minimum) either way.
+    expect(websocketIdleTimeoutComponentsForTesting(0, true)).toEqual([0, 4]);
+    expect(websocketIdleTimeoutComponentsForTesting(0, false)).toEqual([0, 4]);
+  });
+
+  async function connectRaw(port: number): Promise<net.Socket> {
+    return await new Promise((resolve, reject) => {
+      const socket = net.connect({ port, host: "127.0.0.1" }, () => resolve(socket));
+      socket.on("error", reject);
+    });
+  }
+
+  async function handshake(socket: net.Socket): Promise<void> {
+    socket.write(
+      "GET / HTTP/1.1\r\n" +
+        "Host: x\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+        "Sec-WebSocket-Version: 13\r\n\r\n",
+    );
+    await new Promise<void>((resolve, reject) => {
+      let response = "";
+      function onData(d: Buffer) {
+        response += d.toString("latin1");
+        if (!response.includes("\r\n\r\n")) return;
+        socket.off("data", onData);
+        if (response.includes(" 101 ")) resolve();
+        else reject(new Error("upgrade failed: " + response));
+      }
+      socket.on("data", onData);
+      socket.on("error", reject);
+    });
+  }
+
+  // Silently collects any bytes the server sends and reports whether the
+  // socket was closed by the server, up to `ms` milliseconds. Never rejects:
+  // a server-initiated abrupt close (RST) surfaces as `closed: true` rather
+  // than an uncaught "error" event.
+  function waitForCloseOrTimeout(socket: net.Socket, ms: number): Promise<{ closed: boolean; bytes: Buffer }> {
+    return new Promise(resolve => {
+      let bytes = Buffer.alloc(0);
+      let finished = false;
+
+      const onData = (d: Buffer) => {
+        bytes = Buffer.concat([bytes, d]);
+      };
+      const onCloseLike = () => finish(true);
+      const finish = (closed: boolean) => {
+        if (finished) return;
+        finished = true;
+        socket.off("data", onData);
+        socket.off("close", onCloseLike);
+        socket.off("error", onCloseLike);
+        clearTimeout(timer);
+        resolve({ closed, bytes });
+      };
+      const timer = setTimeout(() => finish(false), ms);
+
+      socket.on("data", onData);
+      socket.on("close", onCloseLike);
+      socket.on("error", onCloseLike);
+    });
+  }
+
+  it.concurrent(
+    "sanity: a small nonzero idleTimeout still pings then force-closes an unresponsive socket",
+    async () => {
+      await using server = serve({
+        port: 0,
+        websocket: {
+          idleTimeout: 8, // uws's minimum reliable granularity -- see "should allow use of custom timeout" in test/js/bun/http/serve.test.ts:2598
+          open() {},
+          message() {},
+        },
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("no upgrade", { status: 400 });
+        },
+      });
+
+      const socket = await connectRaw(server.port);
+      try {
+        await handshake(socket);
+
+        // Deliberately never read-and-respond meaningfully after the
+        // handshake: don't send a pong, don't send anything. The server's
+        // idle timer should fire an unmasked ping frame (0x89 0x00), get no
+        // reply, and force-close.
+        const { closed, bytes } = await waitForCloseOrTimeout(socket, 20_000);
+
+        expect(closed).toBeTrue();
+        // We should have observed the ping frame before the close.
+        expect(bytes.length).toBeGreaterThanOrEqual(2);
+        expect(bytes[0]).toBe(0x89); // FIN(1) + opcode PING(0x9)
+        expect(bytes[1]).toBe(0x00); // zero-length, unmasked (server->client)
+      } finally {
+        socket.destroy();
+      }
+    },
+    30_000,
+  );
+
+  it.concurrent(
+    "idleTimeout: 0 pings or force-closes neither, under the same conditions",
+    async () => {
+      await using server = serve({
+        port: 0,
+        websocket: {
+          idleTimeout: 0,
+          open() {},
+          message() {},
+        },
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("no upgrade", { status: 400 });
+        },
+      });
+
+      const socket = await connectRaw(server.port);
+      try {
+        await handshake(socket);
+
+        // Same bounded wait as the sanity case above -- long enough that the
+        // 8s case reliably closes within it, so an idleTimeout: 0 websocket
+        // sharing that same (buggy) code path would also have fired by now.
+        const { closed, bytes } = await waitForCloseOrTimeout(socket, 20_000);
+
+        expect(closed).toBeFalse();
+        expect(bytes.length).toBe(0);
+      } finally {
+        socket.destroy();
+      }
+    },
+    30_000,
+  );
 });
 
 // https://github.com/oven-sh/bun/issues/34158

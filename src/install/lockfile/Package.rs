@@ -751,6 +751,20 @@ impl Package<u64> {
 
         let package_version = *package_version_ptr;
 
+        // Recover any alternate digests of the strongest algorithm (W3C SRI
+        // §3.3.4 any-match) from the raw multi-entry integrity string. Done
+        // before `string_builder` borrows the lockfile.
+        if !package_version.integrity_str.is_empty() {
+            let (_, alternates) = crate::integrity::Integrity::parse_with_alternates(
+                package_version.integrity_str.slice(&manifest.string_buf),
+            );
+            lockfile.record_integrity_alternates(
+                manifest.pkg.name.hash,
+                &package_version.integrity,
+                &alternates,
+            );
+        }
+
         let dependency_groups: &[DependencyGroup] = &{
             let mut out: Vec<DependencyGroup> = Vec::with_capacity(4);
             if FEATURES.dependencies {

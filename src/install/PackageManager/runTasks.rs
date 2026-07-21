@@ -1848,6 +1848,9 @@ pub fn generate_network_task_for_tarball<'a>(
         skip_verify: false,
         in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
         integrity: package.meta.integrity,
+        integrity_alternates: this
+            .lockfile
+            .integrity_alternates_for(package.name_hash, &package.meta.integrity),
         url: strings::StringOrTinyString::init_append_if_needed(
             url,
             &mut crate::network_task::filename_store_appender(),

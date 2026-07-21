@@ -1183,6 +1183,14 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             }
         };
 
+        let integrity = if let Some(integrity) = entry.integrity {
+            let (primary, alternates) = Integrity::parse_with_alternates(integrity);
+            this.record_integrity_alternates(name_hash, &primary, &alternates);
+            primary
+        } else {
+            Integrity::default()
+        };
+
         this.packages.append(LockfilePackage {
             name: pkg_name,
             name_hash,
@@ -1212,11 +1220,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 },
                 man_dir: SemverString::default(),
                 has_install_script: HasInstallScript::False,
-                integrity: if let Some(integrity) = entry.integrity {
-                    Integrity::parse(integrity)
-                } else {
-                    Integrity::default()
-                },
+                integrity,
                 ..Default::default()
             },
             bin: Bin::init(),

@@ -749,6 +749,140 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/33700 — SSRI any-match (W3C SRI
+  // §3.3.4): a tarball matching *any* digest of the strongest algorithm must
+  // verify, regardless of order. 1.4 pinned to the first and hard-failed.
+  it("accepts a registry tarball matching a non-first digest of the strongest algorithm", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const bogus = "sha512-" + Buffer.alloc(86, "A").toString() + "==";
+
+    // Bogus sha512 first, real sha512 second. An order-only flip of these two
+    // entries must not change install success.
+    await using server = serveManifest(`${bogus} ${real.sha512}`, real.tgz);
+    using dir = projectDir("integrity-registry-alt-match", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).not.toContain("Integrity check failed");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(await readdirSorted(join(String(dir), "node_modules", "pkg"))).toContain("package.json");
+
+    // Both digests round-trip into the lockfile so a later install from the
+    // lockfile alone (manifest cached) still accepts either.
+    const lockContent = await file(join(String(dir), "bun.lock")).text();
+    expect(lockContent).toContain(bogus);
+    expect(lockContent).toContain(real.sha512);
+  });
+
+  it("rejects a registry tarball matching no digest of the strongest algorithm", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const bogus1 = "sha512-" + Buffer.alloc(86, "A").toString() + "==";
+    const bogus2 = "sha512-" + Buffer.alloc(86, "B").toString() + "==";
+
+    await using server = serveManifest(`${bogus1} ${bogus2}`, real.tgz);
+    using dir = projectDir("integrity-registry-alt-none", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).toContain("Integrity check failed");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/33700 — SSRI any-match: a tarball
+  // matching any digest of the strongest algorithm must verify. Uses a URL
+  // tarball (local-tarball paths are re-resolved per platform).
+  function serveTarball(tgz: Buffer) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        if (new URL(req.url).pathname.endsWith("/baz.tgz")) {
+          return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+  }
+
+  it("accepts a tarball matching a non-first digest of the strongest algorithm", async () => {
+    const real = buildTarball(Buffer.from('{"name":"baz","version":"1.0.0"}\n'));
+    const bogus = buildTarball(Buffer.from('{"name":"bogus","version":"9.9.9"}\n'));
+
+    await using server = serveTarball(real.tgz);
+    const url = `http://127.0.0.1:${server.port}/baz.tgz`;
+    // Bogus digest first (the one Bun used to pin to), real digest second. A
+    // tarball matching only the second entry must still verify.
+    using dir = tempDir("integrity-alt-match", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: url } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "foo", dependencies: { baz: url } } },
+        packages: { baz: [`baz@${url}`, {}, `${bogus.sha512} ${real.sha512}`] },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).not.toContain("Integrity check failed");
+    expect(exitCode).toBe(0);
+    expect(await readdirSorted(join(String(dir), "node_modules", "baz"))).toContain("package.json");
+
+    // The multi-digest shape round-trips: re-emitted next to the primary.
+    const lockContent = await file(join(String(dir), "bun.lock")).text();
+    expect(lockContent).toContain(bogus.sha512);
+    expect(lockContent).toContain(real.sha512);
+  });
+
+  it("rejects a tarball matching no digest of the strongest algorithm", async () => {
+    const real = buildTarball(Buffer.from('{"name":"baz","version":"1.0.0"}\n'));
+    const bogus1 = buildTarball(Buffer.from('{"name":"bogus1","version":"9.9.9"}\n'));
+    const bogus2 = buildTarball(Buffer.from('{"name":"bogus2","version":"8.8.8"}\n'));
+
+    await using server = serveTarball(real.tgz);
+    const url = `http://127.0.0.1:${server.port}/baz.tgz`;
+    using dir = tempDir("integrity-alt-none", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: url } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "foo", dependencies: { baz: url } } },
+        packages: { baz: [`baz@${url}`, {}, `${bogus1.sha512} ${bogus2.sha512}`] },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).toContain("Integrity check failed");
+    expect(exitCode).not.toBe(0);
+  });
 });
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download failure (%s)", linker => {

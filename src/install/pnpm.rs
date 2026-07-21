@@ -906,7 +906,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             return Err(invalid_pnpm_lockfile());
                         };
 
-                        pkg.meta.integrity = Integrity::parse(integrity_str);
+                        let (integrity, integrity_alternates) =
+                            Integrity::parse_with_alternates(integrity_str);
+                        pkg.meta.integrity = integrity;
+                        lockfile.record_integrity_alternates(
+                            name_hash,
+                            &pkg.meta.integrity,
+                            &integrity_alternates,
+                        );
                     }
                 }
 

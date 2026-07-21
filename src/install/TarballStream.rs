@@ -225,6 +225,11 @@ impl TarballStream {
             } else {
                 tarball.integrity
             },
+            &if tarball.skip_verify {
+                integrity::IntegrityAlternates::default()
+            } else {
+                tarball.integrity_alternates.clone()
+            },
             compute_if_missing,
         );
 

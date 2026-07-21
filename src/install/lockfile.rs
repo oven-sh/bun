@@ -26,6 +26,7 @@ use bun_sha_hmac as Crypto;
 use bun_sys::{self as sys, Fd, File};
 
 use crate::config_version::ConfigVersion;
+use crate::integrity::{DIGEST_BUF_LEN, Integrity, IntegrityAlternates};
 use crate::migration;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
@@ -214,6 +215,19 @@ pub struct Lockfile {
     /// happened to land first. Runtime-only — never serialised; sized lazily
     /// in `mark_exact_pin`.
     pub exact_pinned: DynamicBitSet,
+
+    /// Alternate digests of the strongest algorithm for packages whose SSRI
+    /// integrity string carried more than one (W3C SRI §3.3.4 any-match),
+    /// keyed by (package name hash, primary digest bytes) so alternates never
+    /// apply to a different package that happens to share a primary digest.
+    /// Both key parts are copied verbatim by `Package::clone`, so entries stay
+    /// valid across the `clean` rebuild. Populated from the parse paths
+    /// (`bun.lock`, npm manifest, migrations) and consulted both at tarball
+    /// verify time and when re-emitting the lockfile so the shape round-trips.
+    /// Empty in the common single-digest case. Runtime-only — never
+    /// serialised.
+    pub integrity_alternates:
+        BunHashMap<(PackageNameHash, [u8; DIGEST_BUF_LEN]), IntegrityAlternates>,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -1219,6 +1233,13 @@ impl Lockfile {
                 new.workspace_versions.re_index()?;
                 new.workspace_paths.re_index()?;
             }
+
+            // Carry the integrity-alternates side-table across the rebuild. It
+            // is keyed by (name hash, primary digest bytes); `Package::clone`
+            // copies both verbatim, so the keys stay valid.
+            if !old.integrity_alternates.is_empty() {
+                new.integrity_alternates = core::mem::take(&mut old.integrity_alternates);
+            }
         }
 
         // When you run `"bun add react"
@@ -2136,7 +2157,40 @@ impl Lockfile {
             // `get_package_id` applies from id 0.
             loaded_package_count: 0,
             exact_pinned: DynamicBitSet::default(),
+            integrity_alternates: BunHashMap::default(),
         }
+    }
+
+    /// Record alternate digests for a package's integrity (SSRI any-match).
+    /// No-op when there are no alternates or the integrity is unsupported.
+    pub fn record_integrity_alternates(
+        &mut self,
+        name_hash: PackageNameHash,
+        integrity: &Integrity,
+        alternates: &IntegrityAlternates,
+    ) {
+        if alternates.is_empty() || !integrity.tag.is_supported() {
+            return;
+        }
+        bun_core::handle_oom(
+            self.integrity_alternates
+                .put((name_hash, integrity.value), alternates.clone()),
+        );
+    }
+
+    /// Alternate digests recorded for a package's `integrity`, or an empty set.
+    pub fn integrity_alternates_for(
+        &self,
+        name_hash: PackageNameHash,
+        integrity: &Integrity,
+    ) -> IntegrityAlternates {
+        if !integrity.tag.is_supported() {
+            return IntegrityAlternates::default();
+        }
+        self.integrity_alternates
+            .get(&(name_hash, integrity.value))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Snapshot `packages.len()` as the "loaded from lockfile" watermark.

@@ -32,7 +32,7 @@ use crate::{
 use crate::bin_real::ToJsonStyle;
 use crate::config_version::ConfigVersion;
 use crate::extract_tarball as ExtractTarball;
-use crate::integrity::Integrity;
+use crate::integrity::{Integrity, IntegrityAlternates};
 use crate::npm::Negatable;
 use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::repository::RepositoryExt as _;
@@ -306,6 +306,7 @@ impl Stringifier {
         let pkg_name_hashes: &[PackageNameHash] = pkgs.items_name_hash();
         let pkg_metas: &[Meta] = pkgs.items_meta();
         let pkg_bins = pkgs.items_bin();
+        let pkg_alternates = &lockfile.integrity_alternates;
 
         let mut temp_buf: Vec<u8> = Vec::new();
 
@@ -860,7 +861,16 @@ impl Stringifier {
                             )?;
 
                             if pkg_meta.integrity.tag.is_supported() {
-                                write!(writer, ", \"{}\"]", pkg_meta.integrity)?;
+                                write!(writer, ", \"")?;
+                                Self::write_integrity_field(
+                                    writer,
+                                    &pkg_meta.integrity,
+                                    pkg_alternates.get(&(
+                                        pkg_name_hashes[pkg_id as usize],
+                                        pkg_meta.integrity.value,
+                                    )),
+                                )?;
+                                write!(writer, "\"]")?;
                             } else {
                                 writer.write_byte(b']')?;
                             }
@@ -890,7 +900,16 @@ impl Stringifier {
                             )?;
 
                             if pkg_meta.integrity.tag.is_supported() {
-                                write!(writer, ", \"{}\"]", pkg_meta.integrity)?;
+                                write!(writer, ", \"")?;
+                                Self::write_integrity_field(
+                                    writer,
+                                    &pkg_meta.integrity,
+                                    pkg_alternates.get(&(
+                                        pkg_name_hashes[pkg_id as usize],
+                                        pkg_meta.integrity.value,
+                                    )),
+                                )?;
+                                write!(writer, "\"]")?;
                             } else {
                                 writer.write_byte(b']')?;
                             }
@@ -965,7 +984,16 @@ impl Stringifier {
                                 &mut path_buf,
                             )?;
 
-                            write!(writer, ", \"{}\"]", pkg_meta.integrity)?;
+                            write!(writer, ", \"")?;
+                            Self::write_integrity_field(
+                                writer,
+                                &pkg_meta.integrity,
+                                pkg_alternates.get(&(
+                                    pkg_name_hashes[pkg_id as usize],
+                                    pkg_meta.integrity.value,
+                                )),
+                            )?;
+                            write!(writer, "\"]")?;
                         }
                         ResolutionTag::Workspace => {
                             write!(
@@ -1016,10 +1044,18 @@ impl Stringifier {
                             if pkg_meta.integrity.tag.is_supported() {
                                 write!(
                                     writer,
-                                    ", {}, \"{}\"]",
+                                    ", {}, \"",
                                     repo.resolved.fmt_json(buf, Default::default()),
-                                    pkg_meta.integrity,
                                 )?;
+                                Self::write_integrity_field(
+                                    writer,
+                                    &pkg_meta.integrity,
+                                    pkg_alternates.get(&(
+                                        pkg_name_hashes[pkg_id as usize],
+                                        pkg_meta.integrity.value,
+                                    )),
+                                )?;
+                                write!(writer, "\"]")?;
                             } else {
                                 write!(
                                     writer,
@@ -1397,6 +1433,23 @@ impl Stringifier {
         writer.write_all(b"},")?;
 
         optional_peers_buf.clear();
+        Ok(())
+    }
+
+    /// Write the integrity value (without surrounding quotes), re-emitting any
+    /// recorded alternate digests space-separated so a multi-digest SSRI string
+    /// round-trips (W3C SRI §3.3.4 any-match).
+    fn write_integrity_field(
+        writer: &mut Writer,
+        integrity: &Integrity,
+        alternates: Option<&IntegrityAlternates>,
+    ) -> Result<(), WriteError> {
+        write!(writer, "{}", integrity)?;
+        if let Some(alts) = alternates {
+            for alt in alts.iter() {
+                write!(writer, " {}", alt)?;
+            }
+        }
         Ok(())
     }
 
@@ -2627,7 +2680,9 @@ pub fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    pkg.meta.integrity = Integrity::parse(integrity_str);
+                    let (integrity, integrity_alternates) =
+                        Integrity::parse_with_alternates(integrity_str);
+                    pkg.meta.integrity = integrity;
                     if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
                         // Surface — don't fail — for npm parity (`npm install`
                         // proceeds on a malformed lockfile integrity, treating
@@ -2641,6 +2696,11 @@ pub fn parse_into_binary_lockfile(
                         );
                         pkg.meta.integrity = Integrity::default();
                     }
+                    lockfile.record_integrity_alternates(
+                        name_hash,
+                        &pkg.meta.integrity,
+                        &integrity_alternates,
+                    );
 
                     // Fail closed: otherwise a tampered lockfile could redirect
                     // the tarball URL off-registry and install arbitrary content
@@ -2665,7 +2725,9 @@ pub fn parse_into_binary_lockfile(
                     // integrity is optional for tarball deps (backward compat)
                     if i < pkg_info.len() {
                         if let Some(integrity_str) = pkg_info[i].as_str() {
-                            pkg.meta.integrity = Integrity::parse(integrity_str);
+                            let (integrity, integrity_alternates) =
+                                Integrity::parse_with_alternates(integrity_str);
+                            pkg.meta.integrity = integrity;
                             if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
                                 log.add_warning(
                                     Some(source),
@@ -2674,6 +2736,11 @@ pub fn parse_into_binary_lockfile(
                                 );
                                 pkg.meta.integrity = Integrity::default();
                             }
+                            lockfile.record_integrity_alternates(
+                                name_hash,
+                                &pkg.meta.integrity,
+                                &integrity_alternates,
+                            );
                         }
                     }
                 }
@@ -2729,7 +2796,9 @@ pub fn parse_into_binary_lockfile(
                     // Optional integrity hash (added to pin tarball content)
                     if i < pkg_info.len() {
                         if let Some(integrity_str) = pkg_info[i].as_str() {
-                            pkg.meta.integrity = Integrity::parse(integrity_str);
+                            let (integrity, integrity_alternates) =
+                                Integrity::parse_with_alternates(integrity_str);
+                            pkg.meta.integrity = integrity;
                             if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
                                 log.add_warning(
                                     Some(source),
@@ -2738,6 +2807,11 @@ pub fn parse_into_binary_lockfile(
                                 );
                                 pkg.meta.integrity = Integrity::default();
                             }
+                            lockfile.record_integrity_alternates(
+                                name_hash,
+                                &pkg.meta.integrity,
+                                &integrity_alternates,
+                            );
                         }
                     }
                 }

@@ -196,6 +196,6 @@ pub mod layout_asserts {
     pin!(crate::lockfile::package::Scripts, size = 49, align = 1);
 
     // ── .npm manifest cache (PackageManifest.Serializer) ─────────────────
-    pin!(crate::npm::PackageVersion, size = 240, align = 8);
+    pin!(crate::npm::PackageVersion, size = 256, align = 8);
     pin!(crate::npm::NpmPackage, size = 120, align = 8);
 }

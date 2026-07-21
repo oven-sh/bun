@@ -740,6 +740,11 @@ pub struct PackageVersion {
 
     /// Unix timestamp when this version was published (0 if unknown)
     pub publish_timestamp_ms: f64,
+
+    /// Raw `dist.integrity` string, stored only when it carries more than one
+    /// entry so `Package::from_npm` can recover the alternate digests of the
+    /// strongest algorithm (W3C SRI §3.3.4 any-match). Empty otherwise.
+    pub integrity_str: ExternalString,
 }
 
 impl Default for PackageVersion {
@@ -766,6 +771,7 @@ impl Default for PackageVersion {
             has_install_script: false,
             _padding_tail: [0; 2],
             publish_timestamp_ms: 0.0,
+            integrity_str: ExternalString::default(),
         }
     }
 }
@@ -793,8 +799,8 @@ impl PackageVersion {
 // means a cross-version cache read will mis-slice — fail loudly at compile
 // time instead. (Full per-type asserts live in `padding_checker::layout_asserts`.)
 const _: () = assert!(
-    core::mem::size_of::<PackageVersion>() == 240,
-    "Npm.PackageVersion layout drifted from Zig spec (expected 240 bytes); \
+    core::mem::size_of::<PackageVersion>() == 256,
+    "Npm.PackageVersion layout drifted (expected 256 bytes); \
      bump PackageManifest::Serializer::VERSION if intentional",
 );
 
@@ -830,6 +836,15 @@ const _: () = {
     assert!(
         offset_of!(PackageVersion, publish_timestamp_ms)
             == offset_of!(PackageVersion, _padding_tail) + 2
+    );
+    // `integrity_str` follows `publish_timestamp_ms` (f64, ends at 240) with no gap.
+    assert!(
+        offset_of!(PackageVersion, integrity_str)
+            == offset_of!(PackageVersion, publish_timestamp_ms) + size_of::<f64>()
+    );
+    assert!(
+        offset_of!(PackageVersion, integrity_str) + size_of::<ExternalString>()
+            == size_of::<PackageVersion>()
     );
 };
 
@@ -932,9 +947,10 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
-        pub const VERSION: &'static str = "bun-npm-manifest-cache-v0.0.7\n";
+        // - v0.0.8: added raw integrity string for multi-entry SSRI (any-match)
+        pub const VERSION: &'static str = "bun-npm-manifest-cache-v0.0.8\n";
         const HEADER_BYTES: &'static str =
-            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
+            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.8\n");
 
         // Field order is hardcoded (descending alignment). Re-verify if the
         // layout changes.
@@ -2107,14 +2123,19 @@ impl PackageManifest {
 
                 let version_obj = prop.value.as_object();
 
-                if let Some(tarball) = version_obj
+                if let Some(dist) = version_obj
                     .and_then(|o| o.get(b"dist"))
                     .and_then(|dist| dist.as_object())
-                    .and_then(|dist| dist.get(b"tarball"))
-                    .and_then(|tarball| tarball.as_str())
                 {
-                    string_builder.count(tarball);
-                    tarball_urls_count += (!tarball.is_empty()) as usize;
+                    if let Some(tarball) = dist.get(b"tarball").and_then(|t| t.as_str()) {
+                        string_builder.count(tarball);
+                        tarball_urls_count += (!tarball.is_empty()) as usize;
+                    }
+                    if let Some(integrity) = dist.get(b"integrity").and_then(|v| v.as_str()) {
+                        if Integrity::is_multi_entry(integrity) {
+                            string_builder.count(integrity);
+                        }
+                    }
                 }
 
                 'bin: {
@@ -2608,6 +2629,10 @@ impl PackageManifest {
                         if let Some(shasum_str) = dist.get(b"integrity").and_then(|v| v.as_str()) {
                             package_version.integrity = Integrity::parse(shasum_str);
                             if package_version.integrity.tag.is_supported() {
+                                if Integrity::is_multi_entry(shasum_str) {
+                                    package_version.integrity_str =
+                                        string_builder.append::<ExternalString>(shasum_str);
+                                }
                                 break 'integrity;
                             }
                         }

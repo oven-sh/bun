@@ -2811,10 +2811,8 @@ describe("bundler", () => {
     },
   });
   // When an ESM module is wrapped in an __esm lazy initializer, a cyclic
-  // require() of that module must observe its exported bindings as
-  // uninitialized until the wrapper body reaches the original declaration.
-  // Previously the initializer was hoisted into the outer `var` when it was
-  // side-effect free, so the CJS partner saw the value already assigned.
+  // require() must observe its exported bindings as uninitialized until
+  // the wrapper body reaches the original declaration.
   itBundled("edgecase/WrappedESMCycleConstInitializerNotHoisted", {
     files: {
       "/entry.mjs": /* js */ `

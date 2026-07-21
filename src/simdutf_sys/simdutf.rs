@@ -23,6 +23,9 @@ pub struct Status(pub i32);
 
 impl Status {
     pub const SUCCESS: Status = Status(0);
+    /// The leading byte must be followed by N-1 continuation bytes, where N is the UTF-8 character length.
+    /// This is also the error when the input is truncated.
+    pub const TOO_SHORT: Status = Status(2);
     pub const SURROGATE: Status = Status(6);
     /// Found a character that cannot be part of a valid base64 string.
     pub const INVALID_BASE64_CHARACTER: Status = Status(7);

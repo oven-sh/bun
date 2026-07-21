@@ -66,6 +66,51 @@ impl Murmur2_32 {
         h1 ^= h1 >> 15;
         h1
     }
+
+    #[inline]
+    pub fn hash_uint32(v: u32) -> u32 {
+        Self::hash_uint32_with_seed(v, DEFAULT_SEED)
+    }
+
+    pub fn hash_uint32_with_seed(v: u32, seed: u32) -> u32 {
+        const M: u32 = 0x5bd1e995;
+        let len: u32 = 4;
+        let mut h1: u32 = seed ^ len;
+        let mut k1 = v.wrapping_mul(M);
+        k1 ^= k1 >> 24;
+        k1 = k1.wrapping_mul(M);
+        h1 = h1.wrapping_mul(M);
+        h1 ^= k1;
+        h1 ^= h1 >> 13;
+        h1 = h1.wrapping_mul(M);
+        h1 ^= h1 >> 15;
+        h1
+    }
+
+    #[inline]
+    pub fn hash_uint64(v: u64) -> u32 {
+        Self::hash_uint64_with_seed(v, DEFAULT_SEED)
+    }
+
+    pub fn hash_uint64_with_seed(v: u64, seed: u32) -> u32 {
+        const M: u32 = 0x5bd1e995;
+        let len: u32 = 8;
+        let mut h1: u32 = seed ^ len;
+        let mut k1 = (v as u32).wrapping_mul(M);
+        k1 ^= k1 >> 24;
+        k1 = k1.wrapping_mul(M);
+        h1 = h1.wrapping_mul(M);
+        h1 ^= k1;
+        k1 = ((v >> 32) as u32).wrapping_mul(M);
+        k1 ^= k1 >> 24;
+        k1 = k1.wrapping_mul(M);
+        h1 = h1.wrapping_mul(M);
+        h1 ^= k1;
+        h1 ^= h1 >> 13;
+        h1 = h1.wrapping_mul(M);
+        h1 ^= h1 >> 15;
+        h1
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -106,6 +151,44 @@ impl Murmur2_64 {
             h1 ^= k1;
             h1 = h1.wrapping_mul(M);
         }
+        h1 ^= h1 >> 47;
+        h1 = h1.wrapping_mul(M);
+        h1 ^= h1 >> 47;
+        h1
+    }
+
+    #[inline]
+    pub fn hash_uint32(v: u32) -> u64 {
+        Self::hash_uint32_with_seed(v, DEFAULT_SEED as u64)
+    }
+
+    pub fn hash_uint32_with_seed(v: u32, seed: u64) -> u64 {
+        const M: u64 = 0xc6a4a7935bd1e995;
+        let len: u64 = 4;
+        let mut h1: u64 = seed ^ len.wrapping_mul(M);
+        let k1: u64 = v as u64;
+        h1 ^= k1;
+        h1 = h1.wrapping_mul(M);
+        h1 ^= h1 >> 47;
+        h1 = h1.wrapping_mul(M);
+        h1 ^= h1 >> 47;
+        h1
+    }
+
+    #[inline]
+    pub fn hash_uint64(v: u64) -> u64 {
+        Self::hash_uint64_with_seed(v, DEFAULT_SEED as u64)
+    }
+
+    pub fn hash_uint64_with_seed(v: u64, seed: u64) -> u64 {
+        const M: u64 = 0xc6a4a7935bd1e995;
+        let len: u64 = 8;
+        let mut h1: u64 = seed ^ len.wrapping_mul(M);
+        let mut k1 = v.wrapping_mul(M);
+        k1 ^= k1 >> 47;
+        k1 = k1.wrapping_mul(M);
+        h1 ^= k1;
+        h1 = h1.wrapping_mul(M);
         h1 ^= h1 >> 47;
         h1 = h1.wrapping_mul(M);
         h1 ^= h1 >> 47;
@@ -178,6 +261,52 @@ impl Murmur3_32 {
             }
         }
 
+        h1 ^= len;
+        fmix32(h1)
+    }
+
+    #[inline]
+    pub fn hash_uint32(v: u32) -> u32 {
+        Self::hash_uint32_with_seed(v, DEFAULT_SEED)
+    }
+
+    pub fn hash_uint32_with_seed(v: u32, seed: u32) -> u32 {
+        const C1: u32 = 0xcc9e2d51;
+        const C2: u32 = 0x1b873593;
+        let len: u32 = 4;
+        let mut h1: u32 = seed;
+        let mut k1 = v.wrapping_mul(C1);
+        k1 = Self::rotl32(k1, 15);
+        k1 = k1.wrapping_mul(C2);
+        h1 ^= k1;
+        h1 = Self::rotl32(h1, 13);
+        h1 = h1.wrapping_mul(5).wrapping_add(0xe6546b64);
+        h1 ^= len;
+        fmix32(h1)
+    }
+
+    #[inline]
+    pub fn hash_uint64(v: u64) -> u32 {
+        Self::hash_uint64_with_seed(v, DEFAULT_SEED)
+    }
+
+    pub fn hash_uint64_with_seed(v: u64, seed: u32) -> u32 {
+        const C1: u32 = 0xcc9e2d51;
+        const C2: u32 = 0x1b873593;
+        let len: u32 = 8;
+        let mut h1: u32 = seed;
+        let mut k1 = (v as u32).wrapping_mul(C1);
+        k1 = Self::rotl32(k1, 15);
+        k1 = k1.wrapping_mul(C2);
+        h1 ^= k1;
+        h1 = Self::rotl32(h1, 13);
+        h1 = h1.wrapping_mul(5).wrapping_add(0xe6546b64);
+        k1 = ((v >> 32) as u32).wrapping_mul(C1);
+        k1 = Self::rotl32(k1, 15);
+        k1 = k1.wrapping_mul(C2);
+        h1 ^= k1;
+        h1 = Self::rotl32(h1, 13);
+        h1 = h1.wrapping_mul(5).wrapping_add(0xe6546b64);
         h1 ^= len;
         fmix32(h1)
     }

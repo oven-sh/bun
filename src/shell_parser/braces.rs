@@ -957,23 +957,22 @@ impl<'a> Parser<'a> {
 
     fn parse_expansion(&mut self) -> Result<ast::Expansion, ParserError> {
         let mut variants: BumpVec<'a, ast::Group> = BumpVec::new_in(self.bump);
-        while !self.match_any(&[TokenTag::Close, TokenTag::Eof]) {
+        loop {
             let mut group: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
-            let mut close = false;
-            while !self.r#match(TokenTag::Eof) {
-                if self.r#match(TokenTag::Close) {
-                    close = true;
-                    break;
+            // Only this inner loop consumes Close/Eof so a trailing empty
+            // variant (`{a,}`) is pushed before the outer loop exits.
+            let close = loop {
+                if self.match_any(&[TokenTag::Close, TokenTag::Eof]) {
+                    break true;
                 }
                 if self.r#match(TokenTag::Comma) {
-                    break;
+                    break false;
                 }
-                let group_atom = match self.parse_atom()? {
-                    Some(a) => a,
-                    None => break,
-                };
-                group.push(group_atom);
-            }
+                match self.parse_atom()? {
+                    Some(a) => group.push(a),
+                    None => break true,
+                }
+            };
             if group.len() == 1 {
                 let single = group.into_iter().next().unwrap();
                 variants.push(ast::Group {

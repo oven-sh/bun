@@ -54,6 +54,33 @@ describe("$.braces", () => {
     ]);
   });
 
+  // The nested-expansion parser consumed `}` via the outer loop guard after a
+  // trailing `,`, so `{a,}` inside a nested group yielded one variant instead
+  // of two and the last output slot was left empty.
+  describe("nested with empty variant", () => {
+    test.each([
+      ["{x,a{,}b}", ["x", "ab", "ab"]],
+      ["{x,{a,}}z", ["xz", "az", "z"]],
+      ["{x,{,a}}z", ["xz", "z", "az"]],
+      ["{x,{,}}z", ["xz", "z", "z"]],
+      ["a{b,c{d,}}e", ["abe", "acde", "ace"]],
+      ["a{b,c{,d}}e", ["abe", "ace", "acde"]],
+      ["{x,{a,,b}}", ["x", "a", "", "b"]],
+      ["{x,{a,b,}}", ["x", "a", "b", ""]],
+      ["{{a,},x}", ["a", "", "x"]],
+      ["{{a,}{b,}}", ["ab", "a", "b", ""]],
+      ["p{q,{r,}{s,}}t", ["pqt", "prst", "prt", "pst", "pt"]],
+      // A nested comma-free `{}` previously parsed to 0 variants, which made
+      // expand_nested return early and drop the text after it. It is now 1
+      // empty variant, matching calculate_expanded_amount and expand_flat.
+      ["{x,a{}b}", ["x", "ab"]],
+      ["{a,b{}}c", ["ac", "bc"]],
+      ["{x,{}y}", ["x", "y"]],
+    ])("%s", (pattern, expected) => {
+      expect($.braces(pattern)).toEqual(expected);
+    });
+  });
+
   test("very deeply nested", () => {
     // The innermost `{17}` has no comma, so it is literal (bash 5.2).
     const result = $.braces(`{1,{2,{3,{4,{5,{6,{7,{8,{9,{10,{11,{12,{13,{14,{15,{16,{17}}}}}}}}}}}}}}}}}`);

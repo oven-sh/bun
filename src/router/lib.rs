@@ -1028,10 +1028,9 @@ impl Route {
             let is_index = name.is_empty();
 
             let mut has_uppercase = false;
-            // NOTE: reshaped for borrowck — the non-index arm interns via
-            // DirnameStore (process-lifetime arena → `&'static`), so the
-            // post-if bindings are 'static and the route_file_buf borrow is
-            // dropped before the abs-path block below needs it mutably.
+            // NOTE: the non-index arm interns via DirnameStore (process-lifetime
+            // arena → `&'static`), so the post-if bindings drop the
+            // route_file_buf borrow before the abs-path block reborrows it.
             let (name, match_name): (&'static [u8], &'static [u8]) = if !name.is_empty() {
                 validation_result = match Pattern::validate(&name[1..], log) {
                     Some(v) => v,
@@ -1044,10 +1043,9 @@ impl Route {
                     name_i += 1;
                 }
 
-                // NOTE: DirnameStore::append returns `&'static [u8]` (process-
-                // lifetime arena), so rebinding here drops the borrow on
-                // `route_file_buf` and avoids needing lifetime transmutes
-                // below.
+                // NOTE: DirnameStore::append returns `&'static [u8]`, so
+                // rebinding drops the route_file_buf borrow without a
+                // lifetime transmute.
                 let dirname_store = FileSystem::instance().dirname_store();
                 let name: &'static [u8] = dirname_store.append(name).expect("unreachable");
                 let match_name: &'static [u8] = if has_uppercase {

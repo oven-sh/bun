@@ -344,9 +344,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       .replace(/^\/\/[^\n]*\n/gm, "")
       .replace(/^\(?\$\)?;\s*$/m, "")
       .trim();
-    const captured = prologue
-      ? captureBody.replace(/(function\s*\(.*?\)\s*{)/, `$1${prologue}\n`)
-      : captureBody;
+    const captured = prologue ? captureBody.replace(/(function\s*\(.*?\)\s*{)/, `$1${prologue}\n`) : captureBody;
     const finalReplacement =
       (fn.directives.sloppy
         ? captured

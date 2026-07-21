@@ -54,7 +54,9 @@ describe("codegen sources are Bun-API free", () => {
   // legitimately references Bun globals; node-loader.ts guards its dynamic
   // import with a runtime check.
   const allow = new Set(["client-js.ts", "node-loader.ts"]);
-  const files = globSync("**/*.ts", { cwd: codegenDir }).filter(f => !f.endsWith(".d.ts") && !allow.has(path.basename(f)));
+  const files = globSync("**/*.ts", { cwd: codegenDir }).filter(
+    f => !f.endsWith(".d.ts") && !allow.has(path.basename(f)),
+  );
 
   test("no Bun.* / bun:* / import.meta.{dir,main,require} references", () => {
     expect(files.length).toBeGreaterThan(15);
@@ -115,10 +117,9 @@ describe.skipIf(!node)("codegen scripts execute under Node", () => {
       "in.txt": `/* @begin smokeTable\n  foo  fooFunc  Function 0\n@end */\n`,
     });
     const out = path.join(String(dir), "out.h");
-    const r = await runNode(
-      [path.join(codegenDir, "create-hash-table.ts"), path.join(String(dir), "in.txt"), out],
-      { env: { ...bunEnv, TARGET_PLATFORM: process.platform } },
-    );
+    const r = await runNode([path.join(codegenDir, "create-hash-table.ts"), path.join(String(dir), "in.txt"), out], {
+      env: { ...bunEnv, TARGET_PLATFORM: process.platform },
+    });
     expect(r.stderr).not.toContain("Error");
     expect(readFileSync(out, "utf8")).toContain("#pragma once");
     expect(r.status).toBe(0);
@@ -132,7 +133,11 @@ describe.skipIf(!node)("codegen scripts execute under Node", () => {
 test("all builtin modules load in the built bun", async () => {
   const mods = builtinModules.filter(m => !m.startsWith("_") && !m.startsWith("bun:internal"));
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `for (const m of ${JSON.stringify(mods)}) require(m); console.log("loaded", ${mods.length});`],
+    cmd: [
+      bunExe(),
+      "-e",
+      `for (const m of ${JSON.stringify(mods)}) require(m); console.log("loaded", ${mods.length});`,
+    ],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",

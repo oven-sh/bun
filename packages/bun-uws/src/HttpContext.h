@@ -898,10 +898,9 @@ public:
                 /* Middleware? Automatically respond to expectations */
                 std::string_view expect = user.httpRequest->getHeader("expect");
                 if (expect.length() && expect == "100-continue") {
-                    /* RFC 9110 10.1.1: answer the final status instead of 100
-                     * when the outcome is already known. A Content-Length over
-                     * the configured limit is rejected from the head alone, so
-                     * inviting the upload first wastes the body transfer. */
+                    /* RFC 9110 10.1.1: a Content-Length over the configured
+                     * limit is a 413 from the head alone; skip the 100 so the
+                     * handler can answer the final status directly. */
                     bool overLimit = false;
                     if (uint64_t limit = httpContextData->maxRequestBodySize) {
                         std::string_view cl = user.httpRequest->getHeader("content-length");

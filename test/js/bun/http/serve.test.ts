@@ -2249,10 +2249,9 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
 });
 
 it("should not send 100 Continue for an over-limit Content-Length with Expect: 100-continue", async () => {
-  // RFC 9110 10.1.1: a server MUST either send 100 Continue and read, or send
-  // a final status. When Content-Length already exceeds maxRequestBodySize the
-  // 413 is decided from the request head alone, so inviting the upload with
-  // 100 Continue first wastes the body transfer for a known rejection.
+  // RFC 9110 10.1.1: answer the final status instead of 100 when it is already
+  // known. Content-Length > maxRequestBodySize is a 413 from the head alone,
+  // so a 100 Continue first invites an upload that will be rejected.
   using server = Bun.serve({
     port: 0,
     maxRequestBodySize: 100,

@@ -383,13 +383,11 @@ unsafe fn init_runtime_state(
         use bun_options_types::schema::api;
         // Move (not clone) the caller's `TransformOptions` into the
         // `Transpiler::init` call. `InitOptions` is consumed once per VM and
-        // the only post-hook reader of `transform_options` is the
-        // `preserve_symlinks` line below, which reads from the moved-out
-        // value before the move. Avoids deep-cloning `loaders`/
+        // nothing reads `transform_options` after this hook. Avoids
+        // deep-cloning `loaders`/
         // `entry_points`/`define` (Vec<Box<[u8]>>) on every VM init —
         // measurable on `bun -e ''` startup.
         let mut args = core::mem::take(&mut opts.transform_options);
-        let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         // Inlined `configure_transform_options_for_bun_vm`:
         args.write = Some(false);
         args.resolve = Some(api::ResolveMode::Lazy);
@@ -425,10 +423,6 @@ unsafe fn init_runtime_state(
                     t.options.emit_dce_annotations = false;
                     t.resolver.store_fd = opts.store_fd;
                     t.resolver.prefer_module_field = false;
-                    // Propagate `--preserve-symlinks`
-                    // from CLI args to the resolver so symlinked node_modules
-                    // entries resolve via their link path (peer deps stay reachable).
-                    t.resolver.opts.preserve_symlinks = preserve_symlinks;
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(ptr::addr_of_mut!((*vm).modules).cast()),
                         handler: Some(bun_jsc::async_module::Queue::on_wake_handler),

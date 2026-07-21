@@ -1779,7 +1779,7 @@ impl<'a> BundleOptions<'a> {
             root_dir: Box::default(),
             node_modules_bundle_url: Cow::Borrowed(b""),
             node_modules_bundle_pretty_path: Cow::Borrowed(b""),
-            preserve_symlinks: false,
+            preserve_symlinks: transform.preserve_symlinks.unwrap_or(false),
             preserve_extensions: false,
             production: false,
             output_format: Format::Esm,

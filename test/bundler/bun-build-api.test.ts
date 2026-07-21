@@ -1,6 +1,6 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
@@ -183,6 +183,59 @@ describe("Bun.build", () => {
     expect(build.logs[0].position).toEqual(null);
     expect(build.logs[0].level).toEqual("error");
     Bun.gc(true);
+  });
+
+  // https://github.com/oven-sh/bun/issues/31957
+  test("preserveSymlinks resolves a symlinked file's imports from the link path", async () => {
+    const dir = tempDirWithFiles("bun-build-api-preserve-symlinks", {
+      "shared/math.ts": `import { dec } from "fakedec";\nexport const x = dec(1);`,
+      "app/package.json": `{ "name": "app", "dependencies": { "fakedec": "1.0.0" } }`,
+      "app/node_modules/fakedec/package.json": `{ "name": "fakedec", "version": "1.0.0", "main": "index.js" }`,
+      "app/node_modules/fakedec/index.js": `module.exports.dec = n => n + " fakedec-from-app-node-modules";`,
+      "app/index.ts": `import { x } from "./shared/math.ts";\nconsole.log("got", x);`,
+    });
+    // realpath the base so the only symlink in play is the one created below
+    // (macOS tmpdir lives under /var -> /private/var)
+    const root = realpathSync(dir);
+    // "junction" avoids needing symlink privileges on Windows; the type argument
+    // is ignored on POSIX. The resolver dereferences junctions like symlinks.
+    symlinkSync(join(root, "shared"), join(root, "app", "shared"), "junction");
+
+    // Default: the import realpaths to shared/math.ts, which has no
+    // node_modules with "fakedec" above it (matches node's and esbuild's
+    // default).
+    {
+      const build = await buildNoThrow({
+        entrypoints: [join(root, "app", "index.ts")],
+        outdir: join(root, "out-default"),
+      });
+      expect(build.logs[0]?.message).toContain('Could not resolve: "fakedec"');
+      expect(build.success).toBe(false);
+    }
+
+    // preserveSymlinks: resolution keeps the link path, so
+    // app/node_modules/fakedec is found.
+    {
+      const build = await Bun.build({
+        entrypoints: [join(root, "app", "index.ts")],
+        outdir: join(root, "out-preserved"),
+        preserveSymlinks: true,
+      });
+      expect(build.success).toBe(true);
+      expect(await build.outputs[0].text()).toContain("fakedec-from-app-node-modules");
+    }
+
+    // A later default build in the same process must not inherit resolutions
+    // cached by the preserveSymlinks build (and vice versa, covered by the
+    // first build above running before the preserved one).
+    {
+      const build = await buildNoThrow({
+        entrypoints: [join(root, "app", "index.ts")],
+        outdir: join(root, "out-default-again"),
+      });
+      expect(build.logs[0]?.message).toContain('Could not resolve: "fakedec"');
+      expect(build.success).toBe(false);
+    }
   });
 
   test("errors are thrown", async () => {

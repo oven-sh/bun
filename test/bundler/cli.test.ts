@@ -517,3 +517,62 @@ describe("CLI argument error messages", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/31957
+test("--preserve-symlinks resolves a symlinked file's imports from the link path", async () => {
+  using dir = tempDir("build-preserve-symlinks", {
+    "shared/math.ts": `import { dec } from "fakedec";\nexport const x = dec(1);`,
+    "app/package.json": `{ "name": "app", "dependencies": { "fakedec": "1.0.0" } }`,
+    "app/node_modules/fakedec/package.json": `{ "name": "fakedec", "version": "1.0.0", "main": "index.js" }`,
+    "app/node_modules/fakedec/index.js": `module.exports.dec = n => n + " fakedec-from-app-node-modules";`,
+    "app/index.ts": `import { x } from "./shared/math.ts";\nconsole.log("got", x);`,
+  });
+  // realpath the base so the only symlink in play is the one created below
+  // (macOS tmpdir lives under /var -> /private/var)
+  const root = realpathSync(String(dir));
+  // "junction" avoids needing symlink privileges on Windows; the type argument
+  // is ignored on POSIX. The resolver dereferences junctions like symlinks.
+  fs.symlinkSync(join(root, "shared"), join(root, "app", "shared"), "junction");
+
+  async function build(args: string[], outdir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args, "--outdir", outdir],
+      env: bunEnv,
+      cwd: root,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const bundle =
+      exitCode === 0 ? await Bun.file(join(root, outdir, fs.readdirSync(join(root, outdir))[0])).text() : "";
+    return { stderr, exitCode, bundle };
+  }
+
+  // Default: the entry realpaths to shared/math.ts, which has no node_modules
+  // with "fakedec" above it (matches node's and esbuild's default).
+  {
+    const { stderr, exitCode } = await build([join("app", "shared", "math.ts")], "out-default");
+    expect(stderr).toContain('Could not resolve: "fakedec"');
+    expect(exitCode).not.toBe(0);
+  }
+
+  // --preserve-symlinks with the entry point itself behind the symlink:
+  // resolution keeps the link path, so app/node_modules/fakedec is found.
+  {
+    const { stderr, exitCode, bundle } = await build(
+      ["--preserve-symlinks", join("app", "shared", "math.ts")],
+      "out-entry",
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(bundle).toContain("fakedec-from-app-node-modules");
+  }
+
+  // --preserve-symlinks with the symlinked file reached through an import.
+  {
+    const { stderr, exitCode, bundle } = await build(["--preserve-symlinks", join("app", "index.ts")], "out-import");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(bundle).toContain("fakedec-from-app-node-modules");
+  }
+});

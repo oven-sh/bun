@@ -2737,6 +2737,20 @@ declare module "bun" {
     conditions?: Array<string> | string;
 
     /**
+     * When `true`, modules are resolved from the path of the symlink itself
+     * rather than the real path it points to. Imports inside a symlinked file
+     * (for example a shared source folder linked into a project) resolve
+     * relative to the link's location, so `node_modules` of the consuming
+     * project are found.
+     *
+     * Equivalent to `--preserve-symlinks` in `bun build`, mirroring the
+     * Node.js flag of the same name.
+     *
+     * @default false
+     */
+    preserveSymlinks?: boolean;
+
+    /**
      * Controls how environment variables are handled during bundling.
      *
      * Can be one of:

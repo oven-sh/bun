@@ -839,6 +839,27 @@ Controls whether package dependencies are included in the bundle. Possible value
   </Tab>
 </Tabs>
 
+### preserveSymlinks
+
+Resolve modules from the path of the symlink itself instead of the real path it points to, mirroring Node.js' `--preserve-symlinks` flag. Imports inside a symlinked file (for example a shared source folder linked into a project) resolve relative to the link's location, so the `node_modules` of the consuming project are found. Defaults to `false`.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.ts'],
+      outdir: './out',
+      preserveSymlinks: true,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.ts --outdir ./out --preserve-symlinks
+    ```
+  </Tab>
+</Tabs>
+
 ### naming
 
 Customizes the generated file names. Defaults to `./[dir]/[name].[ext]`.
@@ -1693,6 +1714,16 @@ interface BuildConfig {
    * https://nodejs.org/api/packages.html#exports
    */
   conditions?: Array<string> | string;
+
+  /**
+   * Resolve modules from the path of the symlink itself rather than the
+   * real path it points to, mirroring Node.js' `--preserve-symlinks` flag.
+   *
+   * Equivalent to `--preserve-symlinks` in `bun build`.
+   *
+   * @default false
+   */
+  preserveSymlinks?: boolean;
 
   /**
    * Controls how environment variables are handled during bundling.

@@ -1062,6 +1062,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             drop: config.drop.keys().to_vec(),
             bunfig_path: Box::default(),
             jsx: Some(config.jsx.clone()),
+            // Must ride through `from_api` (not `configure_bundler`) so
+            // `Transpiler::init` projects it into the resolver's options.
+            preserve_symlinks: Some(config.preserve_symlinks),
             ..Default::default()
         };
 

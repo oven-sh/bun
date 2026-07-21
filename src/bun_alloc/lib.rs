@@ -3134,6 +3134,15 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         self.index.remove(&_key).is_some()
     }
 
+    /// Drop every key → slot mapping. Like `remove`, already-allocated slots
+    /// are orphaned rather than reused; subsequent `get_or_put` calls append
+    /// fresh slots. Use when every cached value was derived from state that
+    /// changed out from under the cache.
+    pub fn clear(&mut self) {
+        let _guard = self.mutex.lock();
+        self.index.clear();
+    }
+
     pub fn values(&mut self) -> &mut [ValueType] {
         // SAFETY: `backing_buf[0..backing_buf_used]` was initialized by `put`;
         // `MaybeUninit<T>` is `#[repr(transparent)]` so the slice cast is layout-sound.

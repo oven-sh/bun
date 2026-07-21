@@ -336,6 +336,40 @@ fn hash_map_instance_init() -> *mut HashMap {
     }
 }
 
+/// `preserve_symlinks` mode the singleton's contents were computed with.
+/// `DirInfo.abs_real_path` is either the realpath (default) or the symlink
+/// path (`preserve_symlinks`), so an entry cached under one mode is wrong for
+/// the other. Resolvers can differ per `Bun.build` call within one process.
+static CACHE_PRESERVE_SYMLINKS: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Invalidate every cached `DirInfo` when `preserve_symlinks` differs from
+/// the mode the cache was filled with. Key-lookup entry points
+/// (`dir_info_cached_maybe_log`, `dir_info_for_resolution`) call this before
+/// `get_or_put` while holding the resolver mutex, so a resolver never
+/// consumes entries computed with the other mode. Mode changes are rare:
+/// `Bun.build` runs execute one at a time on the bundle thread, and runtime
+/// resolvers keep one mode for the process lifetime.
+///
+/// Tradeoff: `clear` drops only the key index; the slab is append-only (like
+/// `remove`), so each flip orphans the previously filled slots until shutdown
+/// (`Resolver::deinit` still releases their owned resources). That bounds the
+/// cost by flip count, not correctness. Per-mode maps would avoid this but
+/// parent links are raw indexes resolved through this one singleton
+/// (`slot_ptr_at`/`ref_at_index`), and rewriting `abs_real_path` in place
+/// would mutate slots a concurrent reader may hold.
+#[inline(always)]
+pub fn sync_preserve_symlinks_mode(preserve_symlinks: bool) {
+    use core::sync::atomic::Ordering;
+    if CACHE_PRESERVE_SYMLINKS.load(Ordering::Relaxed) != preserve_symlinks {
+        CACHE_PRESERVE_SYMLINKS.store(preserve_symlinks, Ordering::Relaxed);
+        // SAFETY: ARENA — `hash_map_instance()` is the never-null BSSMap
+        // singleton (process-lifetime; never freed). `clear` takes the map's
+        // own mutex; orphaned slots stay valid for live `DirInfoRef`s.
+        unsafe { (*hash_map_instance()).clear() };
+    }
+}
+
 /// Look up a `DirInfo` slot in the process-lifetime BSSMap singleton by index
 /// and wrap it as a [`DirInfoRef`]. Single `unsafe` deref site for
 /// `hash_map_instance()` index reads; `get_parent` /

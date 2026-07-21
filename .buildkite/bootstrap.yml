@@ -13,9 +13,11 @@ steps:
   # (link above). It runs on queue=build-image — the queue that bakes images
   # and therefore holds the AWS/Azure credentials — because ci.mjs checks
   # image existence there before emitting bake steps (scripts/build/ci).
+  # generate-pipeline.sh runs ci.mjs under the spec-pinned Node.js it
+  # fetches (cached), so the standing agent's own node version is irrelevant.
   # Keep this in step with the UI if the UI ever changes.
   - label: ":pipeline:"
     agents:
       queue: "build-image"
     command:
-      - "node .buildkite/ci.mjs"
+      - "sh .buildkite/generate-pipeline.sh"

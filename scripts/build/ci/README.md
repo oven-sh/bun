@@ -17,12 +17,13 @@ number to bump anywhere. Merging _is_ publishing.
 
 ## Prerequisites
 
-- **node >= 25 on the CI orchestrator** (the `build-image` Buildkite queue,
-  which runs `.buildkite/ci.mjs` and `scripts/machine.mjs`). Both import
-  `.ts` modules directly and rely on node\'s built-in type stripping; older
-  nodes fail at import time. (The node baked ONTO the images is separate —
-  it is the `nodejs.version` fact in `spec.ts`, currently 26.x, and the
-  delivery shim fetches exactly that build to run `bootstrap.ts`.)
+- **The pipeline generator brings its own node.** The `:pipeline:` step runs
+  `sh .buildkite/generate-pipeline.sh`, a POSIX shim that reads
+  `nodejs.version` from `spec.ts`, downloads that exact Node.js for the
+  running host (cached in `~/.cache/bun-ci-node`, so it fetches once), and
+  runs `ci.mjs` under it — the standing agent\'s own node is never used. The
+  `.ts` modules need node >= 25 (type stripping); the spec pins 26.x, which
+  is the same node baked ONTO the images and used by the bake shim.
 - The `build-image` queue holds the AWS + Azure credentials `machine.mjs`
   already uses; `ci.mjs`\'s existence check reads the same secrets there.
 - The `aws` CLI on that queue (the AWS existence check shells out to it).

@@ -294,14 +294,7 @@ class Dispatcher extends EventEmitter {
     return Promise.resolve(null);
   }
 }
-class Agent extends Dispatcher {
-  close(callback) {
-    return super.close(callback);
-  }
-  destroy(err, callback) {
-    return super.destroy(err, callback);
-  }
-}
+class Agent extends Dispatcher {}
 class Pool extends Dispatcher {
   request() {}
 }

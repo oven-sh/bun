@@ -55,7 +55,7 @@ describe.concurrent("wasmSIMDFixtures matches fixtures that require wasm SIMD", 
 
   test("every listed fixture exists on disk", () => {
     const onDisk = new Set(allWasmFixtures);
-    for (const f of wasmSIMDFixtures) expect(onDisk.has(f)).toBe(true);
+    expect([...wasmSIMDFixtures].filter(f => !onDisk.has(f))).toEqual([]);
   });
 
   for (const fixture of allWasmFixtures) {

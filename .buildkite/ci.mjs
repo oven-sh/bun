@@ -759,7 +759,11 @@ function getVerifyBaselineStep(platform, options) {
   const targetKey = getTargetKey(platform);
   const triplet = getTargetTriplet(platform);
   const emulator = getEmulatorBinary(platform);
-  const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
+  // Windows SDE (Pin) pays ~45s startup per fixture; 80+ serial fixtures would
+  // take ~1h. qemu-Nehalem on Linux already verifies the same x64-no-AVX JIT
+  // output at ~1s/fixture, so Windows keeps only the static scan + SIMD test.
+  const wantJitStress = hasWebKitChanges(options) && os !== "windows";
+  const jitStressFlag = wantJitStress ? " --jit-stress" : "";
   // Android binaries need /system/bin/linker64 + a bionic sysroot, neither of which exist on the
   // build host, so qemu-user cannot load them; only the static instruction scan is meaningful.
   const skipEmulationFlag = abi === "android" ? " --skip-emulation" : "";
@@ -814,7 +818,7 @@ function getVerifyBaselineStep(platform, options) {
     agents,
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
+    timeout_in_minutes: wantJitStress ? 30 : 10,
     command: [
       ...setupCommands,
       `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,

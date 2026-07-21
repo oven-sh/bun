@@ -12,9 +12,10 @@
 // and that genuinely unknown codes degrade to `UNKNOWN` rather than panicking.
 
 import { translateNtStatusToE } from "bun:internal-for-testing";
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 test.skipIf(!isWindows)("translateNtStatusToE maps delete-related NTSTATUS codes to errno", () => {
@@ -144,4 +145,127 @@ test.skipIf(!isWindows)("fs.rm recursive surfaces a permission error when delete
       execFileSync("icacls", [file, "/remove:d", "*S-1-1-0"], { stdio: "pipe" });
     } catch {}
   }
+});
+
+// On filesystems that do not support FileDispositionInformationEx (FAT32/exFAT,
+// SMB redirectors, some ReFS variants) the POSIX-semantics delete returns an
+// NTSTATUS meaning "not supported" and DeleteFileBun must fall back to the
+// legacy FileDispositionInformation. That legacy call has no
+// IGNORE_READONLY_ATTRIBUTE flag, so a read-only file fails with
+// STATUS_CANNOT_DELETE unless the readonly bit is cleared first. libuv's
+// fs__unlink_rmdir handles both the extra fallback NTSTATUS codes and the
+// readonly clear; this test asserts the DeleteFileBun path (used by recursive
+// fs.rm / unlinkat) does the same. Reproduced against a FAT32 VHD because
+// NTFS accepts the Ex info class and so never exercises the fallback.
+const fat32 = (() => {
+  if (!isWindows) return null;
+  const dir = tempDir("rm-fat32", {});
+  const tmp = String(dir);
+  const vhd = path.join(tmp, "disk.vhd");
+  const mount = path.join(tmp, "mnt");
+  fs.mkdirSync(mount);
+  // diskpart needs an elevated token; if we are not elevated the create/attach
+  // fails and we skip. diskpart in stdin mode exits 0 even when individual
+  // commands fail, so the real gate is the `st_dev` check below.
+  const script = [
+    `create vdisk file="${vhd}" maximum=64 type=expandable`,
+    `select vdisk file="${vhd}"`,
+    `attach vdisk`,
+    `create partition primary`,
+    `format fs=fat32 quick`,
+    `assign mount="${mount}"`,
+  ].join("\n");
+  const r = spawnSync("diskpart", [], { input: script, encoding: "utf8", timeout: 60_000 });
+  const cleanup = () => {
+    const detach = [`select vdisk file="${vhd}"`, `detach vdisk`].join("\n");
+    spawnSync("diskpart", [], { input: detach, encoding: "utf8", timeout: 60_000 });
+    try {
+      dir[Symbol.dispose]();
+    } catch {}
+  };
+  let ok = r.status === 0;
+  if (ok) {
+    // `mount` was created on the host NTFS volume; `assign mount=` turns it
+    // into a volume mount point whose `st_dev` (volume serial) differs from
+    // its parent. Without this check a silent diskpart failure would leave
+    // `mount` on NTFS, where the Ex fast path deletes the readonly file and
+    // the test passes without exercising the fallback.
+    try {
+      ok = fs.statSync(mount).dev !== fs.statSync(tmp).dev;
+    } catch {
+      ok = false;
+    }
+  }
+  if (!ok) {
+    cleanup();
+    return null;
+  }
+  return { mount, cleanup };
+})();
+
+afterAll(() => {
+  fat32?.cleanup();
+});
+
+test.skipIf(!fat32)(
+  "fs.rm recursive deletes a read-only file on a filesystem without POSIX delete semantics",
+  async () => {
+    const { mount } = fat32!;
+    const root = path.join(mount, "tree");
+    // Run the actual deletion in a child so the DeleteFileBun path is exercised
+    // by the bun binary under test, and so a crash surfaces as a non-zero exit
+    // rather than killing the runner.
+    const fixture = `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const root = process.env.TEST_RM_ROOT;
+    const sub = path.join(root, "sub");
+    fs.mkdirSync(sub, { recursive: true });
+    const ro = path.join(sub, "readonly.txt");
+    fs.writeFileSync(ro, "x");
+    fs.chmodSync(ro, 0o444);
+    const plain = path.join(sub, "plain.txt");
+    fs.writeFileSync(plain, "y");
+    let err = null;
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch (e) {
+      err = { code: e && e.code, message: String(e && e.message) };
+    }
+    process.stdout.write(JSON.stringify({
+      err,
+      rootExists: fs.existsSync(root),
+      roExists: fs.existsSync(ro),
+    }));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, TEST_RM_ROOT: root },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const result = JSON.parse(stdout) as {
+      err: null | { code?: string; message: string };
+      rootExists: boolean;
+      roExists: boolean;
+    };
+    expect(result).toEqual({ err: null, rootExists: false, roExists: false });
+  },
+);
+
+// Non-regression: the same operation must keep working on the default
+// filesystem (NTFS), where FileDispositionInformationEx succeeds directly.
+test.skipIf(!isWindows)("fs.rm recursive deletes a read-only file on NTFS", () => {
+  using dir = tempDir("rm-readonly-ntfs", {
+    "sub/readonly.txt": "x",
+    "sub/plain.txt": "y",
+  });
+  const root = String(dir);
+  const ro = path.join(root, "sub", "readonly.txt");
+  fs.chmodSync(ro, 0o444);
+  fs.rmSync(root, { recursive: true, force: true });
+  expect(fs.existsSync(root)).toBe(false);
 });

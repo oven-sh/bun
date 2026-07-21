@@ -799,10 +799,18 @@ impl<'a> Transpiler<'a> {
                 } else {
                     // An explicit NODE_ENV outside {development, production,
                     // test} must not fall through to the development files;
-                    // load `.env.{mode}` instead. Empty or the literal string
-                    // `"undefined"` (a common `NODE_ENV=${NODE_ENV}` footgun
-                    // when the var is unset) still default to development.
+                    // load `.env.{mode}` instead. The canonical names are
+                    // matched case-insensitively so mixed-case spellings route
+                    // to the built-in arms (the byte-exact `is_production()`/
+                    // `is_test()` above would miss them). Empty or the literal
+                    // string `"undefined"` still default to development.
                     match node_env.as_deref() {
+                        Some(m) if m.eq_ignore_ascii_case(b"production") => {
+                            dot_env::DotEnvFileSuffix::Production
+                        }
+                        Some(m) if m.eq_ignore_ascii_case(b"test") => {
+                            dot_env::DotEnvFileSuffix::Test
+                        }
                         Some(m)
                             if !m.is_empty()
                                 && !m.eq_ignore_ascii_case(b"development")

@@ -372,7 +372,17 @@ mod advanced {
                 }
 
                 let message = &data[HEADER_LENGTH..][..message_len as usize];
-                let deserialized = JSValue::deserialize(message, global)?;
+                let deserialized = match JSValue::deserialize(message, global) {
+                    Ok(v) => v,
+                    Err(JsError::Thrown) | Err(JsError::Terminated) => {
+                        // Malformed structured-clone bytes from the peer throw a TypeError
+                        // inside deserialize(). Clear it so it is not reported as this
+                        // process's own uncaught exception; the caller closes the channel.
+                        global.clear_exception();
+                        return Err(IPCDecodeError::InvalidFormat);
+                    }
+                    Err(JsError::OutOfMemory) => return Err(IPCDecodeError::OutOfMemory),
+                };
 
                 Ok(DecodeIPCMessageResult {
                     bytes_consumed: HEADER_LENGTH_U32 + message_len,

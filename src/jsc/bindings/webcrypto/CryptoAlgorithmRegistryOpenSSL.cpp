@@ -38,6 +38,8 @@
 #include "CryptoAlgorithmECDSA.h"
 #include "CryptoAlgorithmEd25519.h"
 #include "CryptoAlgorithmHKDF.h"
+#include "CryptoAlgorithmMLDSA.h"
+#include "CryptoAlgorithmMLKEM.h"
 #include "CryptoAlgorithmHMAC.h"
 #include "CryptoAlgorithmPBKDF2.h"
 #include "CryptoAlgorithmRSAES_PKCS1_v1_5.h"
@@ -81,6 +83,11 @@ void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
     registerAlgorithm<CryptoAlgorithmSHA3_512>();
     registerAlgorithm<CryptoAlgorithmEd25519>();
     registerAlgorithm<CryptoAlgorithmX25519>();
+    registerAlgorithm<CryptoAlgorithmMLDSA44>();
+    registerAlgorithm<CryptoAlgorithmMLDSA65>();
+    registerAlgorithm<CryptoAlgorithmMLDSA87>();
+    registerAlgorithm<CryptoAlgorithmMLKEM768>();
+    registerAlgorithm<CryptoAlgorithmMLKEM1024>();
 }
 
 } // namespace WebCore

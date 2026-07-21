@@ -7,12 +7,26 @@
 #include "ErrorCode.h"
 #include "NodeValidator.h"
 #include "AsymmetricKeyValue.h"
+#include "CryptoAlgorithm.h"
+#include "CryptoAlgorithmParameters.h"
+#include "CryptoAlgorithmRegistry.h"
 #include "CryptoKeyAES.h"
+#include "CryptoKeyAKP.h"
 #include "CryptoKeyHMAC.h"
 #include "CryptoKeyRaw.h"
 #include "CryptoKey.h"
 #include "CryptoKeyType.h"
 #include "JSCryptoKey.h"
+#include "JSCryptoKeyUsage.h"
+#include "SubtleCrypto.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertObject.h"
+#include "JSDOMConvertSequences.h"
+#include "JSDOMConvertStrings.h"
+#include "JSDOMConvertUnion.h"
+#include "JSDOMConvertEnumeration.h"
+#include "JSDOMExceptionHandling.h"
+#include <openssl/bytestring.h>
 #include "CryptoGenKeyPair.h"
 #include "JSBuffer.h"
 #include "BunString.h"
@@ -662,6 +676,16 @@ JSValue KeyObject::asymmetricKeyType(JSGlobalObject* globalObject)
         return jsNontrivialString(vm, "x25519"_s);
     case EVP_PKEY_X448:
         return jsNontrivialString(vm, "x448"_s);
+    case EVP_PKEY_ML_DSA_44:
+        return jsNontrivialString(vm, "ml-dsa-44"_s);
+    case EVP_PKEY_ML_DSA_65:
+        return jsNontrivialString(vm, "ml-dsa-65"_s);
+    case EVP_PKEY_ML_DSA_87:
+        return jsNontrivialString(vm, "ml-dsa-87"_s);
+    case EVP_PKEY_ML_KEM_768:
+        return jsNontrivialString(vm, "ml-kem-768"_s);
+    case EVP_PKEY_ML_KEM_1024:
+        return jsNontrivialString(vm, "ml-kem-1024"_s);
     default:
         return jsUndefined();
     }
@@ -807,9 +831,181 @@ std::optional<bool> KeyObject::equals(const KeyObject& other) const
     }
 }
 
-JSValue KeyObject::toCryptoKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue algorithmValue, JSValue extractableValue, JSValue keyUsagesValue)
+static WebCore::CryptoKeyUsageBitmap toWebCryptoUsageBitmap(const Vector<WebCore::CryptoKeyUsage>& usages)
 {
-    return jsUndefined();
+    WebCore::CryptoKeyUsageBitmap bitmap = 0;
+    for (auto usage : usages) {
+        switch (usage) {
+        case WebCore::CryptoKeyUsage::Encrypt:
+            bitmap |= WebCore::CryptoKeyUsageEncrypt;
+            break;
+        case WebCore::CryptoKeyUsage::Decrypt:
+            bitmap |= WebCore::CryptoKeyUsageDecrypt;
+            break;
+        case WebCore::CryptoKeyUsage::Sign:
+            bitmap |= WebCore::CryptoKeyUsageSign;
+            break;
+        case WebCore::CryptoKeyUsage::Verify:
+            bitmap |= WebCore::CryptoKeyUsageVerify;
+            break;
+        case WebCore::CryptoKeyUsage::DeriveKey:
+            bitmap |= WebCore::CryptoKeyUsageDeriveKey;
+            break;
+        case WebCore::CryptoKeyUsage::DeriveBits:
+            bitmap |= WebCore::CryptoKeyUsageDeriveBits;
+            break;
+        case WebCore::CryptoKeyUsage::WrapKey:
+            bitmap |= WebCore::CryptoKeyUsageWrapKey;
+            break;
+        case WebCore::CryptoKeyUsage::UnwrapKey:
+            bitmap |= WebCore::CryptoKeyUsageUnwrapKey;
+            break;
+        case WebCore::CryptoKeyUsage::EncapsulateKey:
+            bitmap |= WebCore::CryptoKeyUsageEncapsulateKey;
+            break;
+        case WebCore::CryptoKeyUsage::EncapsulateBits:
+            bitmap |= WebCore::CryptoKeyUsageEncapsulateBits;
+            break;
+        case WebCore::CryptoKeyUsage::DecapsulateKey:
+            bitmap |= WebCore::CryptoKeyUsageDecapsulateKey;
+            break;
+        case WebCore::CryptoKeyUsage::DecapsulateBits:
+            bitmap |= WebCore::CryptoKeyUsageDecapsulateBits;
+            break;
+        }
+    }
+    return bitmap;
+}
+
+static std::optional<Vector<uint8_t>> marshalAsymmetricKey(const ncrypto::EVPKeyPointer& pkey, bool isPublic)
+{
+    bssl::ScopedCBB cbb;
+    if (!CBB_init(cbb.get(), 0))
+        return std::nullopt;
+    if (isPublic ? !EVP_marshal_public_key(cbb.get(), pkey.get()) : !EVP_marshal_private_key(cbb.get(), pkey.get()))
+        return std::nullopt;
+    return Vector<uint8_t>(std::span { CBB_data(cbb.get()), CBB_len(cbb.get()) });
+}
+
+// KeyObject.prototype.toCryptoKey, following Node's per-algorithm dispatch in
+// lib/internal/crypto/keys.js.
+JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSValue algorithmValue, JSValue extractableValue, JSValue keyUsagesValue)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    auto algorithm = WebCore::convert<WebCore::IDLUnion<WebCore::IDLObject, WebCore::IDLDOMString>>(*lexicalGlobalObject, algorithmValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool extractable = extractableValue.toBoolean(lexicalGlobalObject);
+    auto keyUsages = WebCore::convert<WebCore::IDLSequence<WebCore::IDLEnumeration<WebCore::CryptoKeyUsage>>>(*lexicalGlobalObject, keyUsagesValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto usagesBitmap = toWebCryptoUsageBitmap(keyUsages);
+
+    auto throwDOMException = [&](WebCore::ExceptionCode code, const String& message) -> JSValue {
+        WebCore::propagateException(*lexicalGlobalObject, scope, WebCore::Exception { code, message });
+        return {};
+    };
+
+    auto paramsOrException = WebCore::SubtleCrypto::normalizeImportParameters(*lexicalGlobalObject, WTF::move(algorithm));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (paramsOrException.hasException()) {
+        WebCore::propagateException(*lexicalGlobalObject, scope, paramsOrException.releaseException());
+        return {};
+    }
+    auto params = paramsOrException.releaseReturnValue();
+    auto identifier = params->identifier;
+
+    RefPtr<WebCore::CryptoKey> result;
+    std::optional<WebCore::ExceptionCode> failureCode;
+    String failureMessage;
+    auto keyCallback = [&](WebCore::CryptoKey& key) { result = &key; };
+    auto exceptionCallback = [&](WebCore::ExceptionCode code, const String& message) {
+        failureCode = code;
+        failureMessage = message;
+    };
+
+    if (type() == CryptoKeyType::Secret) {
+        WebCore::CryptoKeyFormat format = WebCore::CryptoKeyFormat::Raw;
+        switch (identifier) {
+        case CryptoAlgorithmIdentifier::HMAC:
+        case CryptoAlgorithmIdentifier::AES_CTR:
+        case CryptoAlgorithmIdentifier::AES_CBC:
+        case CryptoAlgorithmIdentifier::AES_GCM:
+        case CryptoAlgorithmIdentifier::AES_KW:
+        case CryptoAlgorithmIdentifier::HKDF:
+        case CryptoAlgorithmIdentifier::PBKDF2:
+            break;
+        case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+            format = WebCore::CryptoKeyFormat::RawSecret;
+            break;
+        default:
+            return throwDOMException(WebCore::NotSupportedError, "Unrecognized algorithm name"_s);
+        }
+
+        Vector<uint8_t> keyData;
+        keyData.appendVector(symmetricKey());
+        auto importAlgorithm = WebCore::CryptoAlgorithmRegistry::singleton().create(identifier);
+        importAlgorithm->importKey(format, WebCore::KeyData { WTF::move(keyData) }, *params, extractable, usagesBitmap, WTF::move(keyCallback), WTF::move(exceptionCallback));
+    } else {
+        bool isPublic = type() == CryptoKeyType::Public;
+        switch (identifier) {
+        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
+        case CryptoAlgorithmIdentifier::RSA_PSS:
+        case CryptoAlgorithmIdentifier::RSA_OAEP:
+        case CryptoAlgorithmIdentifier::ECDSA:
+        case CryptoAlgorithmIdentifier::ECDH:
+        case CryptoAlgorithmIdentifier::Ed25519:
+        case CryptoAlgorithmIdentifier::X25519: {
+            // Round-trip through DER so the WebCrypto import performs the same
+            // validation as importKey.
+            auto der = marshalAsymmetricKey(asymmetricKey(), isPublic);
+            if (!der)
+                return throwDOMException(WebCore::OperationError, ""_s);
+            auto importAlgorithm = WebCore::CryptoAlgorithmRegistry::singleton().create(identifier);
+            importAlgorithm->importKey(isPublic ? WebCore::CryptoKeyFormat::Spki : WebCore::CryptoKeyFormat::Pkcs8, WebCore::KeyData { WTF::move(*der) }, *params, extractable, usagesBitmap, WTF::move(keyCallback), WTF::move(exceptionCallback));
+            break;
+        }
+        case CryptoAlgorithmIdentifier::ML_DSA_44:
+        case CryptoAlgorithmIdentifier::ML_DSA_65:
+        case CryptoAlgorithmIdentifier::ML_DSA_87:
+        case CryptoAlgorithmIdentifier::ML_KEM_768:
+        case CryptoAlgorithmIdentifier::ML_KEM_1024: {
+            // Node's 'KeyObject' import path wraps the handle directly.
+            WebCore::CryptoKeyUsageBitmap allowedUsages;
+            if (WebCore::CryptoKeyAKP::isMlDsa(identifier))
+                allowedUsages = isPublic ? WebCore::CryptoKeyUsageVerify : WebCore::CryptoKeyUsageSign;
+            else
+                allowedUsages = isPublic
+                    ? WebCore::CryptoKeyUsageEncapsulateKey | WebCore::CryptoKeyUsageEncapsulateBits
+                    : WebCore::CryptoKeyUsageDecapsulateKey | WebCore::CryptoKeyUsageDecapsulateBits;
+            if (usagesBitmap & ~allowedUsages)
+                return throwDOMException(WebCore::SyntaxError, makeString("Unsupported key usage for a "_s, WebCore::CryptoAlgorithmRegistry::singleton().name(identifier), " key"_s));
+            if (EVP_PKEY_id(asymmetricKey().get()) != WebCore::CryptoKeyAKP::nidForIdentifier(identifier))
+                return throwDOMException(WebCore::DataError, "Invalid key type"_s);
+            EVP_PKEY_up_ref(asymmetricKey().get());
+            WebCore::EvpPKeyPtr platformKey(asymmetricKey().get());
+            result = WebCore::CryptoKeyAKP::create(identifier, type(), WTF::move(platformKey), extractable, usagesBitmap);
+            if (!result)
+                return throwDOMException(WebCore::OperationError, ""_s);
+            break;
+        }
+        default:
+            return throwDOMException(WebCore::NotSupportedError, "Unrecognized algorithm name"_s);
+        }
+    }
+
+    if (failureCode)
+        return throwDOMException(*failureCode, failureMessage);
+    if (!result)
+        return throwDOMException(WebCore::OperationError, ""_s);
+
+    if ((result->type() == WebCore::CryptoKeyType::Private || result->type() == WebCore::CryptoKeyType::Secret) && !result->usagesBitmap()) {
+        return throwDOMException(WebCore::SyntaxError,
+            result->type() == WebCore::CryptoKeyType::Private
+                ? "Usages cannot be empty when importing a private key."_s
+                : "Usages cannot be empty when importing a secret key."_s);
+    }
+
+    return WebCore::toJS(lexicalGlobalObject, globalObject, *result);
 }
 
 static std::optional<const Vector<uint8_t>*> getSymmetricKey(const WebCore::CryptoKey& key)

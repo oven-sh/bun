@@ -45,7 +45,7 @@ static constexpr uint8_t TagLength = 128;
 
 static inline bool usagesAreInvalidForChaCha20Poly1305(CryptoKeyUsageBitmap usages)
 {
-    return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits);
+    return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageKemMask);
 }
 
 // The only tag length ChaCha20-Poly1305 defines is 128 bits; anything else is an

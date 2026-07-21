@@ -248,7 +248,7 @@ static bool supportedAlgorithmIdentifier(CryptoAlgorithmIdentifier identifier, c
     }
 }
 
-RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
+RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch, bool* curveMismatch)
 {
     // In this function we extract the subjectPublicKey after verifying that the algorithm in the SPKI data
     // match the given identifier and curve. Then construct an EC key with the named curve and set the public key.
@@ -318,8 +318,11 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
         return nullptr;
 
     int curveNID = OBJ_obj2nid(value->value.object);
-    if (curveNID != curveIdentifier(curve))
+    if (curveNID != curveIdentifier(curve)) {
+        if (curveMismatch)
+            *curveMismatch = true;
         return nullptr;
+    }
 
     // subjectPublicKey must be a BIT STRING.
     value = sk_ASN1_TYPE_value(subjectPublicKeyInfo.get(), 1);
@@ -359,7 +362,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     return adoptRef(new CryptoKeyEC(identifier, curve, CryptoKeyType::Public, WTF::move(pkey), extractable, usages));
 }
 
-RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
+RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch, bool* curveMismatch)
 {
     // We need a local pointer variable to pass to d2i (DER to internal) functions().
     const uint8_t* ptr = keyData.begin();
@@ -387,8 +390,11 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier i
     if (EC_KEY_check_key(ecKey) <= 0)
         return nullptr;
 
-    if (!verifyCurve(EC_KEY_get0_group(ecKey), curve))
+    if (!verifyCurve(EC_KEY_get0_group(ecKey), curve)) {
+        if (curveMismatch)
+            *curveMismatch = true;
         return nullptr;
+    }
 
     EC_KEY_set_asn1_flag(ecKey, OPENSSL_EC_NAMED_CURVE);
 

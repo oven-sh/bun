@@ -23,7 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-enum KeyFormat { "raw", "spki", "pkcs8", "jwk", "raw-secret" };
+enum KeyFormat { "raw", "spki", "pkcs8", "jwk", "raw-secret", "raw-public", "raw-seed" };
 
 typedef (object or DOMString) AlgorithmIdentifier;
 
@@ -45,4 +45,12 @@ typedef (object or DOMString) AlgorithmIdentifier;
     Promise<any> exportKey(KeyFormat format, CryptoKey key);
     [CallWith=CurrentGlobalObject] Promise<any> wrapKey(KeyFormat format, CryptoKey key, CryptoKey wrappingKey, AlgorithmIdentifier wrapAlgorithm);
     [CallWith=CurrentGlobalObject] Promise<CryptoKey> unwrapKey(KeyFormat format, BufferSource wrappedKey, CryptoKey unwrappingKey, AlgorithmIdentifier unwrapAlgorithm, AlgorithmIdentifier unwrappedKeyAlgorithm, boolean extractable, sequence<CryptoKeyUsage> keyUsages);
+
+    // https://wicg.github.io/webcrypto-modern-algos/
+    [CallWith=CurrentGlobalObject] Promise<CryptoKey> getPublicKey(CryptoKey key, sequence<CryptoKeyUsage> keyUsages);
+    [CallWith=CurrentGlobalObject] Promise<any> encapsulateBits(AlgorithmIdentifier encapsulationAlgorithm, CryptoKey encapsulationKey);
+    [CallWith=CurrentGlobalObject] Promise<any> encapsulateKey(AlgorithmIdentifier encapsulationAlgorithm, CryptoKey encapsulationKey, AlgorithmIdentifier sharedKeyAlgorithm, boolean extractable, sequence<CryptoKeyUsage> usages);
+    [CallWith=CurrentGlobalObject] Promise<ArrayBuffer> decapsulateBits(AlgorithmIdentifier decapsulationAlgorithm, CryptoKey decapsulationKey, BufferSource ciphertext);
+    [CallWith=CurrentGlobalObject] Promise<CryptoKey> decapsulateKey(AlgorithmIdentifier decapsulationAlgorithm, CryptoKey decapsulationKey, BufferSource ciphertext, AlgorithmIdentifier sharedKeyAlgorithm, boolean extractable, sequence<CryptoKeyUsage> usages);
+    [CallWith=CurrentGlobalObject] static boolean supports(DOMString operation, AlgorithmIdentifier algorithm, optional any lengthOrAdditionalAlgorithm = null);
 };

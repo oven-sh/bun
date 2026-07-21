@@ -56,6 +56,9 @@ struct JsonWebKey {
     String qi;
     std::optional<Vector<RsaOtherPrimesInfo>> oth;
     String k;
+    // JWK "AKP" key type (ML-DSA / ML-KEM), RFC draft-ietf-cose-dilithium.
+    String pub;
+    String priv;
 };
 
 } // namespace WebCore

@@ -48,7 +48,21 @@
 #include "JSHmacKeyParams.h"
 #include "JSJsonWebKey.h"
 #include "JSPbkdf2Params.h"
+#include "JSMlDsaParams.h"
 #include "JSX25519Params.h"
+#include "AsymmetricKeyValue.h"
+#include "CryptoAlgorithmMLDSA.h"
+#include "CryptoKeyAKP.h"
+#include "CryptoKeyEC.h"
+#include "CryptoKeyRSA.h"
+#include "ErrorCode.h"
+#include "JSDOMExceptionHandling.h"
+#include "node/crypto/CryptoUtil.h"
+#include <openssl/bytestring.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <functional>
 #include "JSRsaHashedImportParams.h"
 #include "JSRsaHashedKeyGenParams.h"
 #include "JSRsaKeyGenParams.h"
@@ -78,7 +92,9 @@ enum class Operations {
     ImportKey,
     WrapKey,
     UnwrapKey,
-    GetKeyLength
+    GetKeyLength,
+    Encapsulate,
+    Decapsulate
 };
 
 static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAlgorithmParameters(JSGlobalObject&, WebCore::SubtleCrypto::AlgorithmIdentifier, Operations);
@@ -233,6 +249,16 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmRsaPssParams>(params);
             break;
         }
+        case CryptoAlgorithmIdentifier::ML_DSA_44:
+        case CryptoAlgorithmIdentifier::ML_DSA_65:
+        case CryptoAlgorithmIdentifier::ML_DSA_87: {
+            auto params = convertDictionary<CryptoAlgorithmMlDsaParams>(state, value.get());
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.context))
+                return Exception { OperationError, "Input data is too large"_s };
+            result = makeUnique<CryptoAlgorithmMlDsaParams>(params);
+            break;
+        }
         default:
             return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
@@ -311,6 +337,11 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         case CryptoAlgorithmIdentifier::X25519:
         case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+        case CryptoAlgorithmIdentifier::ML_DSA_44:
+        case CryptoAlgorithmIdentifier::ML_DSA_65:
+        case CryptoAlgorithmIdentifier::ML_DSA_87:
+        case CryptoAlgorithmIdentifier::ML_KEM_768:
+        case CryptoAlgorithmIdentifier::ML_KEM_1024:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
@@ -406,6 +437,11 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::Ed25519:
         case CryptoAlgorithmIdentifier::X25519:
         case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+        case CryptoAlgorithmIdentifier::ML_DSA_44:
+        case CryptoAlgorithmIdentifier::ML_DSA_65:
+        case CryptoAlgorithmIdentifier::ML_DSA_87:
+        case CryptoAlgorithmIdentifier::ML_KEM_768:
+        case CryptoAlgorithmIdentifier::ML_KEM_1024:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         case CryptoAlgorithmIdentifier::HMAC: {
@@ -447,6 +483,17 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     case Operations::UnwrapKey:
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::AES_KW:
+            result = makeUnique<CryptoAlgorithmParameters>(params);
+            break;
+        default:
+            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+        }
+        break;
+    case Operations::Encapsulate:
+    case Operations::Decapsulate:
+        switch (*identifier) {
+        case CryptoAlgorithmIdentifier::ML_KEM_768:
+        case CryptoAlgorithmIdentifier::ML_KEM_1024:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
@@ -509,6 +556,14 @@ static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(CryptoKeyUsage usage)
         return CryptoKeyUsageWrapKey;
     case CryptoKeyUsage::UnwrapKey:
         return CryptoKeyUsageUnwrapKey;
+    case CryptoKeyUsage::EncapsulateKey:
+        return CryptoKeyUsageEncapsulateKey;
+    case CryptoKeyUsage::EncapsulateBits:
+        return CryptoKeyUsageEncapsulateBits;
+    case CryptoKeyUsage::DecapsulateKey:
+        return CryptoKeyUsageDecapsulateKey;
+    case CryptoKeyUsage::DecapsulateBits:
+        return CryptoKeyUsageDecapsulateBits;
     }
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -576,6 +631,8 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
     case SubtleCrypto::KeyFormat::Pkcs8:
     case SubtleCrypto::KeyFormat::Raw:
     case SubtleCrypto::KeyFormat::RawSecret:
+    case SubtleCrypto::KeyFormat::RawPublic:
+    case SubtleCrypto::KeyFormat::RawSeed:
         return std::visit(
             WTF::makeVisitor(
                 [&promise](JsonWebKey&) -> std::optional<KeyData> {
@@ -638,10 +695,49 @@ static bool isSupportedExportKey(JSGlobalObject& state, CryptoAlgorithmIdentifie
     case CryptoAlgorithmIdentifier::Ed25519:
     case CryptoAlgorithmIdentifier::X25519:
     case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+    case CryptoAlgorithmIdentifier::ML_DSA_44:
+    case CryptoAlgorithmIdentifier::ML_DSA_65:
+    case CryptoAlgorithmIdentifier::ML_DSA_87:
+    case CryptoAlgorithmIdentifier::ML_KEM_768:
+    case CryptoAlgorithmIdentifier::ML_KEM_1024:
         return true;
     default:
         return false;
     }
+}
+
+static bool isAkpAlgorithm(CryptoAlgorithmIdentifier identifier)
+{
+    return CryptoKeyAKP::isMlDsa(identifier) || CryptoKeyAKP::isMlKem(identifier);
+}
+
+static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params, Ref<DeferredPromise>&& promise);
+
+// Rejects with a DOMException carrying a `cause`, matching Node's error shapes
+// for the ML-DSA/ML-KEM code paths.
+static void rejectWithCause(Ref<DeferredPromise>&& promise, ExceptionCode ec, const String& message, Function<JSC::JSValue(JSDOMGlobalObject&)>&& makeCause)
+{
+    promise->rejectWithCallback([&](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+        auto& vm = globalObject.vm();
+        JSC::JSValue cause = makeCause(globalObject);
+        auto exception = createDOMException(&globalObject, ec, message);
+        if (auto* exceptionObject = exception.getObject(); exceptionObject && cause)
+            exceptionObject->putDirect(vm, vm.propertyNames->cause, cause);
+        return exception;
+    });
+}
+
+// Node rejects oversized ML-DSA context strings with an OperationError whose
+// cause is an ERR_OUT_OF_RANGE error; returns true when it rejected.
+static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params, Ref<DeferredPromise>&& promise)
+{
+    auto* mlDsaParams = dynamicDowncast<CryptoAlgorithmMlDsaParams>(params);
+    if (!mlDsaParams || mlDsaParams->contextVector().size() <= CryptoAlgorithmMLDSA::s_maxContextLength)
+        return false;
+    rejectWithCause(WTF::move(promise), OperationError, "The operation failed for an operation-specific reason"_s, [](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+        return Bun::createError(&globalObject, Bun::ErrorCode::ERR_OUT_OF_RANGE, "context string must be at most 255 bytes"_s);
+    });
+    return true;
 }
 
 RefPtr<DeferredPromise> getPromise(DeferredPromise* index, WeakPtr<SubtleCrypto> weakThis)
@@ -802,6 +898,9 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
         return;
     }
 
+    if (rejectIfMlDsaContextTooLong(*params, WTF::move(promise)))
+        return;
+
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
     auto index = promise.ptr();
@@ -848,6 +947,9 @@ void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
         promise->reject(InvalidAccessError, "Unable to use this key to verify"_s);
         return;
     }
+
+    if (rejectIfMlDsaContextTooLong(*params, WTF::move(promise)))
+        return;
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
@@ -1095,6 +1197,52 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     auto keyData = *keyDataOrNull;
     auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
+    // Node's aliasKeyFormat maps raw-secret and raw-public to raw for these
+    // algorithms and rejects the seed/public formats everywhere else; only the
+    // ML algorithms consume them directly (lib/internal/crypto/webcrypto.js).
+    switch (params->identifier) {
+    case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
+    case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
+    case CryptoAlgorithmIdentifier::RSA_PSS:
+    case CryptoAlgorithmIdentifier::RSA_OAEP:
+    case CryptoAlgorithmIdentifier::ECDSA:
+    case CryptoAlgorithmIdentifier::ECDH:
+    case CryptoAlgorithmIdentifier::Ed25519:
+    case CryptoAlgorithmIdentifier::X25519:
+    case CryptoAlgorithmIdentifier::HKDF:
+    case CryptoAlgorithmIdentifier::PBKDF2:
+        if (format == KeyFormat::RawSecret)
+            format = KeyFormat::Raw;
+        break;
+    default:
+        break;
+    }
+    if (!isAkpAlgorithm(params->identifier) && (format == KeyFormat::RawPublic || format == KeyFormat::RawSeed)) {
+        bool aliasesRawPublic = false;
+        switch (params->identifier) {
+        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
+        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
+        case CryptoAlgorithmIdentifier::RSA_PSS:
+        case CryptoAlgorithmIdentifier::RSA_OAEP:
+        case CryptoAlgorithmIdentifier::ECDSA:
+        case CryptoAlgorithmIdentifier::ECDH:
+        case CryptoAlgorithmIdentifier::Ed25519:
+        case CryptoAlgorithmIdentifier::X25519:
+        case CryptoAlgorithmIdentifier::HKDF:
+        case CryptoAlgorithmIdentifier::PBKDF2:
+            aliasesRawPublic = true;
+            break;
+        default:
+            break;
+        }
+        if (format == KeyFormat::RawPublic && aliasesRawPublic)
+            format = KeyFormat::Raw;
+        else {
+            promise->reject(NotSupportedError, makeString("Unable to import "_s, CryptoAlgorithmRegistry::singleton().name(params->identifier), " using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));
+            return;
+        }
+    }
+
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
     auto index = promise.ptr();
@@ -1112,9 +1260,28 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
             promise->resolve<IDLInterface<CryptoKey>>(key);
         }
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
+    auto exceptionCallback = [index, weakThis, identifier = params->identifier](ExceptionCode ec, const String& msg) mutable {
+        if (auto promise = getPromise(index, weakThis)) {
+            // The ML import paths leave the BoringSSL parse failure in the error
+            // queue; attach it as the DOMException's cause like Node does.
+            if (ec == DataError && isAkpAlgorithm(identifier)) {
+                if (uint32_t opensslError = ERR_get_error()) {
+                    ERR_clear_error();
+                    rejectWithCause(promise.releaseNonNull(), ec, msg, [opensslError](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+                        auto& vm = globalObject.vm();
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        auto cause = Bun::createCryptoError(&globalObject, scope, opensslError, nullptr);
+                        if (scope.exception()) [[unlikely]] {
+                            (void)scope.tryClearException();
+                            return JSC::jsUndefined();
+                        }
+                        return cause;
+                    });
+                    return;
+                }
+            }
             rejectWithException(promise.releaseNonNull(), ec, msg);
+        }
     };
 
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
@@ -1135,6 +1302,29 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
         return;
     }
 
+    // Node aliases raw-public to raw for EC and OKP public keys and rejects the
+    // seed/public formats everywhere else; only the ML algorithms consume them.
+    if (!isAkpAlgorithm(key.algorithmIdentifier()) && (format == KeyFormat::RawPublic || format == KeyFormat::RawSeed)) {
+        bool aliasesRawPublic = false;
+        switch (key.algorithmIdentifier()) {
+        case CryptoAlgorithmIdentifier::ECDSA:
+        case CryptoAlgorithmIdentifier::ECDH:
+        case CryptoAlgorithmIdentifier::Ed25519:
+        case CryptoAlgorithmIdentifier::X25519:
+            aliasesRawPublic = key.type() == CryptoKeyType::Public;
+            break;
+        default:
+            break;
+        }
+        if (format == KeyFormat::RawPublic && aliasesRawPublic)
+            format = KeyFormat::Raw;
+        else {
+            auto type = key.type() == CryptoKeyType::Private ? "private"_s : key.type() == CryptoKeyType::Public ? "public"_s : "secret"_s;
+            promise->reject(NotSupportedError, makeString("Unable to export "_s, CryptoAlgorithmRegistry::singleton().name(key.algorithmIdentifier()), ' ', type, " key using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));
+            return;
+        }
+    }
+
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
     auto index = promise.ptr();
@@ -1146,6 +1336,8 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
             case SubtleCrypto::KeyFormat::Spki:
             case SubtleCrypto::KeyFormat::Pkcs8:
             case SubtleCrypto::KeyFormat::RawSecret:
+            case SubtleCrypto::KeyFormat::RawPublic:
+            case SubtleCrypto::KeyFormat::RawSeed:
             case SubtleCrypto::KeyFormat::Raw: {
                 Vector<uint8_t>& rawKey = std::get<Vector<uint8_t>>(key);
                 fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), rawKey.begin(), rawKey.size());
@@ -1232,6 +1424,8 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                 case SubtleCrypto::KeyFormat::Spki:
                 case SubtleCrypto::KeyFormat::Pkcs8:
                 case SubtleCrypto::KeyFormat::RawSecret:
+                case SubtleCrypto::KeyFormat::RawPublic:
+                case SubtleCrypto::KeyFormat::RawSeed:
                 case SubtleCrypto::KeyFormat::Raw:
                     bytes = std::get<Vector<uint8_t>>(key);
                     break;
@@ -1364,6 +1558,8 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                 case SubtleCrypto::KeyFormat::Spki:
                 case SubtleCrypto::KeyFormat::Pkcs8:
                 case SubtleCrypto::KeyFormat::RawSecret:
+                case SubtleCrypto::KeyFormat::RawPublic:
+                case SubtleCrypto::KeyFormat::RawSeed:
                 case SubtleCrypto::KeyFormat::Raw:
                     keyData = bytes;
                     break;
@@ -1428,6 +1624,521 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
     }
 
     RELEASE_AND_RETURN(scope, unwrapAlgorithm->decrypt(*unwrapParams, unwrappingKey, WTF::move(*wrappedKey), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
+}
+
+static JSC::JSValue toJSArrayBuffer(JSDOMGlobalObject& globalObject, RefPtr<JSC::ArrayBuffer>&& buffer)
+{
+    return JSC::JSArrayBuffer::create(globalObject.vm(), globalObject.arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(buffer));
+}
+
+void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
+{
+    if (key.type() != CryptoKeyType::Private) {
+        promise->reject(key.type() == CryptoKeyType::Secret ? NotSupportedError : InvalidAccessError, "key must be a private key"_s);
+        return;
+    }
+
+    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
+    auto identifier = key.algorithmIdentifier();
+
+    std::unique_ptr<CryptoAlgorithmParameters> importParams;
+    switch (identifier) {
+    case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
+    case CryptoAlgorithmIdentifier::RSA_PSS:
+    case CryptoAlgorithmIdentifier::RSA_OAEP: {
+        auto params = makeUnique<CryptoAlgorithmRsaHashedImportParams>();
+        params->hashIdentifier = downcast<CryptoKeyRSA>(key).hashAlgorithmIdentifier();
+        importParams = WTF::move(params);
+        break;
+    }
+    case CryptoAlgorithmIdentifier::ECDSA:
+    case CryptoAlgorithmIdentifier::ECDH: {
+        auto params = makeUnique<CryptoAlgorithmEcKeyParams>();
+        params->namedCurve = downcast<CryptoKeyEC>(key).namedCurveString();
+        importParams = WTF::move(params);
+        break;
+    }
+    case CryptoAlgorithmIdentifier::Ed25519:
+    case CryptoAlgorithmIdentifier::X25519:
+    case CryptoAlgorithmIdentifier::ML_DSA_44:
+    case CryptoAlgorithmIdentifier::ML_DSA_65:
+    case CryptoAlgorithmIdentifier::ML_DSA_87:
+    case CryptoAlgorithmIdentifier::ML_KEM_768:
+    case CryptoAlgorithmIdentifier::ML_KEM_1024:
+        importParams = makeUnique<CryptoAlgorithmParameters>();
+        break;
+    default:
+        promise->reject(Exception { NotSupportedError });
+        return;
+    }
+    importParams->identifier = identifier;
+
+    Vector<uint8_t> spki;
+    {
+        AsymmetricKeyValue keyValue(key);
+        bssl::ScopedCBB cbb;
+        if (!keyValue.key || !CBB_init(cbb.get(), 0) || !EVP_marshal_public_key(cbb.get(), keyValue.key)) {
+            promise->reject(OperationError, ""_s);
+            return;
+        }
+        spki = Vector<uint8_t>(std::span { CBB_data(cbb.get()), CBB_len(cbb.get()) });
+    }
+
+    auto algorithm = CryptoAlgorithmRegistry::singleton().create(identifier);
+
+    auto index = promise.ptr();
+    m_pendingPromises.add(index, WTF::move(promise));
+    WeakPtr weakThis { *this };
+    auto callback = [index, weakThis](CryptoKey& publicKey) mutable {
+        if (auto promise = getPromise(index, weakThis))
+            promise->resolve<IDLInterface<CryptoKey>>(publicKey);
+    };
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
+        if (auto promise = getPromise(index, weakThis))
+            rejectWithException(promise.releaseNonNull(), ec, msg);
+    };
+
+    algorithm->importKey(KeyFormat::Spki, KeyData { WTF::move(spki) }, *importParams, true, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
+}
+
+void SubtleCrypto::encapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& encapsulationKey, Ref<DeferredPromise>&& promise)
+{
+    auto& vm = state.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Encapsulate);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (paramsOrException.hasException()) {
+        promise->reject(paramsOrException.releaseException());
+        return;
+    }
+    auto params = paramsOrException.releaseReturnValue();
+
+    if (params->identifier != encapsulationKey.algorithmIdentifier()) {
+        promise->reject(InvalidAccessError, "key algorithm mismatch"_s);
+        return;
+    }
+
+    if (!encapsulationKey.allows(CryptoKeyUsageEncapsulateBits)) {
+        promise->reject(InvalidAccessError, "encapsulationKey does not have encapsulateBits usage"_s);
+        return;
+    }
+
+    auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
+
+    auto index = promise.ptr();
+    m_pendingPromises.add(index, WTF::move(promise));
+    WeakPtr weakThis { *this };
+    auto callback = [index, weakThis](Vector<uint8_t>&& sharedKey, Vector<uint8_t>&& ciphertext) mutable {
+        if (auto promise = getPromise(index, weakThis)) {
+            auto sharedKeyBuffer = ArrayBuffer::tryCreate(sharedKey.span());
+            auto ciphertextBuffer = ArrayBuffer::tryCreate(ciphertext.span());
+            if (!sharedKeyBuffer || !ciphertextBuffer) {
+                rejectWithException(promise.releaseNonNull(), OperationError, ""_s);
+                return;
+            }
+            promise->resolveWithCallback([&](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+                auto* result = JSC::constructEmptyObject(&globalObject);
+                result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "sharedKey"_s), toJSArrayBuffer(globalObject, WTF::move(sharedKeyBuffer)));
+                result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "ciphertext"_s), toJSArrayBuffer(globalObject, WTF::move(ciphertextBuffer)));
+                return result;
+            });
+        }
+    };
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
+        if (auto promise = getPromise(index, weakThis))
+            rejectWithException(promise.releaseNonNull(), ec, msg);
+    };
+
+    RELEASE_AND_RETURN(scope, algorithm->encapsulate(encapsulationKey, WTF::move(callback), WTF::move(exceptionCallback)));
+}
+
+void SubtleCrypto::encapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& encapsulationKey, AlgorithmIdentifier&& sharedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
+{
+    auto& vm = state.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Encapsulate);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (paramsOrException.hasException()) {
+        promise->reject(paramsOrException.releaseException());
+        return;
+    }
+    auto params = paramsOrException.releaseReturnValue();
+
+    auto importParamsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(sharedKeyAlgorithm), Operations::ImportKey);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (importParamsOrException.hasException()) {
+        promise->reject(importParamsOrException.releaseException());
+        return;
+    }
+    auto importParams = importParamsOrException.releaseReturnValue();
+
+    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
+
+    if (params->identifier != encapsulationKey.algorithmIdentifier()) {
+        promise->reject(InvalidAccessError, "key algorithm mismatch"_s);
+        return;
+    }
+
+    if (!encapsulationKey.allows(CryptoKeyUsageEncapsulateKey)) {
+        promise->reject(InvalidAccessError, "encapsulationKey does not have encapsulateKey usage"_s);
+        return;
+    }
+
+    auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
+    auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
+
+    auto index = promise.ptr();
+    m_pendingPromises.add(index, WTF::move(promise));
+    WeakPtr weakThis { *this };
+    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](Vector<uint8_t>&& sharedKeyBytes, Vector<uint8_t>&& ciphertext) mutable {
+        KeyData data = WTF::move(sharedKeyBytes);
+        auto keyCallback = [index, weakThis, ciphertext = WTF::move(ciphertext)](CryptoKey& sharedKey) mutable {
+            if (auto promise = getPromise(index, weakThis)) {
+                if ((sharedKey.type() == CryptoKeyType::Private || sharedKey.type() == CryptoKeyType::Secret) && !sharedKey.usagesBitmap()) {
+                    rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when importing a secret key."_s);
+                    return;
+                }
+                auto ciphertextBuffer = ArrayBuffer::tryCreate(ciphertext.span());
+                if (!ciphertextBuffer) {
+                    rejectWithException(promise.releaseNonNull(), OperationError, ""_s);
+                    return;
+                }
+                promise->resolveWithCallback([&](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+                    auto* result = JSC::constructEmptyObject(&globalObject);
+                    result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "ciphertext"_s), toJSArrayBuffer(globalObject, WTF::move(ciphertextBuffer)));
+                    result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "sharedKey"_s), toJS(&globalObject, &globalObject, sharedKey));
+                    return result;
+                });
+            }
+        };
+        auto keyExceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
+            if (auto promise = getPromise(index, weakThis))
+                rejectWithException(promise.releaseNonNull(), ec, msg);
+        };
+        auto format = importParams->identifier == CryptoAlgorithmIdentifier::HKDF || importParams->identifier == CryptoAlgorithmIdentifier::PBKDF2
+            ? SubtleCrypto::KeyFormat::Raw
+            : SubtleCrypto::KeyFormat::RawSecret;
+        importAlgorithm->importKey(format, WTF::move(data), *importParams, extractable, keyUsagesBitmap, WTF::move(keyCallback), WTF::move(keyExceptionCallback));
+    };
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
+        if (auto promise = getPromise(index, weakThis))
+            rejectWithException(promise.releaseNonNull(), ec, msg);
+    };
+
+    RELEASE_AND_RETURN(scope, algorithm->encapsulate(encapsulationKey, WTF::move(callback), WTF::move(exceptionCallback)));
+}
+
+void SubtleCrypto::decapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& decapsulationKey, BufferSource&& ciphertextBufferSource, Ref<DeferredPromise>&& promise)
+{
+    auto& vm = state.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Decapsulate);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (paramsOrException.hasException()) {
+        promise->reject(paramsOrException.releaseException());
+        return;
+    }
+    auto params = paramsOrException.releaseReturnValue();
+
+    auto ciphertext = copyToVector(WTF::move(ciphertextBufferSource), promise);
+    if (!ciphertext)
+        return;
+
+    if (params->identifier != decapsulationKey.algorithmIdentifier()) {
+        promise->reject(InvalidAccessError, "key algorithm mismatch"_s);
+        return;
+    }
+
+    if (!decapsulationKey.allows(CryptoKeyUsageDecapsulateBits)) {
+        promise->reject(InvalidAccessError, "decapsulationKey does not have decapsulateBits usage"_s);
+        return;
+    }
+
+    auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
+
+    auto index = promise.ptr();
+    m_pendingPromises.add(index, WTF::move(promise));
+    WeakPtr weakThis { *this };
+    auto callback = [index, weakThis](const Vector<uint8_t>& sharedKey) mutable {
+        if (auto promise = getPromise(index, weakThis))
+            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), sharedKey.begin(), sharedKey.size());
+    };
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
+        if (auto promise = getPromise(index, weakThis))
+            rejectWithException(promise.releaseNonNull(), ec, msg);
+    };
+
+    RELEASE_AND_RETURN(scope, algorithm->decapsulate(decapsulationKey, WTF::move(*ciphertext), WTF::move(callback), WTF::move(exceptionCallback)));
+}
+
+void SubtleCrypto::decapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& decapsulationKey, BufferSource&& ciphertextBufferSource, AlgorithmIdentifier&& sharedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
+{
+    auto& vm = state.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Decapsulate);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (paramsOrException.hasException()) {
+        promise->reject(paramsOrException.releaseException());
+        return;
+    }
+    auto params = paramsOrException.releaseReturnValue();
+
+    auto importParamsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(sharedKeyAlgorithm), Operations::ImportKey);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (importParamsOrException.hasException()) {
+        promise->reject(importParamsOrException.releaseException());
+        return;
+    }
+    auto importParams = importParamsOrException.releaseReturnValue();
+
+    auto ciphertext = copyToVector(WTF::move(ciphertextBufferSource), promise);
+    if (!ciphertext)
+        return;
+
+    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
+
+    if (params->identifier != decapsulationKey.algorithmIdentifier()) {
+        promise->reject(InvalidAccessError, "key algorithm mismatch"_s);
+        return;
+    }
+
+    if (!decapsulationKey.allows(CryptoKeyUsageDecapsulateKey)) {
+        promise->reject(InvalidAccessError, "decapsulationKey does not have decapsulateKey usage"_s);
+        return;
+    }
+
+    auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
+    auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
+
+    auto index = promise.ptr();
+    m_pendingPromises.add(index, WTF::move(promise));
+    WeakPtr weakThis { *this };
+    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& sharedKeyBytes) mutable {
+        KeyData data = sharedKeyBytes;
+        auto keyCallback = [index, weakThis](CryptoKey& sharedKey) mutable {
+            if (auto promise = getPromise(index, weakThis)) {
+                if ((sharedKey.type() == CryptoKeyType::Private || sharedKey.type() == CryptoKeyType::Secret) && !sharedKey.usagesBitmap()) {
+                    rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when importing a secret key."_s);
+                    return;
+                }
+                promise->resolve<IDLInterface<CryptoKey>>(sharedKey);
+            }
+        };
+        auto keyExceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
+            if (auto promise = getPromise(index, weakThis))
+                rejectWithException(promise.releaseNonNull(), ec, msg);
+        };
+        auto format = importParams->identifier == CryptoAlgorithmIdentifier::HKDF || importParams->identifier == CryptoAlgorithmIdentifier::PBKDF2
+            ? SubtleCrypto::KeyFormat::Raw
+            : SubtleCrypto::KeyFormat::RawSecret;
+        importAlgorithm->importKey(format, WTF::move(data), *importParams, extractable, keyUsagesBitmap, WTF::move(keyCallback), WTF::move(keyExceptionCallback));
+    };
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
+        if (auto promise = getPromise(index, weakThis))
+            rejectWithException(promise.releaseNonNull(), ec, msg);
+    };
+
+    RELEASE_AND_RETURN(scope, algorithm->decapsulate(decapsulationKey, WTF::move(*ciphertext), WTF::move(callback), WTF::move(exceptionCallback)));
+}
+
+ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> SubtleCrypto::normalizeImportParameters(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier)
+{
+    return normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::ImportKey);
+}
+
+// https://wicg.github.io/webcrypto-modern-algos/#SubtleCrypto-method-supports
+// Mirrors Node's SubtleCrypto.supports: argument conversion failures throw,
+// everything discovered while probing an operation reports false.
+bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation, AlgorithmIdentifier&& algorithmIdentifier, JSC::JSValue lengthOrAdditionalAlgorithm)
+{
+    auto& vm = state.vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto normalize = [&](const AlgorithmIdentifier& identifier, Operations op) -> std::unique_ptr<CryptoAlgorithmParameters> {
+        AlgorithmIdentifier copy = identifier;
+        auto result = normalizeCryptoAlgorithmParameters(state, WTF::move(copy), op);
+        if (throwScope.exception()) [[unlikely]] {
+            (void)throwScope.tryClearException();
+            return nullptr;
+        }
+        if (result.hasException())
+            return nullptr;
+        return result.releaseReturnValue();
+    };
+
+    auto getKeyLengthFor = [&](const AlgorithmIdentifier& identifier) -> std::optional<std::optional<size_t>> {
+        auto params = normalize(identifier, Operations::GetKeyLength);
+        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        if (!params)
+            return std::nullopt;
+        auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
+        auto length = algorithm->getKeyLength(*params);
+        if (length.hasException())
+            return std::nullopt;
+        return length.releaseReturnValue();
+    };
+
+    auto checkDeriveBitsLength = [&](const CryptoAlgorithmParameters& params, std::optional<unsigned> length) -> bool {
+        switch (params.identifier) {
+        case CryptoAlgorithmIdentifier::HKDF:
+        case CryptoAlgorithmIdentifier::PBKDF2:
+            return length && *length && !(*length % 8);
+        case CryptoAlgorithmIdentifier::X25519:
+            return !length || *length <= 256;
+        case CryptoAlgorithmIdentifier::ECDH: {
+            auto* publicKey = downcast<CryptoAlgorithmEcdhKeyDeriveParams>(params).publicKey.get();
+            if (!publicKey || !is<CryptoKeyEC>(*publicKey))
+                return false;
+            auto namedCurve = downcast<CryptoKeyEC>(*publicKey).namedCurveString();
+            unsigned maxLength = namedCurve == "P-256"_s ? 256 : namedCurve == "P-384"_s ? 384 : 528;
+            return !length || *length <= maxLength;
+        }
+        default:
+            return true;
+        }
+    };
+
+    // check(op, alg, length) from Node's webcrypto.js.
+    std::function<bool(const String&, const AlgorithmIdentifier&, std::optional<unsigned>)> check = [&](const String& op, const AlgorithmIdentifier& algorithm, std::optional<unsigned> length) -> bool {
+        Operations operationKind;
+        if (op == "encrypt"_s)
+            operationKind = Operations::Encrypt;
+        else if (op == "decrypt"_s)
+            operationKind = Operations::Decrypt;
+        else if (op == "sign"_s || op == "verify"_s)
+            operationKind = op == "sign"_s ? Operations::Sign : Operations::Verify;
+        else if (op == "digest"_s)
+            operationKind = Operations::Digest;
+        else if (op == "generateKey"_s)
+            operationKind = Operations::GenerateKey;
+        else if (op == "deriveBits"_s)
+            operationKind = Operations::DeriveBits;
+        else if (op == "importKey"_s)
+            operationKind = Operations::ImportKey;
+        else if (op == "wrapKey"_s)
+            operationKind = Operations::WrapKey;
+        else if (op == "unwrapKey"_s)
+            operationKind = Operations::UnwrapKey;
+        else if (op == "encapsulate"_s)
+            operationKind = Operations::Encapsulate;
+        else if (op == "decapsulate"_s)
+            operationKind = Operations::Decapsulate;
+        else if (op == "exportKey"_s) {
+            auto params = normalize(algorithm, Operations::ImportKey);
+            return params && isSupportedExportKey(state, params->identifier);
+        } else
+            return false;
+
+        auto params = normalize(algorithm, operationKind);
+        if (!params) {
+            RETURN_IF_EXCEPTION(throwScope, false); // termination cannot be cleared
+            if (op == "wrapKey"_s)
+                return check("encrypt"_s, algorithm, std::nullopt);
+            if (op == "unwrapKey"_s)
+                return check("decrypt"_s, algorithm, std::nullopt);
+            return false;
+        }
+
+        if (op == "deriveBits"_s)
+            return checkDeriveBitsLength(*params, length);
+        if (op == "generateKey"_s && params->identifier == CryptoAlgorithmIdentifier::HMAC)
+            return getKeyLengthFor(algorithm).has_value();
+        return true;
+    };
+
+    String op = operation;
+    if (op != "decapsulateBits"_s && op != "decapsulateKey"_s && op != "decrypt"_s && op != "deriveBits"_s
+        && op != "deriveKey"_s && op != "digest"_s && op != "encapsulateBits"_s && op != "encapsulateKey"_s
+        && op != "encrypt"_s && op != "exportKey"_s && op != "generateKey"_s && op != "getPublicKey"_s
+        && op != "importKey"_s && op != "sign"_s && op != "unwrapKey"_s && op != "verify"_s && op != "wrapKey"_s)
+        return false;
+
+    auto convertAdditionalAlgorithm = [&]() -> std::optional<AlgorithmIdentifier> {
+        auto additional = convert<IDLUnion<IDLObject, IDLDOMString>>(state, lengthOrAdditionalAlgorithm);
+        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        return WTF::move(additional);
+    };
+
+    std::optional<unsigned> length;
+    if (op == "deriveKey"_s) {
+        auto additional = convertAdditionalAlgorithm();
+        if (!additional)
+            return false;
+        if (!check("importKey"_s, *additional, std::nullopt))
+            return false;
+        auto keyLength = getKeyLengthFor(*additional);
+        if (!keyLength)
+            return false;
+        if (*keyLength)
+            length = static_cast<unsigned>(**keyLength);
+        op = "deriveBits"_s;
+    } else if (op == "wrapKey"_s || op == "unwrapKey"_s) {
+        auto additional = convertAdditionalAlgorithm();
+        if (!additional)
+            return false;
+        if (!check(op == "wrapKey"_s ? "exportKey"_s : "importKey"_s, *additional, std::nullopt))
+            return false;
+    } else if (op == "deriveBits"_s) {
+        if (!lengthOrAdditionalAlgorithm.isNull()) {
+            auto converted = convert<IDLUnsignedLong>(state, lengthOrAdditionalAlgorithm);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            length = converted;
+        }
+    } else if (op == "getPublicKey"_s) {
+        auto params = normalize(algorithmIdentifier, Operations::ImportKey);
+        if (!params)
+            return false;
+        switch (params->identifier) {
+        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
+        case CryptoAlgorithmIdentifier::RSA_PSS:
+        case CryptoAlgorithmIdentifier::RSA_OAEP:
+        case CryptoAlgorithmIdentifier::ECDSA:
+        case CryptoAlgorithmIdentifier::ECDH:
+        case CryptoAlgorithmIdentifier::Ed25519:
+        case CryptoAlgorithmIdentifier::X25519:
+        case CryptoAlgorithmIdentifier::ML_DSA_44:
+        case CryptoAlgorithmIdentifier::ML_DSA_65:
+        case CryptoAlgorithmIdentifier::ML_DSA_87:
+        case CryptoAlgorithmIdentifier::ML_KEM_768:
+        case CryptoAlgorithmIdentifier::ML_KEM_1024:
+            return true;
+        default:
+            return false;
+        }
+    } else if (op == "encapsulateKey"_s || op == "decapsulateKey"_s) {
+        auto additional = convertAdditionalAlgorithm();
+        if (!additional)
+            return false;
+        auto additionalParams = normalize(*additional, Operations::ImportKey);
+        if (!additionalParams)
+            return false;
+        switch (additionalParams->identifier) {
+        case CryptoAlgorithmIdentifier::AES_KW:
+        case CryptoAlgorithmIdentifier::AES_GCM:
+        case CryptoAlgorithmIdentifier::AES_CTR:
+        case CryptoAlgorithmIdentifier::AES_CBC:
+        case CryptoAlgorithmIdentifier::AES_CFB:
+        case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+        case CryptoAlgorithmIdentifier::HKDF:
+        case CryptoAlgorithmIdentifier::PBKDF2:
+            break;
+        case CryptoAlgorithmIdentifier::HMAC: {
+            auto hmacLength = downcast<CryptoAlgorithmHmacKeyParams>(*additionalParams).length;
+            if (!hmacLength || *hmacLength == 256)
+                break;
+            return false;
+        }
+        default:
+            return false;
+        }
+    }
+
+    if (op == "encapsulateBits"_s || op == "encapsulateKey"_s)
+        op = "encapsulate"_s;
+    else if (op == "decapsulateBits"_s || op == "decapsulateKey"_s)
+        op = "decapsulate"_s;
+
+    return check(op, algorithmIdentifier, length);
 }
 
 }

@@ -49,6 +49,7 @@ public:
         EcdsaParams,
         HkdfParams,
         HmacKeyParams,
+        MlDsaParams,
         Pbkdf2Params,
         RsaHashedKeyGenParams,
         RsaHashedImportParams,

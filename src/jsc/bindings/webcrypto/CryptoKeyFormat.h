@@ -34,7 +34,9 @@ enum class CryptoKeyFormat {
     Spki,
     Pkcs8,
     Jwk,
-    RawSecret
+    RawSecret,
+    RawPublic,
+    RawSeed
 };
 
 }

@@ -43,6 +43,10 @@ String convertEnumerationToString(CryptoKeyUsage enumerationValue)
         MAKE_STATIC_STRING_IMPL("deriveBits"),
         MAKE_STATIC_STRING_IMPL("wrapKey"),
         MAKE_STATIC_STRING_IMPL("unwrapKey"),
+        MAKE_STATIC_STRING_IMPL("encapsulateKey"),
+        MAKE_STATIC_STRING_IMPL("encapsulateBits"),
+        MAKE_STATIC_STRING_IMPL("decapsulateKey"),
+        MAKE_STATIC_STRING_IMPL("decapsulateBits"),
     };
     static_assert(static_cast<size_t>(CryptoKeyUsage::Encrypt) == 0, "CryptoKeyUsage::Encrypt is not 0 as expected");
     static_assert(static_cast<size_t>(CryptoKeyUsage::Decrypt) == 1, "CryptoKeyUsage::Decrypt is not 1 as expected");
@@ -52,6 +56,10 @@ String convertEnumerationToString(CryptoKeyUsage enumerationValue)
     static_assert(static_cast<size_t>(CryptoKeyUsage::DeriveBits) == 5, "CryptoKeyUsage::DeriveBits is not 5 as expected");
     static_assert(static_cast<size_t>(CryptoKeyUsage::WrapKey) == 6, "CryptoKeyUsage::WrapKey is not 6 as expected");
     static_assert(static_cast<size_t>(CryptoKeyUsage::UnwrapKey) == 7, "CryptoKeyUsage::UnwrapKey is not 7 as expected");
+    static_assert(static_cast<size_t>(CryptoKeyUsage::EncapsulateKey) == 8, "CryptoKeyUsage::EncapsulateKey is not 8 as expected");
+    static_assert(static_cast<size_t>(CryptoKeyUsage::EncapsulateBits) == 9, "CryptoKeyUsage::EncapsulateBits is not 9 as expected");
+    static_assert(static_cast<size_t>(CryptoKeyUsage::DecapsulateKey) == 10, "CryptoKeyUsage::DecapsulateKey is not 10 as expected");
+    static_assert(static_cast<size_t>(CryptoKeyUsage::DecapsulateBits) == 11, "CryptoKeyUsage::DecapsulateBits is not 11 as expected");
     ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
@@ -65,9 +73,13 @@ template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlob
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
     static constexpr SortedArrayMap enumerationMapping { std::to_array<std::pair<ComparableASCIILiteral, CryptoKeyUsage>>({
+        { "decapsulateBits"_s, CryptoKeyUsage::DecapsulateBits },
+        { "decapsulateKey"_s, CryptoKeyUsage::DecapsulateKey },
         { "decrypt"_s, CryptoKeyUsage::Decrypt },
         { "deriveBits"_s, CryptoKeyUsage::DeriveBits },
         { "deriveKey"_s, CryptoKeyUsage::DeriveKey },
+        { "encapsulateBits"_s, CryptoKeyUsage::EncapsulateBits },
+        { "encapsulateKey"_s, CryptoKeyUsage::EncapsulateKey },
         { "encrypt"_s, CryptoKeyUsage::Encrypt },
         { "sign"_s, CryptoKeyUsage::Sign },
         { "unwrapKey"_s, CryptoKeyUsage::UnwrapKey },
@@ -81,7 +93,7 @@ template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlob
 
 template<> ASCIILiteral expectedEnumerationValues<CryptoKeyUsage>()
 {
-    return "\"encrypt\", \"decrypt\", \"sign\", \"verify\", \"deriveKey\", \"deriveBits\", \"wrapKey\", \"unwrapKey\""_s;
+    return "\"encrypt\", \"decrypt\", \"sign\", \"verify\", \"deriveKey\", \"deriveBits\", \"wrapKey\", \"unwrapKey\", \"encapsulateBits\", \"decapsulateBits\", \"encapsulateKey\", \"decapsulateKey\""_s;
 }
 
 } // namespace WebCore

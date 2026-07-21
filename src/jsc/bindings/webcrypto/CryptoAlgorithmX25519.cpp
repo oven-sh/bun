@@ -43,7 +43,7 @@ CryptoAlgorithmIdentifier CryptoAlgorithmX25519::identifier() const
 
 void CryptoAlgorithmX25519::generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
-    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey)) {
+    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
         exceptionCallback(ExceptionCode::SyntaxError, ""_s);
         return;
     }
@@ -132,6 +132,8 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
     bool keyTypeMismatch = false;
     switch (format) {
     case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::RawPublic: // aliased to Raw in SubtleCrypto when applicable
+    case CryptoKeyFormat::RawSeed:
         exceptionCallback(NotSupportedError, ""_s);
         return;
     case CryptoKeyFormat::Jwk: {
@@ -205,6 +207,8 @@ void CryptoAlgorithmX25519::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& k
     KeyData result;
     switch (format) {
     case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::RawPublic: // aliased to Raw in SubtleCrypto when applicable
+    case CryptoKeyFormat::RawSeed:
         exceptionCallback(NotSupportedError, ""_s);
         return;
     case CryptoKeyFormat::Jwk: {

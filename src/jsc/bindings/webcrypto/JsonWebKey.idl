@@ -50,4 +50,8 @@
     DOMString qi;
     sequence<RsaOtherPrimesInfo> oth;
     DOMString k;
+
+    // JWK "AKP" key type (ML-DSA / ML-KEM)
+    DOMString pub;
+    DOMString priv;
 };

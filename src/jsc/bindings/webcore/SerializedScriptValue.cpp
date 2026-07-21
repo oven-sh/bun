@@ -1901,6 +1901,12 @@ private:
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
+                // ChaCha20-Poly1305 and ML-DSA/ML-KEM keys have no serialized form
+                // yet; reject instead of hitting the RELEASE_ASSERT in write().
+                if (key->keyClass() == CryptoKeyClass::AKP || key->algorithmIdentifier() == CryptoAlgorithmIdentifier::ChaCha20_Poly1305) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 if (!startObjectInternal(obj)) // handle duplicates
                     return true;
                 write(CryptoKeyTag);
@@ -2548,6 +2554,11 @@ private:
             write(CryptoAlgorithmIdentifierTag::X25519);
             break;
         case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+        case CryptoAlgorithmIdentifier::ML_DSA_44:
+        case CryptoAlgorithmIdentifier::ML_DSA_65:
+        case CryptoAlgorithmIdentifier::ML_DSA_87:
+        case CryptoAlgorithmIdentifier::ML_KEM_768:
+        case CryptoAlgorithmIdentifier::ML_KEM_1024:
         case CryptoAlgorithmIdentifier::None: {
             RELEASE_ASSERT_NOT_REACHED();
             break;
@@ -2663,6 +2674,11 @@ private:
             write(CryptoKeyClassSubtag::Raw);
             write(key->algorithmIdentifier());
             write(downcast<CryptoKeyRaw>(*key).key());
+            break;
+        case CryptoKeyClass::AKP:
+            // ML-DSA/ML-KEM keys are not serializable yet, like ChaCha20-Poly1305
+            // (see write(CryptoAlgorithmIdentifier)).
+            RELEASE_ASSERT_NOT_REACHED();
             break;
         case CryptoKeyClass::RSA: {
             write(CryptoKeyClassSubtag::RSA);

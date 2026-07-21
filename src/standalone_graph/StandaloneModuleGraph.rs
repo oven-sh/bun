@@ -1430,7 +1430,8 @@ pub(crate) fn inject(
             }
             #[cfg(target_env = "ohos")]
             {
-                let out_path = std::path::Path::new(zname.as_bytes());
+                let out_str = unsafe { core::str::from_utf8_unchecked(zname.as_bytes()) };
+                let out_path = std::path::Path::new(out_str);
                 if let Ok(bytes) = std::fs::read(out_path) {
                     if !ohos_sign::has_codesign(&bytes) {
                         let _ = ohos_sign::sign_selfsign_inplace(out_path);

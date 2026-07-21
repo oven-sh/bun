@@ -137,6 +137,26 @@ describe("fetch accepts responses with more than 256 header fields", () => {
     expect(res.headers.get("content-length")).toBe("2");
   });
 
+  test.concurrent("newline-dense body in the same write as a >256-field header block", async () => {
+    // The overflow scratch is sized from the header-block line count, not the
+    // body, so a body full of LFs must not affect parsing.
+    const body = Buffer.alloc(8192, "\n").toString();
+    await using server = createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        let head = "HTTP/1.1 200 OK\r\n";
+        for (let i = 0; i < 300; i++) head += `X-H-${i}: v${i}\r\n`;
+        socket.end(head + `Content-Length: ${body.length}\r\nConnection: close\r\n\r\n` + body);
+      });
+    }).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(body);
+    expect(res.headers.get("x-h-299")).toBe("v299");
+  });
+
   test.concurrent("genuinely malformed response still rejects with Malformed_HTTP_Response", async () => {
     await using server = createServer(socket => {
       socket.on("error", () => {});

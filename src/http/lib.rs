@@ -1054,8 +1054,8 @@ static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<
 > = bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_RESPONSE_HEADERS_INLINE]);
 
 // Spillover for responses with more than MAX_RESPONSE_HEADERS_INLINE header
-// fields. Sized on demand to the line count of the response buffer, so the
-// 1 MB byte cap (MAX_RESPONSE_HEADER_BUFFER) bounds the allocation.
+// fields. Sized on demand to the header-block line count, so the 1 MB byte
+// cap (MAX_RESPONSE_HEADER_BUFFER) on the header block bounds the slot count.
 static SHARED_RESPONSE_HEADERS_OVERFLOW: bun_core::RacyCell<Vec<picohttp::Header>> =
     bun_core::RacyCell::new(Vec::new());
 
@@ -3753,11 +3753,16 @@ impl<'a> HTTPClient<'a> {
                 Err(picohttp::ParseResponseError::TooManyHeaders)
             ) {
                 // More than MAX_RESPONSE_HEADERS_INLINE fields. Size the
-                // overflow scratch to the line count (a strict upper bound on
-                // the field count) and reparse. The 1 MB byte cap below
-                // remains the only hard limit on the response header block.
+                // overflow scratch to the header-block line count (a strict
+                // upper bound on the field count) and reparse. Count only up
+                // to the terminating CRLF CRLF when present so a newline-dense
+                // body in the same read doesn't inflate the slot count.
+                let buf = to_read!();
+                let header_end = bun_core::strings::index_of(buf, b"\r\n\r\n")
+                    .map(|i| i + 4)
+                    .unwrap_or(buf.len());
+                let needed = bun_core::strings::count_char(&buf[..header_end], b'\n');
                 let overflow = scratch::response_headers_overflow();
-                let needed = bun_core::strings::count_char(to_read!(), b'\n');
                 overflow.resize(needed, picohttp::Header::ZERO);
                 parse_result = picohttp::Response::parse_parts(
                     to_read!(),
@@ -3798,8 +3803,12 @@ impl<'a> HTTPClient<'a> {
             };
 
             // we save the successful parsed response
-            // SAFETY: response borrows SHARED_RESPONSE_HEADERS_BUF / response_message_buffer,
-            // both of which outlive this fn; widen to 'static for storage.
+            // SAFETY: `response` borrows SHARED_RESPONSE_HEADERS_BUF (fixed
+            // static) or SHARED_RESPONSE_HEADERS_OVERFLOW (Vec; buffer moves on
+            // resize) plus response_message_buffer / incoming_data. The erased
+            // borrow is overwritten with `Response::default()` at the top of
+            // each loop iteration before the next resize/append, and
+            // `clone_metadata()` deep-copies before this fn returns.
             // Rebind `response` to the detached `'static` copy so it no longer
             // borrows `to_read` (lets the `to_read` reassignment below pass
             // borrowck — `RawSlice::slice` ties output to `&to_read`).

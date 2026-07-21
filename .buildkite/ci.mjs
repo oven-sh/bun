@@ -746,7 +746,8 @@ function getEmulatorBinary(platform) {
  */
 function hasWebKitChanges(options) {
   const { changedFiles = [] } = options;
-  return changedFiles.some(file => file.includes("scripts/build/deps/webkit.ts") || file.startsWith("vendor/WebKit/"));
+  // vendor/WebKit is gitignored; WebKit version bumps land here.
+  return changedFiles.some(file => file.includes("scripts/build/deps/webkit.ts"));
 }
 
 /**

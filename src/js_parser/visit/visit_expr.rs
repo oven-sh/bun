@@ -149,7 +149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let defines = p.define;
         if let Some(meta) = defines.dots.get(b"meta".as_slice()) {
             for define in meta.as_slice() {
-                if !p.is_dot_define_match(expr, &define.parts) {
+                if !p.is_dot_define_match(expr, &define.parts, false) {
                     continue;
                 }
                 // Substitute user-specified defines
@@ -320,6 +320,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 *e = p.value_for_require(expr.loc);
                 return;
+            }
+        } else if in_.property_access_for_method_call_maybe_should_replace_with_undefined
+            && in_.assign_target == js_ast::AssignTarget::None
+            && !is_delete_target
+            && !result.is_inside_with_scope
+        {
+            // `--drop=<name>` also matches bound identifiers (imports, local
+            // declarations). Only the call-replacement flag is consulted here;
+            // value substitution for `--define` stays unbound-only above.
+            let defines = p.define;
+            if let Some(def) = defines.for_identifier(name) {
+                if def.method_call_must_be_replaced_with_undefined() {
+                    p.method_call_must_be_replaced_with_undefined = true;
+                }
             }
         }
 
@@ -1358,7 +1372,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let defines = p.define;
         if let Some(parts) = defines.dots.get(e_.name.slice()) {
             for define in parts.as_slice() {
-                if p.is_dot_define_match(expr, &define.parts) {
+                // `--drop=<root>.<...>` matches even when <root> is a bound
+                // identifier; plain `--define` stays unbound-only.
+                let allow_bound_root = define.data.method_call_must_be_replaced_with_undefined();
+                if p.is_dot_define_match(expr, &define.parts, allow_bound_root) {
                     if in_.assign_target == js_ast::AssignTarget::None {
                         // Substitute user-specified defines
                         if !define.data.valueless() {
@@ -1983,7 +2000,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.method_call_must_be_replaced_with_undefined = false;
                 match &e_.target.data {
                     // If we're removing this call, don't count any arguments as symbol uses
-                    Data::EIndex(..) | Data::EDot(..) | Data::EIdentifier(..) => {
+                    Data::EIndex(..)
+                    | Data::EDot(..)
+                    | Data::EIdentifier(..)
+                    | Data::EImportIdentifier(..) => {
                         p.is_control_flow_dead = true;
                     }
                     // Special case from `import.meta.hot.*` functions.
@@ -2007,6 +2027,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if method_call_should_be_replaced_with_undefined {
                 p.is_control_flow_dead = old_is_control_flow_dead;
+                p.ignore_usage_of_identifier_in_dot_chain(e_.target);
                 *e = Expr {
                     data: Data::EUndefined(E::Undefined {}),
                     loc: expr.loc,

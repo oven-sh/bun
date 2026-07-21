@@ -114,4 +114,120 @@ describe("bundler", () => {
     drop: ["ASSERT"],
     backend: "api",
   });
+  itBundled("drop/ImportedIdentifierCall", {
+    files: {
+      "/a.js": `
+        import { devlog } from "./log";
+        devlog("secret");
+        process.stdout.write("KEEP\\n");
+      `,
+      "/log.js": `export const devlog = (...a) => process.stdout.write("DEVLOG " + a.join(",") + "\\n");`,
+    },
+    run: { stdout: "KEEP" },
+    drop: ["devlog"],
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude(`"secret"`);
+    },
+  });
+  itBundled("drop/ImportedDefaultCall", {
+    files: {
+      "/a.js": `
+        import devlog from "./log";
+        devlog("secret");
+        process.stdout.write("KEEP\\n");
+      `,
+      "/log.js": `export default (...a) => process.stdout.write("DEVLOG " + a.join(",") + "\\n");`,
+    },
+    run: { stdout: "KEEP" },
+    drop: ["devlog"],
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude(`"secret"`);
+    },
+  });
+  itBundled("drop/LocalFunctionCall", {
+    files: {
+      "/a.js": `
+        function localfn(s) { process.stdout.write("LOCAL " + s + "\\n"); }
+        localfn("x");
+        process.stdout.write("KEEP\\n");
+      `,
+    },
+    run: { stdout: "KEEP" },
+    drop: ["localfn"],
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude(`localfn("x")`);
+    },
+  });
+  itBundled("drop/LocalConstCall", {
+    files: {
+      "/a.js": `
+        const devlog2 = (s) => process.stdout.write("DEVLOG2 " + s + "\\n");
+        devlog2("y");
+        process.stdout.write("KEEP\\n");
+      `,
+    },
+    run: { stdout: "KEEP" },
+    drop: ["devlog2"],
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude(`devlog2("y")`);
+    },
+  });
+  itBundled("drop/ImportedNamespaceRoot", {
+    files: {
+      "/a.js": `
+        import * as ns from "./log";
+        ns.devlog("namespace");
+        process.stdout.write("KEEP\\n");
+      `,
+      "/log.js": `export const devlog = (...a) => process.stdout.write("DEVLOG " + a.join(",") + "\\n");`,
+    },
+    run: { stdout: "KEEP" },
+    drop: ["ns"],
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude(`"namespace"`);
+    },
+  });
+  itBundled("drop/BoundDotDefine", {
+    files: {
+      "/a.js": `
+        const logger = { debug: (s) => process.stdout.write("DEBUG " + s + "\\n") };
+        logger.debug("bound");
+        process.stdout.write("KEEP\\n");
+      `,
+    },
+    run: { stdout: "KEEP" },
+    drop: ["logger.debug"],
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude(`"bound"`);
+    },
+  });
+  itBundled("drop/BoundIdentifierNonCallNotReplaced", {
+    files: {
+      "/a.js": `
+        const devlog = (s) => process.stdout.write("DEVLOG " + s + "\\n");
+        const ref = devlog;
+        ref("alive");
+      `,
+    },
+    run: { stdout: "DEVLOG alive" },
+    drop: ["devlog"],
+    backend: "api",
+  });
+  itBundled("drop/DefineDoesNotReplaceBoundIdentifier", {
+    files: {
+      "/a.js": `
+        const FOO = "local";
+        console.log(FOO);
+      `,
+    },
+    run: { stdout: "local" },
+    define: { FOO: '"replaced"' },
+    backend: "api",
+  });
 });

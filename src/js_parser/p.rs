@@ -6209,6 +6209,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::EIdentifier(id) => {
                     self.ignore_usage(id.ref_);
                 }
+                js_ast::ExprData::EImportIdentifier(id) => {
+                    self.ignore_usage(id.ref_);
+                }
                 js_ast::ExprData::EDot(dot) => {
                     current = dot.target;
                     continue;
@@ -6673,7 +6676,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
     // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
-    pub fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
+    pub fn is_dot_define_match(
+        &mut self,
+        expr: Expr,
+        parts: &[Box<[u8]>],
+        allow_bound_root: bool,
+    ) -> bool {
         match expr.data {
             js_ast::ExprData::EDot(ex) => {
                 if parts.len() > 1 {
@@ -6683,7 +6691,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Intermediates must be dot expressions
                     let last = parts.len() - 1;
                     let is_tail_match = strings::eql(&parts[last], &ex.name);
-                    return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
+                    return is_tail_match
+                        && self.is_dot_define_match(ex.target, &parts[..last], allow_bound_root);
                 }
             }
             js_ast::ExprData::EImportMeta(_) => {
@@ -6703,7 +6712,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let last = parts.len() - 1;
                             let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
                             return is_tail_match
-                                && self.is_dot_define_match(index.target, &parts[..last]);
+                                && self.is_dot_define_match(
+                                    index.target,
+                                    &parts[..last],
+                                    allow_bound_root,
+                                );
                         }
                     }
                 }
@@ -6728,7 +6741,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // when there's actually no symbol by that name, we return Ref.None
                     // If a symbol had already existed by that name, we return .unbound
-                    return result.r#ref.is_empty()
+                    return allow_bound_root
+                        || result.r#ref.is_empty()
                         || self.symbols[result.r#ref.inner_index() as usize].kind
                             == js_ast::symbol::Kind::Unbound;
                 }

@@ -1,8 +1,5 @@
-// Covers the shared helper that both jsc-stress.test.ts and
-// scripts/verify-baseline.ts use to spawn JSC stress fixtures. Keeps
-// verify-baseline's Nehalem skip list in sync with the fixtures: if a new
-// wasm fixture starts using v128 and isn't listed, or a listed one stops,
-// this test fails.
+// Covers the helper shared by jsc-stress.test.ts and scripts/verify-baseline.ts
+// and keeps verify-baseline's Nehalem skip list in sync with the wasm fixtures.
 
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "fs";
@@ -43,11 +40,9 @@ describe("parseJSCFlags", () => {
   });
 });
 
-// verify-baseline.ts emulates a Nehalem CPU (no AVX) on x64. JSC's
-// recomputeDependentOptions() sets `useWasmSIMD = false` there, which makes
-// v128 an invalid type and any module declaring one fail to parse. Assert
-// wasmSIMDFixtures lists exactly those fixtures, so the verify-baseline
-// skip list stays correct as fixtures are added or changed.
+// Nehalem has no AVX so JSC disables useWasmSIMD there, making v128 an invalid
+// wasm type. Assert wasmSIMDFixtures lists exactly the fixtures that fail to
+// parse without SIMD so verify-baseline's skip list stays correct.
 describe.concurrent("wasmSIMDFixtures matches fixtures that require wasm SIMD", () => {
   const allWasmFixtures = readdirSync(wasmFixturesDir)
     .filter(f => f.endsWith(".js"))

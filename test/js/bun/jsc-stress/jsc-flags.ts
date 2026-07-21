@@ -42,12 +42,7 @@ export function parseJSCFlags(filePath: string): Record<string, string> {
   return env;
 }
 
-/**
- * Wasm fixtures whose modules declare v128 (0x7B) types. JSC force-disables
- * `useWasmSIMD` on x86_64 without AVX (Options.cpp: `isX86_64() && !isX86_64_AVX()`),
- * so under Nehalem emulation these fail to parse with
- * `CompileError: WebAssembly.Module doesn't parse ... can't get ... Type`.
- * verify-baseline.ts skips them on x64 since a real Nehalem CPU could never
- * run the wasm-SIMD JIT path anyway.
- */
+// Wasm fixtures whose modules declare v128 (0x7B). JSC's Options.cpp disables
+// useWasmSIMD on x86_64 without AVX, so these fail to parse under Nehalem
+// emulation; verify-baseline.ts skips them on x64.
 export const wasmSIMDFixtures = new Set(["bbq-osr-with-exceptions.js", "omg-tail-call-clobber-scratch-register.js"]);

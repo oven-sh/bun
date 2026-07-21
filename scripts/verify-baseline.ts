@@ -98,13 +98,15 @@ const failedTests: string[] = [];
 
 // Mirrors the relevant bits of test/harness.ts's bunEnv so fixtures behave the
 // same here as under jsc-stress.test.ts.
-const fixtureBaseEnv = {
+const fixtureBaseEnv: Record<string, string | undefined> = {
   ...process.env,
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
 };
+// harness.ts strips this ad-hoc agent override so it can't leak into fixtures.
+delete fixtureBaseEnv.JSC_useJIT;
 
 interface RunTestOptions {
   cwd?: string;

@@ -747,7 +747,7 @@ function getEmulatorBinary(platform) {
 function hasWebKitChanges(options) {
   const { changedFiles = [] } = options;
   // vendor/WebKit is gitignored; WebKit version bumps land here.
-  return changedFiles.some(file => file.includes("scripts/build/deps/webkit.ts"));
+  return changedFiles.some(file => file === "scripts/build/deps/webkit.ts");
 }
 
 /**
@@ -760,14 +760,15 @@ function getVerifyBaselineStep(platform, options) {
   const targetKey = getTargetKey(platform);
   const triplet = getTargetTriplet(platform);
   const emulator = getEmulatorBinary(platform);
+  // Android binaries need /system/bin/linker64 + a bionic sysroot, neither of which exist on the
+  // build host, so qemu-user cannot load them; only the static instruction scan is meaningful.
+  const skipEmulation = abi === "android";
+  const skipEmulationFlag = skipEmulation ? " --skip-emulation" : "";
   // Windows SDE (Pin) pays ~45s startup per fixture; 80+ serial fixtures would
   // take ~1h. qemu-Nehalem on Linux already verifies the same x64-no-AVX JIT
   // output at ~1s/fixture, so Windows keeps only the static scan + SIMD test.
-  const wantJitStress = hasWebKitChanges(options) && os !== "windows";
+  const wantJitStress = hasWebKitChanges(options) && os !== "windows" && !skipEmulation;
   const jitStressFlag = wantJitStress ? " --jit-stress" : "";
-  // Android binaries need /system/bin/linker64 + a bionic sysroot, neither of which exist on the
-  // build host, so qemu-user cannot load them; only the static instruction scan is meaningful.
-  const skipEmulationFlag = abi === "android" ? " --skip-emulation" : "";
 
   // Scan bun-profile, not bun. The stripped binary has no .symtab (ELF) and
   // no companion .pdb (PE) — the static scanner would emit <no-symbol@addr>

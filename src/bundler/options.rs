@@ -2057,8 +2057,6 @@ impl Env {
             },
         }
     }
-
-    // For reading from package.json
 }
 
 #[derive(Debug, Clone, Default)]

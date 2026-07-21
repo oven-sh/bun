@@ -132,8 +132,6 @@ pub struct Mask {
 }
 
 impl Mask {
-    // Field names that carry a vendor prefix.
-
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut image: Option<Image> = None;
         let mut position: Option<Position> = None;

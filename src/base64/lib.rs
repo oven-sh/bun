@@ -222,9 +222,6 @@ pub mod vlq {
             &self.bytes[0..self.len as usize]
         }
 
-        // `std::io::Write` is used as the byte-sink trait so base64 stays a
-        // tier-0 leaf with no bun_io dep.
-
         pub const ZERO: VLQ = VLQ_LOOKUP_TABLE[0];
 
         #[inline]

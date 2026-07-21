@@ -2755,8 +2755,6 @@ mod stylesheet_impl {
         }
     }
 
-    impl StyleSheet<BundlerAtRule> {}
-
     impl StyleAttribute {
         pub fn parse(
             arena: &'static Bump,

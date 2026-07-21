@@ -58,8 +58,6 @@ pub struct AstBuilder<'a, 'bump> {
 // AstBuilder emits; if `ImportScanner` ever grows a host trait in
 // `bun_js_parser`, these stubs are the surface it would formalize.
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
-    // stub for ImportScanner duck typing
-
     pub fn init(bump: &'bump Bump, source: &'a Source, hot_reloading: bool) -> Result<Self, OOM> {
         let scope: *mut Scope = bump.alloc(Scope {
             kind: ScopeKind::Entry,

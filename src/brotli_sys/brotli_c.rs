@@ -310,9 +310,6 @@ impl<'a> Default for CompressionResult<'a> {
     }
 }
 
-// `BrotliEncoder.Operation` is a module-level alias because inherent
-// associated types are unstable in Rust.
-
 impl BrotliEncoder {
     /// # Safety
     /// `opaque` is forwarded to brotli's allocator hooks; it must be valid for

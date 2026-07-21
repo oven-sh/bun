@@ -549,11 +549,6 @@ impl Drop for hostent_with_ttls {
     }
 }
 
-// Per-record-type newtype aliases.
-// Callers (`dns.rs`) need distinct type names to monomorphise the
-// `CAresRecordType` cache-field constant per record. For now these are plain
-// aliases — the trait impls live downstream.
-
 #[repr(C)]
 pub struct struct_nameinfo {
     pub node: *mut u8,

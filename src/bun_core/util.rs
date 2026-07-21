@@ -56,7 +56,6 @@ impl<T: Copy> Unaligned<T> {
         unsafe { core::ptr::addr_of_mut!(self.0).write_unaligned(value) }
     }
 
-    /// Mutable counterpart of [`slice_align_cast`].
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
         if slice.is_empty() {

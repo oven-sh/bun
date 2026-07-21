@@ -109,9 +109,6 @@ impl<'a> AnyEventLoop<'a> {
         }
     }
 
-    // All callers pass a pointer, so we take the erased fn-ptr form directly;
-    // callers cast.
-
     /// Raw-pointer variant of [`Self::tick`] for callers whose `is_done`
     /// callback may reborrow the struct that *contains* this `AnyEventLoop`
     /// (e.g. `bun_install::PackageManager::sleep_until`, where the closure's

@@ -1109,7 +1109,24 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     RELEASE_AND_RETURN(scope, algorithm->importKey(format, WTF::move(keyData), *params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
 }
 
-ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, KeyFormat format, Vector<uint8_t>&& keyData, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages)
+static bool isSecretKeyAlgorithm(CryptoAlgorithmIdentifier identifier)
+{
+    switch (identifier) {
+    case CryptoAlgorithmIdentifier::HMAC:
+    case CryptoAlgorithmIdentifier::AES_CTR:
+    case CryptoAlgorithmIdentifier::AES_CBC:
+    case CryptoAlgorithmIdentifier::AES_GCM:
+    case CryptoAlgorithmIdentifier::AES_CFB:
+    case CryptoAlgorithmIdentifier::AES_KW:
+    case CryptoAlgorithmIdentifier::HKDF:
+    case CryptoAlgorithmIdentifier::PBKDF2:
+        return true;
+    default:
+        return false;
+    }
+}
+
+ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, CryptoKeyType sourceType, KeyFormat format, Vector<uint8_t>&& keyData, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1118,6 +1135,13 @@ ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, K
     if (paramsOrException.hasException())
         return paramsOrException.releaseException();
     auto params = paramsOrException.releaseReturnValue();
+
+    // Node's KeyObject.prototype.toCryptoKey dispatches secret and asymmetric
+    // algorithms through separate switch statements, so a category mismatch
+    // (e.g. secret KeyObject + Ed25519) is NotSupportedError before any usage
+    // or key-data validation runs.
+    if (isSecretKeyAlgorithm(params->identifier) != (sourceType == CryptoKeyType::Secret))
+        return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
 
     auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);

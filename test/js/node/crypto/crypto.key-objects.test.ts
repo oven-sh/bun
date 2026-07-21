@@ -1993,22 +1993,21 @@ describe("KeyObject.prototype.toCryptoKey", () => {
       );
     });
 
-    test("key type mismatch (secret as Ed25519)", () => {
-      expect(() => secret.toCryptoKey("Ed25519", true, ["verify"])).toThrow(
-        expect.objectContaining({ name: "NotSupportedError" }),
-      );
-    });
-
-    test("key type mismatch (secret as X25519)", () => {
-      expect(() => secret.toCryptoKey("X25519", true, [])).toThrow(
-        expect.objectContaining({ name: "NotSupportedError" }),
-      );
-    });
-
-    test("key type mismatch (asymmetric as HMAC)", () => {
-      expect(() => edPub.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"])).toThrow(
-        expect.objectContaining({ name: "NotSupportedError" }),
-      );
+    // Node dispatches by key type before validating usages or key data, so
+    // every secret<->asymmetric mismatch is NotSupportedError regardless of
+    // whatever else is wrong with the input.
+    test.each([
+      ["secret as Ed25519, valid usage", () => secret.toCryptoKey("Ed25519", true, ["verify"])],
+      ["secret as Ed25519, invalid usage", () => secret.toCryptoKey("Ed25519", true, ["sign"])],
+      ["secret as Ed25519, wrong length", () => createSecretKey(Buffer.alloc(31)).toCryptoKey("Ed25519", true, ["verify"])],
+      ["secret as X25519", () => secret.toCryptoKey("X25519", true, [])],
+      ["secret as ECDSA", () => secret.toCryptoKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["verify"])],
+      ["secret as RSA", () => secret.toCryptoKey({ name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["verify"])],
+      ["asymmetric as HMAC", () => edPub.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"])],
+      ["asymmetric as AES-GCM", () => edPub.toCryptoKey("AES-GCM", true, ["encrypt"])],
+      ["asymmetric as HKDF", () => ecPriv.toCryptoKey("HKDF", false, ["deriveBits"])],
+    ] as const)("key type category mismatch: %s", (_, fn) => {
+      expect(fn).toThrow(expect.objectContaining({ name: "NotSupportedError" }));
     });
   });
 });

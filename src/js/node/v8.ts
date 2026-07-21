@@ -73,8 +73,10 @@ function maxOldSpaceSizeBytes() {
         value = execArgv[i + 1];
       }
       if (value !== undefined) {
+        // 0 is a valid value meaning "no limit", so it must reset an
+        // earlier positive value like the native parser does.
         const parsed = Number.parseInt(value, 10);
-        if (parsed > 0) megabytes = parsed;
+        if (parsed >= 0) megabytes = parsed;
       }
     }
     maxOldSpaceSize_ = megabytes * 1024 * 1024;

@@ -8,9 +8,22 @@ describe("isatty", () => {
   test("returns false for non-integer fds without coercing the argument", () => {
     let valueOfCalls = 0;
     const results = {
-      throwingValueOf: isatty({ valueOf: () => { throw new Error("should not coerce"); } } as any),
-      throwingToPrimitive: isatty({ [Symbol.toPrimitive]: () => { throw new Error("should not coerce"); } } as any),
-      countingValueOf: isatty({ valueOf: () => { valueOfCalls++; return 0; } } as any),
+      throwingValueOf: isatty({
+        valueOf: () => {
+          throw new Error("should not coerce");
+        },
+      } as any),
+      throwingToPrimitive: isatty({
+        [Symbol.toPrimitive]: () => {
+          throw new Error("should not coerce");
+        },
+      } as any),
+      countingValueOf: isatty({
+        valueOf: () => {
+          valueOfCalls++;
+          return 0;
+        },
+      } as any),
       bigint: isatty(0n as any),
       string: isatty("0" as any),
       nan: isatty(NaN),

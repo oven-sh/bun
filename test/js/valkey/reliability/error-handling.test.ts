@@ -109,7 +109,7 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
       // Invalid args type
       // @ts-expect-error: Testing runtime behavior with invalid types
       expect(async () => await client.send("GET", "not-an-array")).toThrowErrorMatchingInlineSnapshot(
-        `"Arguments must be an array"`,
+        `"Expected args to be a array for 'send'."`,
       );
 
       // Non-string command

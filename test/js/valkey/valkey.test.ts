@@ -989,7 +989,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.unlink({} as any);
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'unlink'."`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'unlink'."`);
       });
 
       test("should reject invalid additional key in UNLINK", async () => {
@@ -1003,7 +1003,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.touch(null as any);
-        }).toThrowErrorMatchingInlineSnapshot(`"The "key" argument must be specified"`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'touch'."`);
       });
 
       test("should reject invalid additional key in TOUCH", async () => {
@@ -3394,7 +3394,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zrem({} as any, "member");
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zrem'."`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zrem'."`);
       });
 
       test("should reject invalid key in ZMSCORE", async () => {
@@ -4278,7 +4278,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zrangebylex(null as any, "-", "+");
-        }).toThrowErrorMatchingInlineSnapshot(`"The "key" argument must be specified"`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zrangebylex'."`);
       });
 
       test("should return members in reverse lexicographical order with ZREVRANGEBYLEX", async () => {
@@ -4380,9 +4380,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zrevrangebylex({} as any, "+", "-");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zrevrangebylex'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zrevrangebylex'."`);
       });
 
       test("should reject invalid destination in ZRANGESTORE", async () => {

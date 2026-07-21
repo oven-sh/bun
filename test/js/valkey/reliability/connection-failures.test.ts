@@ -27,8 +27,8 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         await client.set("key", "value");
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
-        // Expect an error with connection closed message
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
+        // Expect a connect-errno (on_connect_error surfaces e.g. ECONNREFUSED) or a connection-closed message
+        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|connect E\w+/i);
       } finally {
         // Cleanup
         await client.close();
@@ -52,7 +52,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i,
+        );
       }
 
       try {
@@ -60,7 +62,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i,
+        );
       }
 
       try {
@@ -68,7 +72,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i,
+        );
       }
 
       try {
@@ -76,7 +82,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i,
+        );
       }
     });
 
@@ -134,7 +142,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with a connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
+        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|connect E\w+/i);
       }
 
       await client.close();
@@ -153,7 +161,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         await client.set("key", "value");
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
-        expect(error.message).toMatch(/connection closed|offline queue is disabled/i);
+        expect(error.message).toMatch(/connection closed|connect E\w+|offline queue is disabled/i);
       }
 
       await client.close();
@@ -277,9 +285,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       await client.close();
 
       expect(client.connected).toBe(false);
-      expect(async () => {
-        await client.get("any-key");
-      }).toThrowErrorMatchingInlineSnapshot(`"Connection closed"`);
+      await expect(client.get("any-key")).rejects.toThrow(/connection closed|connect E\w+/i);
       // Multiple disconnects should not cause issues
       await client.close();
       await client.close();
@@ -322,7 +328,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       const promises = clients.map(client =>
         client.get("key").catch(err => {
           // We expect errors, but want to make sure they're the right kind
-          expect(err.message).toMatch(/connection closed|socket closed|failed to connect/i);
+          expect(err.message).toMatch(/connection closed|socket closed|failed to connect|connect E\w+/i);
         }),
       );
 

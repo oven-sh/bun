@@ -78,13 +78,11 @@ pub unsafe fn on_poll<P: StaticPipeWriterProcess>(
     let parent = unsafe { (*writer).parent }
         .expect("StaticPipeWriter writer.parent unset")
         .as_mut_ptr();
-    // SAFETY: intrusive refcount bump via raw pointer; `parent` is live.
-    unsafe { RefCount::<StaticPipeWriter<P>>::ref_(parent) };
-    // SAFETY: exclusive for this dispatch; the keepalive above keeps the
-    // allocation live past this call even if `on_poll` drops every other ref.
+    // SAFETY: `parent` is live (caller contract). The guard's ref keeps the
+    // allocation alive past `on_poll` even if it drops every other ref.
+    let _keepalive = unsafe { bun_ptr::ScopedRef::new(parent) };
+    // SAFETY: exclusive for this dispatch; keepalive holds the allocation.
     unsafe { (*writer).on_poll(size_hint, hup) };
-    // SAFETY: matches the `ref_` above; may free the allocation.
-    unsafe { RefCount::<StaticPipeWriter<P>>::deref(parent) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

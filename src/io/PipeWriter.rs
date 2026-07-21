@@ -377,6 +377,18 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         unsafe { Parent::on_error(self.parent(), err) }
     }
 
+    /// RAII keepalive: bumps the parent's intrusive refcount and derefs on
+    /// `Drop`, so re-entrant callbacks that drop the last external strong ref
+    /// cannot free `*self` while the guard is live. May free on drop.
+    #[inline]
+    fn parent_keepalive(&self) -> impl Drop + use<Parent> {
+        let parent = self.parent();
+        // SAFETY: type invariant — set-once parent backref outlives writer.
+        unsafe { Parent::ref_(parent) };
+        // SAFETY: matches the `ref_` above; may free the allocation on drop.
+        scopeguard::guard(parent, |p| unsafe { Parent::deref(p) })
+    }
+
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>()
     }
@@ -408,15 +420,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         debug_assert!(!err.is_retry());
 
         // `Parent::on_error` may drop the last external strong ref to the
-        // parent (and so free `*self` as an intrusive field). Pin it with an
-        // extra ref so `close()` and its `on_close` dispatch stay live.
-        let parent = self.parent();
-        // SAFETY: type invariant — set-once parent backref outlives writer.
-        unsafe { Parent::ref_(parent) };
+        // parent (and so free `*self` as an intrusive field). Pin it so
+        // `close()` and its `on_close` dispatch stay live.
+        let _keepalive = self.parent_keepalive();
         self.parent_on_error(err);
         self.close();
-        // SAFETY: matches the `ref_` above; may free `*self`.
-        unsafe { Parent::deref(parent) };
     }
 
     pub fn get_force_sync(&self) -> bool {
@@ -472,13 +480,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 // Same shape as `_on_error`: pin the parent, dispatch the
                 // error, then close so `on_close` runs and the fd/owner ref
                 // are released.
-                let parent = self.parent();
-                // SAFETY: type invariant — set-once parent backref outlives writer.
-                unsafe { Parent::ref_(parent) };
+                let _keepalive = self.parent_keepalive();
                 self.parent_on_error(err);
                 self.close();
-                // SAFETY: matches the `ref_` above; may free `*self`.
-                unsafe { Parent::deref(parent) };
             }
             sys::Result::Ok(()) => {}
         }
@@ -748,6 +752,17 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         unsafe { Parent::on_write(self.parent(), amount, status) }
     }
 
+    /// RAII keepalive: bumps the parent's intrusive refcount and derefs on
+    /// `Drop`, so re-entrant callbacks that drop the last external strong ref
+    /// cannot free `*self` while the guard is live. May free on drop.
+    #[inline]
+    fn parent_keepalive(parent: *mut Parent) -> impl Drop + use<Parent> {
+        // SAFETY: type invariant — set-once parent backref outlives writer.
+        unsafe { Parent::ref_(parent) };
+        // SAFETY: matches the `ref_` above; may free the allocation on drop.
+        scopeguard::guard(parent, |p| unsafe { Parent::deref(p) })
+    }
+
     pub fn get_force_sync(&self) -> bool {
         self.force_sync
     }
@@ -796,16 +811,13 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.reset();
 
         // `Parent::on_error` may drop the last external strong ref to the
-        // parent (and so free `*self` as an intrusive field). Pin it with an
-        // extra ref so `close()` and its `on_close` dispatch stay live.
+        // parent (and so free `*self` as an intrusive field). Pin it so
+        // `close()` and its `on_close` dispatch stay live.
         let parent = self.parent();
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        unsafe { Parent::ref_(parent) };
+        let _keepalive = Self::parent_keepalive(parent);
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
         unsafe { Parent::on_error(parent, err) };
         self.close();
-        // SAFETY: matches the `ref_` above; may free `*self`.
-        unsafe { Parent::deref(parent) };
     }
 
     fn _on_write(&mut self, written: usize, status: WriteStatus) {
@@ -872,13 +884,10 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 // `Parent::on_error` may also drop the last external strong
                 // ref to the parent (`FileSink::on_error` → promise reject →
                 // user callback), freeing `*this`. Pin it so `close()` runs.
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::ref_(parent) };
+                let _keepalive = Self::parent_keepalive(parent);
                 // SAFETY: parent BACKREF valid.
                 unsafe { Parent::on_error(parent, err) };
                 Self::r(this).close();
-                // SAFETY: matches the `ref_` above; may free `*this`.
-                unsafe { Parent::deref(parent) };
             }
             sys::Result::Ok(()) => {}
         }

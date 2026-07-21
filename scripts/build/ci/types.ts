@@ -197,7 +197,10 @@ export type LinuxImageBase = {
     /** Extra state dirs the buildkite user owns. */
     readonly buildkiteDirs: readonly string[];
     readonly prefetchDir: string;
-    readonly installCacheDir: string;
+    /** Shared `bun install` download cache dir, warmed at bake time from
+     * the repo's package.json + test/package.json. null = do not warm an
+     * install cache on this image. */
+    readonly installCacheDir: string | null;
     /** Core dumps: %e = executable, %p = pid. scripts/runner.node.mjs reads
      * cores from this same directory pattern. */
     readonly coresDirPattern: string;
@@ -341,7 +344,10 @@ export type WindowsImageBase = {
     /** Filename of the bundled agent inside buildkiteHome (see linux). */
     readonly buildkiteAgentEntry: string;
     readonly prefetchDir: string;
-    readonly installCacheDir: string;
+    /** Shared `bun install` download cache dir, warmed at bake time from
+     * the repo's package.json + test/package.json. null = do not warm an
+     * install cache on this image. */
+    readonly installCacheDir: string | null;
     /** Where the Scoop-installed node lands; the agent service runs it. */
     readonly node: string;
   };

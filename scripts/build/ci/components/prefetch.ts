@@ -88,17 +88,22 @@ export const prefetch: Component = {
             // install` (root + test/) hits disk instead of npm. Left writable
             // and owned by the buildkite user: bun install extracts new
             // tarballs into the cache dir itself, so a read-only cache would
-            // fail on the first unseen package.
+            // fail on the first unseen package. Warmed only when the image
+            // declares an installCacheDir (null = this image warms no cache).
             const cacheDir = image.paths.installCacheDir;
-            await ensureDirectory(cacheDir, { mode: "777" });
-            const ok = await warmInstallCache(bun, clone, cacheDir);
-            if (!ok) {
-              warn("bun install prefetch failed; baking without warm install cache");
-              await removePaths(cacheDir);
+            if (cacheDir === null) {
+              log("no installCacheDir on this image; not warming a bun install cache");
             } else {
-              await setOwnerRecursive(cacheDir, `${image.paths.buildkiteUser}:${image.paths.buildkiteUser}`);
-              await ensureLines("/etc/environment", [`BUN_INSTALL_CACHE_DIR=${cacheDir}`]);
-              await appendToProfiles(ctx, [`export BUN_INSTALL_CACHE_DIR="${cacheDir}"`]);
+              await ensureDirectory(cacheDir, { mode: "777" });
+              const ok = await warmInstallCache(bun, clone, cacheDir);
+              if (!ok) {
+                warn("bun install prefetch failed; baking without warm install cache");
+                await removePaths(cacheDir);
+              } else {
+                await setOwnerRecursive(cacheDir, `${image.paths.buildkiteUser}:${image.paths.buildkiteUser}`);
+                await ensureLines("/etc/environment", [`BUN_INSTALL_CACHE_DIR=${cacheDir}`]);
+                await appendToProfiles(ctx, [`export BUN_INSTALL_CACHE_DIR="${cacheDir}"`]);
+              }
             }
             await removePaths(clone);
           },
@@ -145,15 +150,20 @@ export const prefetch: Component = {
             }
             // Shared `bun install` download cache. Left writable: bun install
             // extracts new tarballs into the cache dir itself. The agent runs
-            // as SYSTEM, which can write here.
+            // as SYSTEM, which can write here. Warmed only when the image
+            // declares an installCacheDir (null = warm no cache).
             const cacheDir = image.paths.installCacheDir;
-            await win.ensureDirectory(cacheDir);
-            const ok = await warmInstallCache("bun", clone, cacheDir);
-            if (!ok) {
-              warn("bun install prefetch failed; baking without warm install cache");
-              await win.removePaths(cacheDir);
+            if (cacheDir === null) {
+              log("no installCacheDir on this image; not warming a bun install cache");
             } else {
-              await win.setMachineEnv("BUN_INSTALL_CACHE_DIR", cacheDir);
+              await win.ensureDirectory(cacheDir);
+              const ok = await warmInstallCache("bun", clone, cacheDir);
+              if (!ok) {
+                warn("bun install prefetch failed; baking without warm install cache");
+                await win.removePaths(cacheDir);
+              } else {
+                await win.setMachineEnv("BUN_INSTALL_CACHE_DIR", cacheDir);
+              }
             }
             // The installs leave ~2 GB of node_modules in the clone.
             await win.removeTreeRobustly(clone);

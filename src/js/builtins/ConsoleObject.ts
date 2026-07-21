@@ -594,9 +594,18 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     assert(expression, ...args) {
       if (!expression) {
-        args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
-        // The arguments will be formatted in warn() again
-        this.warn.$apply(this, args);
+        if (args.length === 0) {
+          this.warn("Assertion failed");
+        } else if (typeof args[0] === "string") {
+          args[0] = "Assertion failed: " + args[0];
+          this.warn.$apply(this, args);
+        } else {
+          // Preserve rich object formatting by prepending the prefix as a
+          // separate argument instead of coercing args[0] to a string via
+          // template literal (which would produce "[object Object]").
+          ArrayPrototypeUnshift.$call(args, "Assertion failed:");
+          this.warn.$apply(this, args);
+        }
       }
     },
 

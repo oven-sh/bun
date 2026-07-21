@@ -8,9 +8,9 @@
 import { join } from "node:path";
 import {
   getBootstrapVersion,
+  getBranchImageSuffix,
   getBuildkiteEmoji,
   getBuildMetadata,
-  getBuildNumber,
   getCanaryRevision,
   getCommitMessage,
   getEmoji,
@@ -272,7 +272,7 @@ function getImageLabel(platform) {
  */
 function getImageName(platform, options) {
   const { os, distro, crossCompile } = platform;
-  const { buildImages, publishImages, imageFilter } = options;
+  const { buildImages, publishImages, imageFilter, changedFiles = [] } = options;
 
   const name = getImageKey(platform);
 
@@ -285,7 +285,15 @@ function getImageName(platform, options) {
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
 
   if (buildImages && !publishImages && (!imageFilter || hostOs === imageFilter || distro === imageFilter)) {
-    return `${name}-build-${getBuildNumber()}`;
+    return `${name}-${getBranchImageSuffix()}`;
+  }
+
+  // Not a [build images] push: if this PR changes the bootstrap script for
+  // this host OS, the published -vN won't match what it needs. Request the
+  // branch-scoped image a prior [build images] push on this branch baked.
+  const bootstrapFile = hostOs === "windows" ? "scripts/bootstrap.ps1" : "scripts/bootstrap.sh";
+  if (!publishImages && !isMainBranch() && changedFiles.includes(bootstrapFile)) {
+    return `${name}-${getBranchImageSuffix()}`;
   }
 
   return `${name}-v${getBootstrapVersion(hostOs)}`;
@@ -843,8 +851,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
  *   1. Edit bootstrap.sh / bootstrap.ps1 and bump its `# Version:` line.
  *   2. Open a PR whose **commit subject** contains `[build images]` (or
  *      `[build linux images]` / `[build windows images]` to scope it). This
- *      bakes throwaway `…-build-<buildNumber>` images and runs the full
+ *      bakes throwaway `…-branch-<branchSlug>` images and runs the full
  *      build+test pipeline against them so you can verify the change.
+ *      Subsequent pushes on the same branch reuse those images (because
+ *      changedFiles includes the bootstrap script), so you can iterate
+ *      without `[build images]` unless you change bootstrap.* again.
  *   3. Once green, amend/force-push the subject to `[publish images]` (or the
  *      scoped variant). This bakes the real `…-vN` images that normal CI will
  *      pick up. Publishing replaces the live tag in place — for Windows it

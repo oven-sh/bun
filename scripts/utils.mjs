@@ -1141,6 +1141,17 @@ export function getBuildNumber() {
 }
 
 /**
+ * Branch-scoped suffix for throwaway CI images. Using the branch instead of
+ * the build number lets subsequent pushes on the same PR reuse the images a
+ * prior `[build images]` push baked (see getImageName() in .buildkite/ci.mjs).
+ * @returns {string}
+ */
+export function getBranchImageSuffix() {
+  const branch = getBranch() || "unknown";
+  return `branch-${branch.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80)}`;
+}
+
+/**
  * @returns {URL | undefined}
  */
 export function getBuildUrl() {

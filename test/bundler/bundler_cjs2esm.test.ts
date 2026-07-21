@@ -376,6 +376,99 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  // `import * as ns` of a CommonJS module must expose `default` as module.exports,
+  // same as `bun run`, Node, and esbuild. Previously the linker would leave a
+  // statically-analyzable CJS file unwrapped for a namespace import and drop `default`.
+  itBundled("cjs2esm/ImportStarCommonJSNamespaceHasDefault", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from './c.cjs';
+        console.log('keys=' + Object.keys(ns).sort().join(',') + ' typeof default=' + typeof ns.default);
+        console.log('unwrap', JSON.stringify(ns.default ?? ns));
+      `,
+      "/c.cjs": /* js */ `
+        exports.n = 7;
+      `,
+    },
+    run: {
+      stdout: "keys=default,n typeof default=object\nunwrap {\"n\":7}",
+    },
+  });
+  itBundled("cjs2esm/ImportStarCommonJSNamespaceHasDefaultNodeTarget", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from './c.cjs';
+        console.log('keys=' + Object.keys(ns).sort().join(',') + ' typeof default=' + typeof ns.default);
+      `,
+      "/c.cjs": /* js */ `
+        exports.n = 7;
+      `,
+    },
+    target: "node",
+    run: {
+      stdout: "keys=default,n typeof default=object",
+    },
+  });
+  itBundled("cjs2esm/ImportStarCommonJSEsModuleMarkerHasDefault", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from './c.cjs';
+        console.log('keys=' + Object.keys(ns).sort().join(',') + ' typeof default=' + typeof ns.default);
+      `,
+      "/c.cjs": /* js */ `
+        exports.__esModule = true;
+        exports.n = 7;
+      `,
+    },
+    run: {
+      stdout: "keys=__esModule,default,n typeof default=object",
+    },
+  });
+  itBundled("cjs2esm/ImportStarCommonJSModuleExportsAssign", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from './c.cjs';
+        console.log('keys=' + Object.keys(ns).sort().join(',') + ' typeof default=' + typeof ns.default);
+      `,
+      "/c.cjs": /* js */ `
+        module.exports.n = 7;
+      `,
+    },
+    run: {
+      stdout: "keys=default,n typeof default=object",
+    },
+  });
+  itBundled("cjs2esm/ImportStarAndNamedFromCommonJS", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from './c.cjs';
+        import { n } from './c.cjs';
+        console.log(n, Object.keys(ns).sort().join(','), typeof ns.default);
+      `,
+      "/c.cjs": /* js */ `
+        exports.n = 7;
+      `,
+    },
+    run: {
+      stdout: "7 default,n object",
+    },
+  });
+  // Named-only imports from a CJS file are still converted without a wrapper.
+  itBundled("cjs2esm/ImportNamedOnlyFromCommonJSStaysUnwrapped", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { n } from './c.cjs';
+        console.log(n);
+      `,
+      "/c.cjs": /* js */ `
+        exports.n = 7;
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "7",
+    },
+  });
   itBundled("cjs2esm/ModuleExportsRenamingAssignExportsDeOpt", {
     files: {
       "/entry.js": /* js */ `

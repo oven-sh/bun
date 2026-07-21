@@ -213,9 +213,12 @@ pub fn scan_imports_and_exports(
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
                         }
 
-                        if record
+                        if (record
                             .flags
-                            .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
+                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                            || record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS))
                             && other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                         {
                             col!(exports_kind)[other_file] = ExportsKind::Cjs;

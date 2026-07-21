@@ -124,8 +124,9 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // Namespace import only gets the CJS exports as-is, no default wrapper
-      stdout: '{"foo":"foo","bar":"bar"}',
+      // Namespace import of a CJS module must expose `default` (= module.exports)
+      // to match `bun run`, Node, and esbuild.
+      stdout: '{"default":{"foo":"foo","bar":"bar"},"foo":"foo","bar":"bar"}',
     },
   });
 
@@ -464,8 +465,9 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // Star import gets the exports as-is, no wrapper
-      stdout: '{"named":"named","default":"default","__esModule":true}',
+      // The importer is ESM, so __toESM runs with isNodeMode=1 and sets `default`
+      // to the whole module.exports regardless of __esModule (matches Node and esbuild).
+      stdout: '{"default":{"__esModule":true,"default":"default","named":"named"},"__esModule":true,"named":"named"}',
     },
   });
 

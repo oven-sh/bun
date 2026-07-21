@@ -1,7 +1,7 @@
 import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
@@ -91,6 +91,55 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
     }).toThrow(/"subtract" is missing/);
   });
 }); // </given add(a, b) function>
+
+// A cc() that throws must still free its TinyCC state. The missing-symbol path
+// exercises the worst case: the source compiles and relocates (JIT pages mmap'd)
+// before the throw, so the leaked state is large and the RSS signal is clear.
+it("does not leak the TinyCC state when cc() throws", async () => {
+  using dir = tempDir("bun-ffi-cc-leak", {
+    "good.c": "int f() { return 42; }\n",
+    "fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      const source = path.join(import.meta.dir, "good.c");
+      const step = () => {
+        try {
+          cc({ source, symbols: { nosuchsym_xyz: { args: [], returns: "int" } } }).close();
+        } catch {}
+      };
+
+      for (let i = 0; i < 100; i++) step();
+      Bun.gc(true);
+      const start = process.memoryUsage.rss();
+      for (let i = 0; i < 800; i++) step();
+      Bun.gc(true);
+      const end = process.memoryUsage.rss();
+      console.log(JSON.stringify({ deltaMB: (end - start) / 1048576 }));
+    `,
+  });
+
+  // Shrink the ASAN quarantine so RSS reflects what is actually retained,
+  // not freed-but-quarantined TCC blocks.
+  const asanOptions = [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=1"].filter(Boolean).join(":");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: { ...bunEnv, ASAN_OPTIONS: asanOptions },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: normalizeBunSnapshot(stdout), stderr, exitCode }).toMatchObject({
+    stdout: expect.stringMatching(/^\{"deltaMB":/),
+    exitCode: 0,
+  });
+  const { deltaMB } = JSON.parse(stdout);
+  // 800 leaked states ≈ 23-33 MB depending on build; the bound sits well
+  // below that and above allocator jitter.
+  expect(deltaMB).toBeLessThan(isASAN || isDebug ? 15 : 10);
+});
 
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `

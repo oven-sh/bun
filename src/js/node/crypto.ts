@@ -73,6 +73,8 @@ const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEnc
 const { validateString, validateObject, validateUint32 } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
+
 const kHandle = Symbol("kHandle");
 
 function verifySpkac(spkac, encoding) {
@@ -169,7 +171,7 @@ crypto_exports.hash = function hash(algorithm, input, options) {
     validateString(outputEncoding, "outputEncoding");
     normalized = normalizeEncoding(outputEncoding);
     if (normalized === undefined) {
-      if (outputEncoding.toLowerCase() === "buffer") {
+      if (StringPrototypeToLowerCase.$call(outputEncoding) === "buffer") {
         normalized = "buffer";
       } else {
         throw $ERR_INVALID_ARG_VALUE("outputEncoding", outputEncoding);

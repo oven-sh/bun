@@ -45,8 +45,6 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
   });
 
   test("bundled output uses a valid identifier for the generated default name", async () => {
-    // `--no-bundle` now keeps the function anonymous, so check the bundled output
-    // where convertStmtsForChunk still assigns the generated `_1_default` name.
     using dir = tempDir("issue-31401-bundle", {
       "1.ts": `export default function () {}\n`,
       "entry.ts": `import f from "./1.ts"; console.log(typeof f);\n`,

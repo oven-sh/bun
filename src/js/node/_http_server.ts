@@ -3434,6 +3434,12 @@ ServerResponse.prototype._callPendingCallbacks = function () {
 
 ServerResponse.prototype._finish = function () {
   this.emit("prefinish");
+  process.nextTick(() => {
+    if (!this._closed) {
+      this._closed = true;
+      this.emit("close");
+    }
+  });
 };
 
 ServerResponse.prototype.detachSocket = function (socket) {

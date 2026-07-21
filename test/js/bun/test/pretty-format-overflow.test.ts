@@ -52,10 +52,9 @@ test("deep nesting", () => {
   }, 30000);
 });
 
-// A failing toEqual / toMatchSnapshot on a deeply-nested (non-circular) value used to walk
-// the native stack to exhaustion inside pretty_format's Formatter::print_as, taking the whole
-// runner down with SIGSEGV instead of reporting a matcher failure. Run in a subprocess so a
-// regression fails these tests rather than segfaulting the outer runner.
+// A failing toEqual / toMatchSnapshot on a deeply nested (non-circular) value used to exhaust
+// the native stack in pretty_format's Formatter::print_as and SIGSEGV the runner mid-run. Run
+// in a subprocess so a regression fails these tests instead of segfaulting the outer runner.
 describe.concurrent("pretty_format stops recursion before native stack overflow", () => {
   const depth = 20000;
 

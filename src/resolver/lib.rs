@@ -1995,6 +1995,10 @@ pub mod dir_entry_accessor {
         type Handle = DirEntryHandle;
         type DirIter = DirEntryDirIter;
 
+        fn stat(path: &ZStr) -> Maybe<Stat> {
+            Syscall::stat(path)
+        }
+
         fn statat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
             let mut buf = PathBuffer::uninit();
             let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {

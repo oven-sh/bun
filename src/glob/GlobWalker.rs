@@ -87,6 +87,7 @@ pub trait Accessor {
 
     fn open(path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
     fn openat(handle: Self::Handle, path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
+    fn stat(path: &ZStr) -> Maybe<Stat>;
     fn statat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
     /// Like statat but does not follow symlinks.
     fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
@@ -177,6 +178,10 @@ impl Accessor for SyscallAccessor {
 
     fn open(path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
         Ok(Syscall::open(path, O::DIRECTORY | O::RDONLY, 0).map(|fd| SyscallHandle { value: fd }))
+    }
+
+    fn stat(path: &ZStr) -> Maybe<Stat> {
+        Syscall::stat(path)
     }
 
     fn statat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
@@ -449,36 +454,32 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 //
                 // In that case we don't need to do any walking and can just open up the FS entry
                 if starting_component_idx as usize >= self.walker.pattern_components.len() {
-                    // Matched-path payload must respect SENTINEL. The open()
+                    // Matched-path payload must respect SENTINEL. The stat()
                     // probe always needs a NUL — use a separate dupeZ for it so
                     // SENTINEL=false matched paths don't carry a spurious 0x00.
                     let path = dupe_matched::<SENTINEL>(path_without_special_syntax);
                     let pathz_owned = dupe_z(path_without_special_syntax);
                     // SAFETY: dupe_z appends NUL at len()-1; ZStr len excludes it.
                     let pathz = ZStr::from_slice_with_nul(&pathz_owned[..]);
-                    let fd = match A::open(pathz)? {
+                    let stat_result = match A::stat(pathz) {
                         Err(e) => {
-                            if e.get_errno() == E::ENOTDIR {
-                                self.walker.matched_paths.insert(&path, ());
-                                self.iter_state = IterState::Matched(path);
-                                return Ok(Ok(()));
-                            }
-                            // Doesn't exist
-                            if e.get_errno() == E::ENOENT {
+                            // ENOTDIR here means a path component is not a directory,
+                            // i.e. the target does not exist.
+                            if e.get_errno() == E::ENOENT || e.get_errno() == E::ENOTDIR {
                                 self.iter_state = IterState::GetNext;
                                 return Ok(Ok(()));
                             }
                             return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&path))));
                         }
-                        Ok(fd) => fd,
+                        Ok(stat) => stat,
                     };
-                    let _ = A::close(fd);
-                    if self.walker.only_files {
+                    let mode = stat_result.st_mode as u32;
+                    if S::ISREG(mode) || !self.walker.only_files {
+                        self.walker.matched_paths.insert(&path, ());
+                        self.iter_state = IterState::Matched(path);
+                    } else {
                         self.iter_state = IterState::GetNext;
-                        return Ok(Ok(()));
                     }
-                    self.walker.matched_paths.insert(&path, ());
-                    self.iter_state = IterState::Matched(path);
                     return Ok(Ok(()));
                 }
 

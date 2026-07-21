@@ -485,7 +485,9 @@ impl Expansion {
                 *has_quoted_empty = true;
             }
             ast::SimpleAtom::Var(label) => {
-                // Spec `expandVar`: shell_env first, then export_env, else "".
+                // Spec `expandVar`: shell_env first, then export_env, then the
+                // dynamic-special-variable fallback (`$RANDOM`, `$UID`, ...),
+                // else "".
                 let key = EnvStr::init_slice(label);
                 if let Some(v) = shell.shell_env.get(key) {
                     out.extend_from_slice(v.slice());
@@ -493,6 +495,8 @@ impl Expansion {
                 } else if let Some(v) = shell.export_env.get(EnvStr::init_slice(label)) {
                     out.extend_from_slice(v.slice());
                     v.deref();
+                } else {
+                    shell.append_special_var(label, out);
                 }
             }
             ast::SimpleAtom::VarArgv(int) => {

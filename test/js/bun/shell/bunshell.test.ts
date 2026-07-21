@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { hostname as osHostname } from "node:os";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -1328,6 +1329,106 @@ describe("deno_task", () => {
     TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
       .stdout("1 testing test this out\n")
       .runAsTest("exported vars 2");
+  });
+
+  // bash's auto-initialized / dynamic shell variables: these used to fall
+  // through the env-map lookup and expand to the empty string.
+  describe("special shell variables", () => {
+    // `bunEnv` above is `{ ...process.env, ... }`, so HOSTNAME / SHLVL /
+    // OSTYPE may already be inherited. Strip every name under test so the
+    // fallback path is what's exercised.
+    const envNoSpecials: Record<string, string> = { ...bunEnv };
+    for (const k of [
+      "RANDOM",
+      "UID",
+      "EUID",
+      "GROUPS",
+      "PPID",
+      "SECONDS",
+      "LINENO",
+      "IFS",
+      "SHLVL",
+      "HOSTNAME",
+      "OSTYPE",
+    ]) {
+      delete envNoSpecials[k];
+    }
+
+    test("$RANDOM is a fresh 15-bit integer on each reference", async () => {
+      const out = await $`${{ raw: `printf '%s %s %s' "$RANDOM" "$RANDOM" "$RANDOM"` }}`.env(envNoSpecials).text();
+      const parts = out.split(" ");
+      expect(parts).toHaveLength(3);
+      for (const p of parts) {
+        expect(p).toMatch(/^\d+$/);
+        const n = Number(p);
+        expect(n).toBeGreaterThanOrEqual(0);
+        expect(n).toBeLessThanOrEqual(32767);
+      }
+      // Three independent 15-bit draws: P(all equal) is 2^-30.
+      expect(new Set(parts).size).toBeGreaterThan(1);
+    });
+
+    test("tmp.$RANDOM.$RANDOM yields distinct names across runs", async () => {
+      const run = () => $`${{ raw: `n=tmp.$RANDOM.$RANDOM; printf '%s' "$n"` }}`.env(envNoSpecials).text();
+      const [a, b] = await Promise.all([run(), run()]);
+      expect(a).toMatch(/^tmp\.\d+\.\d+$/);
+      expect(b).toMatch(/^tmp\.\d+\.\d+$/);
+      expect(a).not.toBe(b);
+      expect(a).not.toBe("tmp..");
+    });
+
+    test("$IFS defaults to <space><tab><newline>", async () => {
+      expect(await $`${{ raw: `printf '[%s]' "$IFS"` }}`.env(envNoSpecials).text()).toBe("[ \t\n]");
+    });
+
+    test("$SECONDS starts at 0", async () => {
+      expect(await $`${{ raw: `printf '%s' "$SECONDS"` }}`.env(envNoSpecials).text()).toBe("0");
+    });
+
+    test("$SHLVL defaults to 1 when unset in the environment", async () => {
+      expect(await $`${{ raw: `printf '%s' "$SHLVL"` }}`.env(envNoSpecials).text()).toBe("1");
+    });
+
+    test("$LINENO expands to a number", async () => {
+      expect(await $`${{ raw: `printf '%s' "$LINENO"` }}`.env(envNoSpecials).text()).toMatch(/^\d+$/);
+    });
+
+    test("$OSTYPE is a non-empty platform string", async () => {
+      const out = await $`${{ raw: `printf '%s' "$OSTYPE"` }}`.env(envNoSpecials).text();
+      expect(out.length).toBeGreaterThan(0);
+      if (process.platform === "darwin") expect(out).toStartWith("darwin");
+      else if (process.platform === "linux") expect(out).toStartWith("linux");
+      else if (process.platform === "win32") expect(out).toBe("msys");
+    });
+
+    test("$HOSTNAME matches os.hostname()", async () => {
+      expect(await $`${{ raw: `printf '%s' "$HOSTNAME"` }}`.env(envNoSpecials).text()).toBe(osHostname());
+    });
+
+    test("$PPID is the parent process id", async () => {
+      const out = await $`${{ raw: `printf '%s' "$PPID"` }}`.env(envNoSpecials).text();
+      expect(out).toMatch(/^\d+$/);
+      // The shell runs in-process, so its PPID is this process's PPID.
+      expect(out).toBe(String(process.ppid));
+    });
+
+    if (isPosix) {
+      test("$UID / $EUID / $GROUPS match the real process credentials", async () => {
+        const out = await $`${{ raw: `printf '%s %s %s' "$UID" "$EUID" "$GROUPS"` }}`.env(envNoSpecials).text();
+        expect(out).toBe(`${process.getuid!()} ${process.geteuid!()} ${process.getgid!()}`);
+      });
+    }
+
+    test("user assignment shadows the special-variable fallback", async () => {
+      const out = await $`${{ raw: `RANDOM=pinned; IFS=:; printf '%s %s' "$RANDOM" "$IFS"` }}`
+        .env(envNoSpecials)
+        .text();
+      expect(out).toBe("pinned :");
+    });
+
+    test("unknown variable still expands to the empty string", async () => {
+      expect(await $`${{ raw: `printf '[%s]' "$DEFINITELY_NOT_SET_123"` }}`.env(envNoSpecials).text()).toBe("[]");
+    });
   });
 
   describe("pipeline", async () => {

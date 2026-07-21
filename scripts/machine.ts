@@ -146,7 +146,7 @@ const aws = {
       }
       await new Promise(resolve => setTimeout(resolve, i * Math.random() * 15_000));
     }
-    throw new Error(`Failed to run instances: ${inspect(instanceOptions)}`);
+    throw new Error(`Failed to run instances: ${inspect(options)}`);
   },
 
   /**
@@ -1242,9 +1242,9 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
       clientSecret,
       subscriptionId,
       tenantId,
-      resourceGroup,
       // Dedicated build RG so Packer's 4-core bake VMs don't contend with
-      // robobun CI runners for the runner quota.
+      // robobun CI runners for the runner quota. (The gallery's own RG is
+      // a spec fact, image.gallery.resourceGroup, read by the template.)
       buildResourceGroup: `${resourceGroup}-PACKER`,
       location: image.gallery.location,
     },

@@ -479,7 +479,14 @@ export const scratchDir = (() => {
  * Uses global fetch (node's undici) so it works before curl is installed.
  */
 export async function download(what: Download, options: { name?: string } = {}): Promise<string> {
-  const name = options.name ?? decodeURIComponent(basename(new URL(what.url).pathname)) ?? "download";
+  const derived = decodeURIComponent(basename(new URL(what.url).pathname));
+  const name = options.name ?? derived;
+  if (!name) {
+    // A URL with no filename in its path (https://get.docker.com) can't
+    // name its own file; the caller must pass { name }. Silently choosing
+    // one would write to a mystery path — say what's needed instead.
+    throw new Error(`download(${what.url}): URL has no filename; pass { name } to name the file`);
+  }
   const path = join(scratchDir, name);
   if (mode.dryRun) {
     log(`[dry-run] would download ${what.url}`);

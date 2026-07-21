@@ -34,8 +34,6 @@ export type PackerTemplateInput = {
     clientSecret: string;
     subscriptionId: string;
     tenantId: string;
-    /** The gallery's resource group (also where robobun launches VMs). */
-    resourceGroup: string;
     /** Where Packer creates its temporary build resources. Kept separate
      * so its 4-core bake VMs don't contend with CI runners for quota. */
     buildResourceGroup: string;

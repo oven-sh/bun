@@ -25,17 +25,20 @@ for (const image of images) {
 console.log("\nDry-running every image's bootstrap plan:");
 let failed = 0;
 for (const image of images) {
+  // A dry-run is pure planning and finishes in well under a second; the
+  // timeout turns a stall into a reported failure instead of a hung check.
   const result = spawnSync(
     process.execPath,
     [bootstrap, `--image=${image.key}`, "--ci", "--repo-ref=main", "--dry-run"],
-    { encoding: "utf8" },
+    { encoding: "utf8", timeout: 60_000 },
   );
   const complete = /all (\d+) step\(s\) complete/.exec(result.stdout);
+  const timedOut = result.signal === "SIGTERM";
   if (result.status === 0 && complete) {
     console.log(`  ok   ${image.key} (${complete[1]} steps)`);
   } else {
     failed++;
-    console.log(`  FAIL ${image.key} (exit ${result.status})`);
+    console.log(`  FAIL ${image.key} (${timedOut ? "timed out after 60s" : `exit ${result.status}`})`);
     console.log(indent(`${result.stdout}\n${result.stderr}`.trim().split("\n").slice(-30).join("\n")));
   }
 }

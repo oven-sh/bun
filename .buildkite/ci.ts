@@ -16,7 +16,6 @@ import { alpineRelease } from "../scripts/build/ci/spec.ts";
 import {
   getBuildkiteEmoji,
   getBuildMetadata,
-  getBuildNumber,
   getCanaryRevision,
   getCommitMessage,
   getEmoji,
@@ -830,7 +829,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
  * changes, so this branch bakes the new images once and every later push
  * — including main after merge, which computes the same hash — reuses
  * them. There is no commit-message tag and no version to bump; see
- * scripts/build/ci/README.md.
+ * scripts/build/ci/CLAUDE.md.
  *
  * @param {Platform} platform
  * @returns {Step}

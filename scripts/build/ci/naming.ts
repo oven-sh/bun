@@ -66,7 +66,7 @@ export function imageKey(platform: {
   distro?: string;
   features?: string[];
   abi?: string;
-  crossCompile?: string;
+  crossCompile?: boolean;
 }): string {
   const { os, arch, distro, release, features, abi, crossCompile } = platform;
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;

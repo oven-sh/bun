@@ -357,6 +357,10 @@ const alpinePackages = (arch: Arch): LinuxPackages => ({
     "gdb",
     "libgcc",
     "libstdc++",
+    // shadow provides usermod/groupmod (busybox does not); addUserToGroup
+    // relies on it. Declared explicitly rather than trusting the base
+    // image to pull it in transitively.
+    "shadow",
   ],
   buildEssentials: [
     "build-base",

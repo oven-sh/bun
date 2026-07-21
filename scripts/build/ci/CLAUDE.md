@@ -1,4 +1,9 @@
-# CI machine images
+# CI machine images — how this system works
+
+This is the guidance document for `scripts/build/ci` (loaded when working in
+this directory). Read it before changing anything here: it explains the design,
+the invariants that must not be broken, and how to make the common changes.
+
 
 How the machines Bun's CI runs on get built, named, and kept in sync with
 the repo. This directory is the whole system: what an image contains, how it
@@ -61,8 +66,9 @@ image entry (or the shared list it references) in `spec.ts`.
 edit the builder in `artifacts.ts`. The resolved URLs are part of the hash,
 so exactly the images whose downloads changed re-bake.
 
-**Change bootstrap logic without changing any fact** (a fix in
-`linux.ts`, a change to `agent.mjs`): the hashes do NOT change and existing
+**Change bootstrap logic without changing any fact** (a fix inside a
+component in `components/`, an edit to `runtime.ts` or the ops modules):
+the hashes do NOT change and existing
 images are reused — recipe code is deliberately outside the hash so a comment
 edit never triggers an hour-long bake. When such a change _must_ reach the
 images, bump `epoch` in `spec.ts`. That is the one manual step left, and

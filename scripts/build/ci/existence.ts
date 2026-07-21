@@ -46,18 +46,35 @@ async function checkAwsAmi(image: Image, name: string, secrets: Secrets): Promis
     AWS_SECRET_ACCESS_KEY: secrets.get("EC2_SECRET_ACCESS_KEY"),
     AWS_REGION: secrets.get("EC2_REGION"),
   };
+  // state=available only: an AMI that is still pending, or that failed,
+  // is NOT usable and must not suppress its own re-bake (mirrors the Azure
+  // path, which counts only a Succeeded version).
   const result = spawnSync(
     "aws",
-    ["ec2", "describe-images", "--owners", "self", "--filters", `Name=name,Values=${name}`, "--output", "json"],
+    [
+      "ec2",
+      "describe-images",
+      "--owners",
+      "self",
+      "--filters",
+      `Name=name,Values=${name}`,
+      "Name=state,Values=available",
+      "--output",
+      "json",
+    ],
     { encoding: "utf8", env },
   );
+  if (result.error) {
+    // The command could not start (aws CLI missing / not executable).
+    throw new Error(`could not run the aws CLI to check ${name}: ${result.error.message}`);
+  }
   if (result.status !== 0) {
-    throw new Error(`aws describe-images failed for ${name}: ${result.stderr.trim()}`);
+    throw new Error(`aws describe-images failed for ${name} (exit ${result.status}): ${result.stderr.trim()}`);
   }
   const parsed = JSON.parse(result.stdout);
   const [found] = parsed.Images;
-  if (found) return { image, name, exists: true, detail: `${found.ImageId} (${found.State})` };
-  return { image, name, exists: false, detail: "no AMI with this name" };
+  if (found) return { image, name, exists: true, detail: `${found.ImageId} (available)` };
+  return { image, name, exists: false, detail: "no available AMI with this name" };
 }
 
 async function checkAzureGalleryVersion(image: Image, name: string, secrets: Secrets): Promise<Existence> {
@@ -71,8 +88,14 @@ async function checkAzureGalleryVersion(image: Image, name: string, secrets: Sec
   const path =
     `/subscriptions/${subscription}/resourceGroups/${gallery.resourceGroup}` +
     `/providers/Microsoft.Compute/galleries/${gallery.name}/images/${name}/versions/${gallery.imageVersion}`;
+  // Generous ceiling: this is a single metadata GET that Azure answers in
+  // under a second when healthy. The bound exists only to turn a genuinely
+  // dead endpoint (a hung TLS handshake never rejects on its own) into a
+  // visible failure — it fails loudly into the existence-check banner, it
+  // never silently skips a bake. Slow-but-alive Azure has 2 minutes.
   const response = await fetch(`https://management.azure.com${path}?api-version=2024-03-03`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(120_000),
   });
   if (response.status === 404) {
     return { image, name, exists: false, detail: "no gallery version with this name" };
@@ -91,6 +114,7 @@ async function checkAzureGalleryVersion(image: Image, name: string, secrets: Sec
 async function azureToken(tenant: string, clientId: string, clientSecret: string): Promise<string> {
   const response = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
     method: "POST",
+    signal: AbortSignal.timeout(120_000),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body:
       `grant_type=client_credentials&client_id=${clientId}` +

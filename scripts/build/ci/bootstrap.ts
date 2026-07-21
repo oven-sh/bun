@@ -12,7 +12,7 @@
 // command, download, and file write) without changing the machine — the
 // way to review what a bake will do, from any host.
 //
-// See scripts/build/ci/README.md for the whole image system.
+// See scripts/build/ci/CLAUDE.md for the whole image system.
 
 import { parseArgs } from "node:util";
 import { detectHost } from "./bootstrap/host.ts";

@@ -700,6 +700,19 @@ describe("bun test", () => {
         expect(stderr).not.toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
+    test("should match test names case-insensitively (jest parity)", () => {
+      const stderr = runTest({
+        args: ["-t", "mixedcase target"],
+        input: `
+          import { test, expect } from "bun:test";
+          test("MixedCase Target", () => { expect(1).toBe(1); });
+          test("unrelated", () => { expect(1).toBe(1); });
+        `,
+      });
+      expect(stderr).toContain("(pass) MixedCase Target");
+      expect(stderr).toContain("1 pass");
+      expect(stderr).not.toContain("(pass) unrelated");
+    });
     test("should allow tests run with test.each to be matched", () => {
       const numbers = [
         [1, 2, 3],

@@ -696,7 +696,8 @@ pub(crate) fn execute_simple_s3_request(
     let vm = VirtualMachine::get();
     let verbose = vm.as_mut().get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
-    let (disable_timeout, idle_timeout_seconds) = http_timeout_options(options.idle_timeout_seconds);
+    let (disable_timeout, idle_timeout_seconds) =
+        http_timeout_options(options.idle_timeout_seconds);
     task.http.write(AsyncHTTP::init(
         options.method,
         url,

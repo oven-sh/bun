@@ -139,7 +139,8 @@ impl ScopeFunctions {
     pub fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
-        let [array] = frame.arguments_as_array::<1>();
+        let args = frame.arguments();
+        let array = args.first().copied().unwrap_or(JSValue::UNDEFINED);
         if array.is_undefined_or_null() || !array.is_array() {
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
@@ -148,8 +149,66 @@ impl ScopeFunctions {
         if !this.each.is_empty() {
             return Err(global.throw(format_args!("Cannot {} on {}", "each", this)));
         }
+
+        // Tagged-template form: test.each` a | b \n ${1} | ${2} `(...). The engine
+        // calls us as each(strings, ...values); `strings` is a frozen array with an
+        // own `.raw` array. Build the row-object table here so the existing
+        // array-of-objects path in `call_as_function` handles the rest.
+        if let Some(raw) = array.get_own_truthy(global, b"raw")? {
+            if raw.is_array() {
+                let table = parse_tagged_template_each(global, array, args.get(1..).unwrap_or(&[]))?;
+                return create_bound(global, this.mode, table, this.cfg, strings::EACH());
+            }
+        }
+
         create_bound(global, this.mode, array, this.cfg, strings::EACH())
     }
+}
+
+/// Build the `.each` row table for the tagged-template form. `strings[0]` is the
+/// `|`-separated header; `data` are the interpolated expressions in source order.
+fn parse_tagged_template_each(
+    global: &JSGlobalObject,
+    strings: JSValue,
+    data: &[JSValue],
+) -> JsResult<JSValue> {
+    const WS: &[u8] = b" \t\r\n";
+
+    let header_js = strings.get_index(global, 0)?;
+    let header = header_js.to_slice(global)?;
+    let mut columns: Vec<&[u8]> = Vec::new();
+    for piece in header.slice().split(|&b| b == b'|') {
+        let name = bun_core::strings::trim(piece, WS);
+        if !name.is_empty() {
+            columns.push(name);
+        }
+    }
+
+    if columns.is_empty() {
+        return Err(global.throw(format_args!(
+            ".each`...` table must have a header row with at least one column"
+        )));
+    }
+    if !data.is_empty() && data.len() % columns.len() != 0 {
+        return Err(global.throw(format_args!(
+            "Not enough arguments supplied for given headings: received {} value(s) for {} column(s)",
+            data.len(),
+            columns.len(),
+        )));
+    }
+
+    let num_cols = columns.len();
+    let num_rows = data.len() / num_cols;
+    let table = JSValue::create_empty_array(global, num_rows)?;
+    for row in 0..num_rows {
+        let obj = JSValue::create_empty_object(global, num_cols);
+        for (col, name) in columns.iter().enumerate() {
+            obj.put(global, *name, data[row * num_cols + col]);
+        }
+        table.put_index(global, row as u32, obj)?;
+    }
+    table.ensure_still_alive();
+    Ok(table)
 }
 
 #[bun_jsc::host_fn]

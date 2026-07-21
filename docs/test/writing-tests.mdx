@@ -346,6 +346,20 @@ test.each([
 });
 ```
 
+### Tagged template table
+
+You can also write the table as a tagged template literal. The first row is a `|`-separated header of column names, and each subsequent row supplies one `${value}` per column. Each row is passed to the callback as a single object keyed by the column names.
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test.each`
+  a    | b    | expected
+  ${1} | ${2} | ${3}
+  ${4} | ${5} | ${9}
+`("add($a, $b) = $expected", ({ a, b, expected }) => {
+  expect(a + b).toBe(expected);
+});
+```
+
 ### Format Specifiers
 
 Use these specifiers to format the test title:

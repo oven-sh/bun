@@ -529,17 +529,56 @@ it("supports serialize/deserialize", () => {
   expect(Database.deserialize(input)).toBeInstanceOf(Database);
 });
 
-it("serialize(name) rejects a db closed during name toString()", () => {
-  const db = new Database(":memory:");
-  db.run("CREATE TABLE t(a)");
-  expect(() =>
-    db.serialize({
-      toString() {
-        db.close();
-        return "main";
-      },
+// Coercing the schema-name argument to serialize() can re-enter JavaScript
+// via toString(). If that JS closes the database, sqlite3_serialize must not
+// be called on the freed handle. Run in a subprocess because the unsafe
+// variant operates on freed memory.
+it("serialize(name) rejects a db closed during name toString()", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE t(a)");
+
+    let message = "did not throw";
+    try {
+      db.serialize({
+        toString() {
+          db.close();
+          return "main";
+        },
+      });
+    } catch (e) {
+      message = e.message;
+    }
+    out.closeDuringToString = message;
+
+    const db2 = new Database(":memory:");
+    db2.run("CREATE TABLE t(a)");
+    out.plain = Buffer.isBuffer(db2.serialize("main"));
+    db2.close();
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      closeDuringToString: "Can't do this on a closed database",
+      plain: true,
     }),
-  ).toThrow("Can't do this on a closed database");
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("Database.deserialize should support strict mode", () => {

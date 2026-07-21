@@ -246,9 +246,21 @@ describe.concurrent("rm refuses '.' and '..' operands", () => {
     });
   });
 
-  test("does not refuse '...' or dotfiles", async () => {
-    using dir = tempDir("rm-dot-ok", { ".hidden": "H", ".../x.txt": "X" });
-    const r = await $`rm -rf .hidden ...`.cwd(String(dir)).nothrow().quiet();
+  test("does not refuse dotfiles", async () => {
+    using dir = tempDir("rm-dot-ok", { ".hidden": "H", ".h2/x.txt": "X" });
+    const r = await $`rm -rf .hidden .h2`.cwd(String(dir)).nothrow().quiet();
+    expect({ stderr: r.stderr.toString(), exitCode: r.exitCode, remaining: readdirSync(String(dir)) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      remaining: [],
+    });
+  });
+
+  // Win32 path normalization strips trailing periods from path components, so a
+  // directory literally named `...` does not round-trip through the harness.
+  test.skipIf(isWindows)("does not refuse '...'", async () => {
+    using dir = tempDir("rm-dots-ok", { ".../x.txt": "X" });
+    const r = await $`rm -rf ...`.cwd(String(dir)).nothrow().quiet();
     expect({ stderr: r.stderr.toString(), exitCode: r.exitCode, remaining: readdirSync(String(dir)) }).toEqual({
       stderr: "",
       exitCode: 0,

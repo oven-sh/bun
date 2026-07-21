@@ -493,22 +493,36 @@ describe("spawn()", () => {
     // child to get its own description, i.e. a blocking relay pipe.
     //
     // The test above passes only because 6-byte writes never fill the buffer.
+    //
+    // p3's stdout is drained throughout: 4 MB cannot fit in the pipe, so
+    // leaving it unread would deadlock a correct (blocking) writer instead of
+    // letting this flip to a pass. Draining still fills the buffer often
+    // enough for a nonblocking writer to hit EAGAIN -- today `cat` dies after
+    // roughly 240 KB of the 4 MB.
     it.skipIf(isWindows).todo("a child inheriting another subprocess's stdin survives a large write", async () => {
+      const size = 4 * 1024 * 1024;
       const dir = tmpdirSync();
       const bigPath = path.join(dir, "big.txt");
-      await write(bigPath, Buffer.alloc(4 * 1024 * 1024, "x"));
+      await write(bigPath, Buffer.alloc(size, "x"));
 
       let writer;
-      // p3's stdout is never drained, so it stops reading and the write end
-      // handed to the writer fills up.
       const p3 = spawn("cat", { stdio: ["pipe", "pipe", "inherit"] });
       try {
+        let received = 0;
+        p3.stdout.on("data", chunk => (received += chunk.length));
+
         writer = spawn("cat", [bigPath], { stdio: ["ignore", p3.stdin, "pipe"] });
         let stderr = "";
         writer.stderr.setEncoding("utf8");
         writer.stderr.on("data", chunk => (stderr += chunk));
+
         const [code] = await once(writer, "close");
-        expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+        // Close p3's own copy of the write end so its stdout reaches EOF and
+        // every forwarded byte has been counted before asserting.
+        p3.stdin.end();
+        await once(p3.stdout, "end");
+
+        expect({ code, stderr, received }).toEqual({ code: 0, stderr: "", received: size });
       } finally {
         for (const p of [writer, p3]) p?.kill();
       }

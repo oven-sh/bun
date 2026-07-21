@@ -159,8 +159,7 @@ impl PipeReader {
                 // Leave IS_PAUSED set (the init default) so uv_read_start is
                 // deferred until JS first pulls; the kernel pipe buffer then
                 // provides backpressure and the child blocks.
-                let reader_ptr =
-                    core::ptr::from_mut(&mut self.reader).cast::<core::ffi::c_void>();
+                let reader_ptr = core::ptr::from_mut(&mut self.reader).cast::<core::ffi::c_void>();
                 if let Some(source) = self.reader.source.as_mut() {
                     source.set_data(reader_ptr);
                 }

@@ -582,7 +582,6 @@ impl Interpreter {
                 _buffered_stdout: Bufio::default(),
                 _buffered_stderr: Bufio::default(),
                 shell_env: EnvMap::init(),
-                cmd_local_env: EnvMap::init(),
                 export_env,
                 __prev_cwd: cwd_arr.clone(),
                 __cwd: cwd_arr,
@@ -1787,7 +1786,6 @@ pub struct ShellExecEnv {
     pub _buffered_stdout: Bufio,
     pub _buffered_stderr: Bufio,
     pub shell_env: EnvMap,
-    pub cmd_local_env: EnvMap,
     pub export_env: EnvMap,
     pub __prev_cwd: Vec<u8>,
     pub __cwd: Vec<u8>,
@@ -1830,7 +1828,6 @@ impl ShellExecEnv {
     pub fn memory_cost(&self) -> usize {
         let mut size = core::mem::size_of::<ShellExecEnv>();
         size += self.shell_env.memory_cost();
-        size += self.cmd_local_env.memory_cost();
         size += self.export_env.memory_cost();
         size += self.__cwd.capacity();
         size += self.__prev_cwd.capacity();
@@ -1910,9 +1907,9 @@ impl ShellExecEnv {
 
     /// Heap-allocates a
     /// fresh env for a subshell/pipeline child: dups `cwd_fd`, clones
-    /// `shell_env`/`export_env`, gives it a fresh empty `cmd_local_env`, and
-    /// borrows or owns buffered stdout/stderr per `kind` (subshell/pipeline
-    /// borrow the parent's buffers so output bubbles up; cmd-subst owns).
+    /// `shell_env`/`export_env`, and borrows or owns buffered stdout/stderr per
+    /// `kind` (subshell/pipeline borrow the parent's buffers so output bubbles
+    /// up; cmd-subst owns).
     ///
     /// Caller frees with `ShellExecEnv::deinit_impl(p)`.
     pub fn dupe_for_subshell(
@@ -1952,7 +1949,6 @@ impl ShellExecEnv {
             _buffered_stdout: stdout,
             _buffered_stderr: stderr,
             shell_env: self.shell_env.clone(),
-            cmd_local_env: EnvMap::init(),
             export_env: self.export_env.clone(),
             __prev_cwd: self.__prev_cwd.clone(),
             __cwd: self.__cwd.clone(),
@@ -1999,7 +1995,6 @@ impl ShellExecEnv {
         // EnvMap has a Drop impl; replace with fresh to free now and leave
         // valid state for any later `Drop` of the outer `Interpreter` box.
         self.shell_env = EnvMap::init();
-        self.cmd_local_env = EnvMap::init();
         self.export_env = EnvMap::init();
         self.__cwd = Vec::new();
         self.__prev_cwd = Vec::new();
@@ -2127,23 +2122,6 @@ impl ShellExecEnv {
         self.export_env.insert(EnvStr::init_slice(b"PWD"), pwd);
 
         Ok(())
-    }
-
-    /// Routes `label = value` into one of the three env maps depending on
-    /// where the assignment appeared (`FOO=1 cmd` → cmd-local, bare `FOO=1` →
-    /// shell, `export FOO=1` → exported). NOTE: `EnvMap::insert` `.ref()`s the
-    /// value, so callers should deref `value` after the call.
-    pub fn assign_var(
-        &mut self,
-        label: crate::shell::env_str::EnvStr,
-        value: crate::shell::env_str::EnvStr,
-        assign_ctx: AssignCtx,
-    ) {
-        match assign_ctx {
-            AssignCtx::Cmd => self.cmd_local_env.insert(label, value),
-            AssignCtx::Shell => self.shell_env.insert(label, value),
-            AssignCtx::Exported => self.export_env.insert(label, value),
-        }
     }
 
     /// Looks up `$HOME` (`$USERPROFILE` on Windows) in `shell_env` first, then

@@ -3,6 +3,7 @@
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
+use crate::shell::EnvMap;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
@@ -23,6 +24,10 @@ pub struct Cmd {
     pub io: IO,
     pub state: CmdState,
     pub args: Vec<Vec<u8>>,
+    /// `FOO=bar cmd` prefix assignments. POSIX scopes these to this one
+    /// command, so they live here (freed with the node) instead of in the
+    /// `ShellExecEnv` that every command in the scope shares.
+    pub cmd_local_env: EnvMap,
     pub redirection_file: Vec<u8>,
     pub redirection_fd: Option<*mut CowFd>,
     pub exec: Exec,
@@ -212,6 +217,7 @@ impl Cmd {
             io,
             state: CmdState::Idle,
             args: Vec::new(),
+            cmd_local_env: EnvMap::init(),
             redirection_file: Vec::new(),
             redirection_fd: None,
             exec: Exec::None,
@@ -541,12 +547,12 @@ impl Cmd {
         resolved.push(0);
         interp.as_cmd_mut(this).args[0] = resolved;
 
-        // Fill env from export_env + cmd_local_env.
+        // Fill env from export_env + this command's prefix assignments.
         {
-            let env = interp.as_cmd_mut(this).base.shell_mut();
-            let mut iter = env.export_env.iterator();
+            let cmd = interp.as_cmd_mut(this);
+            let mut iter = cmd.base.shell_mut().export_env.iterator();
             spawn_args.fill_env::<false>(&mut iter);
-            let mut iter = env.cmd_local_env.iterator();
+            let mut iter = cmd.cmd_local_env.iterator();
             spawn_args.fill_env::<false>(&mut iter);
         }
 

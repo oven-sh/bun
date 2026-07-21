@@ -984,6 +984,29 @@ booga"
       });
     });
 
+    const printFoo = "console.log(process.env.FOO)";
+
+    test("cmd_local_var does not outlive the command", async () => {
+      const { stdout } = await $`FOO=bar ${BUN} -e ${printFoo}; ${BUN} -e ${printFoo}`;
+      expect(stdout.toString()).toEqual("bar\nundefined\n");
+    });
+
+    test("cmd_local_var does not accumulate across commands", async () => {
+      const printAB = "console.log(JSON.stringify([process.env.A ?? null, process.env.B ?? null]))";
+      const { stdout } = await $`A=1 ${BUN} -e ${"0"}; B=2 ${BUN} -e ${"0"}; ${BUN} -e ${printAB}`;
+      expect(stdout.toString()).toEqual("[null,null]\n");
+    });
+
+    test("cmd_local_var does not outlive a builtin", async () => {
+      const { stdout } = await $`FOO=bar echo hi; ${BUN} -e ${printFoo}`;
+      expect(stdout.toString()).toEqual("hi\nundefined\n");
+    });
+
+    test("cmd_local_var overrides an exported var for one command only", async () => {
+      const { stdout } = await $`export FOO=exported; FOO=local ${BUN} -e ${printFoo}; ${BUN} -e ${printFoo}`;
+      expect(stdout.toString()).toEqual("local\nexported\n");
+    });
+
     test("expand shell var", async () => {
       const { stdout } = await $`FOO=bar BAR=baz; echo $FOO $BAR`;
       const str = stdout.toString();
@@ -1014,9 +1037,9 @@ booga"
       let procEnv = JSON.parse(str1);
       expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar" });
       procEnv = JSON.parse(str2);
+      // `BAZ=1` was scoped to the previous command, so it must not be here.
       expect(procEnv).toEqual({
         ...bunEnv,
-        BAZ: "1",
         FOO: "bar",
         BUN_TEST_VAR: "1",
       });

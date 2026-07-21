@@ -144,12 +144,34 @@ impl Assigns {
             merged
         };
 
+        // `EnvMap::insert` `.ref()`s both strings, so the `+1` from
+        // `init_ref_counted` is released below.
         let value_ref = EnvStr::init_ref_counted(value.into_boxed_slice());
-        interp.as_assigns_mut(this).base.shell_mut().assign_var(
-            EnvStr::init_slice(label),
-            value_ref,
-            ctx,
-        );
+        let label_ref = EnvStr::init_slice(label);
+        match ctx {
+            // `FOO=1 cmd` — scoped to that one command, so it lands in the
+            // `Cmd`'s own map (which dies with the command) rather than in the
+            // `ShellExecEnv` shared by every command in this scope.
+            AssignCtx::Cmd => {
+                let parent = interp.as_assigns(this).base.parent;
+                interp
+                    .as_cmd_mut(parent)
+                    .cmd_local_env
+                    .insert(label_ref, value_ref);
+            }
+            AssignCtx::Shell => interp
+                .as_assigns_mut(this)
+                .base
+                .shell_mut()
+                .shell_env
+                .insert(label_ref, value_ref),
+            AssignCtx::Exported => interp
+                .as_assigns_mut(this)
+                .base
+                .shell_mut()
+                .export_env
+                .insert(label_ref, value_ref),
+        }
         value_ref.deref();
 
         Yield::Next(this)

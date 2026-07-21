@@ -70,7 +70,7 @@ const {
 
 const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
-const { validateString } = require("internal/validators");
+const { validateString, validateObject, validateUint32 } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 
 const kHandle = Symbol("kHandle");
@@ -151,7 +151,30 @@ crypto_exports.createPrivateKey = createPrivateKey;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
 
-crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
+crypto_exports.hash = function hash(algorithm, input, options) {
+  let outputEncoding;
+  let outputLength;
+
+  if (typeof options === "string") {
+    outputEncoding = options;
+  } else if (options !== undefined) {
+    validateObject(options, "options");
+    outputLength = options.outputLength;
+    outputEncoding = options.outputEncoding;
+  }
+
+  outputEncoding ??= "hex";
+  if (outputEncoding !== "hex") {
+    validateString(outputEncoding, "outputEncoding");
+  }
+
+  if (outputLength !== undefined) {
+    validateUint32(outputLength, "outputLength");
+    const h = new _Hash(algorithm, { outputLength });
+    h.update(h, input);
+    return h.digest(outputEncoding);
+  }
+
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 

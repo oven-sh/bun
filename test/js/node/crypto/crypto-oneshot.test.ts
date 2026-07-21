@@ -21,7 +21,7 @@ describe("crypto.hash", () => {
       );
     });
 
-    [null, true, 1, () => {}, {}].forEach(invalid => {
+    [null, true, 1, () => {}, []].forEach(invalid => {
       expect(() => crypto.hash("sha1", "test", invalid)).toThrow(
         expect.objectContaining({
           code: "ERR_INVALID_ARG_TYPE",
@@ -33,6 +33,56 @@ describe("crypto.hash", () => {
       expect.objectContaining({
         code: "ERR_INVALID_ARG_VALUE",
       }),
+    );
+  });
+
+  test("accepts an options object for the third argument", () => {
+    const expectedHex = crypto.createHash("sha256").update("abc").digest("hex");
+    const expectedBase64 = crypto.createHash("sha256").update("abc").digest("base64");
+
+    expect(crypto.hash("sha256", "abc", {})).toBe(expectedHex);
+    expect(crypto.hash("sha256", "abc", { outputEncoding: undefined })).toBe(expectedHex);
+    expect(crypto.hash("sha256", "abc", { outputEncoding: "hex" })).toBe(expectedHex);
+    expect(crypto.hash("sha256", "abc", { outputEncoding: "base64" })).toBe(expectedBase64);
+
+    const buf = crypto.hash("sha256", "abc", { outputEncoding: "buffer" });
+    expect(Buffer.isBuffer(buf)).toBe(true);
+    expect(buf.toString("hex")).toBe(expectedHex);
+
+    expect(() => crypto.hash("sha256", "abc", { outputEncoding: 42 })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+
+  test("options.outputLength controls XOF digest length", () => {
+    for (const [algorithm, length] of [
+      ["shake128", 8],
+      ["shake128", 64],
+      ["shake256", 16],
+    ] as const) {
+      const expected = crypto.createHash(algorithm, { outputLength: length }).update("abc").digest("hex");
+      expect(crypto.hash(algorithm, "abc", { outputLength: length })).toBe(expected);
+      expect(crypto.hash(algorithm, "abc", { outputLength: length, outputEncoding: "hex" })).toBe(expected);
+
+      const buf = crypto.hash(algorithm, Buffer.from("abc"), { outputLength: length, outputEncoding: "buffer" });
+      expect(Buffer.isBuffer(buf)).toBe(true);
+      expect(buf.length).toBe(length);
+      expect(buf.toString("hex")).toBe(expected);
+    }
+
+    expect(crypto.hash("shake128", "abc", { outputLength: 0 })).toBe("");
+
+    expect(crypto.hash("sha256", "abc", { outputLength: 32 })).toBe(
+      crypto.createHash("sha256").update("abc").digest("hex"),
+    );
+
+    for (const invalid of [-1, 1.5, NaN, 2 ** 32]) {
+      expect(() => crypto.hash("shake128", "abc", { outputLength: invalid })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+    }
+    expect(() => crypto.hash("shake128", "abc", { outputLength: "8" })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
   });
   const input = readFileSync(path("utf8_test_text.txt"));

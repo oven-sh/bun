@@ -888,6 +888,23 @@ pub unsafe fn spawn_process_posix(
                 set_spawned_stdio(&mut spawned, i, fds[0]);
             }
             PosixStdio::Pipe(fd) => {
+                // Caller-supplied fd bound for the child's stdin/stdout/stderr
+                // (raw number in the stdio array, `Bun.file(fd)`, memfd, or a
+                // stream fd extracted by `nodeToBun`). Children use blocking
+                // stdio — a synchronous reader like `cat` exits 1 with
+                // "Resource temporarily unavailable" on its first `read(2)`
+                // when `O_NONBLOCK` is set — but `O_NONBLOCK` lives on the
+                // open file description, not the descriptor, so `dup2` shares
+                // the flag between parent and child. Clearing it here affects
+                // both; that's unavoidable, and matches libuv's
+                // `uv__process_child_init`, which runs the same
+                // `uv__nonblock_fcntl(fd, 0)` post-fork in the child (same
+                // OFD, same observable effect on the parent). The
+                // `markStreamsAsStdio` caller pauses the parent's reader on
+                // the same JS tick once spawn returns (no FilePoll fires in
+                // between), so parent-going-blocking is moot; for direct
+                // numeric-fd callers this is documented Node-parity.
+                let _ = bun_sys::update_nonblocking(*fd, false);
                 actions.dup2(*fd, fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }

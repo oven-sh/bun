@@ -56,7 +56,12 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          // JSON.stringify: the JSON lexer rejects `*`/`?`/`(`/`)` before
+          // `parse_env_json`'s auto-quote fallback runs (see #30679). Without
+          // pre-quoting here, a minified-CSS string starting with `*{...}`
+          // breaks `bun run build:debug` on older bun versions that don't
+          // yet have the lexer recovery.
+          OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {
           syntax: !debug,

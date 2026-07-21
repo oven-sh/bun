@@ -48,6 +48,7 @@ interface NativePtr {
   pull: (view: any, closer: any) => any;
   updateRef: (ref: boolean) => void;
   cancel: (error: any) => void;
+  getFd: () => number;
 }
 
 let debugId = 0;
@@ -71,6 +72,18 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+
+  // Expose the underlying pipe fd (when available) so this stream can be
+  // passed to `child_process.spawn` as stdio — for example `spawn(..., {
+  // stdio: [proc.stdout, 'pipe', 'inherit'] })` to pipe one subprocess's
+  // stdout into another's stdin. `nodeToBun` extracts `.fd` from node-ish
+  // stream stdio; Node's equivalent is `subprocess.stdout._handle.fd`.
+  if (typeof bunNativePtr?.getFd === "function") {
+    const fd = bunNativePtr.getFd();
+    if (typeof fd === "number" && fd >= 0) {
+      stream.fd = fd;
+    }
+  }
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -236,6 +249,11 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   if (ptr) {
     ptr.cancel(error);
   }
+  // `ptr.cancel` closes the underlying pipe fd, so clear the cached `fd` that
+  // `constructNativeReadable` exposed for stdio hand-off — otherwise a
+  // destroyed stream still reports a stale (closed or kernel-reused) fd to
+  // `child_process.spawn`. Mirrors the WriteStream fast-path `close()`.
+  this.fd = null;
   if (cb) {
     process.nextTick(cb);
   }

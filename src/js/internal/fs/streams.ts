@@ -807,6 +807,15 @@ function writableFromFileSink(fileSink: any) {
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;
+  // Expose the underlying pipe fd so this stream can be passed to
+  // `child_process.spawn` as stdio (e.g. `{ stdio: ['pipe', proc.stdin, ...] }`
+  // piping one subprocess's stdout into another subprocess's stdin) — node's
+  // equivalent `subprocess.stdin` is a `net.Socket` whose fd is discoverable,
+  // so `nodeToBun` expects `.fd` on stream stdio.
+  const fd = fileSink._getFd?.();
+  if (typeof fd === "number" && fd >= 0) {
+    w.fd = fd;
+  }
   return w;
 }
 

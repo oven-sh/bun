@@ -41,6 +41,12 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
 const kFromNode = Symbol("kFromNode");
+// Marker applied to a readable stream whose pipe fd has been handed off to
+// another subprocess's stdio. Used by `#handleOnExit`'s drain logic to skip
+// auto-resuming such streams — mirrors Node's `kIsUsedAsStdio` (see
+// lib/internal/child_process.js). Without this, our own `PipeReader` would
+// race the child for the pipe's bytes and the child would usually lose.
+const kIsUsedAsStdio = Symbol("kIsUsedAsStdio");
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
@@ -528,7 +534,10 @@ function spawnSync(file, args, options) {
   options.killSignal = sanitizeKillSignal(options.killSignal);
 
   const stdio = options.stdio || "pipe";
-  const bunStdio = getBunStdioFromOptions(stdio);
+  // Sync path: only the `bunStdio` fd mapping matters. Unlike async `spawn`,
+  // the source streams are not quiesced (see below at the `Bun.spawnSync`
+  // call), so `streamsToQuiesce` is intentionally ignored here.
+  const { bunStdio } = getBunStdioFromOptions(stdio);
 
   var { input } = options;
   if (input) {
@@ -572,6 +581,12 @@ function spawnSync(file, args, options) {
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
     });
+    // No quiescing on the sync path. `Bun.spawnSync` blocks the JS thread
+    // until the child exits, so the parent's reader can't race it, and this
+    // line only runs once the child is already gone. Calling
+    // `markStreamsAsStdio` here would have no upside and its irreversible
+    // `setFlowing(false)` would permanently brick the source stream (e.g.
+    // `process.stdin`). Node likewise does not mark streams in `spawnSync`.
   } catch (err) {
     error = err;
     stdout = null;
@@ -1136,13 +1151,28 @@ class ChildProcess extends EventEmitter {
       if (stdout === undefined) {
         this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
       } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout?.destroyed) {
-        stdout.resume?.();
+        if (stdout[kIsUsedAsStdio]) {
+          // The fd was handed to another child; we marked this stream paused +
+          // `updateRef(false)` in `markStreamsAsStdio`, which unregisters the
+          // native FilePoll — so the stream will never see EOF on its own and
+          // never emit `'close'`. Without `'close'` the `#closesNeeded` tally
+          // stalls one short and we'd never emit `this`'s `'close'` either.
+          // `destroy()` fires `'close'` synchronously-ish and releases the
+          // now-useless parent-side read fd.
+          stdout.destroy?.();
+        } else {
+          stdout.resume?.();
+        }
       }
 
       if (stderr === undefined) {
         this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed) {
-        stderr.resume?.();
+        if (stderr[kIsUsedAsStdio]) {
+          stderr.destroy?.();
+        } else {
+          stderr.resume?.();
+        }
       }
     }
 
@@ -1350,7 +1380,7 @@ class ChildProcess extends EventEmitter {
     const serialization = options.serialization || "json";
 
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
-    const bunStdio = getBunStdioFromOptions(stdio);
+    const { bunStdio, streamsToQuiesce } = getBunStdioFromOptions(stdio);
     // Extra "pipe" slots (i >= 3) are wrapped in a net.Socket by
     // #getBunSpawnIo, which hands the fd to usockets (usockets closes it on
     // socket close). Use Bun.spawn's "socket-fd" so the parent end is stored
@@ -1438,6 +1468,13 @@ class ChildProcess extends EventEmitter {
       this.pid = this.#handle.pid;
 
       $debug("ChildProcess: spawn", this.pid, spawnargs);
+
+      // Only quiesce source streams after spawn has taken over the fd —
+      // see `markStreamsAsStdio`. Doing this before spawn (or running it on
+      // the catch path below) would leave the source stream permanently
+      // stuck if spawn throws, since `setFlowing(false)` has no
+      // user-recoverable counterpart.
+      if (streamsToQuiesce.length > 0) markStreamsAsStdio(streamsToQuiesce);
 
       process.nextTick(() => {
         this.emit("spawn");
@@ -1673,7 +1710,11 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
-function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
+function nodeToBun(
+  item: any,
+  index: number,
+  streamsToQuiesce: any[],
+): string | number | null | NodeJS.TypedArray | ArrayBufferView {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
@@ -1685,19 +1726,25 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
     return item;
   }
   if (isNodeStreamReadable(item)) {
-    const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
-    if (typeof itemFd === "number") return itemFd;
-    const handle = item._handle;
-    const handleFd = handle ? handle.fd : undefined;
-    if (typeof handleFd === "number") return handleFd;
+    const fd = extractStreamFd(item);
+    if (fd !== undefined) {
+      streamsToQuiesce.push(item);
+      return fd;
+    }
+    if (item.destroyed === true) {
+      throw new Error(`Cannot use a destroyed stream as stdio[${index}]`);
+    }
     throw new Error(`TODO: stream.Readable stdio @ ${index}`);
   }
   if (isNodeStreamWritable(item)) {
-    const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
-    if (typeof itemFd === "number") return itemFd;
-    const handle = item._handle;
-    const handleFd = handle ? handle.fd : undefined;
-    if (typeof handleFd === "number") return handleFd;
+    const fd = extractStreamFd(item);
+    if (fd !== undefined) {
+      streamsToQuiesce.push(item);
+      return fd;
+    }
+    if (item.destroyed === true) {
+      throw new Error(`Cannot use a destroyed stream as stdio[${index}]`);
+    }
     throw new Error(`TODO: stream.Writable stdio @ ${index}`);
   }
   const result = nodeToBunLookup[item];
@@ -1705,6 +1752,83 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
     throw new Error(`Invalid stdio option[${index}] "${item}"`);
   }
   return result;
+}
+
+/**
+ * Extract the underlying pipe/file fd from a Node-ish stream suitable for
+ * forwarding to `Bun.spawn` as `stdio`.
+ *   - `item.fd` is already a number — our own `WriteStream` / `NativeReadable`
+ *     set `.fd` from the FileSink / ReadableStreamSource; Node's own
+ *     `fs.ReadStream` / `fs.WriteStream` set it after open.
+ *   - `item._handle.fd` is a number — Node's `net.Socket`-backed subprocess
+ *     streams expose the pipe fd here; we don't emit this but accept it.
+ * A destroyed stream is rejected up front: its fd has been (or is about to be)
+ * closed, and not every destroy path clears the cached `.fd` synchronously
+ * (the `WriteStream` fast-path only nulls it in `close()`, which the async
+ * `_destroy` branch skips when the sink still has buffered bytes). Forwarding
+ * such an fd would `dup2` a stale (possibly kernel-reused) descriptor into the
+ * child, so guarding here covers both the readable and writable sides.
+ * Returns `undefined` when no fd is available so the caller can raise the
+ * stream-stdio-unsupported error.
+ */
+function extractStreamFd(item: any): number | undefined {
+  if (item.destroyed === true) return undefined;
+  if (Object.hasOwn(item, "fd")) {
+    const fd = item.fd;
+    if (typeof fd === "number") return fd;
+  }
+  const handle = item._handle;
+  if (handle) {
+    const fd = handle.fd;
+    if (typeof fd === "number") return fd;
+  }
+  return undefined;
+}
+
+/**
+ * Quiesce source streams whose fds have been inherited by a child. MUST be
+ * invoked AFTER `Bun.spawn` returns successfully: the
+ * `$bunNativePtr.setFlowing(false)` side-effect is sticky at the native
+ * layer with no user-recoverable counterpart, so running it when spawn
+ * then throws would leave the source stream permanently stuck. The sync
+ * path deliberately does not call this (see the comment at the
+ * `Bun.spawnSync` call site); Node likewise does not mark streams in
+ * `spawnSync`.
+ *
+ * Mirrors Node's `getValidStdio` post-spawn hook (`readStop()` + `pause()`
+ * + `kIsUsedAsStdio` tag in `lib/internal/child_process.js`):
+ *   - `$bunNativePtr?.setFlowing(false)` / `.updateRef(false)` stop Bun's
+ *     internal `FileReader` / `BufferedReader` from issuing further
+ *     `read(2)`s on the pipe fd — the equivalent of libuv's `readStop()`.
+ *   - `.pause()` clears the consumer-side flowing flag so `_read` won't
+ *     call `pull` again.
+ *   - The `kIsUsedAsStdio` tag tells `#handleOnExit` to skip the
+ *     `stdout.resume?.()` that would otherwise resurrect reading right as
+ *     the child starts.
+ */
+function markStreamsAsStdio(streams: any[]) {
+  for (const item of streams) {
+    item[kIsUsedAsStdio] = true;
+    const ptr = item.$bunNativePtr;
+    if (ptr) {
+      try {
+        ptr.setFlowing?.(false);
+      } catch {}
+      try {
+        ptr.updateRef?.(false);
+      } catch {}
+    }
+    if (typeof item.pause === "function") {
+      try {
+        item.pause();
+      } catch {}
+    }
+    const rs = item._readableState;
+    if (rs) {
+      rs.reading = false;
+      rs.flowing = false;
+    }
+  }
 }
 
 /**
@@ -1748,7 +1872,10 @@ function fdToStdioName(fd: number) {
   }
 }
 
-function getBunStdioFromOptions(stdio) {
+function getBunStdioFromOptions(stdio): {
+  bunStdio: (string | number | null | NodeJS.TypedArray | ArrayBufferView)[];
+  streamsToQuiesce: any[];
+} {
   const normalizedStdio = normalizeStdio(stdio);
   if (normalizedStdio.filter(v => v === "ipc").length > 1) throw $ERR_IPC_ONE_PIPE();
   // Node options:
@@ -1757,7 +1884,7 @@ function getBunStdioFromOptions(stdio) {
   // overlapped -- same as pipe on Unix based systems
   // inherit -- 'inherit': equivalent to ['inherit', 'inherit', 'inherit'] or [0, 1, 2]
   // ignore -- > /dev/null, more or less same as null option for Bun.spawn stdio
-  // TODO: Stream -- use this stream
+  // Stream -- handled by `nodeToBun` via fd extraction + `streamsToQuiesce`.
   // number -- used as FD
   // null, undefined: Use default value. Not same as ignore, which is Bun.spawn null.
   // null/undefined: For stdio fds 0, 1, and 2 (in other words, stdin, stdout, and stderr) a pipe is created. For fd 3 and up, the default is 'ignore'
@@ -1772,9 +1899,10 @@ function getBunStdioFromOptions(stdio) {
   // overlapped -> pipe
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
-  // Stream -> throw err for now
-  const bunStdio = normalizedStdio.map(nodeToBun);
-  return bunStdio;
+  // Stream -> extract its fd and record the stream for post-spawn quiesce.
+  const streamsToQuiesce: any[] = [];
+  const bunStdio = normalizedStdio.map((item, i) => nodeToBun(item, i, streamsToQuiesce));
+  return { bunStdio, streamsToQuiesce };
 }
 
 function normalizeStdio(stdio): string[] {

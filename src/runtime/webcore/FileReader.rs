@@ -1163,6 +1163,38 @@ impl readable_stream::SourceContext for FileReader {
     fn set_flowing(&mut self, flag: bool) {
         Self::set_flowing(self, flag)
     }
+    fn get_fd(&self) -> i64 {
+        // Windows: the pipe handle is system-kind (`Fd::from_system(pipe.fd())`
+        // in `bun_io::PipeReader::WindowsBufferedReader::Source::Pipe`), and
+        // `Fd::uv()` panics for non-stdio system HANDLEs. Until we have a
+        // safe handle→uv-fd round-trip (`makeLibUVOwned`-style) for inherited
+        // subprocess stdio on Windows, return `-1` so `constructNativeReadable`
+        // sees no fd and `nodeToBun`'s stream-stdio path falls back to the
+        // unsupported-stdio error instead of crashing the parent on any piped
+        // spawn.
+        #[cfg(windows)]
+        {
+            return -1;
+        }
+        // POSIX path: the `fd` field is only populated after `on_start`
+        // resolves the lazy blob/path; before that (and for pipe-backed
+        // streams constructed via `ReadableStream::from_pipe`) the real fd
+        // lives in the buffered reader's pipe handle instead. Prefer the
+        // pipe handle first so the subprocess stdout/stderr path yields the
+        // pipe fd immediately.
+        #[cfg(not(windows))]
+        {
+            let reader_fd = self.reader().get_fd();
+            if reader_fd != Fd::INVALID {
+                return reader_fd.uv() as i64;
+            }
+            let field_fd = self.fd.get();
+            if field_fd != Fd::INVALID {
+                return field_fd.uv() as i64;
+            }
+            -1
+        }
+    }
     // toBufferedValue: null
 }
 

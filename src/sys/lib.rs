@@ -6233,22 +6233,54 @@ unsafe impl Send for DynLib {}
 // synchronized, so `&DynLib` may be shared across threads.
 unsafe impl Sync for DynLib {}
 impl DynLib {
-    /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryW(path)`.
-    pub fn open(path: &[u8]) -> core::result::Result<Self, bun_errno::SystemErrno> {
-        let mut buf = bun_paths::PathBuffer::default();
-        // `std.DynLib.open` returns `error.NameTooLong`; never truncate (could
-        // dlopen a different library whose path is a prefix of the requested one).
-        if path.len() >= buf.0.len() {
-            return Err(bun_errno::SystemErrno::ENAMETOOLONG);
+    /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryW(path)`. On failure the `Err`
+    /// is the formatted loader message (`dlerror()` / `FormatMessageW`),
+    /// captured immediately so a later retry cannot overwrite it.
+    pub fn open(path: &[u8]) -> core::result::Result<Self, Box<[u8]>> {
+        // Never truncate (could dlopen a different library whose path is a
+        // prefix of the requested one).
+        if path.len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(Box::from(b"path too long" as &[u8]));
         }
-        let len = path.len();
-        buf.0[..len].copy_from_slice(path);
-        buf.0[len] = 0;
-        // SAFETY: NUL-terminated above.
-        let z = ZStr::from_buf(&buf.0[..], len);
-        match dlopen(z, RTLD::LAZY) {
-            Some(h) => Ok(Self { handle: h }),
-            None => Err(bun_errno::SystemErrno::ENOENT),
+        #[cfg(unix)]
+        {
+            let mut buf = bun_paths::PathBuffer::default();
+            let len = path.len();
+            buf.0[..len].copy_from_slice(path);
+            buf.0[len] = 0;
+            // SAFETY: NUL-terminated above.
+            let z = ZStr::from_buf(&buf.0[..], len);
+            match dlopen(z, RTLD::LAZY) {
+                Some(h) => Ok(Self { handle: h }),
+                None => Err(dlopen_error(path)),
+            }
+        }
+        #[cfg(windows)]
+        {
+            let mut wbuf = bun_paths::w_path_buffer_pool::get();
+            let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, path);
+            const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
+            let dw_flags = if bun_paths::is_absolute_windows(path) {
+                LOAD_WITH_ALTERED_SEARCH_PATH
+            } else {
+                0
+            };
+            // SAFETY: `to_w_path` NUL-terminates; `hFile` is reserved (NULL).
+            let p = unsafe {
+                bun_windows_sys::kernel32::LoadLibraryExW(
+                    wpath.as_ptr(),
+                    core::ptr::null_mut(),
+                    dw_flags,
+                )
+            };
+            if !p.is_null() {
+                return Ok(Self { handle: p.cast() });
+            }
+            // Capture before `wbuf` returns to the pool (its Drop pushes into
+            // a thread-local Vec, which may allocate on first use per thread).
+            let err = bun_windows_sys::kernel32::GetLastError();
+            drop(wbuf);
+            Err(dlopen_error_windows(err, path))
         }
     }
     /// `dlsym` typed lookup.
@@ -6272,8 +6304,10 @@ impl DynLib {
         unsafe {
             libc::dlclose(self.handle);
         }
-        // Windows: FreeLibrary via windows mod; intentionally leaked here
-        // (close is a no-op on Windows in our usage).
+        #[cfg(windows)]
+        {
+            bun_windows_sys::kernel32::FreeLibrary(self.handle);
+        }
     }
     #[inline]
     pub fn handle(&self) -> *mut c_void {
@@ -6336,6 +6370,121 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
         if p.is_null() { None } else { Some(p.cast()) }
     }
 }
+
+/// Formatted message for the most recent `dlopen`/`LoadLibrary` failure on
+/// the calling thread. Matches libuv's `uv__dlerror` so `process.dlopen`
+/// errors are byte-identical to Node.js. POSIX: heap copy of `dlerror()`.
+/// Windows: `FormatMessageW(GetLastError())` tried with English first then
+/// the default language, trailing `\r\n` preserved, `%1` substituted with
+/// `filename` for `ERROR_BAD_EXE_FORMAT`, falling back to `"error: {N}"`.
+pub fn dlopen_error(filename: &[u8]) -> Box<[u8]> {
+    #[cfg(unix)]
+    {
+        let _ = filename;
+        // SAFETY: dlerror() is thread-safe on glibc/musl/Darwin; the returned
+        // pointer is valid until the next dl* call on this thread.
+        let msg: &[u8] = unsafe {
+            let p = libc::dlerror();
+            if !p.is_null() {
+                bun_core::ffi::cstr(p).to_bytes()
+            } else {
+                b"unknown error"
+            }
+        };
+        Box::<[u8]>::from(msg)
+    }
+    #[cfg(windows)]
+    {
+        dlopen_error_windows(bun_windows_sys::kernel32::GetLastError(), filename)
+    }
+}
+
+/// Windows arm of [`dlopen_error`] taking a pre-captured `GetLastError()`
+/// value (mirrors `uv__dlerror(lib, filename, errorno)`), so callers that
+/// must run code between `LoadLibraryExW` and formatting can capture the
+/// error first and nothing in between can clobber the last-error slot.
+#[cfg(windows)]
+pub fn dlopen_error_windows(err: u32, filename: &[u8]) -> Box<[u8]> {
+    {
+        use bun_windows_sys::kernel32;
+        use std::io::Write as _;
+        const FORMAT_MESSAGE_ALLOCATE_BUFFER: u32 = 0x0000_0100;
+        const FORMAT_MESSAGE_IGNORE_INSERTS: u32 = 0x0000_0200;
+        const FORMAT_MESSAGE_FROM_SYSTEM: u32 = 0x0000_1000;
+        const LANG_ENGLISH_US: u32 = 0x0409;
+        const ERROR_BAD_EXE_FORMAT: u32 = 193;
+        const ERROR_RESOURCE_TYPE_NOT_FOUND: u32 = 1813;
+        const ERROR_MUI_FILE_NOT_FOUND: u32 = 15100;
+
+        let format = |lang: u32, buf: &mut *mut u16| -> u32 {
+            // SAFETY: with ALLOCATE_BUFFER, lpBuffer receives an LPWSTR* and the
+            // system allocates the result (freed via LocalFree below).
+            unsafe {
+                kernel32::FormatMessageW(
+                    FORMAT_MESSAGE_ALLOCATE_BUFFER
+                        | FORMAT_MESSAGE_FROM_SYSTEM
+                        | FORMAT_MESSAGE_IGNORE_INSERTS,
+                    core::ptr::null(),
+                    err,
+                    lang,
+                    core::ptr::from_mut(buf).cast::<u16>(),
+                    0,
+                    core::ptr::null_mut(),
+                )
+            }
+        };
+        let mut buf: *mut u16 = core::ptr::null_mut();
+        let mut n = format(LANG_ENGLISH_US, &mut buf);
+        if n == 0
+            && matches!(
+                kernel32::GetLastError(),
+                ERROR_MUI_FILE_NOT_FOUND | ERROR_RESOURCE_TYPE_NOT_FOUND
+            )
+        {
+            n = format(0, &mut buf);
+        }
+        let out = if n > 0 && !buf.is_null() {
+            // SAFETY: FormatMessageW wrote `n` WCHARs at `buf`.
+            let wide = unsafe { core::slice::from_raw_parts(buf, n as usize) };
+            let mut out = bun_core::strings::to_utf8_alloc(wide);
+            if err == ERROR_BAD_EXE_FORMAT {
+                if let Some(i) = bun_core::strings::index_of(&out, b"%1") {
+                    out.splice(i..i + 2, filename.iter().copied());
+                }
+            }
+            out.into_boxed_slice()
+        } else {
+            let mut v = Vec::new();
+            write!(&mut v, "error: {}", err).ok();
+            v.into_boxed_slice()
+        };
+        if !buf.is_null() {
+            // SAFETY: `buf` was allocated by FormatMessageW with
+            // FORMAT_MESSAGE_ALLOCATE_BUFFER; LocalFree is its documented release.
+            unsafe { kernel32::LocalFree(buf.cast()) };
+        }
+        out
+    }
+}
+
+/// C-ABI `dlopen_error()` for `process.dlopen` (`BunProcess.cpp`) so both
+/// `bun:ffi` and `process.dlopen` share one error formatter. `errorno` is
+/// `GetLastError()` captured immediately after `LoadLibraryExW` (ignored on
+/// POSIX, which reads `dlerror()`). Caller owns the returned `BunString`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__dlerror(errorno: u32, filename: &bun_core::String) -> bun_core::String {
+    #[cfg(windows)]
+    {
+        let filename = filename.to_utf8();
+        bun_core::String::clone_utf8(&dlopen_error_windows(errorno, filename.slice()))
+    }
+    #[cfg(unix)]
+    {
+        let _ = (errorno, filename);
+        bun_core::String::clone_utf8(&dlopen_error(b""))
+    }
+}
+
 /// `dlsym(handle, name)`.
 pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_void> {
     #[cfg(unix)]
@@ -6347,8 +6496,8 @@ pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_voi
     }
     #[cfg(windows)]
     {
-        // The Windows arm calls `GetProcAddressA` (which widens
-        // `name` to UTF-16 and forwards to kernel32 `GetProcAddress`).
+        // `GetProcAddress` takes `LPCSTR` — pass the narrow NUL-terminated
+        // name straight through.
         windows::GetProcAddressA(handle, name)
     }
 }

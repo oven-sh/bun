@@ -1,6 +1,6 @@
 import { dlopen, linkSymbols } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isMusl } from "harness";
+import { isMusl, isWindows } from "harness";
 
 describe("FFI error messages", () => {
   test("dlopen shows library name when library cannot be opened", () => {
@@ -17,6 +17,25 @@ describe("FFI error messages", () => {
       // Error message should include the library name
       expect(err.message).toContain("libnonexistent12345.so");
       expect(err.message).toMatch(/Failed to open library/i);
+    }
+  });
+
+  test("dlopen error reports the first attempt's message, not the cwd-resolved retry", () => {
+    try {
+      dlopen("libnonexistent_first_err_54321.so", {
+        test: { args: [], returns: "int" },
+      });
+      expect.unreachable("Should have thrown an error");
+    } catch (err: any) {
+      expect(err.message).toMatch(/Failed to open library/i);
+      // The fallback retry absolutizes against cwd; its dlerror would mention
+      // that path. The reported error must come from the user's original name.
+      expect(err.message).not.toContain(process.cwd());
+      if (isWindows) {
+        // FormatMessageW text, not a bare "error code 126". The text itself
+        // is localized, so only assert the old bare-code fallback is gone.
+        expect(err.message).not.toMatch(/: error code \d+$/);
+      }
     }
   });
 

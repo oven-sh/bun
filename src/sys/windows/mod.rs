@@ -4830,6 +4830,9 @@ pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_v
         kernel32::SetLastError(DWORD::from(Win32Error::FILENAME_EXCED_RANGE.int()));
         return ptr::null_mut();
     }
+    // Always set the altered-search flag to match libuv `uv_dlopen` (and so
+    // Node.js) exactly. `process.dlopen` passes an absolute path, so MSDN's
+    // "undefined for relative paths" caveat does not apply here.
     const LOAD_WITH_ALTERED_SEARCH_PATH: DWORD = 0x00000008;
     // SAFETY: buf NUL-terminated by `encode_into_utf16_buf_z`.
     unsafe {

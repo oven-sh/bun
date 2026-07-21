@@ -315,6 +315,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
 }
 
 extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
+extern "C" BunString Bun__dlerror(uint32_t errorno, BunString* filename);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -528,63 +529,37 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     Bun__process_dlopen_count++;
 
-#if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
-    HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
-
-// On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
-#else
     CrashHandler__setDlOpenAction(utf8.data());
+#if OS(WINDOWS)
+    HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
+    // Capture immediately (libuv does the same) so nothing below can clobber the last-error slot.
+    DWORD errorno = handle ? 0 : GetLastError();
+#else
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
+    uint32_t errorno = 0;
+#endif
     CrashHandler__setDlOpenAction(nullptr);
 
     tryToDeleteIfNecessary();
-#endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
 
     if (!handle) {
+        // Re-borrow: tryToDeleteIfNecessary() may have called
+        // filename.convertTo16Bit(), which swaps the StringImpl and leaves the
+        // earlier borrowed filename_str dangling.
+        filename_str = Bun::toString(filename);
+        BunString err = Bun__dlerror(errorno, &filename_str);
 #if OS(WINDOWS)
-        DWORD errorId = GetLastError();
-        LPWSTR messageBuffer = nullptr;
-        DWORD charCount = FormatMessageW(
-            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK, // Prevents automatic line breaks
-            NULL, // No source needed when using FORMAT_MESSAGE_FROM_SYSTEM
-            errorId,
-            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
-            (LPWSTR)&messageBuffer, // Buffer will be allocated by the function
-            0, // Minimum size to allocate - 0 means "determine size automatically"
-            NULL // No arguments since we're using FORMAT_MESSAGE_IGNORE_INSERTS
-        );
-
-        WTF::StringBuilder errorBuilder;
-        errorBuilder.append("LoadLibrary failed: "_s);
-        if (messageBuffer && charCount > 0) {
-            // Trim trailing whitespace, carriage returns, and newlines that FormatMessageW often includes
-            while (charCount > 0 && (messageBuffer[charCount - 1] == L'\r' || messageBuffer[charCount - 1] == L'\n' || messageBuffer[charCount - 1] == L' '))
-                charCount--;
-
-            errorBuilder.append(WTF::StringView(messageBuffer, charCount, false));
-        } else {
-            errorBuilder.append("error code "_s);
-            errorBuilder.append(WTF::String::number(errorId));
-        }
-
-        WTF::String msg = errorBuilder.toString();
-        if (messageBuffer)
-            LocalFree(messageBuffer); // Free the buffer allocated by FormatMessageW
-
-        // Since we're relying on LastError(), we have to delete after checking for errors
-        tryToDeleteIfNecessary();
+        // Node.js (src/node_binding.cc) appends the filename after uv_dlerror() on Windows.
+        WTF::String msg = makeString(err.toWTFString(), filename);
 #else
-        WTF::String msg = WTF::String::fromUTF8(dlerror());
+        WTF::String msg = err.toWTFString();
 #endif
+        err.deref();
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
-
-#if OS(WINDOWS)
-    tryToDeleteIfNecessary();
-#endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
         // Module self-registered via static constructor(s).

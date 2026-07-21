@@ -759,6 +759,22 @@ pub mod kernel32 {
             lpOverlapped: *mut c_void,
         ) -> BOOL;
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
+        /// `FreeLibrary` (`libloaderapi.h`). `hModule` is an opaque HMODULE
+        /// (validated kernel-side; bad handle → `FALSE` + `GetLastError`).
+        pub safe fn FreeLibrary(hModule: HMODULE) -> BOOL;
+        pub fn FormatMessageW(
+            dwFlags: DWORD,
+            lpSource: LPCVOID,
+            dwMessageId: DWORD,
+            dwLanguageId: DWORD,
+            lpBuffer: LPWSTR,
+            nSize: DWORD,
+            Arguments: *mut c_void,
+        ) -> DWORD;
+        /// `LocalFree` (`winbase.h`). Accepts null (no-op); a non-null `hMem`
+        /// must have come from `LocalAlloc`/`LocalReAlloc` or `FormatMessageW`
+        /// with `FORMAT_MESSAGE_ALLOCATE_BUFFER`.
+        pub fn LocalFree(hMem: *mut c_void) -> *mut c_void;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;

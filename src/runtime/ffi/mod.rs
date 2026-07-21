@@ -108,39 +108,6 @@ mod dom_call_slowpath {
 // `tcc_externs!` in `src/tcc_sys/tcc.rs`.
 use bun_tcc_sys as TCC;
 
-/// Get the last dynamic-library loading error message in a cross-platform way.
-/// On POSIX systems, this calls `dlerror()`.
-/// On Windows, this uses `GetLastError()` and formats the error code.
-/// Returns an owned byte string (heap-copied since `dlerror()`'s storage is
-/// not stable across calls).
-///
-/// Note: never fails — `Vec` write! is infallible and the POSIX path is
-/// unconditional.
-pub(crate) fn get_dl_error() -> Box<[u8]> {
-    #[cfg(windows)]
-    {
-        use std::io::Write as _;
-        let err = bun_sys::windows::GetLastError();
-        let err_int = err as u32;
-        let mut v = Vec::new();
-        write!(&mut v, "error code {}", err_int).ok();
-        v.into_boxed_slice()
-    }
-    #[cfg(not(windows))]
-    {
-        // SAFETY: dlerror is safe to call from any thread
-        let msg: &[u8] = unsafe {
-            let p = libc::dlerror();
-            if !p.is_null() {
-                bun_core::ffi::cstr(p).to_bytes()
-            } else {
-                b"unknown error"
-            }
-        };
-        Box::<[u8]>::from(msg)
-    }
-}
-
 // ═════════════════════════════════════════════════════════════════════════════
 // FFI — `.classes.ts` payload (the C++ JSCell wrapper stays generated; this is
 // `m_ctx`). The codegen `FFIPrototype__*` thunks resolve to `crate::ffi::FFI`,

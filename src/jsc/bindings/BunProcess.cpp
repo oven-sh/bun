@@ -3259,7 +3259,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     double groupNumber = groupResolved.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (!std::isfinite(groupNumber) || groupNumber < 0 || groupNumber > static_cast<double>(std::numeric_limits<gid_t>::max())) {
-        JSC::throwTypeError(globalObject, scope, "The "extraGroup" argument must be a non-negative safe integer"_s);
+        JSC::throwTypeError(globalObject, scope, "The 'extraGroup' argument must be a non-negative safe integer"_s);
         return {};
     }
     gid_t groupId = static_cast<gid_t>(groupNumber);

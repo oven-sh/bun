@@ -296,6 +296,11 @@ function send(message, cb?) {
   return process.send(wire, undefined, kInternalSendOptions);
 }
 
+// node:http workers arbitrate their self-binds through the primary
+// (probePort / shareListenFd in internal/cluster/primary); expose the
+// internal channel for _http_server's cluster listen path.
+cluster._sendInternal = send;
+
 // Extend generic Worker with methods specific to worker processes.
 Worker.prototype.disconnect = function () {
   if (this.state !== "disconnecting" && this.state !== "destroying") {

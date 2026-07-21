@@ -4841,6 +4841,10 @@ void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {
     JSC::VM& vm = *arg0;
+    // Firing NeedTermination wakes this VM's blocked Atomics.wait (VMTraps
+    // notifies vm.syncWaiter()), but WaiterListManager::waitForSync only exits
+    // on hasTerminationRequest(), so set it first or the waiter re-parks forever.
+    vm.setHasTerminationRequest();
     bool didEnter = vm.currentThreadIsHoldingAPILock();
     if (didEnter)
         vm.apiLock().unlock();

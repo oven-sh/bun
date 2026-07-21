@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -82,6 +82,55 @@ test(
   },
   timeout,
 );
+
+// https://github.com/oven-sh/bun/issues/29173
+// JSC's Atomics.wait loop only exits on vm.hasTerminationRequest(), which
+// Bun never set before firing the NeedTermination trap that wakes the waiter.
+test("terminate() interrupts a worker blocked in Atomics.wait", async () => {
+  using dir = tempDir("worker-terminate-atomics-wait", {
+    "worker.js": `
+      self.onmessage = ({ data: sab }) => {
+        const ia = new Int32Array(sab);
+        postMessage("waiting");
+        // Re-enter the futex forever; terminate() must interrupt this.
+        for (;;) Atomics.wait(ia, 0, 0);
+      };
+    `,
+    "main.js": `
+      const sab = new SharedArrayBuffer(16);
+      const ia = new Int32Array(sab);
+      const w = new Worker(new URL("./worker.js", import.meta.url).href);
+      w.addEventListener("close", () => {
+        console.log("CLOSED");
+        process.exit(0);
+      });
+      w.onmessage = ({ data }) => {
+        if (data !== "waiting") return;
+        // Atomics.notify returns how many waiters it woke; spinning until it
+        // returns 1 proves the worker thread is parked inside Atomics.wait.
+        while (Atomics.notify(ia, 0, 1) === 0) {}
+        // The worker's for(;;) re-enters the futex within microseconds; this
+        // bounded wait guarantees terminate() lands while it is parked again.
+        Atomics.wait(ia, 1, 0, 100);
+        w.terminate();
+      };
+      w.postMessage(sab);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("CLOSED\n");
+  expect(exitCode).toBe(0);
+});
 
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and

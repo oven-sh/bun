@@ -1331,6 +1331,97 @@ describe("bundler", () => {
       expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/30669
+  // `require("bun")` rewrites to `globalThis.Bun`; the printer must keep a
+  // space so `--minify-whitespace` doesn't fuse `return`/`typeof` into it.
+  itBundled("minify/BunRequireAfterReturnKeyword", {
+    files: {
+      "/entry.js": /* js */ `
+        function getBunModule() {
+          try {
+            return require("bun");
+          } catch {
+            return undefined;
+          }
+        }
+        function viaTypeof() {
+          return typeof require("bun");
+        }
+        const m = getBunModule();
+        console.log(m === undefined ? "FAIL-undefined" : "PASS-" + typeof m.SQL);
+        console.log(viaTypeof());
+      `,
+    },
+    minifyWhitespace: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      // The printer must NOT fuse adjacent identifier-continue tokens.
+      expect(file).not.toContain("returnglobalThis");
+      expect(file).not.toContain("typeofglobalThis");
+    },
+    run: {
+      stdout: "PASS-function\nobject",
+    },
+  });
+
+  // Dynamic `import("bun")` rewrites to `Promise.resolve(globalThis.Bun)` and
+  // must not fuse with a preceding identifier-continue token either. The
+  // `await` path guards `awaitPromise`; the bare-`return` path guards
+  // `returnPromise` (no `await` sits between `return` and the rewrite).
+  itBundled("minify/BunDynamicImportAfterAwait", {
+    files: {
+      "/entry.js": /* js */ `
+        async function getBunAwait() {
+          return await import("bun");
+        }
+        function getBunReturn() {
+          return import("bun");
+        }
+        Promise.all([getBunAwait(), getBunReturn()]).then(([a, b]) =>
+          console.log(typeof a.SQL, typeof b.SQL),
+        );
+      `,
+    },
+    minifyWhitespace: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(file).not.toContain("awaitPromise");
+      expect(file).not.toContain("returnPromise");
+    },
+    run: {
+      stdout: "function function",
+    },
+  });
+
+  // Same token-fusion class in the require-of-a-bundled-ESM-module arm:
+  // `return require("./esm")` emits `__toCommonJS(exports)` with no leading
+  // space, fusing into `return__toCommonJS` under --minify-whitespace.
+  itBundled("minify/BunRequireEsmModuleAfterReturn", {
+    files: {
+      "/entry.js": /* js */ `
+        function get() {
+          return require("./esm-mod.mjs");
+        }
+        console.log(typeof get(), get().value);
+      `,
+      "/esm-mod.mjs": `export const value = 1;`,
+    },
+    minifyWhitespace: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      // `return` must not fuse with the `__toCommonJS(` emit. (The `run`
+      // assertion below is the runtime proof — a fused token is a
+      // ReferenceError, not `object 1`.)
+      expect(file).not.toContain("return__toCommonJS");
+    },
+    run: {
+      stdout: "object 1",
+    },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

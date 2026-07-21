@@ -168,3 +168,55 @@ test("tsconfig 'extends' resolves package specifiers from node_modules", async (
     exitCode: 0,
   });
 });
+
+// TypeScript 5 allows "extends" to be an array. Each entry is resolved like a
+// single-string extends (relative or package specifier), and later entries
+// override earlier ones. The leaf config overrides all of them.
+test("tsconfig 'extends' accepts an array of base configs", async () => {
+  using dir = tempDir("tsconfig-extends-array", {
+    "lib/a/mod.ts": `export default "A";`,
+    "lib/b/mod.ts": `export default "B";`,
+    "a.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/a/*"] } } }),
+    "b.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/b/*"] } } }),
+    // paths is defined in both entries; the later one wins.
+    "tsconfig.json": JSON.stringify({ extends: ["./a.json", "./b.json"] }),
+    "index.ts": `import x from "@lib/mod"; console.log(x);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "B\n", stderr: "", exitCode: 0 });
+});
+
+test("tsconfig 'extends' array entries may be package specifiers", async () => {
+  using dir = tempDir("tsconfig-extends-array-pkg", {
+    "lib/mod.ts": `export default "LIB";`,
+    "node_modules/@tsc/base/package.json": JSON.stringify({ name: "@tsc/base", version: "1.0.0" }),
+    "node_modules/@tsc/base/tsconfig.json": JSON.stringify({
+      compilerOptions: { paths: { "@lib/*": ["../../../lib/*"] } },
+    }),
+    "local.json": JSON.stringify({ compilerOptions: { jsx: "react" } }),
+    "tsconfig.json": JSON.stringify({ extends: ["@tsc/base", "./local.json"] }),
+    "index.ts": `import x from "@lib/mod"; console.log(x);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "LIB\n", stderr: "", exitCode: 0 });
+});

@@ -140,6 +140,7 @@ H.push("  const char* const* argNames;");
 H.push("  const uint8_t* argDir;   // 0=in 1=out 2=inout (bit 7 = optional)");
 H.push("  const char* category;");
 H.push("  int8_t iosbIndex; // arg index of the PIO_STATUS_BLOCK, -1 if none (mangle target)");
+H.push("  int8_t oaIndex;   // arg index of the POBJECT_ATTRIBUTES, -1 if none (path decode)");
 H.push("};");
 H.push("");
 H.push("extern HookEntry kHooks[SYS__COUNT];");
@@ -184,10 +185,11 @@ for (const s of syscalls) {
 C.push("HookEntry kHooks[SYS__COUNT] = {");
 for (const s of syscalls) {
   const iosb = s.args.findIndex(a => a.type === "PIO_STATUS_BLOCK");
+  const oa = s.args.findIndex(a => a.type === "POBJECT_ATTRIBUTES");
   C.push(
     `  {${JSON.stringify(s.name)}, (void**)&Real_${s.name}, (void*)&Hook_${s.name}, ${s.args.length}, ` +
       `${s.ret === "NTSTATUS" ? "true" : "false"}, ${s.name}_types, ${s.name}_names, ${s.name}_dirs, ` +
-      `${JSON.stringify(s.category)}, ${iosb}},`,
+      `${JSON.stringify(s.category)}, ${iosb}, ${oa}},`,
   );
 }
 C.push("};");

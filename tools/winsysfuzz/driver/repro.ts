@@ -9,7 +9,7 @@
 // kill), the faulting stack for a CRASH, and a copy-pasteable repro command.
 
 import { join } from "node:path";
-import { freshDir, moduleOf, replayCoordinate, statusName, symbolize, wsfrun, type ReplayResult } from "./lib";
+import { ensureDir, moduleOf, replayCoordinate, statusName, symbolize, wsfrun, stamp, type ReplayResult } from "./lib";
 
 const argv = process.argv.slice(2);
 const flag = (n: string, d?: string) => {
@@ -27,8 +27,9 @@ const progArgs: string[] = [];
 for (let i = progIdx + 1; i < argv.length && !argv[i].startsWith("--"); i++) progArgs.push(argv[i]);
 const times = Math.max(1, +(flag("--times", "3") as string));
 const timeoutMs = 1000 * +(flag("--timeout", "30") as string);
-const outDir = flag("--out", "C:\\wsfrepro") as string;
-freshDir(outDir);
+// Never-reused timestamped root: nothing is ever deleted; old runs accumulate.
+const outDir = join(flag("--out", "C:\\wsfrepro") as string, stamp);
+ensureDir(outDir);
 
 const parts = schedule.trim().split(/\s+/);
 const [schedSys, schedRva, , schedMode, schedStatus] = parts;

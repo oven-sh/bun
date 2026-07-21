@@ -76,6 +76,50 @@ inline bool AfterCall(uintptr_t ip) {
 
 // WSF_FRAMES scales the stack-scrape depth (x32 qwords); 0 = _ReturnAddress only.
 int g_frames = 6;
+// WSF_ARGS=1: decode and log the NT path handed to path-bearing syscalls
+// ('A' records) — the hostile-argument attack's ground truth.
+bool g_logArgs = false;
+
+// Copy an OBJECT_ATTRIBUTES' ObjectName into 'out' (UTF-16), tolerating a
+// wild pointer from the target: reading through a bad pointer bun passed
+// must fault into __except here, not crash the process and get blamed on
+// bun. Returns the number of UTF-16 units copied.
+static size_t SafeCopyObjectName(const void* oaPtr, wchar_t* out, size_t cap) {
+  __try {
+    auto* oa = (const OBJECT_ATTRIBUTES*)oaPtr;
+    if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer) return 0;
+    size_t units = oa->ObjectName->Length / sizeof(wchar_t);
+    if (units > cap) units = cap;
+    for (size_t i = 0; i < units; i++) out[i] = oa->ObjectName->Buffer[i];
+    return units;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return 0;
+  }
+}
+
+// Escape UTF-16 into printable ASCII: printable ASCII as-is (except space,
+// backslash and quote, which are hex-escaped so the record stays one token
+// and unambiguous), everything else as \uXXXX. Hostile paths keep every
+// odd byte visible: lone surrogates, embedded NULs, trailing spaces.
+static size_t EscapeUtf16(const wchar_t* s, size_t n, char* out, size_t cap) {
+  size_t o = 0;
+  static const char hex[] = "0123456789abcdef";
+  for (size_t i = 0; i < n && o + 7 < cap; i++) {
+    wchar_t c = s[i];
+    if (c > 0x20 && c < 0x7f && c != L'\\' && c != L'"') {
+      out[o++] = (char)c;
+    } else {
+      out[o++] = '\\';
+      out[o++] = 'u';
+      out[o++] = hex[(c >> 12) & 15];
+      out[o++] = hex[(c >> 8) & 15];
+      out[o++] = hex[(c >> 4) & 15];
+      out[o++] = hex[c & 15];
+    }
+  }
+  out[o] = '\0';
+  return o;
+}
 
 struct Rule {
   uint32_t sys;
@@ -281,6 +325,7 @@ bool CallCtx::PreFault() {
       LogLine("X %lld %lu %u %llx %s %llx !P\n", seq, GetCurrentThreadId(), sys_,
               (unsigned long long)injected_, rvas,
               (unsigned long long)(nframes_ ? frames_[0] : 0));
+      LogArgs(seq);
       return true;
     }
     return false; // post-fault: real call runs, Exit() substitutes
@@ -331,8 +376,22 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
     LONG64 seq = InterlockedIncrement64(&g_seq);
     LogLine("X %lld %lu %u %llx %s %llx%s\n", seq, GetCurrentThreadId(), sys_,
             (unsigned long long)ret, rvas, (unsigned long long)(nframes_ ? frames_[0] : 0), tag);
+    LogArgs(seq);
   }
   return ret;
+}
+
+// Path decode for hostile-argument verification: the NT path that actually
+// reached the kernel, as an 'A' record sharing its X record's seq.
+void CallCtx::LogArgs(LONG64 seq) const {
+  int8_t oa = kHooks[sys_].oaIndex;
+  if (!g_logArgs || oa < 0 || oa >= argc_) return;
+  wchar_t path[400];
+  size_t units = SafeCopyObjectName((const void*)args_[oa], path, 400);
+  if (!units) return;
+  char esc[900];
+  EscapeUtf16(path, units, esc, sizeof esc);
+  LogLine("A %lld %u %s\n", seq, sys_, esc);
 }
 
 // --- runtime init ----------------------------------------------------------
@@ -371,6 +430,7 @@ bool RuntimeInit() {
   if (EnvA("WSF_FRAMES", tmp, sizeof tmp)) g_frames = atoi(tmp);
   if (g_frames < 0) g_frames = 0; // 0 = no stack walk, _ReturnAddress only
   if (g_frames > kMaxFrames - 1) g_frames = kMaxFrames - 1;
+  if (EnvA("WSF_ARGS", tmp, sizeof tmp)) g_logArgs = tmp[0] == '1';
 
   char exePath[MAX_PATH];
   GetModuleFileNameA(nullptr, exePath, sizeof exePath);

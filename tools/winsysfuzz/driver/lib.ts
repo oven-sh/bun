@@ -1,7 +1,7 @@
 // Shared driver library: trace parsing, RVA symbolization, module
 // classification, and a watchdogged runner around wsfrun.exe.
 
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export const here = dirname(import.meta.path);
@@ -59,6 +59,12 @@ export interface Rec {
   frame0: string;
   fault: "" | "P" | "Q" | "M"; // pre / post / mangle
   entryOnly: boolean;
+  path?: string; // decoded NT path from an 'A' record (WSF_ARGS=1)
+}
+
+// Undo the runtime's UTF-16 escaping (\uXXXX) back to a JS string.
+export function unescapePath(s: string): string {
+  return s.replace(/\\u([0-9a-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 }
 export interface Trace {
   notes: string[];
@@ -70,6 +76,7 @@ export interface Trace {
 
 export function parseTrace(text: string): Trace {
   const t: Trace = { notes: [], recs: [], bunBase: "0", cleanEnd: false, attached: 0 };
+  const bySeq = new Map<number, Rec>();
   for (const line of text.split("\n")) {
     if (!line) continue;
     if (line.startsWith("#")) {
@@ -84,7 +91,7 @@ export function parseTrace(text: string): Trace {
     const p = line.split(" ");
     if (p[0] === "X") {
       const rvas = p[5] === "0" ? [] : p[5].split(",");
-      t.recs.push({
+      const rec: Rec = {
         seq: +p[1],
         tid: +p[2],
         sys: +p[3],
@@ -94,7 +101,13 @@ export function parseTrace(text: string): Trace {
         frame0: p[6],
         fault: p[7] === "!P" ? "P" : p[7] === "!Q" ? "Q" : p[7] === "!M" ? "M" : "",
         entryOnly: false,
-      });
+      };
+      t.recs.push(rec);
+      bySeq.set(rec.seq, rec);
+    } else if (p[0] === "A") {
+      // 'A <seq> <sysid> <escaped-path>': attaches to its X record by seq.
+      const rec = bySeq.get(+p[1]);
+      if (rec) rec.path = unescapePath(p.slice(3).join(" "));
     } else if (p[0] === "E") {
       const rvas = p[4] === "0" ? [] : p[4].split(",");
       t.recs.push({ seq: +p[1], tid: +p[2], sys: +p[3], status: "", rva: rvas[0] ?? "0", rvas, frame0: p[5], fault: "", entryOnly: true });
@@ -185,9 +198,27 @@ export interface RunResult {
   crash: boolean; // NTSTATUS-style exit
 }
 
-export function freshDir(dir: string) {
-  rmSync(dir, { recursive: true, force: true });
+// The toolkit NEVER deletes: no rm, no unlink, anywhere. Runs never reuse a
+// directory (roots are timestamped per invocation, run dirs unique within),
+// so there is never a stale artifact to clear, and old runs simply accumulate
+// for the user to prune.
+export function ensureDir(dir: string) {
   mkdirSync(dir, { recursive: true });
+}
+
+// Per-invocation timestamp used to build never-reused output roots.
+export const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+// The trace log a run just wrote: newest wsf-*.log by mtime. Directories
+// are unique per run so there is normally exactly one; newest-by-mtime is
+// the guarantee even if a caller ever reuses one.
+export function newestLog(dir: string): string | null {
+  if (!existsSync(dir)) return null;
+  const logs = readdirSync(dir)
+    .filter(f => f.startsWith("wsf-") && f.endsWith(".log"))
+    .map(f => ({ f, t: statSync(join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.t - a.t);
+  return logs.length ? join(dir, logs[0].f) : null;
 }
 
 // --- debugger-backed capture (Debugging Tools for Windows) --------------------
@@ -259,7 +290,7 @@ export async function replayCoordinate(opts: {
   capture?: boolean; // capture hang stacks / crash dump (default true)
 }): Promise<ReplayResult> {
   const capture = opts.capture !== false;
-  freshDir(opts.dir);
+  ensureDir(opts.dir);
   const sched = join(opts.dir, "schedule.txt");
   await Bun.write(sched, opts.schedule + "\n");
   const env: Record<string, string> = {
@@ -300,8 +331,7 @@ export async function replayCoordinate(opts: {
   const ms = Math.round(performance.now() - t0);
   const exitCode = timedOut ? null : proc.exitCode;
   const crash = exitCode !== null && (exitCode >= 0x80000000 || exitCode < 0);
-  const logs = readdirSync(opts.dir).filter(f => f.startsWith("wsf-") && f.endsWith(".log"));
-  const trace = await readTrace(logs.length ? join(opts.dir, logs[0]) : null);
+  const trace = await readTrace(newestLog(opts.dir));
   const fired = trace ? trace.recs.filter(r => r.fault) : [];
   let outcome: ReplayResult["outcome"] = "clean";
   if (timedOut) outcome = "HANG";
@@ -344,7 +374,7 @@ export async function captureCrash(cmdline: string[], env: Record<string, string
 }
 
 export async function runOnce(o: RunOpts): Promise<RunResult> {
-  freshDir(o.workDir);
+  ensureDir(o.workDir);
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     WSF_LOG_DIR: o.workDir,
@@ -383,8 +413,7 @@ export async function runOnce(o: RunOpts): Promise<RunResult> {
   const stdout = await Bun.file(outFile).text().catch(() => "");
   const stderr = await Bun.file(errFile).text().catch(() => "");
 
-  const logs = readdirSync(o.workDir).filter(f => f.startsWith("wsf-") && f.endsWith(".log"));
-  const logPath = logs.length ? join(o.workDir, logs[0]) : null;
+  const logPath = newestLog(o.workDir);
   const code = timedOut ? null : proc.exitCode;
   return {
     outcome: timedOut ? "hang" : "exit",

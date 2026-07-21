@@ -13,7 +13,7 @@
 
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { manifest, moduleOf, nameOf, readTrace, runOnce, symbolize } from "./lib";
+import { moduleOf, nameOf, readTrace, runOnce, stamp, symbolize } from "./lib";
 
 const argv = process.argv.slice(2);
 const flag = (n: string, d?: string) => {
@@ -27,7 +27,7 @@ if (!bun) {
 }
 const workloadsDir = flag("--workloads", join(import.meta.dir, "..", "workloads")) as string;
 const timeoutMs = 1000 * +(flag("--timeout", "60") as string);
-const workRoot = flag("--work", "C:\\wsfcov") as string;
+const workRoot = join(flag("--work", "C:\\wsfcov") as string, stamp); // never-reused root; nothing deleted
 
 // Keep this list in sync with the FAULTS table in sweep.ts: it defines
 // which syscalls are fault sites, i.e. what "coverage" means.

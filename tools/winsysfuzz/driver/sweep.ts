@@ -16,7 +16,7 @@
 
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { classifySym, moduleOf, nameOf, parseTrace, readTrace, replayCoordinate, runOnce, statusName, symbolize } from "./lib";
+import { classifySym, ensureDir, moduleOf, nameOf, parseTrace, readTrace, replayCoordinate, runOnce, stamp, statusName, symbolize } from "./lib";
 
 const argv = process.argv.slice(2);
 const flag = (n: string, d?: string) => {
@@ -37,7 +37,8 @@ const jobs = Math.max(1, +(flag("--jobs", "6") as string));
 const maxHits = Math.max(1, +(flag("--hits", "1") as string));
 const modFilter = flag("--modules")?.split(",");
 const sysFilter = flag("--syscalls")?.split(",");
-const workRoot = flag("--work", "C:\\wsfsweep") as string;
+// Never-reused timestamped root: nothing is ever deleted; old sweeps accumulate.
+const workRoot = join(flag("--work", "C:\\wsfsweep") as string, stamp);
 const outPath = flag("--out", join(workRoot, "sweep-report.json")) as string;
 const planOnly = argv.includes("--plan-only"); // baseline + estimate, then stop
 
@@ -98,7 +99,7 @@ const FAULTS: Record<string, Fault[]> = {
 };
 
 const runsDir = join(workRoot, "runs");
-mkdirSync(runsDir, { recursive: true });
+ensureDir(runsDir);
 
 // --- baseline -----------------------------------------------------------------
 console.log(`baseline: ${bun} ${progArgs.join(" ")}`);
@@ -198,8 +199,10 @@ async function worker(w: number) {
     const idx = next++;
     if (idx >= plan.length) return;
     const job = plan[idx];
-    const dir = join(runsDir, `w${w}`);
-    const sched = join(runsDir, `sched-w${w}.txt`);
+    // Unique dir per job (never reused) - no stale trace can be misread.
+    const dir = join(runsDir, `job${String(job.id).padStart(4, "0")}`);
+    ensureDir(dir);
+    const sched = join(dir, "schedule.txt");
     await Bun.write(sched, `${job.coord.sysName} ${job.coord.rva} ${job.hit} ${job.mode} ${job.status}\n`);
     const rr = await runOnce({ bun, args: progArgs, workDir: dir, timeoutMs, schedule: sched });
     const tr = await readTrace(rr.logPath);

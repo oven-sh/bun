@@ -58,7 +58,7 @@ describe("Bun.S3Client region from environment", () => {
     ).toBe("ap-south-1");
   });
 
-  test.concurrent("explicit region option overrides AWS_DEFAULT_REGION", async () => {
+  test.concurrent("explicit region option overrides all region environment variables", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -69,7 +69,12 @@ describe("Bun.S3Client region from environment", () => {
           process.stdout.write(url.searchParams.get("X-Amz-Credential").split("/")[2]);
         `,
       ],
-      env: { ...baseEnv, AWS_DEFAULT_REGION: "eu-west-1" },
+      env: {
+        ...baseEnv,
+        S3_REGION: "ap-south-1",
+        AWS_REGION: "us-west-2",
+        AWS_DEFAULT_REGION: "eu-west-1",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

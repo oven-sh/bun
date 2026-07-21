@@ -270,12 +270,17 @@ impl Ls {
                 b'l' => opts.long_listing = true,
                 b'R' => opts.recursive = true,
                 b'r' => opts.reverse_order = true,
+                b'U' => opts.no_sort = true,
+                b'f' => {
+                    opts.no_sort = true;
+                    opts.show_all = true;
+                }
                 b'1' => opts.one_file_per_line = true,
                 // The remaining short flags are recognised but currently no-op.
-                b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G' | b'h' | b'H'
-                | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p' | b'q' | b'Q'
-                | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x' | b'X' | b'Z' => {}
-                _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
+                b'b' | b'B' | b'c' | b'C' | b'D' | b'F' | b'g' | b'G' | b'h' | b'H' | b'i'
+                | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p' | b'q' | b'Q' | b's'
+                | b'S' | b't' | b'T' | b'u' | b'v' | b'w' | b'x' | b'X' | b'Z' => {}
+                _ => return ParseFlag::IllegalOption(Box::from(&[ch][..])),
             }
         }
         ParseFlag::ContinueParsing
@@ -510,9 +515,16 @@ impl ShellLsTask {
 
             let mut iterator = dir_iterator::iterate(fd);
 
-            // If `-a` is used, "." and ".." should show up as results. However,
-            // our `DirIterator` abstraction skips them, so add them now.
-            this.add_dot_entries_if_needed(fd);
+            // Collect entries first so they can be sorted before printing.
+            // POSIX requires `ls` to sort by collating sequence by default.
+            let mut entries: Vec<(Vec<u8>, bool)> = Vec::new();
+
+            // `DirIterator` skips `.` and `..`; add them for `-a` so they
+            // participate in the sort.
+            if this.opts.show_all {
+                entries.push((b".".to_vec(), false));
+                entries.push((b"..".to_vec(), false));
+            }
 
             loop {
                 match iterator.next() {
@@ -523,13 +535,26 @@ impl ShellLsTask {
                     Ok(None) => break,
                     Ok(Some(current)) => {
                         let name = current.name.slice_u8();
-                        this.add_entry(name, fd);
-                        if matches!(current.kind, bun_sys::EntryKind::Directory)
-                            && this.opts.recursive
-                        {
-                            this.enqueue(name);
+                        if this.should_skip_entry(name) {
+                            continue;
                         }
+                        let is_dir = matches!(current.kind, bun_sys::EntryKind::Directory);
+                        entries.push((name.to_vec(), is_dir));
                     }
+                }
+            }
+
+            if !this.opts.no_sort {
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                if this.opts.reverse_order {
+                    entries.reverse();
+                }
+            }
+
+            for (name, is_dir) in &entries {
+                this.add_entry(name, fd);
+                if *is_dir && this.opts.recursive {
+                    this.enqueue(name);
                 }
             }
             return;
@@ -614,12 +639,6 @@ impl ShellLsTask {
         );
         self.output.extend_from_slice(name);
         self.output.push(b'\n');
-    }
-
-    fn add_dot_entries_if_needed(&mut self, dir_fd: bun_sys::Fd) {
-        // `add_entry()` already checks if we can add "." and ".." to the result.
-        self.add_entry(b".", dir_fd);
-        self.add_entry(b"..", dir_fd);
     }
 
     fn error_with_path(&self, err: &bun_sys::Error) -> bun_sys::Error {
@@ -804,6 +823,8 @@ pub struct Opts {
     pub recursive: bool,
     /// `-r`, `--reverse` — reverse order while sorting
     pub reverse_order: bool,
+    /// `-U` / `-f` — do not sort; list entries in directory order
+    pub no_sort: bool,
     /// `-1` — list one file per line
     pub one_file_per_line: bool,
 }

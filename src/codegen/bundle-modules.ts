@@ -40,10 +40,9 @@ const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp_modules");
 const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "codegen");
 const JS_DIR = path.join(CMAKE_BUILD_ROOT, "js");
 
-// Lightweight scan for top-level ESM import/export statements. The files in
-// src/js/ are preprocessed before bundling so we only need to detect the
-// statement *kind* (builtin-module import, default export, named runtime
-// export), not their full shape.
+// Lightweight scan for top-level ESM import/export statements. src/js/* is
+// preprocessed before bundling so we only need the statement *kind* (builtin
+// import, default export, named runtime export), not the full shape.
 function scanImportsExports(src: string) {
   const noComments = src.replace(/\/\*[^]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
   const imports: { kind: "import-statement"; path: string }[] = [];
@@ -268,11 +267,11 @@ for (const entrypoint of bundledEntryPoints) {
   const output = fs
     .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
     .replace(/^(?:\/\/[^\n]*\n)+/, "")
-    // esbuild's keepNames `__name` uses a descriptor without `__proto__: null`,
-    // which `Object.prototype.get = fn` pollution then poisons.
+    // esbuild's keepNames `__name` reads user-overridable Object.defineProperty
+    // and trusts its return value as the binding; neutralize both.
     .replace(
-      /__defProp\(target, "name", \{ value, configurable: !0 \}\)/,
-      '__defProp(target, "name", { __proto__: null, value, configurable: !0 })',
+      /var __name = .*;$/m,
+      'var __name = (t, v) => { try { __defProp(t, "name", { __proto__: null, value: v, configurable: !0 }); } catch {} return t; };',
     );
   // Trailing newline before `})` is load-bearing: esbuild preserves `//!`
   // legal comments, and a `//!` on the final line would swallow the wrapper
@@ -291,11 +290,9 @@ for (const entrypoint of bundledEntryPoints) {
       .replace(/return \$\nexport /, "return")
       .replace(/__intrinsic__/g, "@")
       .replace(/__no_intrinsic__/g, "") + "\n";
-  // JSC's builtin loader asserts `view.is8Bit()` (pure 8-bit source). esbuild's
-  // ascii charset escapes string literals but inline comments pass through
-  // verbatim, so escape every non-ASCII codepoint. Latin-1 chars (0x80-0xFF)
-  // must be escaped too: on disk they'd be multi-byte UTF-8 and decode to a
-  // 16-bit string on load.
+  // JSC's builtin loader asserts view.is8Bit(). esbuild's ascii charset covers
+  // string literals but not comments, and 0x80-0xFF is multi-byte UTF-8 on
+  // disk -> loads as 16-bit; escape every non-ASCII codepoint.
   captured = captured.replace(/[^\x00-\x7F]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
   captured = captured.replace(
     /function\s*\(.*?\)\s*{/,

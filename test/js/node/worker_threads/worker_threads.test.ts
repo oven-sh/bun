@@ -258,10 +258,6 @@ test("receiveMessageOnPort works as FIFO", () => {
 }, 9999999);
 
 describe("receiveMessageOnPort interacts with the port's start/stop state like Node", () => {
-  // Node's contract: start() opens the port for delivery (messages are dispatched,
-  // even to zero listeners, and so discarded); removing the last 'message' listener
-  // stops the port again (messages buffer). receiveMessageOnPort only sees what is
-  // still buffered.
   const tick = () => new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
 
   async function outcome(setup: (p: MessagePort) => void) {
@@ -279,6 +275,15 @@ describe("receiveMessageOnPort interacts with the port's start/stop state like N
 
   test("start() with no listener discards", async () => {
     expect(await outcome(p => p.start())).toBe(undefined);
+  });
+
+  test("start() then removeEventListener of an unregistered listener stays started (discards)", async () => {
+    expect(
+      await outcome(p => {
+        p.start();
+        p.removeEventListener("message", function neverRegistered() {});
+      }),
+    ).toBe(undefined);
   });
 
   test("never started buffers", async () => {

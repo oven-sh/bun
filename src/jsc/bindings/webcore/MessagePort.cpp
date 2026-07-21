@@ -541,7 +541,10 @@ bool MessagePort::removeEventListener(const AtomString& eventType, EventListener
         m_hasMessageEventListener = false;
         // Node stops the port when the last 'message' listener goes away; further
         // messages buffer for receiveMessageOnPort until start() (or a new listener).
-        m_started = false;
+        // A removeEventListener for a callback that was never registered is a no-op
+        // (`result` is false) and must not stop an explicitly-start()ed port.
+        if (result)
+            m_started = false;
     }
     if (!hasEventListeners(eventNames().closeEvent))
         m_hasCloseEventListener.store(false, std::memory_order_release);

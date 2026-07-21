@@ -1,17 +1,6 @@
 --- a/crypto/fipsmodule/rsa/rsa.cc.inc
 +++ b/crypto/fipsmodule/rsa/rsa.cc.inc
-@@ -413,6 +413,10 @@
-   uint8_t bytes[19];
- };
- 
-+// BoringSSL ships EVP_sha512_224 but only defines SHA512_256_DIGEST_LENGTH in
-+// <openssl/sha2.h>.
-+#define SHA512_224_DIGEST_LENGTH 28
-+
- // kPKCS1SigPrefixes contains the ASN.1 prefixes for PKCS#1 signatures with
- // different hash functions.
- static const struct pkcs1_sig_prefix kPKCS1SigPrefixes[] = {
-@@ -458,6 +462,22 @@
+@@ -458,6 +458,22 @@
          {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
           0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40},
      },

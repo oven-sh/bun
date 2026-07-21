@@ -79,6 +79,13 @@ pub struct JSBundleCompletionTask {
     pub transpiler: *mut BundleV2<'static>,
     pub plugins: Option<NonNull<Plugin>>,
     pub started_at_ns: u64,
+    /// Auto-install config captured from the VM's transpiler so the bundler
+    /// worker thread can propagate it into `Transpiler.options` in
+    /// `configure_bundler`.
+    pub global_cache: options::GlobalCache,
+    pub install: Option<NonNull<api::BunInstall>>,
+    pub prefer_offline_install: bool,
+    pub prefer_latest_install: bool,
 }
 
 impl JSBundleCompletionTask {
@@ -118,7 +125,9 @@ pub(crate) fn create_and_schedule_completion_task(
     event_loop: *mut EventLoop,
 ) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
-    let env = global_this.bun_vm().transpiler.env;
+    let vm_transpiler = &global_this.bun_vm().transpiler;
+    let env = vm_transpiler.env;
+    let vm_opts = &vm_transpiler.options;
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
@@ -138,6 +147,12 @@ pub(crate) fn create_and_schedule_completion_task(
         transpiler: ptr::null_mut(),
         plugins,
         started_at_ns: 0,
+        // Mirror the VM's install config so the bundle thread can propagate
+        // it into `Transpiler.options` (and transitively the resolver).
+        global_cache: vm_opts.global_cache,
+        install: vm_opts.install,
+        prefer_offline_install: vm_opts.prefer_offline_install,
+        prefer_latest_install: vm_opts.prefer_latest_install,
     }));
     // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
     unsafe {
@@ -975,6 +990,14 @@ impl CompletionStruct for JSBundleCompletionTask {
             // Emitting DCE annotations is nonsensical in --compile.
             transpiler.options.emit_dce_annotations = false;
         }
+
+        // Propagate install config captured from the VM at
+        // `create_and_schedule_completion_task` so the bundler's resolver can
+        // auto-install missing packages from the global cache or npm.
+        transpiler.options.global_cache = self.global_cache;
+        transpiler.options.install = self.install;
+        transpiler.options.prefer_offline_install = self.prefer_offline_install;
+        transpiler.options.prefer_latest_install = self.prefer_latest_install;
 
         transpiler.configure_linker();
         transpiler.configure_defines()?;

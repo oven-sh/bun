@@ -1386,6 +1386,23 @@ pub(crate) fn __bun_js_event_loop_current() -> *mut () {
     VirtualMachine::get().as_mut().event_loop().cast()
 }
 
+/// Null-returning variant of [`__bun_js_event_loop_current`]. Returns the
+/// live per-thread `*mut jsc::EventLoop` when a VM is bound on this thread,
+/// otherwise null. Used by `bun_install::PackageManager::init_with_runtime_once`
+/// to fall back to `MiniEventLoop` for VM-less callers (bun build CLI,
+/// bundler worker thread).
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_js_event_loop_current_or_null() -> *mut () {
+    match VirtualMachine::get_or_null() {
+        Some(vm) => {
+            // SAFETY: `get_or_null` returned `Some`, so the pointer names a
+            // live per-thread VM; `event_loop()` reads the self-pointer.
+            unsafe { (*vm).event_loop().cast() }
+        }
+        None => core::ptr::null_mut(),
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_event_loop::SpawnSyncEventLoop` extern impls
 //

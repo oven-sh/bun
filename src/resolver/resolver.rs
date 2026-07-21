@@ -873,6 +873,13 @@ impl<'a> Resolver<'a> {
     /// resolve failure rather than panicking.
     pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
         if let Some(pm) = self.package_manager {
+            // The PM is a process singleton shared by every resolver; another
+            // caller (e.g. a Bun.build() completion whose per-task log has
+            // since been freed) may have installed a stale log. Refresh so
+            // error paths always write through this resolver's live log.
+            // SAFETY: `pm` names the process-lifetime singleton; `self.log`
+            // outlives this resolver's use of it.
+            unsafe { (*pm.as_ptr()).set_log(self.log.as_ptr()) };
             return Ok(pm.as_ptr());
         }
         // SAFETY: `DotEnv::Loader<'a>` is layout-identical across `'a`;
@@ -889,8 +896,17 @@ impl<'a> Resolver<'a> {
         // names the `PackageManager` singleton (`'static`).
         let pm: NonNull<dyn AutoInstaller> =
             unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
+        // Zig: `if (pm.onWake.context == null) pm.onWake = this.onWakePackageManager;`
+        // — guard against overwriting a pre-registered VM-side handler when
+        // this Resolver is the second to reach the PM singleton (e.g. bundler
+        // worker thread after the runtime has already wired a dynamic-import
+        // handler).
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
-        unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
+        if unsafe { (*pm.as_ptr()).on_wake_context() }.is_none() {
+            // SAFETY: as above — `pm` names the live singleton; no other
+            // reference is held across this call.
+            unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
+        }
         self.package_manager = Some(pm);
         Ok(pm.as_ptr())
     }
@@ -1547,6 +1563,70 @@ impl<'a> Resolver<'a> {
             ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
             ResultUnion::Failure(e) => Err(e),
         }
+    }
+
+    /// Like `resolve`, but uses the configured `global_cache` setting to
+    /// allow auto-installing packages from the global cache or npm.
+    pub fn resolve_with_global_cache(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> crate::CrateResult<Result> {
+        let global_cache = self.opts.global_cache;
+        match self.resolve_and_auto_install(source_dir, import_path, kind, global_cache) {
+            ResultUnion::Success(result) => Ok(result),
+            ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
+            ResultUnion::Failure(e) => Err(e),
+        }
+    }
+
+    /// Like `resolve_with_framework`, but uses the configured `global_cache`
+    /// setting to allow auto-installing packages from the global cache or npm.
+    pub fn resolve_with_framework_and_global_cache(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> crate::CrateResult<Result> {
+        // SAFETY: PORT — matches `resolve_with_framework` below; `import_path`
+        // is caller-interned and outlives the returned Result.
+        let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
+        if let Some(f) = self.opts.framework.as_ref() {
+            if let Some(mod_) = f.built_in_modules.get(import_path) {
+                match mod_ {
+                    bun_options_types::BuiltInModule::Code(_) => {
+                        return Ok(Result {
+                            import_kind: kind,
+                            path_pair: PathPair {
+                                primary: Fs::Path::init_with_namespace(import_path, b"node"),
+                                secondary: None,
+                            },
+                            module_type: options::ModuleType::Esm,
+                            primary_side_effects_data: SideEffects::NoSideEffectsPureData,
+                            flags: ResultFlags::default(),
+                            ..Default::default()
+                        });
+                    }
+                    bun_options_types::BuiltInModule::Import(path) => {
+                        // SAFETY: PORT — `path` borrows from the framework
+                        // config, which outlives the returned Result; copy the
+                        // reference out so the `&self.opts.framework` borrow
+                        // ends before `self.resolve_with_global_cache(&mut
+                        // self, ..)`. Matches `resolve_with_framework` below.
+                        let path: &'static [u8] =
+                            unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
+                        let top = self.fs_ref().top_level_dir;
+                        return self.resolve_with_global_cache(
+                            top,
+                            path,
+                            ast::ImportKind::EntryPointBuild,
+                        );
+                    }
+                }
+            }
+        }
+        self.resolve_with_global_cache(source_dir, import_path, kind)
     }
 
     /// Runs a resolution but also checking if a Bun Bake framework has an

@@ -2284,6 +2284,7 @@ pub(crate) fn init_with_runtime(
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
 ) -> crate::Result<*mut PackageManager> {
+    let log_ptr: *mut bun_ast::Log = log;
     // NB: not `bun_core::run_once!` — the body is fallible (reading the root
     // directory hits ENOENT/EACCES at runtime when the cwd was deleted or is
     // unreadable), and the failure must be sticky: `holder::RAW_PTR` stays
@@ -2297,7 +2298,19 @@ pub(crate) fn init_with_runtime(
         }
     });
     match *INIT_ERROR.lock() {
-        None => Ok(get()),
+        None => {
+            let pm = get();
+            // The once-init installs whatever `log` the first caller passed.
+            // Subsequent callers would otherwise leave the singleton pointing
+            // at a stale/freed log — e.g. `Bun.build()`'s per-completion log
+            // is freed when the task is dropped. Refresh on every call so
+            // error paths in `PackageManagerEnqueue` / `runTasks` always
+            // write through the live log.
+            // SAFETY: `pm` is the process-lifetime singleton; `log_ptr`
+            // aliases the caller's `log` which outlives this call.
+            unsafe { (*pm).log = log_ptr };
+            Ok(pm)
+        }
         Some(code) => Err(code),
     }
 }
@@ -2417,9 +2430,12 @@ pub(crate) fn init_with_runtime_once(
             root_package_json_file,
             bun_sys::File::from_fd(Fd::invalid())
         );
-        // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
-        // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
-        wr!(event_loop, AnyEventLoop::js_current());
+        // erased *mut () set by tier-6; `js_current_or_mini()` resolves the
+        // per-thread JS event loop via `bun_io::__bun_get_vm_ctx` (link-time,
+        // definer in bun_runtime) and falls back to a fresh `MiniEventLoop`
+        // when no VM is bound — the case for `bun build` CLI and the bundler
+        // worker thread. See PackageManager.zig `initWithRuntimeOnce`.
+        wr!(event_loop, AnyEventLoop::js_current_or_mini());
         wr!(
             original_package_json_path,
             ZBox::from_vec_with_nul(original_package_json_path)
@@ -2499,6 +2515,26 @@ pub(crate) fn init_with_runtime_once(
     let manager = unsafe { &mut *manager_ptr };
     // The lockfile allocation is folded into the struct literal above
     // (`Box::new(Lockfile::default())`).
+
+    // Zig: when `initWithRuntimeOnce` falls back to `MiniEventLoop`, wire the
+    // parent event loop and set `MiniEventLoop.global` so `FilePoll` cleanup
+    // on this thread has a valid thread-local handle. The regular `init()`
+    // path (bun install CLI) does the same dance above.
+    if matches!(manager.event_loop, AnyEventLoop::Mini(_)) {
+        // Write the parent event loop into `uws_loop.internal_loop_data` so
+        // uSockets timers / lifecycle waiters can recover the mini loop via
+        // `EventLoopHandle::from_tag_ptr`. Mirrors the `init()` path above.
+        let uws_loop = manager.event_loop.r#loop();
+        // SAFETY: `uws_loop` is the live process-global `uws::Loop` just
+        // returned by `r#loop()`; backref is `manager.event_loop` owned by the
+        // singleton.
+        let uws_loop = unsafe { &mut *uws_loop };
+        EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
+        if let AnyEventLoop::Mini(mini) = &mut manager.event_loop {
+            let mini_ptr: *mut MiniEventLoop<'static> = &raw mut **mini;
+            mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
+        }
+    }
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();

@@ -386,8 +386,11 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       state.interrupted = true;
       state.childProc?.kill();
     };
+    const signal = opts.signal as AbortSignal | undefined;
+    if (signal?.aborted) onInterrupt();
     process.on("SIGINT", onInterrupt);
     process.on("SIGTERM", onInterrupt);
+    signal?.addEventListener("abort", onInterrupt, { once: true });
     try {
       for (let i = 0; i < files.length; i++) {
         if (state.interrupted) break;
@@ -396,6 +399,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     } finally {
       process.off("SIGINT", onInterrupt);
       process.off("SIGTERM", onInterrupt);
+      signal?.removeEventListener("abort", onInterrupt);
     }
 
     if (state.interrupted) {
@@ -2666,7 +2670,11 @@ function attributeProcessError(err: unknown, failureType: string): void {
     entry.fail(wrapper as Error);
     return;
   }
-  // No active test: node's fatal path — print and exit 1 (kGenericUserError).
+  // No active test. Outside an active run (an isolation:'none' run already
+  // restored its state) these listeners must not pre-empt the caller's own
+  // error handling; let the runtime's default/user handlers take over.
+  if (!runEventsEnabled()) return;
+  // node's fatal path — print and exit 1 (kGenericUserError).
   console.error((err as Error)?.stack ?? err);
   process.exit(1);
 }
@@ -3253,7 +3261,12 @@ async function runStandalone() {
   // builtin convention for long-lived callbacks.
   standaloneSink = standaloneSinkImpl.bind(undefined, stream, counts);
 
-  const reporterDone = attachStandaloneReporters(stream);
+  // All pipes attach before any test emits: node awaits setupTestReporters()
+  // during bootstrap, otherwise a custom reporter's import() yields with an
+  // earlier pipe already flowing and it receives a truncated stream.
+  const reporterFlush: Promise<void>[] = [];
+  await attachStandaloneReporters(stream, reporterFlush);
+  const reporterDone = Promise.all(reporterFlush);
   const root = getRootNode();
 
   try {
@@ -3375,7 +3388,7 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
   noteSuiteCollectionSettled(node);
 }
 
-async function attachStandaloneReporters(stream: TestsStream): Promise<unknown> {
+async function attachStandaloneReporters(stream: TestsStream, promises: Promise<void>[]): Promise<void> {
   const reporters = require("node:test/reporters");
   const names: string[] = [];
   const destinationNames: string[] = [];
@@ -3394,7 +3407,6 @@ async function attachStandaloneReporters(stream: TestsStream): Promise<unknown> 
   const { PassThrough, compose } = require("node:stream");
   const { createWriteStream } = require("node:fs");
   const path = require("node:path");
-  const promises: Promise<void>[] = [];
   for (let i = 0; i < names.length; i++) {
     const name = names[i];
     let reporter = (reporters as Record<string, unknown>)[name];
@@ -3463,7 +3475,6 @@ async function attachStandaloneReporters(stream: TestsStream): Promise<unknown> 
       }),
     );
   }
-  return Promise.all(promises);
 }
 
 function bunTestOptions(options: TestOptions) {

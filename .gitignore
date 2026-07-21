@@ -216,3 +216,5 @@ src/jsc/bindings/GeneratedBindings.zig
 # Web Streams rewrite working notes (design docs, spec transcription, review logs).
 # Kept locally for the ongoing work; not part of the source tree.
 /specs/
+
+scratch

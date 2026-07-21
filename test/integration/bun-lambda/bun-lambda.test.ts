@@ -15,10 +15,7 @@ const buildLayerPath = path.join(
 );
 
 test("build-layer.ts does not stub process.{stdout,stderr}.getWindowSize (#2081 is fixed)", async () => {
-  // When #2081 was open, @oclif/core crashed at import with
-  // "stream.getWindowSize is not a function" and build-layer.ts monkeypatched
-  // the streams to work around it. Bun has since implemented tty.WriteStream,
-  // so the script must not clobber the real getWindowSize.
+  // https://github.com/oven-sh/bun/issues/2081
   const source = await Bun.file(buildLayerPath).text();
   expect(source).not.toMatch(/process\.std(out|err)\.getWindowSize\s*=/);
   expect(source).not.toContain("issues/2081");

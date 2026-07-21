@@ -990,7 +990,12 @@ test("error snapshots", () => {
   } else {
     expect(() => {
       expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
-    }).toThrow("Received function did not throw");
+    }).toThrowErrorMatchingInlineSnapshot(`
+"expect(received).toThrowErrorMatchingInlineSnapshot()
+
+Matcher error: Received function did not throw
+"
+`);
   }
 });
 test("error inline snapshots", () => {

@@ -1596,6 +1596,56 @@ it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle excepti
   );
 });
 
+// JSC's reifyStaticProperty stores a PropertyCallback's return value via
+// putDirect with no exception check, so a builder must never return the empty
+// JSValue (putDirectInternal asserts on it) or let an exception escape. The
+// allocation paths in these builders only fail on OOM, so this is a scope-
+// discipline guard rather than a deterministic crash repro.
+it("lazy process properties reify under JSC exception-scope validation", async () => {
+  const properties = [
+    "versions",
+    "release",
+    "report",
+    "config",
+    "allowedNodeEnvironmentFlags",
+    "features",
+    "_preload_modules",
+    "env",
+    "mainModule",
+  ];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const names = ${JSON.stringify(properties)};
+        const types = {};
+        for (const name of names) types[name] = typeof process[name];
+        void process.report.getReport();
+        process.stdout.write(JSON.stringify(types));
+      `,
+    ],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, types: JSON.parse(stdout || "null"), exitCode }).toEqual({
+    stderr: "",
+    types: {
+      versions: "object",
+      release: "object",
+      report: "object",
+      config: "object",
+      allowedNodeEnvironmentFlags: "object",
+      features: "object",
+      _preload_modules: "object",
+      env: "object",
+      mainModule: "undefined",
+    },
+    exitCode: 0,
+  });
+});
+
 it("process.versions", () => {
   expect(process.versions.node).toEqual("26.3.0");
   expect(process.versions.v8).toEqual("14.6.202.34-node.20");

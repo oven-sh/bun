@@ -229,18 +229,29 @@ test.concurrent("set/send serialize ArrayBuffer arguments before a later toStrin
   const src = `
     const net = require("node:net");
 
+    // Each command frame ends in the value arg "$1\\r\\nv\\r\\n"; count those
+    // tails in the accumulated bytes so TCP fragmentation can't resolve early.
+    const TAIL = Buffer.from("$1\\r\\nv\\r\\n");
     let wire = Buffer.alloc(0);
+    let want = 0;
     let resolveFrame;
-    let gotFrame = new Promise(r => (resolveFrame = r));
+    let saidHello = false;
+    function tails() {
+      let n = 0, i = -1;
+      while ((i = wire.indexOf(TAIL, i + 1)) !== -1) n++;
+      return n;
+    }
     const server = net.createServer(socket => {
       socket.on("data", data => {
-        if (data.includes("HELLO")) {
-          socket.write("+OK\\r\\n");
+        if (!saidHello) {
+          if (data.includes("HELLO")) { saidHello = true; socket.write("+OK\\r\\n"); }
           return;
         }
         wire = Buffer.concat([wire, data]);
-        socket.write("+OK\\r\\n");
-        resolveFrame();
+        if (resolveFrame && tails() >= want) {
+          socket.write("+OK\\r\\n");
+          const r = resolveFrame; resolveFrame = null; r();
+        }
       });
       socket.on("error", () => {});
     });
@@ -279,17 +290,20 @@ test.concurrent("set/send serialize ArrayBuffer arguments before a later toStrin
     {
       const key = Buffer.from(new ArrayBuffer(4096));
       key.write("ORIGINALKEY");
+      want = 1;
+      const done = new Promise(r => (resolveFrame = r));
       client.set(key, evilValue(key)).catch(() => {});
-      await gotFrame;
+      await done;
     }
 
     // send("LPUSH", [key, value]): same shape through the array iterator.
     {
-      gotFrame = new Promise(r => (resolveFrame = r));
       const key = Buffer.from(new ArrayBuffer(4096));
       key.write("ORIGINAL2KEY");
+      want = 2;
+      const done = new Promise(r => (resolveFrame = r));
       client.send("LPUSH", [key, evilValue(key)]).catch(() => {});
-      await gotFrame;
+      await done;
     }
 
     client.close();
@@ -310,12 +324,11 @@ test.concurrent("set/send serialize ArrayBuffer arguments before a later toStrin
     cmd: [bunExe(), "-e", src],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);

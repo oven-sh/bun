@@ -53,6 +53,9 @@
 #include "JSRsaKeyGenParams.h"
 #include "JSRsaOaepParams.h"
 #include "JSRsaPssParams.h"
+#include "JSCryptoKeyUsage.h"
+#include "JSDOMConvertSequences.h"
+#include "JSDOMConvertEnumeration.h"
 #include <JavaScriptCore/JSONObject.h>
 
 namespace WebCore {
@@ -513,38 +516,32 @@ static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>&
 }
 
 // Maybe we want more specific error messages?
-static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionCode ec, const String& msg)
+static ASCIILiteral defaultCryptoErrorMessage(ExceptionCode ec)
 {
-    if (!msg.isEmpty()) {
-        passedPromise->reject(ec, msg);
-        return;
-    }
     switch (ec) {
     case NotSupportedError:
-        passedPromise->reject(ec, "The algorithm is not supported"_s);
-        return;
+        return "The algorithm is not supported"_s;
     case SyntaxError:
-        passedPromise->reject(ec, "A required parameter was missing or out-of-range"_s);
-        return;
+        return "A required parameter was missing or out-of-range"_s;
     case InvalidStateError:
-        passedPromise->reject(ec, "The requested operation is not valid for the current state of the provided key"_s);
-        return;
+        return "The requested operation is not valid for the current state of the provided key"_s;
     case InvalidAccessError:
-        passedPromise->reject(ec, "The requested operation is not valid for the provided key"_s);
-        return;
+        return "The requested operation is not valid for the provided key"_s;
     case UnknownError:
-        passedPromise->reject(ec, "The operation failed for an unknown transient reason (e.g. out of memory)"_s);
-        return;
+        return "The operation failed for an unknown transient reason (e.g. out of memory)"_s;
     case DataError:
-        passedPromise->reject(ec, "Data provided to an operation does not meet requirements"_s);
-        return;
+        return "Data provided to an operation does not meet requirements"_s;
     case OperationError:
-        passedPromise->reject(ec, "The operation failed for an operation-specific reason"_s);
-        return;
+        return "The operation failed for an operation-specific reason"_s;
     default:
-        break;
+        ASSERT_NOT_REACHED();
+        return ""_s;
     }
-    ASSERT_NOT_REACHED();
+}
+
+static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionCode ec, const String& msg)
+{
+    passedPromise->reject(ec, msg.isEmpty() ? String(defaultCryptoErrorMessage(ec)) : msg);
 }
 
 static void normalizeJsonWebKey(JsonWebKey& webKey)
@@ -1127,7 +1124,7 @@ static bool isSecretKeyAlgorithm(CryptoAlgorithmIdentifier identifier)
     }
 }
 
-ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, CryptoKeyType sourceType, KeyFormat format, Vector<uint8_t>&& keyData, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages)
+ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, CryptoKeyType sourceType, KeyFormat format, Vector<uint8_t>&& keyData, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, JSValue keyUsagesValue)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1142,6 +1139,8 @@ ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, C
     if (isSecretKeyAlgorithm(params->identifier) != (sourceType == CryptoKeyType::Secret))
         return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
 
+    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(state, keyUsagesValue);
+    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
@@ -1151,7 +1150,7 @@ ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, C
         result = &key;
     };
     auto exceptionCallback = [&exception](ExceptionCode ec, const String& msg) {
-        exception = Exception { ec, msg.isEmpty() ? String() : msg };
+        exception = Exception { ec, msg.isEmpty() ? String(defaultCryptoErrorMessage(ec)) : msg };
     };
 
     KeyData data = WTF::move(keyData);
@@ -1161,7 +1160,7 @@ ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, C
     if (exception)
         return WTF::move(*exception);
     if (!result)
-        return Exception { OperationError };
+        return Exception { OperationError, defaultCryptoErrorMessage(OperationError) };
 
     if ((result->type() == CryptoKeyType::Private || result->type() == CryptoKeyType::Secret) && !result->usagesBitmap()) {
         return Exception { SyntaxError,

@@ -80,7 +80,7 @@ public:
     void deriveBits(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& baseKey, std::optional<unsigned> length, Ref<DeferredPromise>&&);
     void importKey(JSC::JSGlobalObject&, KeyFormat, KeyDataVariant&&, AlgorithmIdentifier&&, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
     // Synchronous variant used by node:crypto KeyObject.prototype.toCryptoKey.
-    static ExceptionOr<Ref<CryptoKey>> importKeySync(JSC::JSGlobalObject&, CryptoKeyType sourceType, KeyFormat, Vector<uint8_t>&&, AlgorithmIdentifier&&, bool extractable, Vector<CryptoKeyUsage>&&);
+    static ExceptionOr<Ref<CryptoKey>> importKeySync(JSC::JSGlobalObject&, CryptoKeyType sourceType, KeyFormat, Vector<uint8_t>&&, AlgorithmIdentifier&&, bool extractable, JSC::JSValue keyUsages);
     void exportKey(KeyFormat, CryptoKey&, Ref<DeferredPromise>&&);
     void wrapKey(JSC::JSGlobalObject&, KeyFormat, CryptoKey&, CryptoKey& wrappingKey, AlgorithmIdentifier&& wrapAlgorithm, Ref<DeferredPromise>&&);
     void unwrapKey(JSC::JSGlobalObject&, KeyFormat, BufferSource&& wrappedKey, CryptoKey& unwrappingKey, AlgorithmIdentifier&& unwrapAlgorithm, AlgorithmIdentifier&& unwrappedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);

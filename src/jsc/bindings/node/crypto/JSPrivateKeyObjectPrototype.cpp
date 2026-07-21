@@ -14,15 +14,13 @@ using namespace WebCore;
 using namespace ncrypto;
 
 JSC_DECLARE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_export);
-JSC_DECLARE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_toCryptoKey);
 
 const JSC::ClassInfo JSPrivateKeyObjectPrototype::s_info = { "PrivateKeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPrivateKeyObjectPrototype) };
 
-// asymmetricKeyType/asymmetricKeyDetails live on the shared AsymmetricKeyObject prototype
-// (JSAsymmetricKeyObjectPrototype.cpp), matching Node's prototype chain.
+// asymmetricKeyType/asymmetricKeyDetails/toCryptoKey live on the shared AsymmetricKeyObject
+// prototype (JSAsymmetricKeyObjectPrototype.cpp), matching Node's prototype chain.
 static const JSC::HashTableValue JSPrivateKeyObjectPrototypeTableValues[] = {
     { "export"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPrivateKeyObjectPrototype_export, 1 } },
-    { "toCryptoKey"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPrivateKeyObjectPrototype_toCryptoKey, 3 } },
 };
 
 void JSPrivateKeyObjectPrototype::finishCreation(JSC::VM& vm)
@@ -50,21 +48,4 @@ JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_export, (JSGlobalObject * g
     return JSValue::encode(handle.exportAsymmetric(globalObject, scope, optionsValue, CryptoKeyType::Private));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_toCryptoKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPrivateKeyObject* privateKeyObject = dynamicDowncast<JSPrivateKeyObject>(callFrame->thisValue());
-    if (!privateKeyObject) {
-        throwThisTypeError(*globalObject, scope, "PrivateKeyObject"_s, "toCryptoKey"_s);
-        return {};
-    }
-
-    KeyObject& handle = privateKeyObject->handle();
-    JSValue algorithmValue = callFrame->argument(0);
-    JSValue extractableValue = callFrame->argument(1);
-    JSValue keyUsagesValue = callFrame->argument(2);
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(handle.toCryptoKey(globalObject, scope, algorithmValue, extractableValue, keyUsagesValue)));
-}

@@ -1814,6 +1814,18 @@ describe("KeyObject.prototype.toCryptoKey", () => {
     expect(secret.toCryptoKey.length).toBe(3);
   });
 
+  test("prototype placement matches Node", () => {
+    const secret = createSecretKey(Buffer.alloc(32));
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    // SecretKeyObject.prototype and AsymmetricKeyObject.prototype each own a copy;
+    // KeyObject.prototype does not.
+    expect(Object.hasOwn(Object.getPrototypeOf(secret), "toCryptoKey")).toBe(true);
+    expect(Object.hasOwn(Object.getPrototypeOf(publicKey), "toCryptoKey")).toBe(false);
+    expect(Object.hasOwn(KeyObject.prototype, "toCryptoKey")).toBe(false);
+    expect(publicKey.toCryptoKey).toBe(privateKey.toCryptoKey);
+    expect(secret.toCryptoKey).not.toBe(publicKey.toCryptoKey);
+  });
+
   describe("secret keys", () => {
     test("HMAC", () => {
       const secret = createSecretKey(Buffer.alloc(32, 1));
@@ -1945,6 +1957,22 @@ describe("KeyObject.prototype.toCryptoKey", () => {
       expect(() => secret.toCryptoKey("NotAnAlgorithm", true, ["sign"])).toThrow(
         expect.objectContaining({ name: "NotSupportedError" }),
       );
+    });
+
+    test("unrecognized algorithm takes precedence over invalid usage", () => {
+      // Algorithm normalization runs before keyUsages conversion.
+      expect(() => secret.toCryptoKey("NotAnAlgorithm", true, ["bogus-usage" as any])).toThrow(
+        expect.objectContaining({ name: "NotSupportedError" }),
+      );
+    });
+
+    test("error message matches subtle.importKey for the same input", async () => {
+      const fn = () => createSecretKey(Buffer.alloc(20)).toCryptoKey("AES-GCM", true, ["encrypt"]);
+      const asyncErr = await subtle.importKey("raw", Buffer.alloc(20), "AES-GCM", true, ["encrypt"]).then(
+        () => null,
+        e => e,
+      );
+      expect(fn).toThrow(expect.objectContaining({ name: asyncErr.name, message: asyncErr.message }));
     });
 
     test("empty usages for secret key", () => {

@@ -13,15 +13,12 @@
 #include "CryptoKey.h"
 #include "CryptoKeyType.h"
 #include "JSCryptoKey.h"
-#include "JSCryptoKeyUsage.h"
 #include "CryptoGenKeyPair.h"
 #include "SubtleCrypto.h"
 #include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertObject.h"
-#include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
-#include "JSDOMConvertEnumeration.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSBuffer.h"
 #include "BunString.h"
@@ -914,8 +911,6 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* globalObject, ThrowScope& scope, 
     RETURN_IF_EXCEPTION(scope, {});
     auto extractable = convert<IDLBoolean>(*globalObject, extractableValue);
     RETURN_IF_EXCEPTION(scope, {});
-    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*globalObject, keyUsagesValue);
-    RETURN_IF_EXCEPTION(scope, {});
 
     SubtleCrypto::KeyFormat format;
     Vector<uint8_t> keyData;
@@ -956,7 +951,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* globalObject, ThrowScope& scope, 
     }
     }
 
-    auto result = SubtleCrypto::importKeySync(*globalObject, type(), format, WTF::move(keyData), WTF::move(algorithm), extractable, WTF::move(keyUsages));
+    auto result = SubtleCrypto::importKeySync(*globalObject, type(), format, WTF::move(keyData), WTF::move(algorithm), extractable, keyUsagesValue);
     RETURN_IF_EXCEPTION(scope, {});
     if (result.hasException()) {
         WebCore::propagateException(*globalObject, scope, result.releaseException());

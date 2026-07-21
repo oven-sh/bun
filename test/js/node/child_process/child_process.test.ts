@@ -961,4 +961,14 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
       c.kill();
     }
   });
+
+  it("still drains a paused stdout to 'close' after the child exits", async () => {
+    const c = spawn("sh", ["-c", "echo hello"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      env: bunEnv,
+    });
+    c.stdout!.pause();
+    await once(c, "close");
+    expect(c.exitCode).toBe(0);
+  });
 });

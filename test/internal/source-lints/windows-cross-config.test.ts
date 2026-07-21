@@ -176,12 +176,14 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(plain.url).toContain("bun-webkit-windows-amd64.tar.gz");
     expect(plain.destDir).not.toEndWith("-lto");
 
-    // Default windows x64 cross config (lto=true, baseline=true): windows has
-    // no -baseline WebKit variant (prebuiltSuffix gates -baseline on cfg.linux),
-    // so it fetches the plain -lto tarball.
+    // Default windows x64 cross config (lto=true, baseline=true): windows has no
+    // -baseline-lto WebKit (the -lto tarball is haswell bitcode), so it fetches
+    // the non-LTO -baseline archive. Bun's own C++/rust still ThinLTO; WebKit
+    // links as regular COFF.
     const def = webkit.source(resolveWindowsCross());
     if (def.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${def.kind}`);
-    expect(def.url).toContain("bun-webkit-windows-amd64-lto.tar.gz");
+    expect(def.url).toContain("bun-webkit-windows-amd64-baseline.tar.gz");
+    expect(def.destDir).toEndWith("-baseline");
 
     const arm64 = webkit.source(resolveWindowsCross({ arch: "aarch64" }));
     if (arm64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${arm64.kind}`);

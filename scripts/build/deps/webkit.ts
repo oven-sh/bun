@@ -62,13 +62,16 @@ function prebuiltSuffix(cfg: Config): string {
   let s = "";
   if (cfg.linux && cfg.abi === "musl") s += "-musl";
   if (cfg.linux && cfg.abi === "android") s += "-android";
-  // Baseline WebKit artifacts (-march=nehalem) exist for Linux amd64
-  // (glibc + musl) release/-lto only; windows -lto has no -baseline variant.
-  if (cfg.baseline && cfg.x64 && !cfg.asan && !cfg.debug && cfg.linux && cfg.abi !== "android") {
-    s += "-baseline";
-  }
+  // Baseline (-march=nehalem) WebKit artifacts: linux amd64 (glibc + musl) has
+  // both -baseline and -baseline-lto; windows amd64 has only -baseline (regular
+  // COFF, no bitcode). The windows -lto tarball is haswell-targeted bitcode, so
+  // a baseline build MUST take the non-LTO -baseline archive there and forgo
+  // WebKit participating in ThinLTO (bun's own C++ + rust still do).
+  const wantsBaseline =
+    cfg.baseline && cfg.x64 && !cfg.asan && !cfg.debug && ((cfg.linux && cfg.abi !== "android") || cfg.windows);
+  if (wantsBaseline) s += "-baseline";
   if (cfg.debug) s += "-debug";
-  else if (cfg.lto) s += "-lto";
+  else if (cfg.lto && !(wantsBaseline && cfg.windows)) s += "-lto";
   if (cfg.asan) s += "-asan";
   return s;
 }

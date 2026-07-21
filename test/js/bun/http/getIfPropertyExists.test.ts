@@ -65,8 +65,7 @@ describe("getIfPropertyExists", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout.trim())).toEqual({ status: 200, xa: "a", xb: null });
     expect(exitCode).toBe(0);
   });

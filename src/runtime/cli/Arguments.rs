@@ -119,7 +119,7 @@ pub(crate) const BASE_PARAMS_: &[ParamType] = concat_params!(
             "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
         ),
         parse_param!(
-            "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
+            "-c, --config <PATH>               Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
         ),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],

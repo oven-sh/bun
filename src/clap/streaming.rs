@@ -240,16 +240,17 @@ where
             } else {
                 false
             };
-            if param.takes_value == clap::Values::None
-                || param.takes_value == clap::Values::OneOptional
-            {
-                if next_is_eql && param.takes_value == clap::Values::None {
+            if param.takes_value == clap::Values::None {
+                if next_is_eql {
                     return Err(self.err(arg, Some(short), None, ArgError::DoesntTakeValue));
                 }
                 return Ok(Some(Arg { param, value: None }));
             }
 
             if arg.len() <= next_index {
+                if param.takes_value == clap::Values::OneOptional {
+                    return Ok(Some(Arg { param, value: None }));
+                }
                 let value = match self.iter.next() {
                     Some(v) => v,
                     None => {
@@ -521,6 +522,84 @@ mod tests {
                 Arg {
                     param: d,
                     value: Some(b"0"),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn short_one_optional() {
+        let params: [clap::Param<u8>; 3] = [
+            clap::Param {
+                id: 0,
+                names: clap::Names::short(b'a'),
+                ..Default::default()
+            },
+            clap::Param {
+                id: 1,
+                names: clap::Names::short(b'c'),
+                takes_value: clap::Values::OneOptional,
+                ..Default::default()
+            },
+            clap::Param {
+                id: 2,
+                takes_value: clap::Values::One,
+                ..Default::default()
+            },
+        ];
+        let a = &params[0];
+        let c = &params[1];
+        let pos = &params[2];
+
+        test_no_err(
+            &params,
+            &[
+                b"-c", b"-c=v", b"-cv", b"-ac", b"-ac=v", b"-acv", b"-c", b"p",
+            ],
+            &[
+                Arg {
+                    param: c,
+                    value: None,
+                },
+                Arg {
+                    param: c,
+                    value: Some(b"v"),
+                },
+                Arg {
+                    param: c,
+                    value: Some(b"v"),
+                },
+                Arg {
+                    param: a,
+                    value: None,
+                },
+                Arg {
+                    param: c,
+                    value: None,
+                },
+                Arg {
+                    param: a,
+                    value: None,
+                },
+                Arg {
+                    param: c,
+                    value: Some(b"v"),
+                },
+                Arg {
+                    param: a,
+                    value: None,
+                },
+                Arg {
+                    param: c,
+                    value: Some(b"v"),
+                },
+                Arg {
+                    param: c,
+                    value: None,
+                },
+                Arg {
+                    param: pos,
+                    value: Some(b"p"),
                 },
             ],
         );

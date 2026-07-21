@@ -454,7 +454,7 @@ async function runOneFile(
     nesting: 0,
     name: file,
     type: "test",
-    testId: 1,
+    testId: ++runTestIdCounter,
     parentId: 0,
     tags: [],
     line: 1,

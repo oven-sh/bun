@@ -321,25 +321,29 @@ async function main() {
     if (data.file === undefined) success = data.success;
   });
 
+  // Resolve every reporter before piping any copy: runFiles is already running
+  // in the background, and once the first stream.pipe() starts it flowing, a
+  // custom reporter's await import() yields with events draining only to the
+  // earlier copies. Node awaits setupTestReporters() during bootstrap.
+  let resolved: unknown[];
+  try {
+    resolved = await Promise.all(reporterNames.map(resolveReporter));
+  } catch (err) {
+    // node's main is ESM: a reporter that can't be set up leaves the
+    // top-level await unfinished, which exits with code 7. inspect() keeps
+    // the error's `code` visible, like node's fatal printer.
+    console.error(require("node:util").inspect(err));
+    process.exit(7);
+  }
   const reporterPromises: Promise<void>[] = [];
-  for (let i = 0; i < reporterNames.length; i++) {
-    let reporter;
-    try {
-      reporter = await resolveReporter(reporterNames[i]);
-    } catch (err) {
-      // node's main is ESM: a reporter that can't be set up leaves the
-      // top-level await unfinished, which exits with code 7. inspect() keeps
-      // the error's `code` visible, like node's fatal printer.
-      console.error(require("node:util").inspect(err));
-      process.exit(7);
-    }
+  for (let i = 0; i < resolved.length; i++) {
     const destination = destinationFor(destinationNames[i]);
     // Each reporter gets its own copy of the stream: a Readable broadcasts to
     // every piped destination, and object-mode PassThroughs keep the
     // per-reporter iteration independent.
     const copy = new PassThrough({ objectMode: true });
     stream.pipe(copy);
-    reporterPromises.push(attachReporter(reporter, copy, destination));
+    reporterPromises.push(attachReporter(resolved[i], copy, destination));
   }
 
   try {

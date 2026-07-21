@@ -613,19 +613,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 )?;
                 path = new_path;
             } else {
-                // No explicit env: inherit the live `process.env` so runtime
-                // mutations (set/delete/PATH edits) reach the child.
-                let process_env = global_this.process_env_object()?;
-                process_env.ensure_still_alive();
-                if let Some(object) = process_env.get_object() {
-                    append_envp_from_js(
-                        global_this,
-                        JSObject::opaque_ref(object),
-                        &mut env_array,
-                        &mut path,
-                        &mut cstr_storage,
-                    )?;
-                }
+                inherit_process_env(global_this, &mut env_array, &mut path, &mut cstr_storage)?;
             }
 
             get_argv(
@@ -906,19 +894,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
         } else {
-            // No options object means no explicit env: inherit the live
-            // `process.env` so runtime mutations reach the child.
-            let process_env = global_this.process_env_object()?;
-            process_env.ensure_still_alive();
-            if let Some(object) = process_env.get_object() {
-                append_envp_from_js(
-                    global_this,
-                    JSObject::opaque_ref(object),
-                    &mut env_array,
-                    &mut path,
-                    &mut cstr_storage,
-                )?;
-            }
+            inherit_process_env(global_this, &mut env_array, &mut path, &mut cstr_storage)?;
             get_argv(
                 global_this,
                 cmd_value,
@@ -2092,6 +2068,22 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         dest: BunString::EMPTY,
     };
     global_this.throw_value(err.to_error_instance(global_this))
+}
+
+/// Populate `envp` / `path` from the live `process.env` JS object so runtime
+/// mutations (set/delete/PATH edits) reach the child.
+fn inherit_process_env(
+    global_this: &JSGlobalObject,
+    envp: &mut Vec<CStrPtr>,
+    path: &mut &[u8],
+    storage: &mut Vec<ZBox>,
+) -> JsResult<()> {
+    let process_env = global_this.process_env_object()?;
+    process_env.ensure_still_alive();
+    if let Some(object) = process_env.get_object() {
+        append_envp_from_js(global_this, JSObject::opaque_ref(object), envp, path, storage)?;
+    }
+    Ok(())
 }
 
 /// `storage` receives ownership of every `K=V\0` line whose pointer is pushed

@@ -194,6 +194,11 @@ describe("fs.watchFile", () => {
       });
     }
 
+    expect(() => {
+      fs.watchFile(file, { persistent: false }, listener);
+      fs.unwatchFile(file, listener);
+    }, "omitted interval should use the default").not.toThrow();
+
     for (const interval of [0, 100, 4294967295]) {
       expect(() => {
         fs.watchFile(file, { interval, persistent: false }, listener);

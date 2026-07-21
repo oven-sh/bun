@@ -296,8 +296,8 @@ pub fn sign(elf: &[u8], force: bool) -> Result<Vec<u8>, SignError> {
     }
     let (mut tmp, cs_off) = inject_codesign_section(&buf)?;
 
-    // Merkle root over tmp, skipping the cs section range
-    let root = merkle::root_hash(&tmp, cs_off, PAGE as u64);
+    // Merkle root + intermediate tree bytes over tmp, skipping the cs section
+    let (root, tree_bytes) = merkle::root_hash_and_tree(&tmp, cs_off, PAGE as u64);
 
     // descriptor with sign_size=0 for digest, then SHA-256 it
     let desc_for_digest = descriptor::build(0, tmp.len() as u64, &root);
@@ -307,14 +307,27 @@ pub fn sign(elf: &[u8], force: bool) -> Result<Vec<u8>, SignError> {
     let desc_on_disk = descriptor::build(32, tmp.len() as u64, &root);
 
     // ElfSignInfo header (8B) + descriptor (256B) + signature (32B) = 296B
-    let mut payload = [0u8; 8 + descriptor::SIZE + 32];
+    let sig_size = 32u32;
+    let payload_len = 8 + descriptor::SIZE + sig_size as usize;
+    let mut payload = vec![0u8; payload_len];
     payload[0..4].copy_from_slice(&descriptor::ELF_SIGN_INFO_TYPE.to_le_bytes());
-    payload[4..8].copy_from_slice(&((descriptor::SIZE + 32) as u32).to_le_bytes());
+    payload[4..8].copy_from_slice(&(descriptor::SIZE as u32 + sig_size).to_le_bytes());
     payload[8..8 + descriptor::SIZE].copy_from_slice(&desc_on_disk);
     payload[8 + descriptor::SIZE..].copy_from_slice(&signature);
 
-    // Write payload into the cs section
-    tmp[cs_off as usize..cs_off as usize + payload.len()].copy_from_slice(&payload);
+    // Write payload then merkle tree bytes into the cs section
+    let cs_section = &mut tmp[cs_off as usize..cs_off as usize + PAGE as usize];
+    cs_section[..payload_len].copy_from_slice(&payload);
+    // Write merkle tree intermediate hashes after the signature, as the
+    // upstream binary-sign-tool does. The section is 4KB; if tree bytes
+    // exceed available space they are silently truncated (the kernel does
+    // not verify the tree for self-signed binaries).
+    let tree_start = payload_len;
+    let tree_max = PAGE as usize - tree_start;
+    if !tree_bytes.is_empty() {
+        let n = tree_bytes.len().min(tree_max);
+        cs_section[tree_start..tree_start + n].copy_from_slice(&tree_bytes[..n]);
+    }
 
     Ok(tmp)
 }

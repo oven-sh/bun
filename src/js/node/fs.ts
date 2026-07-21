@@ -24,15 +24,25 @@ function lazyGlob() {
 }
 
 const { guardCallback } = require("internal/shared");
+let asyncHooksHub;
 
-// Validates and returns the callback wrapped by guardCallback.
+// With async_hooks id tracking on, the request becomes an FSREQCALLBACK
+// resource (init now, before/after + ids around the callback, destroy after);
+// otherwise guardCallback just reroutes callback throws to the uncaught path.
+function wrapFsCallback(callback) {
+  const hooksHub = (asyncHooksHub ??= require("internal/async_hooks_tick"));
+  if (hooksHub.state.tracking) return hooksHub.wrapRequestCallback("FSREQCALLBACK", callback);
+  return guardCallback(callback);
+}
+
+// Validates and returns the wrapped callback.
 // Callers must use the return value, not the argument.
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
     throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
   }
 
-  return guardCallback(callback);
+  return wrapFsCallback(callback);
 }
 
 // Micro-optimization: avoid creating a new function for every call
@@ -71,7 +81,7 @@ var access = function access(path, mode, callback) {
   },
   close = function close(fd, callback) {
     if ($isCallable(callback)) {
-      callback = guardCallback(callback);
+      callback = wrapFsCallback(callback);
       fs.close(fd).then(() => callback(null), callback);
     } else if (callback === undefined) {
       fs.close(fd).then(() => {});
@@ -94,12 +104,15 @@ var access = function access(path, mode, callback) {
       callback = options;
       options = undefined;
     }
-    callback = ensureCallback(callback);
-
-    // node throws for any defined `recursive`, not just truthy ones
+    if (!$isCallable(callback)) {
+      throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
+    }
+    // node throws for any defined `recursive`, not just truthy ones — and
+    // validates before creating the req, so no init is emitted on this throw.
     if (options?.recursive !== undefined) {
       throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is no longer supported");
     }
+    callback = wrapFsCallback(callback);
     fs.rmdir(path, options).then(nullcallback(callback), callback);
   },
   copyFile = function copyFile(src, dest, mode, callback) {
@@ -150,7 +163,7 @@ var access = function access(path, mode, callback) {
       options = undefined;
     }
 
-    callback = guardCallback(callback);
+    callback = wrapFsCallback(callback);
     fs.fstat(fd, options).then(function (stats) {
       callback(null, stats);
     }, callback);
@@ -273,7 +286,7 @@ var access = function access(path, mode, callback) {
     if (!callback) {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
-    callback = guardCallback(callback);
+    callback = wrapFsCallback(callback);
     fs.read(fd, buffer, offset, length, position).then(
       bytesRead => void callback(null, bytesRead, buffer),
       err => callback(err),
@@ -415,7 +428,7 @@ var access = function access(path, mode, callback) {
     } else if ($isCallable(callback)) {
       // Not ensureCallback: node does not validate the 4-argument overload's
       // callback, and a non-callable one must stay an ignored `.then` handler.
-      callback = guardCallback(callback);
+      callback = wrapFsCallback(callback);
     }
 
     fs.symlink(target, path, type).then(callback, callback);
@@ -613,6 +626,10 @@ var access = function access(path, mode, callback) {
     // the eager path check runs on an async stat so the JS thread isn't
     // blocked and the callback never fires synchronously.
     const result = new Dir(1, path, options, kAlreadyValidated);
+    // node emits FSREQCALLBACK for the opendir request (the handle itself is
+    // a separate DIRHANDLE resource, not modeled here). Wrapped after the Dir
+    // constructor so its synchronous validation throws emit no init.
+    callback = wrapFsCallback(callback);
     // Invoke the callback from process.nextTick so an exception thrown by it
     // surfaces as an uncaught exception instead of rejecting this internal
     // promise chain (same convention as glob() below).
@@ -802,7 +819,9 @@ const realpath: typeof import("node:fs").realpath =
           callback = options;
           options = undefined;
         }
-        callback = ensureCallback(callback);
+        if (!$isCallable(callback)) {
+          throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
+        }
         let encoding;
         if (options) {
           if (typeof options === "string") encoding = options;
@@ -826,6 +845,8 @@ const realpath: typeof import("node:fs").realpath =
           p = getValidatedPath(p);
         }
         throwIfNullBytesInFileName(p);
+        // Wrapped after validation so a synchronous throw emits no init.
+        callback = wrapFsCallback(callback);
 
         const knownHard = new Set();
         const pathModule = require("node:path");
@@ -976,14 +997,19 @@ function cp(src, dest, options, callback) {
     options = undefined;
   }
 
-  callback = ensureCallback(callback);
+  if (!$isCallable(callback)) {
+    throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
+  }
 
-  // node's callback form throws synchronously on invalid options/paths
+  // node's callback form throws synchronously on invalid options/paths.
+  // No FSREQCALLBACK wrap: node's fs.cp runs entirely on the promise path
+  // and emits no req resource (verified on v26.3.0).
   const { validateCpOptions } = require("internal/fs/cp-sync");
   const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
+  callback = guardCallback(callback);
 
   promises.cp(src, dest, options).then(callOnceWithNull.bind(null, callback), callback);
 }
@@ -1144,6 +1170,7 @@ class Dir {
   read(cb?: (err: Error | null, entry: DirentType) => void): any {
     if (!$isUndefinedOrNull(cb)) {
       validateFunction(cb, "callback");
+      // Not wrapFsCallback: node types Dir callbacks DIRHANDLE, not FSREQCALLBACK.
       cb = guardCallback(cb);
       // node's callback overload returns undefined (like close(cb) above)
       this.read().then(callOnceWithNullThen.bind(null, cb), cb);
@@ -1186,6 +1213,7 @@ class Dir {
   close(cb?: (err?: Error) => void) {
     if (!$isUndefinedOrNull(cb)) {
       validateFunction(cb, "callback");
+      // Not wrapFsCallback: node types Dir callbacks DIRHANDLE, not FSREQCALLBACK.
       cb = guardCallback(cb);
       this.close().then(callOnceWithNull.bind(null, cb), cb);
       return;

@@ -1,5 +1,10 @@
 #include "wtf/SIMDUTF.h"
 
+#if defined(__APPLE__) && defined(__x86_64__)
+#include <stdlib.h>
+#include <sys/sysctl.h>
+#endif
+
 typedef struct SIMDUTFResult {
     int error;
     size_t count;
@@ -399,5 +404,73 @@ size_t simdutf__utf16_length_from_latin1(const char* input, size_t length)
 {
     UNUSED_PARAM(input);
     return simdutf::utf16_length_from_latin1(length);
+}
+
+// Returns whether simdutf selected a real implementation for this CPU.
+//
+// When built with -march=nehalem (Bun's x64 baseline) simdutf omits its
+// scalar fallback because it assumes the westmere (SSE4.2) kernel can
+// "always run". On a host without SSE4.2 — for example the default QEMU
+// TCG vCPU, which only advertises SSE3 — the runtime dispatcher finds no
+// compatible implementation and returns an `unsupported_implementation`
+// stub. Every function on that stub returns 0/false/{OTHER,0}, which
+// silently corrupts every downstream consumer (firstNonASCII, StringImpl
+// UTF-8 creation, Base64, ...). Bun checks this once at startup so it can
+// fail fast with a useful diagnostic instead of spinning for ~16 seconds
+// allocating ~4 GB and then segfaulting (issue #30613).
+//
+// The stub's validate_ascii() unconditionally returns false, so probing it
+// with a single known-ASCII byte both forces lazy dispatch to run and
+// detects the stub without reaching into simdutf's private state.
+bool simdutf__has_implementation()
+{
+    static constexpr const char probe = 'a';
+    return simdutf::validate_ascii(&probe, 1);
+}
+
+// Recovers simdutf dispatch when the unsupported stub was selected under
+// Rosetta 2. Returns whether simdutf is usable afterwards; always false on
+// other platforms, so the caller falls through to the fail-fast diagnostic.
+//
+// Rosetta 2 on macOS 15+ translates every instruction the default x64 build
+// emits (the whole binary is compiled with -march=haswell and executes
+// fine), but the translated CPUID/XGETBV do not advertise the full Haswell
+// feature set, so simdutf's runtime dispatcher matches none of its compiled
+// kernels (westmere and the scalar fallback are elided at compile time once
+// __AVX2__ is defined) and installs the unsupported stub. That stub made
+// `bun install` spin forever while parsing bun.lock: validate_ascii_with_errors
+// reports a (fake) non-ASCII byte at index 0 for every input, so
+// first_non_ascii-driven scan loops over Latin-1 strings never advance.
+//
+// The available-implementations list is ordered most- to least-advanced, and
+// simdutf's CAN_ALWAYS_RUN_* pruning guarantees the last entry requires no
+// more than the ISA this translation unit itself was compiled with: if this
+// code is executing at all, that kernel can execute too. An explicit
+// SIMDUTF_FORCE_IMPLEMENTATION is a deliberate override, so it is honored
+// (by aborting in the caller) rather than second-guessed, and the healed
+// kernel is re-probed so a translator that cannot actually execute it still
+// fails fast in the caller instead of running corrupted.
+bool simdutf__recover_implementation_under_rosetta()
+{
+#if defined(__APPLE__) && defined(__x86_64__)
+    if (getenv("SIMDUTF_FORCE_IMPLEMENTATION"))
+        return false;
+
+    int translated = 0;
+    size_t size = sizeof(translated);
+    if (sysctlbyname("sysctl.proc_translated", &translated, &size, nullptr, 0) != 0 || translated != 1)
+        return false;
+
+    const simdutf::implementation* least_demanding = nullptr;
+    for (const simdutf::implementation* impl : simdutf::get_available_implementations())
+        least_demanding = impl;
+    if (!least_demanding)
+        return false;
+
+    simdutf::get_active_implementation() = least_demanding;
+    return simdutf__has_implementation();
+#else
+    return false;
+#endif
 }
 }

@@ -151,6 +151,31 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+    // Both Bun and WebKit trust simdutf unconditionally for UTF-8/UTF-16
+    // length computation, validation, and base64. If the runtime CPU lacks
+    // every instruction set simdutf was compiled for, it silently dispatches
+    // to a stub that returns 0/false for everything, and the process spends
+    // ~16 seconds churning through ~4 GB of bad allocations before crashing
+    // with an opaque SIGSEGV. Detect that up front and explain why.
+    //
+    // One exception: under Rosetta 2 the stub means the translated
+    // CPUID/XGETBV under-reported the feature set, not that the host cannot
+    // execute the compiled kernels (it is already executing this
+    // `-march=haswell` binary), so dispatch is recovered and Bun keeps
+    // running. Before that recovery, `bun install` hung forever under
+    // Rosetta on macOS 15: the stub claims a non-ASCII byte at index 0 for
+    // every input, so `first_non_ascii`-driven scan loops never advanced.
+    //
+    // This must run before convert_env_to_wtf8/init_argv on Windows — both
+    // convert UTF-16 via simdutf and would panic on a null unwrap before
+    // any diagnostic could be printed. It therefore cannot depend on
+    // Output being initialized and writes to raw stderr instead.
+    if !bun_simdutf_sys::simdutf::has_any_implementation()
+        && !bun_simdutf_sys::simdutf::recover_implementation_under_rosetta()
+    {
+        abort_for_unsupported_simdutf();
+    }
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
@@ -230,4 +255,51 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     bun_runtime::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
+}
+
+unsafe extern "C" {
+    fn bun_abort_missing_simd(
+        requirement: *const core::ffi::c_char,
+        hint: *const core::ffi::c_char,
+    ) -> !;
+}
+
+/// Prints a CPU-requirement diagnostic and exits. Called from `main()` before
+/// `Output` is initialized and before Windows has converted its environment
+/// block to UTF-8, so the actual write goes through the C runtime
+/// (fprintf(stderr)/getenv) in `bun_abort_missing_simd` rather than
+/// `bun_core::Output` / `bun_core::getenv_z`.
+#[cold]
+fn abort_for_unsupported_simdutf() -> ! {
+    use bun_core::Environment;
+
+    const IS_X64: bool = cfg!(target_arch = "x86_64");
+    const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
+
+    // simdutf's minimum compiled-in kernel is westmere (SSE4.2) for the
+    // baseline build and haswell (AVX2) for the default build — the lower
+    // tiers are elided once __SSE4_2__ / __AVX2__ are defined.
+    let requirement: &core::ffi::CStr = if IS_X64 {
+        if Environment::BASELINE {
+            c"SSE4.2"
+        } else {
+            c"AVX2"
+        }
+    } else if IS_AARCH64 {
+        c"NEON"
+    } else {
+        c"SIMD"
+    };
+
+    let hint: &core::ffi::CStr = if IS_X64 && Environment::BASELINE {
+        c"  Bun's baseline build targets Nehalem-class (2008+) x86_64 CPUs.\n  If this is a VM, enable host CPU passthrough (e.g. -cpu host for QEMU/KVM).\n"
+    } else if IS_X64 {
+        bun_runtime::cli::upgrade_command::SIMDUTF_BASELINE_HINT
+    } else {
+        c""
+    };
+
+    // SAFETY: both arguments are NUL-terminated static C strings; the C
+    // side only reads them to print the diagnostic, then calls exit(134).
+    unsafe { bun_abort_missing_simd(requirement.as_ptr(), hint.as_ptr()) }
 }

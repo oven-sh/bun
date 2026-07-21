@@ -266,6 +266,7 @@ dependencies = [
  "bun_mimalloc_sys",
  "bun_platform",
  "bun_runtime",
+ "bun_simdutf_sys",
  "bun_sys",
  "libc",
 ]

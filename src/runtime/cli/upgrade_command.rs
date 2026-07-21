@@ -196,6 +196,21 @@ pub(crate) static Bun__githubURL: SyncCStr = SyncCStr(
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Hint text printed by `bun_bin::abort_for_unsupported_simdutf()` on the
+/// non-baseline x64 build. Lives here so the URL stays in sync with
+/// `BUN__GITHUB_BASELINE_URL` / `BASELINE_ZIP_FILENAME`.
+pub const SIMDUTF_BASELINE_HINT: &core::ffi::CStr = {
+    const S: &str = const_format::concatcp!(
+        "  Install the baseline build, which only requires SSE4.2:\n    https://github.com/oven-sh/bun/releases/download/bun-v",
+        Global::package_json_version,
+        "/",
+        Version::BASELINE_ZIP_FILENAME,
+        "\n\0",
+    );
+    // SAFETY: `S` has exactly one NUL, at the end.
+    unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(S.as_bytes()) }
+};
+
 pub struct UpgradeCommand;
 
 impl UpgradeCommand {

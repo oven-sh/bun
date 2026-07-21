@@ -489,9 +489,7 @@ it("process.reallyExit does not emit 'exit'", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(11);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 11 });
 });
 
 describe.concurrent(() => {

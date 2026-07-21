@@ -1158,6 +1158,13 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
+        if !self.stack_check.is_safe_to_recurse() {
+            // Deeply nested (non-cyclic) values would otherwise exhaust the native
+            // stack. Checked before the circular-reference gate so every
+            // self-recursive tag (Array/Object/Map/Set/JSX) is covered.
+            self.failed = true;
+            return Ok(());
+        }
         // reshaped for borrowck — `WrappedWriter` borrows both writer_
         // and &mut self.estimated_line_length; we use a local wrapper and sync
         // `failed` at scope exit. estimated_line_length is unused by WrappedWriter
@@ -1165,13 +1172,6 @@ impl<'a> Formatter<'a> {
         let mut writer = WrappedWriter::new(writer_);
 
         if FORMAT.can_have_circular_references() {
-            if !self.stack_check.is_safe_to_recurse() {
-                // Deeply nested (non-cyclic) values can exhaust the native stack.
-                // Stop recursion; the matcher still reports a normal failure.
-                self.failed = true;
-                return Ok(());
-            }
-
             if self.map_node.is_none() {
                 // `visited::Pool::get()` returns an RAII `PoolGuard` that
                 // would release on scope exit; instead the raw node is stashed on

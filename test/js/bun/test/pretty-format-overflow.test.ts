@@ -131,4 +131,29 @@ describe.concurrent("pretty_format stops recursion before native stack overflow"
     expect(stderr).toContain("Ran 1 test");
     expect(exitCode).toBe(0);
   });
+
+  test("failing toEqual on a deeply nested React element chain", async () => {
+    using dir = tempDir("pretty-format-deep-jsx", {
+      "deep.test.ts": `
+        import { test, expect } from "bun:test";
+        test("deep jsx", () => {
+          let e: any = "x";
+          for (let i = 0; i < ${depth}; i++)
+            e = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { children: e } };
+          expect(e).toEqual({});
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "deep.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("expect(received).toEqual(expected)");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
 });

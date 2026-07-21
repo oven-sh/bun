@@ -1432,11 +1432,11 @@ pub(crate) fn inject(
             {
                 let out_str = unsafe { core::str::from_utf8_unchecked(zname.as_bytes()) };
                 let out_path = std::path::Path::new(out_str);
-                if let Ok(bytes) = std::fs::read(out_path) {
-                    if !ohos_sign::has_codesign(&bytes) {
-                        let _ = ohos_sign::sign_selfsign_inplace(out_path);
-                    }
-                }
+                // The base bun binary is already signed, but we've appended
+                // the JS bundle after the original signature.  Strip the old
+                // .codesign and sign the modified file so the signature
+                // covers the entire standalone binary.
+                let _ = ohos_sign::sign_selfsign_inplace_with_strip(out_path);
             }
             return cloned_executable_fd;
         }

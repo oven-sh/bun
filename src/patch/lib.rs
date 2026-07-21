@@ -1371,8 +1371,7 @@ impl<'a> PatchLinesParser<'a> {
         if let Some(part) = &self.current_hunk_mutation_part {
             tally(part);
         }
-        original == hunk.header.original.len as usize
-            && patched == hunk.header.patched.len as usize
+        original == hunk.header.original.len as usize && patched == hunk.header.patched.len as usize
     }
 }
 

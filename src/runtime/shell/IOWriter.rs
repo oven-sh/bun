@@ -637,9 +637,9 @@ impl IOWriter {
             debug_assert!(writer.len != writer.written);
             writer.len - writer.written
         };
-        // `state()` already ties `s` to `&self`, so a plain slice borrow has
-        // the right lifetime. `buf` is not reallocated until after the
-        // caller's write syscall completes.
+        // Slice stays valid for the caller's synchronous use: POSIX drains
+        // it before returning; Windows copies it into `winbuf` before any
+        // async boundary (`buf` itself may reallocate under a pending write).
         let start = s.total_bytes_written;
         &s.buf[start..start + remaining]
     }

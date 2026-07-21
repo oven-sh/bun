@@ -16,7 +16,6 @@ use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
 use bun_sys::Fd;
-use bun_url::PathnameScanner;
 
 use bun_http_types::URLPath::URLPath;
 
@@ -38,10 +37,7 @@ use bun_resolver::DirInfoRef;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::FileSystem;
 
-// peechy schema types: `StringPointer` lives in `bun_core::schema::api` (T0);
-// the route-config pair lives in `bun_options_types::schema::api`.
 mod api {
-    pub(crate) use bun_core::schema::api::StringPointer;
     pub(crate) use bun_options_types::schema::api::{LoadedRouteConfig, RouteConfig};
 }
 
@@ -111,18 +107,6 @@ impl RouteConfig {
             static_dir: Box::from(Self::DEFAULT_STATIC_DIR),
             routes_enabled: false,
             ..Default::default()
-        }
-    }
-
-    pub fn from_loaded_routes(loaded: api::LoadedRouteConfig) -> RouteConfig {
-        RouteConfig {
-            extensions: loaded.extensions,
-            routes_enabled: !loaded.dir.is_empty(),
-            static_dir_enabled: !loaded.static_dir.is_empty(),
-            dir: loaded.dir,
-            asset_prefix_path: loaded.asset_prefix,
-            static_dir: loaded.static_dir,
-            possible_dirs: Box::default(),
         }
     }
 
@@ -230,22 +214,6 @@ impl<'a> Router<'a> {
         self.routes.list.items_filepath()
     }
 
-    pub fn get_public_paths(&self) -> &[&'static [u8]] {
-        self.routes.list.items_public_path()
-    }
-
-    pub fn route_index_by_hash(&self, hash: u32) -> Option<usize> {
-        if hash == INDEX_ROUTE_HASH {
-            return self.routes.index_id;
-        }
-
-        self.routes
-            .list
-            .items_hash()
-            .iter()
-            .position(|&h| h == hash)
-    }
-
     pub fn get_names(&self) -> &[&'static [u8]] {
         self.routes.list.items_name()
     }
@@ -333,8 +301,6 @@ struct RouteIndex {
     name: &'static [u8],
     match_name: &'static [u8],
     filepath: &'static [u8],
-    public_path: &'static [u8],
-    hash: u32,
 }
 
 // TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
@@ -350,8 +316,6 @@ pub struct RouteIndexList {
     name: Vec<&'static [u8]>,
     match_name: Vec<&'static [u8]>,
     filepath: Vec<&'static [u8]>,
-    public_path: Vec<&'static [u8]>,
-    hash: Vec<u32>,
 }
 
 impl RouteIndexList {
@@ -360,8 +324,6 @@ impl RouteIndexList {
         self.name.reserve_exact(cap);
         self.match_name.reserve_exact(cap);
         self.filepath.reserve_exact(cap);
-        self.public_path.reserve_exact(cap);
-        self.hash.reserve_exact(cap);
         Ok(())
     }
     pub(crate) fn push(&mut self, item: RouteIndex) {
@@ -369,8 +331,6 @@ impl RouteIndexList {
         self.name.push(item.name);
         self.match_name.push(item.match_name);
         self.filepath.push(item.filepath);
-        self.public_path.push(item.public_path);
-        self.hash.push(item.hash);
     }
     #[inline]
     pub fn len(&self) -> usize {
@@ -391,14 +351,6 @@ impl RouteIndexList {
     #[inline]
     pub fn items_filepath(&self) -> &[&'static [u8]] {
         &self.filepath
-    }
-    #[inline]
-    pub fn items_public_path(&self) -> &[&'static [u8]] {
-        &self.public_path
-    }
-    #[inline]
-    pub fn items_hash(&self) -> &[u32] {
-        &self.hash
     }
 }
 
@@ -422,7 +374,6 @@ pub struct Routes {
     /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
     /// no borrow it doesn't actually take; matches `static_` above.
     pub index: Option<NonNull<Route>>,
-    pub index_id: Option<usize>,
 
     // allocator dropped — global mimalloc
     pub config: RouteConfig,
@@ -440,7 +391,6 @@ impl Default for Routes {
             dynamic_len: 0,
             static_: StringHashMap::new(),
             index: None,
-            index_id: Some(0),
             config: RouteConfig::default(),
             client_framework_enabled: false,
         }
@@ -758,17 +708,11 @@ impl<'a> RouteLoader<'a> {
                 index_id = Some(i);
             }
 
-            let (filepath, match_name, public_path) = (
-                route.abs_path.as_bytes(),
-                route.match_name.as_bytes(),
-                route.public_path.as_bytes(),
-            );
+            let (filepath, match_name) = (route.abs_path.as_bytes(), route.match_name.as_bytes());
             route_list.push(RouteIndex {
                 name: route.name,
                 filepath,
                 match_name,
-                public_path,
-                hash: route.full_hash,
                 route,
             });
         }
@@ -794,7 +738,6 @@ impl<'a> RouteLoader<'a> {
             // pointer.
             index: this.index,
             config,
-            index_id,
             client_framework_enabled: false,
         }
     }
@@ -940,14 +883,6 @@ impl TinyPtr {
     }
 
     #[inline]
-    pub fn to_string_pointer(self) -> api::StringPointer {
-        api::StringPointer {
-            offset: self.offset() as u32,
-            length: self.len() as u32,
-        }
-    }
-
-    #[inline]
     pub fn eql(a: TinyPtr, b: TinyPtr) -> bool {
         a == b
     }
@@ -994,18 +929,10 @@ pub struct Route {
 
     pub abs_path: AbsPath,
 
-    /// URL-safe path for the route's transpiled script relative to project's top level directory
-    /// - It might not share a prefix with the absolute path due to symlinks.
-    /// - It has a leading slash
-    pub public_path: Interned,
-
     pub kind: pattern::Tag,
 
     pub has_uppercase: bool,
 }
-
-// TODO(b1): inherent assoc types unstable; module-level alias instead.
-pub type RoutePtr = TinyPtr;
 
 impl Route {
     pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
@@ -1101,55 +1028,40 @@ impl Route {
             let is_index = name.is_empty();
 
             let mut has_uppercase = false;
-            // NOTE: reshaped for borrowck — both arms intern via DirnameStore
-            // (process-lifetime arena → `&'static`), so the post-if bindings are
-            // 'static and the route_file_buf borrow is dropped before the
-            // abs-path block below needs it mutably.
-            let (public_path, name, match_name): (&'static [u8], &'static [u8], &'static [u8]) =
-                if !name.is_empty() {
-                    validation_result = match Pattern::validate(&name[1..], log) {
-                        Some(v) => v,
-                        None => return None,
-                    };
-
-                    let mut name_i: usize = 0;
-                    while !has_uppercase && name_i < public_path.len() {
-                        has_uppercase = public_path[name_i] >= b'A' && public_path[name_i] <= b'Z';
-                        name_i += 1;
-                    }
-
-                    let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
-                    let name_len = name.len();
-
-                    // NOTE: DirnameStore::append returns `&'static [u8]` (process-
-                    // lifetime arena), so rebinding here drops the borrow on
-                    // `route_file_buf` and avoids needing lifetime transmutes
-                    // below.
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
-                    let name: &'static [u8] = &public_path[name_offset..][0..name_len];
-                    let match_name: &'static [u8] = if has_uppercase {
-                        dirname_store
-                            .append_lower_case(&name[1..])
-                            .expect("unreachable")
-                    } else {
-                        &name[1..]
-                    };
-
-                    debug_assert!(match_name[0] != b'/');
-                    debug_assert!(name[0] == b'/');
-                    (public_path, name, match_name)
-                } else {
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
-                    (
-                        public_path,
-                        Route::INDEX_ROUTE_NAME,
-                        Route::INDEX_ROUTE_NAME,
-                    )
+            // NOTE: the non-index arm interns via DirnameStore (process-lifetime
+            // arena → `&'static`), so the post-if bindings drop the
+            // route_file_buf borrow before the abs-path block reborrows it.
+            let (name, match_name): (&'static [u8], &'static [u8]) = if !name.is_empty() {
+                validation_result = match Pattern::validate(&name[1..], log) {
+                    Some(v) => v,
+                    None => return None,
                 };
+
+                let mut name_i: usize = 0;
+                while !has_uppercase && name_i < public_path.len() {
+                    has_uppercase = public_path[name_i] >= b'A' && public_path[name_i] <= b'Z';
+                    name_i += 1;
+                }
+
+                // NOTE: DirnameStore::append returns `&'static [u8]`, so
+                // rebinding drops the route_file_buf borrow without a
+                // lifetime transmute.
+                let dirname_store = FileSystem::instance().dirname_store();
+                let name: &'static [u8] = dirname_store.append(name).expect("unreachable");
+                let match_name: &'static [u8] = if has_uppercase {
+                    dirname_store
+                        .append_lower_case(&name[1..])
+                        .expect("unreachable")
+                } else {
+                    &name[1..]
+                };
+
+                debug_assert!(match_name[0] != b'/');
+                debug_assert!(name[0] == b'/');
+                (name, match_name)
+            } else {
+                (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
+            };
 
             if abs_path_str.is_empty() {
                 // The reads of `cache().fd` and the `set_abs_path` write below
@@ -1259,14 +1171,13 @@ impl Route {
             #[cfg(all(debug_assertions, windows))]
             {
                 debug_assert!(!strings::index_of_char(name, b'\\').is_some());
-                debug_assert!(!strings::index_of_char(public_path, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(abs_path.as_bytes(), b'\\').is_some());
                 // SAFETY: read-only reborrow; the `&mut` write above is dead.
                 debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
             }
 
-            // NOTE: name/match_name/public_path are already `&'static` via
+            // NOTE: name/match_name are already `&'static` via
             // DirnameStore::append above. `entry.base()` borrows the entry (it
             // may be inline-stored for ≤31-byte names); intern it
             // explicitly to get `&'static` without a lifetime transmute.
@@ -1279,7 +1190,6 @@ impl Route {
             Some(Route {
                 name,
                 basename,
-                public_path: Interned::from_static(public_path),
                 match_name: Interned::from_static(match_name),
                 full_hash: if is_index {
                     INDEX_ROUTE_HASH
@@ -1471,20 +1381,6 @@ impl<'a> Match<'a> {
         // SAFETY: producers (`Routes::match_page*`) always set `params` to a
         // live caller-provided list that outlives the `Match`.
         unsafe { (*self.params).len() > 0 }
-    }
-
-    pub fn params_iterator(&self) -> PathnameScanner<'_> {
-        // SAFETY: see `has_params`.
-        PathnameScanner::init(self.pathname, self.name, unsafe { &*self.params })
-    }
-
-    pub fn name_with_basename<'s>(file_path: &'s [u8], dir: &[u8]) -> &'s [u8] {
-        let mut name = file_path;
-        if let Some(i) = strings::index_of(name, dir) {
-            name = &name[i + dir.len()..];
-        }
-
-        &name[0..name.len() - bun_paths::extension(name).len()]
     }
 
     pub fn pathname_without_leading_slash(&self) -> &[u8] {

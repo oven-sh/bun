@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { packerDownload } from "./build/ci/artifacts.ts";
 import { BOOTSTRAP_SOURCE_DIRS, LINUX_REMOTE_ROOT } from "./build/ci/delivery.ts";
 import { imageName as computeImageName, imageEntry } from "./build/ci/naming.ts";
 import { linuxPackerTemplate, windowsPackerTemplate } from "./build/ci/packer.ts";
+import { packer } from "./build/ci/spec.ts";
 import { docker } from "./docker.mjs";
 import { tart } from "./tart.mjs";
 import {
@@ -702,4 +703,8 @@ async function main() {
   await buildLinuxImageWithPacker({ image, repoRef, agentPath, bootstrapDir });
 }
 
-await main();
+// Run only when executed as the entry point (node scripts/machine.mjs …),
+// not when the module is imported for its types (e.g. azure.mjs's JSDoc).
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
+  await main();
+}

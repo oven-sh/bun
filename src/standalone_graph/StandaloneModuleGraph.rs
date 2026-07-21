@@ -1428,6 +1428,15 @@ pub(crate) fn inject(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
+            #[cfg(target_env = "ohos")]
+            {
+                let out_path = std::path::Path::new(zname.as_bytes());
+                if let Ok(bytes) = std::fs::read(out_path) {
+                    if !ohos_sign::has_codesign(&bytes) {
+                        let _ = ohos_sign::sign_selfsign_inplace(out_path);
+                    }
+                }
+            }
             return cloned_executable_fd;
         }
         _ => {

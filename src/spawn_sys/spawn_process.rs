@@ -973,6 +973,23 @@ pub unsafe fn spawn_process_posix(
     let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
     // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
     let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
+    #[cfg(target_env = "ohos")]
+    {
+        // OHOS seccomp blocks exec of unsigned ELF binaries. Sign any
+        // native binary before spawning so posix_spawn doesn't return
+        // EACCES. Only checks regular files with ELF magic.
+        let argv0_str = unsafe { core::str::from_utf8_unchecked(argv0_cstr.as_bytes()) };
+        let p = std::path::Path::new(argv0_str);
+        if p.is_file() {
+            if let Ok(bytes) = std::fs::read(p) {
+                if bytes.len() > 4 && bytes[..4] == [0x7f, 0x45, 0x4c, 0x46] {
+                    if !ohos_sign::has_codesign(&bytes) {
+                        let _ = ohos_sign::sign_selfsign_inplace(p);
+                    }
+                }
+            }
+        }
+    }
     let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
 
     match spawn_result {

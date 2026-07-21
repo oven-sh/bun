@@ -230,10 +230,11 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             vm.global_exit();
         }
 
+        let mut had_error = false;
         if !this.eval_script.is_empty() || this.eval_and_print {
             // Non-interactive: evaluate the -e/--eval or -p/--print script,
             // drain the event loop, and exit
-            let had_error = this.repl.eval_script(this.eval_script, this.eval_and_print);
+            had_error = this.repl.eval_script(this.eval_script, this.eval_and_print);
             Output::flush();
             if had_error {
                 // Only overwrite on error so `process.exitCode = N` in the
@@ -248,11 +249,12 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             // Interactive: run the REPL loop
             if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
                 bun_core::pretty_errorln!("<r><red>REPL error: {}<r>", err.name());
+                had_error = true;
             }
         }
 
         // Clean up
-        vm.on_exit(true);
+        vm.on_exit(!had_error);
         vm.global_exit();
     }
 

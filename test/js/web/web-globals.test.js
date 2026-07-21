@@ -112,6 +112,49 @@ test("MessageEvent", () => {
   expect(called).toBe(true);
 });
 
+test("Event.prototype.timeStamp", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        while (performance.now() < 10) {}
+        const before = performance.now();
+        const samples = [];
+        samples.push(new Event("x").timeStamp);
+        samples.push(new CustomEvent("x").timeStamp);
+        samples.push(new MessageEvent("x").timeStamp);
+        samples.push(new ErrorEvent("x").timeStamp);
+        const target = new EventTarget();
+        target.addEventListener("go", e => samples.push(e.timeStamp));
+        target.dispatchEvent(new Event("go"));
+        const ac = new AbortController();
+        ac.signal.addEventListener("abort", e => samples.push(e.timeStamp));
+        ac.abort();
+        const after = performance.now();
+        const ev = new Event("stable");
+        const first = ev.timeStamp;
+        while (performance.now() < after + 5) {}
+        console.log(JSON.stringify({ before, after, samples, first, second: ev.timeStamp }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { before, after, samples, first, second } = JSON.parse(stdout);
+  expect(samples.length).toBe(6);
+  for (const ts of samples) {
+    expect(typeof ts).toBe("number");
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(after);
+  }
+  expect(first).toBeGreaterThanOrEqual(after);
+  expect(second).toBe(first);
+  expect(exitCode).toBe(0);
+});
+
 it("crypto.getRandomValues", () => {
   var foo = new Uint8Array(32);
 

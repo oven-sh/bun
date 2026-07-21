@@ -3378,8 +3378,9 @@ RefPtr<Performance> GlobalObject::performance()
 {
     if (!m_performance) {
         auto* context = this->scriptExecutionContext();
-        double nanoTimeOrigin = Bun__readOriginTimerStart(this->bunVM());
-        auto timeOrigin = MonotonicTime::fromRawSeconds(nanoTimeOrigin / 1000.0);
+        // WTF MonotonicTime value at the instant bunVM()->origin_timer was captured.
+        auto elapsed = Seconds { static_cast<double>(Bun__readOriginTimer(this->bunVM())) / 1000000000.0 };
+        auto timeOrigin = MonotonicTime::now() - elapsed;
         m_performance = Performance::create(context, timeOrigin);
     }
 

@@ -733,12 +733,14 @@ Learn more about [using and writing security scanners](/pm/security-scanner-api)
 
 ### `install.minimumReleaseAge`
 
-Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold are filtered out during installation. Default `null` (disabled).
+Configure a minimum age for npm package versions. Package versions published more recently than this threshold are filtered out during installation. Accepts either a number of seconds or an [`ms`](https://npmjs.com/package/ms)-style duration string like `"2d"`, `"1 week"`, or `"48h"`. Set to `0` to disable. Default `null` (disabled).
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
 # Only install package versions published at least 3 days ago
-minimumReleaseAge = 259200
+minimumReleaseAge = "3d"
+# Or as a number of seconds:
+# minimumReleaseAge = 259200
 ```
 
 See [Minimum release age](/pm/cli/install#minimum-release-age).

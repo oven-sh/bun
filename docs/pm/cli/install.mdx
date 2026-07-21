@@ -255,11 +255,15 @@ The default is controlled by a `configVersion` field in your lockfile. For a det
 
 ## Minimum release age
 
-To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Bun filters out package versions published more recently than the specified threshold (in seconds) during installation.
+To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Bun filters out package versions published more recently than the specified threshold during installation. The filter is disabled by default; pass `0` to disable it explicitly.
+
+The value accepts either an [`ms`](https://npmjs.com/package/ms)-style duration string (`3d`, `1 week`, `48h`) or a bare number of seconds:
 
 ```bash terminal icon="terminal"
 # Only install package versions published at least 3 days ago
-bun add @types/bun --minimum-release-age 259200 # seconds
+bun add @types/bun --minimum-release-age 3d
+# Or as a number of seconds:
+bun add @types/bun --minimum-release-age 259200
 ```
 
 You can also configure this in `bunfig.toml`:
@@ -267,7 +271,7 @@ You can also configure this in `bunfig.toml`:
 ```toml bunfig.toml icon="settings"
 [install]
 # Only install package versions published at least 3 days ago
-minimumReleaseAge = 259200 # seconds
+minimumReleaseAge = "3d" # or 259200 (seconds)
 
 # Exclude trusted packages from the age gate
 minimumReleaseAgeExcludes = ["@types/node", "typescript"]
@@ -334,8 +338,10 @@ concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 linker = "hoisted"
 
 
-# minimum age config
-minimumReleaseAge = 259200 # seconds
+# skip package versions published within this period (security feature)
+# accepts ms-style duration strings ("2d", "48h", "1 week") or a number of seconds
+# (disabled by default; 0 also disables)
+minimumReleaseAge = 259200 # or "3d"
 minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 ```
 

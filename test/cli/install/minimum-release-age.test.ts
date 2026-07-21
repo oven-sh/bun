@@ -1361,6 +1361,233 @@ registry = "${mockRegistryUrl}"`,
       expect(lockfile).toContain("regular-package@3.0.0");
     });
 
+    test("0 is equivalent to unset: requests the abbreviated manifest, not the extended one", async () => {
+      // `minimumReleaseAge = 0` disables the filter, so it must behave exactly
+      // like leaving the option unset — including not forcing the full
+      // (extended, `time`-bearing) registry manifest for every package. Use a
+      // dedicated registry that records the Accept header for the manifest
+      // request so we can assert the abbreviated form was requested.
+      const acceptHeaders: string[] = [];
+      await using registry = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/regular-package") {
+            const accept = req.headers.get("accept") ?? "";
+            acceptHeaders.push(accept);
+            const base = `http://localhost:${registry.port}`;
+            const versions = {
+              "1.0.0": {
+                name: "regular-package",
+                version: "1.0.0",
+                dist: { tarball: `${base}/regular-package/-/regular-package-1.0.0.tgz`, integrity: "sha512-fake1==" },
+              },
+              "2.0.0": {
+                name: "regular-package",
+                version: "2.0.0",
+                dist: { tarball: `${base}/regular-package/-/regular-package-2.0.0.tgz`, integrity: "sha512-fake2==" },
+              },
+            };
+            const full = {
+              name: "regular-package",
+              "dist-tags": { latest: "2.0.0" },
+              versions,
+              time: { "1.0.0": daysAgo(30), "2.0.0": daysAgo(1) },
+            };
+            if (accept.includes("application/vnd.npm.install-v1+json")) {
+              return Response.json({ name: full.name, "dist-tags": full["dist-tags"], versions });
+            }
+            return Response.json(full);
+          }
+          if (url.pathname.includes(".tgz")) {
+            const m = url.pathname.match(/\/([^\/]+)\/-\/\1-([\d.]+).tgz/)!;
+            return new Response(createTarball(m[1], m[2]), {
+              headers: { "Content-Type": "application/octet-stream" },
+            });
+          }
+          return new Response("not found", { status: 404 });
+        },
+      });
+
+      using dir = tempDir("zero-abbreviated-manifest", {
+        "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+        "bunfig.toml": `[install]\nminimumReleaseAge = 0\nregistry = "http://localhost:${registry.port}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      // With 0 (disabled), no version is filtered -> latest wins.
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("regular-package@2.0.0");
+
+      // The manifest must have been fetched, and every request for it must use
+      // the abbreviated Accept header — disabling via 0 must not pull the
+      // extended (`application/json`) manifest that the age filter requires.
+      expect(acceptHeaders.length).toBeGreaterThan(0);
+      expect(acceptHeaders.every(a => a.includes("application/vnd.npm.install-v1+json"))).toBe(true);
+    });
+
+    test("CLI flag accepts ms-style duration string", async () => {
+      using dir = tempDir("cli-ms-string", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // 5 days -> 2.1.0 (6 days old) passes, 3.0.0 (1 day old) blocked
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("CLI flag accepts ms-style duration string with space", async () => {
+      using dir = tempDir("cli-ms-string-space", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", "1 week", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // 7 days -> 2.0.0 (10 days old) passes, 2.1.0 (6 days) and 3.0.0 (1 day) blocked
+      expect(lockfile).toContain("regular-package@2.0.0");
+      expect(lockfile).not.toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("CLI flag rejects invalid duration string", async () => {
+      using dir = tempDir("cli-ms-invalid", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", "banana"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("--minimum-release-age");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("bunfig accepts ms-style duration string", async () => {
+      using dir = tempDir("bunfig-ms-string", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = "5 days"
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("bunfig bare-number string is seconds (matches unquoted form)", async () => {
+      using dir = tempDir("bunfig-ms-bare", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = "${5 * SECONDS_PER_DAY}"
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // "432000" as a string should be 5 days (seconds), same as unquoted 432000
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("bunfig rejects invalid duration string", async () => {
+      using dir = tempDir("bunfig-ms-invalid", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = "nope"
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("minimumReleaseAge");
+      expect(exitCode).not.toBe(0);
+    });
+
     test("global bunfig.toml configuration works", async () => {
       // Create a fake home directory with global bunfig
       using globalConfigDir = tempDir("global-config", {

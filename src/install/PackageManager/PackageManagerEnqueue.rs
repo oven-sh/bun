@@ -1028,8 +1028,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 task_id,
                                 dependency.behavior.is_required(),
                             ) {
-                                let needs_extended_manifest =
-                                    this.options.minimum_release_age_ms.is_some();
+                                // `Some(0.0)` means the age filter is explicitly
+                                // disabled, so it needs the abbreviated manifest
+                                // just like the unset (`None`) case — only a
+                                // positive age requires the `time`-bearing
+                                // extended manifest.
+                                let needs_extended_manifest = this
+                                    .options
+                                    .minimum_release_age_ms
+                                    .is_some_and(|ms| ms > 0.0);
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
                                     // SAFETY: `this_ptr` is the live exclusive
@@ -1071,8 +1078,16 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         .version,
                                                 )
                                             {
-                                                if let Some(min_age_ms) =
-                                                    this.options.minimum_release_age_ms
+                                                // `Some(0.0)` means the filter is
+                                                // explicitly disabled — skip the
+                                                // check so this exact-version path
+                                                // agrees with the range/dist-tag
+                                                // filters (which also treat `0` as
+                                                // "no gate").
+                                                if let Some(min_age_ms) = this
+                                                    .options
+                                                    .minimum_release_age_ms
+                                                    .filter(|&ms| ms > 0.0)
                                                 {
                                                     if !loaded_manifest
                                                         .as_ref()
@@ -2373,7 +2388,12 @@ fn get_or_put_resolved_package(
             // materializing `&mut *this_ptr` after `name_str`/`scope` are
             // derived from it would pop their borrow-stack tags under SB.
             let cache_ctx = this.manifest_disk_cache_ctx();
-            let needs_ext = this.options.minimum_release_age_ms.is_some();
+            // Only a positive age needs the extended (`time`-bearing) manifest;
+            // `Some(0.0)` (filter explicitly disabled) behaves like unset.
+            let needs_ext = this
+                .options
+                .minimum_release_age_ms
+                .is_some_and(|ms| ms > 0.0);
             let this_ptr: *mut PackageManager = this;
             // SAFETY: `string_bytes` is not resized between here and the
             // `find_result` lookup; `manifest` lives in `this.manifests` and

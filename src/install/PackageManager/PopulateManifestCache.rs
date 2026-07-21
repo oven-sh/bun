@@ -175,7 +175,12 @@ pub fn populate_manifest_cache(
                 let pkg_name_slice = pkg_name.slice(string_buf);
                 // `options` is not mutated between here and the
                 // `start_manifest_task` call — read via the BACKREF `mgr_ref`.
-                let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
+                // `Some(0.0)` (filter explicitly disabled) behaves like unset;
+                // only a positive age needs the extended manifest.
+                let needs_extended_manifest = mgr_ref
+                    .options
+                    .minimum_release_age_ms
+                    .is_some_and(|ms| ms > 0.0);
 
                 // `scope_for_package_name` borrows only `options` (via the
                 // BACKREF `mgr_ref`); `manifests` is a disjoint field projected
@@ -233,8 +238,13 @@ pub fn populate_manifest_cache(
                     }
 
                     // `options` read via BACKREF `mgr_ref` — see provenance-root
-                    // note above.
-                    let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
+                    // note above. `Some(0.0)` (filter explicitly disabled)
+                    // behaves like unset; only a positive age needs the
+                    // extended manifest.
+                    let needs_extended_manifest = mgr_ref
+                        .options
+                        .minimum_release_age_ms
+                        .is_some_and(|ms| ms > 0.0);
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
                     // See disjoint-field note on the `.All` arm above.
                     let scope =

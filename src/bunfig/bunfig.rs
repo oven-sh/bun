@@ -1475,22 +1475,48 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(min_age) = install_obj.get(b"minimumReleaseAge") {
+            const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
             match &min_age.data {
                 ExprData::ENumber(seconds) => {
                     if seconds.value() < 0.0 {
                         self.add_error(
                             min_age.loc,
-                            b"Expected positive number of seconds for minimumReleaseAge",
+                            b"Expected a non-negative number of seconds for minimumReleaseAge (0 disables)",
                         )?;
                         return Ok(());
                     }
-                    const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
                     install.minimum_release_age_ms = Some(seconds.value() * MS_PER_S);
+                }
+                ExprData::EString(s) => {
+                    // A bare number with no unit is interpreted as seconds for
+                    // consistency with the unquoted form and the CLI flag.
+                    // Trim first so `"259200 "` doesn't fall through to
+                    // `parse_ms` (which would treat it as milliseconds).
+                    let text = s.string(self.bump)?.trim_ascii();
+                    let ms = if let Some(secs) = bun_core::parse_f64(text) {
+                        secs * MS_PER_S
+                    } else if let Some(ms) = bun_core::parse_ms(text) {
+                        ms
+                    } else {
+                        self.add_error(
+                            min_age.loc,
+                            b"Expected a duration like \"2d\" or \"1 week\" for minimumReleaseAge",
+                        )?;
+                        return Ok(());
+                    };
+                    if !(ms.is_finite() && ms >= 0.0) {
+                        self.add_error(
+                            min_age.loc,
+                            b"Expected a non-negative duration for minimumReleaseAge (0 disables)",
+                        )?;
+                        return Ok(());
+                    }
+                    install.minimum_release_age_ms = Some(ms);
                 }
                 _ => {
                     self.add_error(
                         min_age.loc,
-                        b"Expected number of seconds for minimumReleaseAge",
+                        b"Expected a number of seconds or a duration string for minimumReleaseAge",
                     )?;
                 }
             }

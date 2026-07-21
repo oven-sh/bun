@@ -1205,8 +1205,8 @@ pub use crate::fmt::{
     hex_char_lower, hex_char_upper, hex_digit_value, hex_lower, hex_pair_value, hex_u8, hex_u16,
     hex_upper, hex2_lower, hex2_upper, hex4_lower, hex4_upper, int_as_bytes, parse_ascii,
     parse_f32, parse_f64, parse_hex_prefix, parse_hex_to_int, parse_hex4,
-    parse_int as parse_int_radix, parse_num, print_int, quote, raw, s, size, size_f64, size_i64,
-    truncated_hash32, truncated_hash32_bytes, utf16,
+    parse_int as parse_int_radix, parse_ms, parse_num, print_int, quote, raw, s, size, size_f64,
+    size_i64, truncated_hash32, truncated_hash32_bytes, utf16,
 };
 
 /// Tier-0 surrogate/transcode primitives that [`crate::string::immutable`]

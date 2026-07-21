@@ -1686,7 +1686,12 @@ impl PackageManifest {
             return FindVersionResult::Err(FindVersionError::NotFound);
         };
         let min_age_gate_ms = match minimum_release_age_ms {
-            Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
+            // `Some(0.0)` means the filter is explicitly disabled — treat it
+            // like unset so no age gate is applied (and no `time` data, which
+            // only the extended manifest carries, is required).
+            Some(min_age_ms)
+                if min_age_ms > 0.0 && !self.should_exclude_from_age_filter(exclusions) =>
+            {
                 Some(min_age_ms)
             }
             _ => None,
@@ -1810,7 +1815,12 @@ impl PackageManifest {
         exclusions: Option<&[&[u8]]>,
     ) -> FindVersionResult<'_> {
         let min_age_gate_ms = match minimum_release_age_ms {
-            Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
+            // `Some(0.0)` means the filter is explicitly disabled — treat it
+            // like unset so no age gate is applied (and no `time` data, which
+            // only the extended manifest carries, is required).
+            Some(min_age_ms)
+                if min_age_ms > 0.0 && !self.should_exclude_from_age_filter(exclusions) =>
+            {
                 Some(min_age_ms)
             }
             _ => None,

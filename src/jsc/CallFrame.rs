@@ -181,10 +181,9 @@ impl CallFrame {
         CallerSrcLoc { str, line, column }
     }
 
-    /// Like `get_caller_src_loc` but skips the sourcemap remap (two mutex
-    /// acquisitions + hashmap lookup + VLQ search). Cheap enough for hot
-    /// paths; call `CallerSrcLoc::remap` later when a mapped location is
-    /// actually needed.
+    /// Like `get_caller_src_loc` but skips the sourcemap remap so it's cheap
+    /// on hot paths; call `CallerSrcLoc::remap` later when a mapped location
+    /// is actually needed.
     pub fn get_caller_src_loc_unmapped(&self, global_this: &JSGlobalObject) -> CallerSrcLoc {
         let mut str = bun_core::String::default();
         let mut line: c_uint = 0;

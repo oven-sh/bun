@@ -41,10 +41,9 @@ pub struct Expect {
     pub flags: Cell<Flags>,
     pub parent: Option<bun_test::RefDataPtr>,
     pub custom_label: bun_core::String,
-    // Source location of the `expect(...)` call itself. Captured here because a
-    // matcher invoked in tail position (`return expect(v).toMatchInlineSnapshot()`)
-    // has its JS caller frame eliminated by JSC's proper tail calls, so the
-    // matcher's own `get_caller_src_loc` sees the *helper's caller* instead.
+    // `expect(...)` call site, captured before a tail-position matcher (e.g.
+    // `return expect(v).toMatchInlineSnapshot()`) loses this frame to JSC's
+    // proper tail calls. Un-remapped; see `inline_snapshot`.
     pub expect_src_file: bun_core::String,
     pub expect_src_line: core::ffi::c_uint,
     pub expect_src_col: core::ffi::c_uint,
@@ -732,12 +731,9 @@ impl Expect {
         // error path between ref creation and the wrapper taking ownership; from
         // then on `Expect::finalize` derefs `parent` (RefDataPtr has no Drop).
 
-        // Capture the `expect(...)` call site now, while the caller's frame is
-        // still on the stack. A matcher called in tail position cannot recover
-        // this frame later (see the `Expect` struct comment). The unmapped
-        // variant skips the sourcemap remap (two mutex acquisitions + VLQ
-        // search) since this runs on every `expect()` call; `inline_snapshot`
-        // remaps on demand.
+        // Capture the `expect(...)` call site now, before a tail-position
+        // matcher loses this frame. Unmapped to keep the per-`expect()` cost
+        // low; `inline_snapshot` remaps on demand.
         let expect_srcloc = callframe.get_caller_src_loc_unmapped(global_this);
 
         let expect = Expect {
@@ -1168,12 +1164,9 @@ impl Expect {
                 );
             }
 
-            // Fallback location: where `expect(...)` itself was called. Only
-            // usable when that call happened in the same file we write back to.
-            // The values stored on `Expect` are un-remapped (captured cheaply
-            // on the `expect()` hot path); remap here. `remap` takes and
-            // returns +1 ownership of `str`, so give it a fresh ref and
-            // release whatever comes back.
+            // Fallback: the `expect(...)` call site (stored un-remapped). Remap
+            // here; `remap` is in/out +1 on `str`, so give it a fresh ref and
+            // release whatever comes back. Only usable when it's the same file.
             let (fallback_line, fallback_col) = {
                 let mut expect_loc = bun_jsc::call_frame::CallerSrcLoc {
                     str: this.expect_src_file.dupe_ref(),

@@ -6147,10 +6147,9 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLocUnmapped(JSC::CallFrame* callFrame,
     getCallerSrcLocImpl(callFrame, globalObject, outSourceURL, outLine, outColumn, false);
 }
 
-// Apply sourcemap remapping to a (url, line, col) triple captured earlier by
-// `Bun__CallFrame__getCallerSrcLocUnmapped`. `*ioSourceURL` is in/out with +1
-// ownership: the caller passes a +1, `remap_stack_frame_positions` may swap it
-// for a new +1, and the caller releases whichever +1 comes back.
+// Sourcemap-remap a (url, line, col) captured by `getCallerSrcLocUnmapped`.
+// `*ioSourceURL` is in/out +1: caller passes a +1, this may swap it for a new
+// +1, and the caller releases whichever comes back.
 CPP_DECL void Bun__remapSrcLoc(JSC::JSGlobalObject* globalObject, BunString* ioSourceURL, unsigned int* ioLine, unsigned int* ioColumn)
 {
     if (ioSourceURL->tag == BunStringTag::Empty or ioSourceURL->tag == BunStringTag::Dead or *ioLine == 0)

@@ -62,10 +62,9 @@ pub type ValuesHashMap = HashMap<u64, Box<[u8]>>;
 pub struct InlineSnapshotToWrite {
     pub line: c_ulong,
     pub col: c_ulong,
-    /// Location of the `expect(...)` call that produced this matcher; used as
-    /// a fallback starting point when `(line, col)` doesn't land on the
-    /// matcher name (JSC tail-call elimination can report the helper's caller
-    /// instead of the matcher call site). `(0, 0)` means no usable fallback.
+    /// `expect(...)` call site; fallback when `(line, col)` misses the matcher
+    /// name (JSC tail-call elimination loses the helper's frame). `(0, 0)` =
+    /// no usable fallback.
     pub fallback_line: c_ulong,
     pub fallback_col: c_ulong,
     /// owned (was: owned by Snapshots.allocator)
@@ -472,15 +471,9 @@ impl<'a> Snapshots<'a> {
             let source =
                 bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
 
-            // 2a. resolve fallback locations: when the matcher was called in
-            // tail position, JSC's proper tail calls eliminate the helper's
-            // frame and `(line, col)` points at the helper's *caller* instead
-            // of the matcher call site. Parse the expression at the
-            // `expect(...)` location (captured before the tail call) and pull
-            // the matcher's `name_loc` off the AST, then fix up `(line, col)`
-            // before sorting. Parsing (rather than byte-scanning) keeps decoy
-            // occurrences inside string/template/comment arguments from
-            // matching.
+            // 2a. resolve fallbacks: a tail-position matcher call loses its
+            // frame to JSC PTC, so parse the `expect(...)` site and pull the
+            // matcher's `name_loc` off the AST to fix `(line, col)` pre-sort.
             for ils in ils_info.iter_mut() {
                 // c_ulong is u32 on Windows (LLP64); widen explicitly.
                 #[allow(clippy::useless_conversion)]
@@ -510,13 +503,9 @@ impl<'a> Snapshots<'a> {
                     continue;
                 };
 
-                // Parse `expect(<args>).<chain>.<fn_name>(<args>)` starting at
-                // the `expect` identifier and walk to the outermost call's
-                // `.name_loc`. Errors (including lexer errors) are discarded:
-                // this is a best-effort fallback and the main loop reports a
-                // clear error if it still can't find the matcher. The log
-                // guard temporarily installs a scratch `Log` so lexer/parser
-                // diagnostics from a failed parse don't surface.
+                // Parse `expect(<args>).<chain>.<fn_name>(<args>)` and walk to
+                // the outer call's `.name_loc`. Best-effort: parse errors are
+                // swallowed (scratch `Log`); the main loop reports if unfound.
                 let found: Option<usize> = 'parse: {
                     let mut scratch_log = bun_ast::Log::init();
                     let scratch_log_ptr: *mut bun_ast::Log = &raw mut scratch_log;

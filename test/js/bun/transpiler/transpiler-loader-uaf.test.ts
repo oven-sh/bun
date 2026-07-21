@@ -1,11 +1,7 @@
-// transformSync/scan/scanImports captured the code ArrayBuffer's ptr/len
-// before coercing the `loader` argument. `is_string()` accepts String
-// *objects*, so `loader_from_js` runs a user-supplied `toString()` that can
-// detach and free the code buffer, leaving the parser reading whatever heap
-// block replaces it. Async `transform()` was already safe because it copies
-// the bytes before coercing the loader.
+// `is_string()` accepts String *objects*, so a `new String("js")` loader with a
+// hostile `toString()` can detach the code buffer during loader coercion.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
 const fixture = `
 const N = 1 << 20;
@@ -84,8 +80,10 @@ describe("Bun.Transpiler loader coercion ordering", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
+    expect({ stdout: normalizeBunSnapshot(stdout), stderr: normalizeBunSnapshot(stderr), exitCode }).toEqual({
+      stdout: "OK",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

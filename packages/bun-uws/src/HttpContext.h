@@ -901,17 +901,9 @@ public:
                     /* RFC 9110 10.1.1: a Content-Length over the configured
                      * limit is a 413 from the head alone; skip the 100 so the
                      * handler can answer the final status directly. */
-                    bool overLimit = false;
-                    if (uint64_t limit = httpContextData->maxRequestBodySize) {
-                        std::string_view cl = user.httpRequest->getHeader("content-length");
-                        uint64_t len = cl.length() ? 0 : UINT64_MAX;
-                        for (char c : cl) {
-                            if (c < '0' || c > '9') { len = UINT64_MAX; break; }
-                            len = len * 10 + (uint64_t)(c - '0');
-                        }
-                        overLimit = len != UINT64_MAX && len > limit;
-                    }
-                    if (!overLimit) {
+                    std::string_view cl = user.httpRequest->getHeader("content-length");
+                    uint64_t len = cl.length() ? HttpParser::toUnsignedInteger(cl) : 0;
+                    if (len == UINT64_MAX || len <= httpContextData->maxRequestBodySize) {
                         user.httpResponse->writeContinue();
                     }
                 }

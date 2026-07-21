@@ -601,6 +601,7 @@ struct HttpResponseData;
          * personality so a client cannot stream unbounded extension bytes. */
         static const uint64_t MAX_CHUNK_EXTENSION_SIZE = 16 * 1024;
 
+    public:
         /* Returns UINT64_MAX on error. Maximum 999999999 is allowed. */
         static uint64_t toUnsignedInteger(std::string_view str) {
             /* We assume at least 64-bit integer giving us safely 999999999999999999 (18 number of 9s) */
@@ -618,6 +619,7 @@ struct HttpResponseData;
             }
             return unsignedIntegerValue;
         }
+    private:
 
         static inline uint64_t hasLess(uint64_t x, uint64_t n) {
             return (((x)-~0ULL/255*(n))&~(x)&~0ULL/255*128);

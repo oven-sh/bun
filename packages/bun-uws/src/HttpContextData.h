@@ -80,10 +80,10 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
-    /* Gate for the auto 100-continue: when non-zero, an Expect: 100-continue
-     * request whose Content-Length already exceeds this is not sent 100. The
-     * handler's own size check still produces the 413. */
-    uint64_t maxRequestBodySize = 0;
+    /* Gate for the auto 100-continue: an Expect: 100-continue request whose
+     * Content-Length exceeds this is not sent 100 (the handler still produces
+     * the 413). UINT64_MAX = unlimited; 0 is a real limit (reject any body). */
+    uint64_t maxRequestBodySize = UINT64_MAX;
 
     // TODO: SNI
     void clearRoutes() {

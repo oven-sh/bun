@@ -303,9 +303,8 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     emitter.emit(event, arguments);
 
     // Node performs a final microtask checkpoint after emitting 'exit' on a
-    // natural drain (not process.exit() or fatal exception), so promise
-    // reactions and queueMicrotask callbacks queued by the listener run
-    // before termination. process.nextTick does not.
+    // natural drain (not process.exit() or fatal exception); process.nextTick
+    // is not drained.
     if (drainMicrotasks && !vm.hasTerminationRequest()) {
         vm.drainMicrotasks();
     }

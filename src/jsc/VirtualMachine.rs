@@ -1513,10 +1513,9 @@ impl VirtualMachine {
             }
         }
 
-        // Drain microtasks queued by the 'exit' listener only on a natural
-        // event-loop drain: not after a fatal error, and not when a worker
-        // reached here via terminate()/process.exit() (both set
-        // requested_terminate before shutdown() calls us).
+        // Node drains microtasks after 'exit' only on a natural drain: not
+        // after a fatal error, and not for a worker that reached here via
+        // terminate()/process.exit() (both set requested_terminate first).
         let natural = self.unhandled_error_counter == 0
             && !self
                 .worker_ref()

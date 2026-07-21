@@ -501,6 +501,15 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
+    // Only the main thread VM (context id 1, see VirtualMachine::init)
+    // enforces --max-old-space-size. Node terminates an over-limit worker
+    // without killing the process (resourceLimits), so a worker heap OOM
+    // must not _exit the whole process from here.
+    if (executionContextId == 1) {
+        if (size_t heapLimit = Bun__Node__MaxOldSpaceSizeBytes)
+            WebCore::clientData(vm)->enforceMaxOldSpaceSize(vm, heapLimit);
+    }
+
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
         if (executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > 1) [[unlikely]] {
             auto* structure = Zig::GlobalObject::createStructure(vm);

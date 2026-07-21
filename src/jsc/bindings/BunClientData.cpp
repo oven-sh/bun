@@ -35,8 +35,6 @@
 #include <unistd.h>
 #endif
 
-extern "C" size_t Bun__Node__MaxOldSpaceSizeBytes;
-
 namespace Bun {
 
 // Enforces `--max-old-space-size`: when a full GC cannot keep the live heap
@@ -144,6 +142,13 @@ void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
         delete heapData;
 }
 
+void JSVMClientData::enforceMaxOldSpaceSize(VM& vm, size_t limitBytes)
+{
+    ASSERT(!m_heapSizeLimitObserver);
+    m_heapSizeLimitObserver = std::make_unique<Bun::HeapSizeLimitObserver>(vm.heap, limitBytes);
+    vm.heap.addObserver(m_heapSizeLimitObserver.get());
+}
+
 JSVMClientData::~JSVMClientData()
 {
     if (m_heapSizeLimitObserver)
@@ -170,11 +175,6 @@ void JSVMClientData::create(VM* vm, void* bunVM)
     vm->deferredWorkTimer->onCancelPendingWork = [clientData](JSC::DeferredWorkTimer::Ticket& ticket) -> void {
         Bun::JSCTaskScheduler::onCancelPendingWork(clientData, ticket);
     };
-
-    if (size_t heapLimit = Bun__Node__MaxOldSpaceSizeBytes) {
-        clientData->m_heapSizeLimitObserver = std::make_unique<Bun::HeapSizeLimitObserver>(vm->heap, heapLimit);
-        vm->heap.addObserver(clientData->m_heapSizeLimitObserver.get());
-    }
 
     vm->clientData = clientData; // ~VM deletes this pointer.
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);

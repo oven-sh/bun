@@ -96,6 +96,9 @@ public:
 
     static void create(JSC::VM*, void*);
 
+    // Registers the --max-old-space-size observer with this VM's heap.
+    void enforceMaxOldSpaceSize(JSC::VM&, size_t limitBytes);
+
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
     JSBuiltinFunctions& builtinFunctions() { return *m_builtinFunctions; }

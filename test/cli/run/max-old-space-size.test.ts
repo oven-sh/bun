@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Pushes ~1 MB of live array data per iteration, then reports how far it got.
 const allocateScript = (mb: number) =>
@@ -34,6 +34,36 @@ test.concurrent("--max-old-space-size does not abort workloads that fit under th
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).not.toContain("JavaScript heap out of memory");
   expect(stdout).toContain("reached 16MB");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("--max-old-space-size does not kill the process when a worker exceeds the limit", async () => {
+  // The limit only aborts for the main thread VM; Node's model for workers is
+  // resourceLimits + a worker-scoped error, never a process-wide abort.
+  using dir = tempDir("max-old-space-size-worker", {
+    "main.js": `
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker("./worker.js");
+      worker.on("exit", code => console.log("worker exited " + code));
+    `,
+    "worker.js": `
+      const chunks = [];
+      for (let i = 0; i < 128; i++) chunks.push(new Array(131072).fill(i));
+      Bun.gc(true);
+      console.log("worker reached " + chunks.length + "MB");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--max-old-space-size=64", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("JavaScript heap out of memory");
+  expect(stdout).toContain("worker reached 128MB");
+  expect(stdout).toContain("worker exited 0");
   expect(exitCode).toBe(0);
 });
 

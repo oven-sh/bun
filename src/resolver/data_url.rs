@@ -143,10 +143,9 @@ pub struct FetchDataURL {
     pub body: Vec<u8>,
 }
 
-const HTTP_WHITESPACE: &[u8] = b"\t\n\x0C\r ";
-
+/// https://fetch.spec.whatwg.org/#http-whitespace
 fn is_http_whitespace(c: u8) -> bool {
-    HTTP_WHITESPACE.contains(&c)
+    matches!(c, b'\t' | b'\n' | b'\r' | b' ')
 }
 
 fn trim_trailing_http_whitespace(mut s: &[u8]) -> &[u8] {

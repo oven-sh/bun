@@ -2081,7 +2081,13 @@ fn inherit_process_env(
     let process_env = global_this.process_env_object()?;
     process_env.ensure_still_alive();
     if let Some(object) = process_env.get_object() {
-        append_envp_from_js(global_this, JSObject::opaque_ref(object), envp, path, storage)?;
+        append_envp_from_js(
+            global_this,
+            JSObject::opaque_ref(object),
+            envp,
+            path,
+            storage,
+        )?;
     }
     Ok(())
 }

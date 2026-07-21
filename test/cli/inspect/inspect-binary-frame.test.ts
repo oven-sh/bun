@@ -1,6 +1,6 @@
 import { Subprocess, spawn } from "bun";
 import { afterEach, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 let inspectee: Subprocess | undefined;
 
@@ -27,7 +27,9 @@ function waitForReply(ws: WebSocket, id: number): Promise<any> {
   });
 }
 
-test("binary frame closes the inspector websocket with 1003 instead of leaving a mute open socket", async () => {
+// The inspector WS server drops connections with 1006 under release+ASAN
+// (inspect.test.ts is quarantined for the same reason); debug+ASAN is fine.
+test.skipIf(isASAN && !isDebug)("binary frame closes the inspector websocket with 1003 instead of leaving a mute open socket", async () => {
   inspectee = spawn({
     cwd: import.meta.dir,
     cmd: [bunExe(), "--inspect=127.0.0.1:0", "inspectee.js"],

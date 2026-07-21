@@ -19,6 +19,9 @@ describe("exit", async () => {
   // prettier-ignore
   TestBuilder.command`exit abc`.exitCode(2).stderr("exit: numeric argument required\n").runAsTest("numeric argument required");
 
+  // prettier-ignore
+  TestBuilder.command`exit abc def`.exitCode(2).stderr("exit: numeric argument required\n").runAsTest("non-numeric first arg checked before argc");
+
   describe("no argument propagates the last command's status", async () => {
     TestBuilder.command`false; exit`.exitCode(1).runAsTest("false; exit");
     TestBuilder.command`true; exit`.exitCode(0).runAsTest("true; exit");

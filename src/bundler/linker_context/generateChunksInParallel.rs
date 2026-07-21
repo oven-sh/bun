@@ -1247,10 +1247,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         crate::chunk::Content::Html => Box::default(),
                     },
                     bake_extra: 'brk: {
-                        if c.framework.is_none() || IS_DEV_SERVER {
+                        let Some(framework) = c.framework else {
                             break 'brk BakeExtra::default();
-                        }
-                        if !c.framework.unwrap().is_built_in_react {
+                        };
+                        if IS_DEV_SERVER {
                             break 'brk BakeExtra::default();
                         }
 
@@ -1264,8 +1264,15 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             && side == options::Side::Server
                         {
                             extra.is_route = true;
-                            extra.fully_static = !static_route_visitor
-                                .has_transitive_use_client(chunk.entry_point.source_index());
+                            // The "use client" analysis is only meaningful when
+                            // server components are enabled; without them there
+                            // are no client boundaries, and every route would be
+                            // misclassified as fully static, dropping the
+                            // framework's client entry point from prerendered
+                            // pages.
+                            extra.fully_static = framework.server_components.is_some()
+                                && !static_route_visitor
+                                    .has_transitive_use_client(chunk.entry_point.source_index());
                         }
 
                         break 'brk extra;

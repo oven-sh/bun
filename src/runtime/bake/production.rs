@@ -610,8 +610,8 @@ pub(super) fn build_with_vm(
     )?;
 
     // `bake_body::Framework` is the runtime-side superset; the bundler reads only
-    // `built_in_modules` / `server_components` / `react_fast_refresh` /
-    // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
+    // `built_in_modules` / `server_components` / `react_fast_refresh`
+    // via its lower-tier `bake_types::Framework` view.
     // Project once here via the shared helper so the field-shape (e.g.
     // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
     // (The two Framework types could only merge if `FileSystemRouterType` /
@@ -800,13 +800,11 @@ pub(super) fn build_with_vm(
             }
         }
     }
-    // Write the runtime file to disk if there are any client chunks
-    {
-        let Some(runtime_file_index) = maybe_runtime_file_index else {
-            Output::panic(format_args!(
-                "Runtime file not found. This is an unexpected bug in Bun. Please file a bug report on GitHub."
-            ));
-        };
+    // Write the runtime file to disk if there are any client chunks. When no
+    // bundled module needs the runtime's wrapper functions (e.g. a small app
+    // on a custom framework), the runtime is not part of any chunk and there
+    // is nothing to write.
+    if let Some(runtime_file_index) = maybe_runtime_file_index {
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)
                 && file.src_path.text != b"bun-framework-react/client.tsx"

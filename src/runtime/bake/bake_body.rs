@@ -1134,12 +1134,7 @@ impl Framework {
             .map(|rfr| bt::ReactFastRefresh {
                 import_source: rfr.import_source.into(),
             });
-        bt::Framework::new(
-            built_in_modules,
-            server_components,
-            react_fast_refresh,
-            self.is_built_in_react,
-        )
+        bt::Framework::new(built_in_modules, server_components, react_fast_refresh)
     }
 
     pub fn init_transpiler<'a>(

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -593,5 +593,58 @@ export default function IndexPage() {
 
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
+  });
+
+  // https://github.com/oven-sh/bun/issues/32142
+  test("custom framework builds without the built-in react framework", async () => {
+    const dir = tempDirWithFiles("bake-production-custom-framework", {
+      "bun.app.ts": `export default {
+  app: {
+    framework: {
+      fileSystemRouterTypes: [
+        {
+          root: "pages",
+          style: "nextjs-pages",
+          serverEntryPoint: "./server-entry.ts",
+          clientEntryPoint: "./client-entry.ts",
+        },
+      ],
+    },
+  },
+};`,
+      "pages/index.tsx": `export default function Home() { return "homepage"; }`,
+      "server-entry.ts": `export function render(req: Request, meta: any) {
+  return new Response(String(meta.pageModule.default()));
+}
+export async function prerender(meta: any) {
+  const scripts = meta.modules.map(m => '<script type="module" src="' + m + '"></script>').join("");
+  const body = String(meta.pageModule.default());
+  return { files: { "index.html": "<!DOCTYPE html><html><body>" + body + scripts + "</body></html>" } };
+}`,
+      "client-entry.ts": `console.log("client loaded");`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+      .cwd(dir)
+      .env({ ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1" })
+      .throws(false);
+
+    expect({ exitCode, stderr: stderr.toString() }).toMatchObject({ exitCode: 0 });
+
+    const htmlPage = path.join(dir, "dist", "index.html");
+    expect(existsSync(htmlPage)).toBe(true);
+
+    const htmlContent = await Bun.file(htmlPage).text();
+    expect(htmlContent).toContain("homepage");
+
+    // A framework without server components has no "use client" boundaries,
+    // so its routes must not be treated as fully static: the client entry
+    // point is still passed to prerender via `meta.modules`.
+    const scriptMatch = htmlContent.match(/<script type="module" src="([^"]*_bun[^"]*\.js)"><\/script>/);
+    expect(scriptMatch).toBeTruthy();
+
+    // The referenced client bundle was written to disk.
+    const scriptSrc = scriptMatch![1].replace(/^\//, "");
+    expect(existsSync(path.join(dir, "dist", scriptSrc))).toBe(true);
   });
 });

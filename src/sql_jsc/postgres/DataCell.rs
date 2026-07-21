@@ -1055,6 +1055,10 @@ fn parse_binary_numeric<'a>(
                 0
             };
             bun_core::scoped_log!(PostgresDataCell, "digit: {}", digit);
+            // Postgres numeric_recv rejects `d < 0 || d >= NBASE` (NBASE = 10000).
+            if digit >= 10000 {
+                return Err(crate::Error::InvalidBuffer);
+            }
             let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
             let digit_len = 4usize;
             if !first_non_zero {
@@ -1098,6 +1102,9 @@ fn parse_binary_numeric<'a>(
                 0
             };
             bun_core::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
+            if digit >= 10000 {
+                return Err(crate::Error::InvalidBuffer);
+            }
             let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
             result.extend_from_slice(&digit_str);
             d += 1;

@@ -1693,6 +1693,61 @@ it("client stream events observe the request-time async context, not the session
   }
 });
 
+// Like Node, session.destroy(err) tears open streams down synchronously from the caller's
+// stack: their 'error'/'close' run in the destroy() caller's async context (not the
+// request()-time one), while the session's own 'error'/'close' keep the connect-time context.
+it("client session.destroy() emits open streams' error/close in the caller's async context", async () => {
+  const als = new AsyncLocalStorage();
+  const CONNECT = { id: "connect" };
+  const REQUEST = { id: "request" };
+  const DESTROY = { id: "destroy" };
+  const server = http2.createServer();
+  let client;
+  try {
+    const { promise: streamsOpened, resolve: onStreamsOpened } = Promise.withResolvers();
+    let openStreams = 0;
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (++openStreams === 2) onStreamsOpened();
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const { promise: connected, resolve: onConnect } = Promise.withResolvers();
+    client = als.run(CONNECT, () => http2.connect(`http://localhost:${server.address().port}`));
+    client.on("connect", onConnect);
+    const sessionEvents = { error: null, close: null };
+    const { promise: sessionClosed, resolve: onSessionClose } = Promise.withResolvers();
+    client.on("error", () => (sessionEvents.error = als.getStore()));
+    client.on("close", () => {
+      sessionEvents.close = als.getStore();
+      onSessionClose();
+    });
+    await connected;
+    const streamEvents = [];
+    als.run(REQUEST, () => {
+      for (let i = 0; i < 2; i++) {
+        const req = client.request({ ":path": `/${i}` });
+        req.on("error", () => streamEvents.push({ i, event: "error", store: als.getStore() }));
+        req.on("close", () => streamEvents.push({ i, event: "close", store: als.getStore() }));
+      }
+    });
+    await streamsOpened;
+    als.run(DESTROY, () => client.destroy(new Error("boom")));
+    await sessionClosed;
+    // Emission order across the two streams is not the contract; the context each ran in is.
+    streamEvents.sort((a, b) => a.i - b.i || a.event.localeCompare(b.event));
+    expect(streamEvents).toEqual([
+      { i: 0, event: "close", store: DESTROY },
+      { i: 0, event: "error", store: DESTROY },
+      { i: 1, event: "close", store: DESTROY },
+      { i: 1, event: "error", store: DESTROY },
+    ]);
+    expect(sessionEvents).toEqual({ error: CONNECT, close: CONNECT });
+  } finally {
+    client?.destroy?.();
+    server.close();
+  }
+});
+
 it("sensitive headers should work", async () => {
   const server = http2.createServer();
   let client;
@@ -2466,6 +2521,55 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
   expect(stdout).not.toContain("NO_ERROR");
   expect(stdout).toContain("STATUS:200");
   expect(exitCode).toBe(0);
+});
+
+it("http2 client.request() propagates a throwing header-value toString() instead of masking it", async () => {
+  // Node calls `${value}` and lets the user's exception escape; it must not be
+  // replaced with ERR_HTTP2_INVALID_HEADER_VALUE.
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", () => {});
+  await new Promise(resolve => client.once("connect", resolve));
+
+  try {
+    const boom = msg => ({
+      toString() {
+        throw new RangeError(msg);
+      },
+    });
+    const describeThrow = fn => {
+      try {
+        fn();
+        return { name: "<none>", code: "<none>", message: "<none>" };
+      } catch (e) {
+        return { name: e.constructor.name, code: e.code, message: e.message };
+      }
+    };
+
+    expect([
+      describeThrow(() => client.request({ ":path": "/", "x-a": boom("scalar") })),
+      describeThrow(() => client.request({ ":path": "/", "x-a": "ok", "x-b": boom("second") })),
+      describeThrow(() => client.request({ ":path": "/", "x-a": [boom("array0")] })),
+      describeThrow(() => client.request({ ":path": "/", "x-a": ["ok", boom("array1")] })),
+      describeThrow(() =>
+        client.request({ ":path": "/", "x-a": boom("sensitive"), [http2.sensitiveHeaders]: ["x-a"] }),
+      ),
+    ]).toEqual([
+      { name: "RangeError", code: undefined, message: "scalar" },
+      { name: "RangeError", code: undefined, message: "second" },
+      { name: "RangeError", code: undefined, message: "array0" },
+      { name: "RangeError", code: undefined, message: "array1" },
+      { name: "RangeError", code: undefined, message: "sensitive" },
+    ]);
+  } finally {
+    client.close();
+    server.close();
+  }
 });
 
 it("http2 server resets streams whose request headers contain CR, LF, or NUL octets", async () => {

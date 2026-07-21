@@ -523,7 +523,7 @@ it("process.version is set", () => {
   expect(process.version).not.toInclude("unset");
 });
 
-it.todo("process.argv0", () => {
+it("process.argv0", () => {
   expect(basename(process.argv0)).toBe(basename(process.argv[0]));
 });
 
@@ -2239,4 +2239,35 @@ it("process.throwDeprecation is per-Worker, not process-global", async () => {
   expect(stdout.trim()).toBe('{"uncaught":false}');
   expect(stderr).toContain("DeprecationWarning: hi");
   expect(exitCode).toBe(0);
+});
+
+describe("NODE_NO_WARNINGS", () => {
+  // Node suppresses only on the exact string "1" (test-env-var-no-warnings.js).
+  // Bun's generic boolean env parse used to accept "true", "01", etc.
+  async function warn(value) {
+    const env = { ...bunEnv };
+    delete env.NODE_NO_WARNINGS;
+    if (value !== undefined) env.NODE_NO_WARNINGS = value;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'process.emitWarning("foo")'],
+      env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
+    expect(exitCode).toBe(0);
+    return stderr;
+  }
+
+  it.concurrent.each(["true", "0", "01", "2", "foo", undefined])(
+    'does not suppress warnings for NODE_NO_WARNINGS="%s"',
+    async value => {
+      expect(await warn(value)).toMatch(/Warning: foo/);
+    },
+  );
+
+  it.concurrent('suppresses warnings for NODE_NO_WARNINGS="1"', async () => {
+    expect(await warn("1")).not.toMatch(/Warning: foo/);
+  });
 });

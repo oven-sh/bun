@@ -69,13 +69,8 @@ export const cpuTargetFlags: Flag[] = [
   },
   {
     flag: "-march=nehalem",
-    when: c => c.x64 && c.baseline,
-    desc: "x64 baseline: Nehalem (2008) — no AVX, broadest compatibility",
-  },
-  {
-    flag: "-march=haswell",
-    when: c => c.x64 && !c.baseline,
-    desc: "x64 default: Haswell (2013) — AVX2, BMI2 available",
+    when: c => c.x64,
+    desc: "x64: Nehalem (2008) — no AVX, broadest compatibility",
   },
 ];
 
@@ -472,30 +467,11 @@ export const globalFlags: Flag[] = [
     // WebKit macos -lto prebuilts and rustc's -Clinker-plugin-lto bitcode are
     // both ThinLTO-summaried, so this makes the whole link one uniform
     // ThinLTO graph with cross-module importing across C++/Rust/JSC
-    // boundaries. Darwin only for now — see the -flto=full entry below.
+    // boundaries. All platforms now use ThinLTO (the linux JSC ThinLTO
+    // miscompile was fixed in the WebKit prebuilt).
     flag: "-flto=thin",
-    when: c => c.darwin && c.lto,
+    when: c => c.unix && c.lto,
     desc: "Thin link-time optimization",
-  },
-  {
-    // Linux stays on full LTO: the LLVM 22 ThinLTO backend pipeline
-    // (rust-lld) miscompiles JavaScriptCore on linux at every opt level
-    // above --lto-O0 — a JIT-tier correctness bug plus several bundler hangs
-    // in the test suite, on both x64 and aarch64, with cross-module
-    // importing disabled, ICF ruled out, and WPD ruled out. The same
-    // bitcode through ld64.lld on darwin is fine. Full LTO uses a different
-    // (regular-LTO) pass pipeline over one merged module and has shipped
-    // green for months. Cost: the link is serial (~14 min vs ~1.5 min).
-    // Rust<->C++ cross-language inlining still happens: the Rust side emits
-    // one fat, summary-less bitcode module (CARGO_PROFILE_RELEASE_LTO=fat
-    // under -Clinker-plugin-lto — see rust.ts) that joins the same
-    // regular-LTO partition as the C++, so nothing goes through the
-    // miscompiling ThinLTO backends. Revisit ThinLTO once the bad pass is
-    // isolated — the repro is `bun -e 'require("axobject-query")'` failing
-    // in the DFG tier.
-    flag: "-flto=full",
-    when: c => c.unix && !c.darwin && c.lto,
-    desc: "Full link-time optimization (linux: ThinLTO miscompiles JSC, see comment)",
   },
   {
     // Windows (cross) uses ThinLTO like darwin: clang-cl accepts -flto=thin
@@ -532,13 +508,9 @@ export const globalFlags: Flag[] = [
     // (typeidCompatibleVTable entries) and whole-program devirtualization
     // runs in index-based mode via --lto-whole-program-visibility at link
     // time. 0 is also the default for rustc, for Apple targets, and for the
-    // WebKit macos/windows -lto prebuilts, so this is the configuration that
-    // can't drift. Windows: -fwhole-program-vtables is never passed there
-    // (see above) so 0 is already the default — kept explicit so the
-    // ThinLTO graph can't drift if that ever changes. Not linux: full LTO
-    // (no per-module summaries, so the flag is meaningless there).
+    // WebKit -lto prebuilts, so this is the configuration that can't drift.
     flag: "-fno-split-lto-unit",
-    when: c => (c.darwin || c.windows) && c.lto,
+    when: c => c.lto,
     desc: "Index-based WPD: keep type metadata in the ThinLTO summaries, no regular-LTO half",
   },
 
@@ -868,21 +840,24 @@ export const linkerFlags: Flag[] = [
     // only fires for classes explicitly annotated [[clang::lto_visibility]],
     // i.e. never. A static executable that only dlopens C-ABI addons (NAPI)
     // satisfies the whole-program assumption. ld64.lld has no named option
-    // for this; -mllvm reaches the underlying cl::opt directly. Darwin only:
-    // linux is on full LTO where this was never enabled.
+    // for this; -mllvm reaches the underlying cl::opt directly.
     flag: ["-Wl,-mllvm,-whole-program-visibility"],
     when: c => c.darwin && c.lto,
     desc: "Enable index-based whole-program devirtualization at link time",
   },
   {
-    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
-    when: c => c.darwin && c.lto,
-    desc: "LTO at link time (matches compile-side -flto=thin)",
+    // ELF spelling of the entry above. The WebKit -lto prebuilts carry the
+    // !type/!vcall_visibility metadata (built with -fwhole-program-vtables),
+    // so this upgrades JSC/WTF's exported classes to hidden LTO visibility
+    // and lets WPD fire on them, not just on our -fvisibility=hidden classes.
+    flag: ["-Wl,--lto-whole-program-visibility"],
+    when: c => c.unix && !c.darwin && c.lto,
+    desc: "Enable index-based whole-program devirtualization at link time (lld ELF)",
   },
   {
-    flag: ["-flto=full", "-fwhole-program-vtables", "-fforce-emit-vtables"],
-    when: c => c.unix && !c.darwin && c.lto,
-    desc: "LTO at link time (matches compile-side -flto=full)",
+    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
+    when: c => c.unix && c.lto,
+    desc: "LTO at link time (matches compile-side -flto=thin)",
   },
   {
     // Without -O at link time, clang's driver defaults LTO codegen to -O2.
@@ -963,18 +938,6 @@ export const linkerFlags: Flag[] = [
     flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
     when: c => c.windows && c.winsysroot !== undefined,
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
-  },
-  {
-    // BoringSSL's allocator hooks (defined in src/boringssl/lib.rs, routing
-    // OPENSSL_malloc to mimalloc) are referenced by BoringSSL only as COFF
-    // weak externals, which never pull the defining archive member on their
-    // own — so on Windows the hooks silently stayed unbound and every
-    // BoringSSL allocation (TLS handshakes, parsed certificates) landed on
-    // the CRT's NT heap instead of mimalloc. Force the symbols in so the
-    // weak externals bind, like they already do on ELF/Mach-O.
-    flag: ["/INCLUDE:OPENSSL_memory_alloc", "/INCLUDE:OPENSSL_memory_free", "/INCLUDE:OPENSSL_memory_get_size"],
-    when: c => c.windows,
-    desc: "Bind BoringSSL's mimalloc-backed allocator hooks (COFF weak externals don't pull archive members)",
   },
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
@@ -1135,10 +1098,15 @@ export const linkerFlags: Flag[] = [
 
   // ─── Linux ───
   {
-    // Wrap glibc symbols whose default version on a modern build host is
-    // > 2.17. Each __wrap_X in workaround-missing-symbols.cpp pins to the
+    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`],
+    when: c => c.linux && c.abi !== "android" && c.crossTarget !== undefined && c.sysroot !== undefined,
+    desc: "linux sysroot link (gnu: ubuntu:20.04+gcc-13; musl: alpine)",
+  },
+  {
+    // Wrap glibc symbols whose default version on the sysroot's glibc (2.31)
+    // is > 2.17. Each __wrap_X in workaround-missing-symbols.cpp pins to the
     // 2.2.5/2.17 compat version (or a raw syscall) so the binary's verneed
-    // never exceeds the floor regardless of the host's glibc.
+    // never exceeds the floor.
     flag: [
       "exp",
       "exp2",
@@ -1390,13 +1358,13 @@ export const linkerFlags: Flag[] = [
     //   LLVM_ENABLE_ZLIB or did not find zlib at build time`.
     // We only fall onto rust-lld for cross-language LTO when rustc's LLVM is
     // newer than the system clang/lld (see config.ts `cfg.ld` selection); in
-    // that case, drop the flag rather than fail the link. Larger debug
-    // sections in `bun-profile` is a build-size cost, not a correctness one —
-    // and only on agents where the LLVM versions diverge. The system lld path
-    // (linux/freebsd llvm-* packages) keeps compressing.
+    // that case the link-time flag is dropped and llvm-objcopy compresses
+    // post-link instead (shims.ts elfDebugCompressPostlinkCommand) — an
+    // uncompressed bun-profile is ~2x larger and every `--compile` test
+    // copies it, so leaving it uncompressed times CI out.
     flag: "-Wl,--compress-debug-sections=zlib",
     when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
-    desc: "Compress ELF debug sections (skipped with rust-lld — built without zlib)",
+    desc: "Compress ELF debug sections (post-link via llvm-objcopy with rust-lld — built without zlib)",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -1682,7 +1650,7 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
 /**
  * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
  * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
- * end up targeting generic x86-64 while the rest of bun targets haswell.
+ * end up targeting generic x86-64 while the rest of bun targets nehalem.
  */
 export function computeCpuTargetFlags(cfg: Config): string[] {
   const out: string[] = [];

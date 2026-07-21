@@ -113,19 +113,10 @@ impl Version {
     } else {
         ""
     };
-    const SUFFIX_CPU: &'static str = if Environment::BASELINE {
-        "-baseline"
-    } else {
-        ""
-    };
-    const SUFFIX: &'static str = const_format::concatcp!(Version::SUFFIX_ABI, Version::SUFFIX_CPU);
+    const SUFFIX: &'static str = Version::SUFFIX_ABI;
     pub const FOLDER_NAME: &'static str =
         const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX);
-    pub const BASELINE_FOLDER_NAME: &'static str =
-        const_format::concatcp!("bun-", Version::TRIPLET, "-baseline");
     pub const ZIP_FILENAME: &'static str = const_format::concatcp!(Version::FOLDER_NAME, ".zip");
-    pub const BASELINE_ZIP_FILENAME: &'static str =
-        const_format::concatcp!(Version::BASELINE_FOLDER_NAME, ".zip");
 
     pub const PROFILE_FOLDER_NAME: &'static str =
         const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX, "-profile");
@@ -134,17 +125,6 @@ impl Version {
 
     const CURRENT_VERSION: &'static str =
         const_format::concatcp!("bun-v", Global::package_json_version);
-
-    pub const BUN__GITHUB_BASELINE_URL: &'static ZStr = {
-        const S: &str = const_format::concatcp!(
-            "https://github.com/oven-sh/bun/releases/download/bun-v",
-            Global::package_json_version,
-            "/",
-            Version::BASELINE_ZIP_FILENAME,
-            "\0"
-        );
-        ZStr::from_static(S.as_bytes())
-    };
 
     pub fn is_current(&self) -> bool {
         &*self.tag == Self::CURRENT_VERSION.as_bytes()
@@ -161,7 +141,7 @@ impl Version {
             tag: IntegrityTag::SHA256,
             ..Default::default()
         };
-        for (i, pair) in buf[PREFIX.len()..].chunks_exact(2).enumerate() {
+        for (i, pair) in buf[PREFIX.len()..].as_chunks::<2>().0.iter().enumerate() {
             match bun_fmt::hex_pair_value(pair[0], pair[1]) {
                 Some(byte) => digest.value[i] = byte,
                 None => return Integrity::default(),
@@ -199,8 +179,6 @@ pub(crate) static Bun__githubURL: SyncCStr = SyncCStr(
 pub struct UpgradeCommand;
 
 impl UpgradeCommand {
-    pub const BUN__GITHUB_BASELINE_URL: &'static ZStr = Version::BUN__GITHUB_BASELINE_URL;
-
     const DEFAULT_GITHUB_HEADERS: &'static [u8] = b"Acceptapplication/vnd.github.v3+json";
 
     pub fn get_latest_version<const SILENT: bool>(

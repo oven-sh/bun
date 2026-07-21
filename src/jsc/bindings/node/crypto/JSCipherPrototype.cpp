@@ -234,10 +234,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherGetAuthTag, (JSC::JSGlobalObject * lexicalGloba
 
     JSC::JSUint8Array* buf = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), *cipher->m_authTagLen);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!buf) {
-        throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return {};
-    }
 
     memcpy(buf->vector(), cipher->m_authTag, *cipher->m_authTagLen);
 

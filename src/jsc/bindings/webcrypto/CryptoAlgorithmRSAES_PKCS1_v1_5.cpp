@@ -97,19 +97,20 @@ void CryptoAlgorithmRSAES_PKCS1_v1_5::generateKey(const CryptoAlgorithmParameter
 void CryptoAlgorithmRSAES_PKCS1_v1_5::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
     RefPtr<CryptoKeyRSA> result;
+    bool keyTypeMismatch = false;
     switch (format) {
     case CryptoKeyFormat::Jwk: {
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
         if (usages && ((!key.d.isNull() && (usages ^ CryptoKeyUsageDecrypt)) || (key.d.isNull() && (usages ^ CryptoKeyUsageEncrypt)))) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an RSAES-PKCS1-v1_5 key"_s);
             return;
         }
         if (usages && !key.use.isNull() && key.use != "enc"_s) {
-            exceptionCallback(DataError, ""_s);
+            exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
         if (!key.alg.isNull() && key.alg != ALG) {
-            exceptionCallback(DataError, ""_s);
+            exceptionCallback(DataError, "JWK \"alg\" does not match the requested algorithm"_s);
             return;
         }
         result = CryptoKeyRSA::importJwk(parameters.identifier, std::nullopt, WTF::move(key), extractable, usages);
@@ -117,18 +118,18 @@ void CryptoAlgorithmRSAES_PKCS1_v1_5::importKey(CryptoKeyFormat format, KeyData&
     }
     case CryptoKeyFormat::Spki: {
         if (usages && (usages ^ CryptoKeyUsageEncrypt)) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an RSAES-PKCS1-v1_5 key"_s);
             return;
         }
-        result = CryptoKeyRSA::importSpki(parameters.identifier, std::nullopt, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyRSA::importSpki(parameters.identifier, std::nullopt, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     }
     case CryptoKeyFormat::Pkcs8: {
         if (usages && (usages ^ CryptoKeyUsageDecrypt)) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an RSAES-PKCS1-v1_5 key"_s);
             return;
         }
-        result = CryptoKeyRSA::importPkcs8(parameters.identifier, std::nullopt, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyRSA::importPkcs8(parameters.identifier, std::nullopt, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     }
     default:
@@ -136,7 +137,7 @@ void CryptoAlgorithmRSAES_PKCS1_v1_5::importKey(CryptoKeyFormat format, KeyData&
         return;
     }
     if (!result) {
-        exceptionCallback(DataError, ""_s);
+        exceptionCallback(DataError, keyTypeMismatch ? "Invalid key type"_s : "Invalid keyData"_s);
         return;
     }
 

@@ -92,7 +92,7 @@ describe("bun:jsc setTimeZone(<legacy zone>)", () => {
   });
 });
 
-test("unrelated IANA zones still work", async () => {
+test.concurrent("unrelated IANA zones still work", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", probe],
     env: { ...bunEnv, TZ: "America/New_York" },
@@ -106,7 +106,7 @@ test("unrelated IANA zones still work", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("unknown TZ values remain unknown", async () => {
+test.concurrent("unknown TZ values remain unknown", async () => {
   // ICU rejects this; the override stays unset and the host default applies.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", probe],

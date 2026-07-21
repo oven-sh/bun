@@ -110,6 +110,9 @@ const listenDriver = `
 const wsDriver = `
     const ws = new WebSocket("ws://127.0.0.1:" + port);
     await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
+    // Terminating the worker ends the connection under the client; swallow the
+    // resulting ErrorEvent so it does not surface as an uncaught error.
+    ws.onerror = () => {};
     ws.send("go");
 `;
 

@@ -453,7 +453,6 @@ for (let [gcTick, label] of [
             stdout: "pipe",
             stdin: new Blob([hugeString + "\n"]),
             stderr: "inherit",
-            lazy: true,
           });
         }
 

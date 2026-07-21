@@ -439,7 +439,9 @@ impl PosixBufferedReader {
         if self.get_fd() != fd {
             self.handle = PollOrFd::Fd(fd);
         }
-        self.register_poll();
+        if !self.flags.contains(PosixFlags::IS_PAUSED) {
+            self.register_poll();
+        }
 
         sys::Result::Ok(())
     }

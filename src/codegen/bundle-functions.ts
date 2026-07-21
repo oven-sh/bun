@@ -357,7 +357,10 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       )
         .replace(/^\((async )?function\(/, "($1function (")
         .replace(/__intrinsic__/g, "@")
-        .replace(/__no_intrinsic__/g, "") + "\n";
+        .replace(/__no_intrinsic__/g, "")
+        // Same 8-bit constraint as bundle-modules: escape regex-literal
+        // codepoints esbuild's ascii charset leaves raw.
+        .replace(/[^\x00-\x7F]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")) + "\n";
 
     const errors = [...finalReplacement.matchAll(/@bundleError\((.*)\)/g)];
     if (errors.length) {

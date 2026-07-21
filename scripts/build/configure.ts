@@ -63,13 +63,14 @@ export function resolveToolchain(targetOs?: OS): Toolchain {
   // ninja's generator rule invokes reconfigure, cwd is the build dir.
   const repoRoot = findRepoRoot();
 
-  // esbuild — comes from the root install. Path is deterministic.
-  // If not present, the first codegen build will fail with a clear error
-  // (and the build itself runs the package install first via the root
-  // install stamp, so this path will exist by the time esbuild rules fire).
-  const esbuild = resolve(repoRoot, "node_modules", ".bin", host.os === "windows" ? "esbuild.exe" : "esbuild");
-
   const packageManager = findPackageManager(host.os);
+
+  // esbuild — comes from the root install. bun install writes a real .exe
+  // shim on Windows; npm's cmd-shim writes .cmd. The file won't exist until
+  // the root pkg_install edge fires, so branch on the chosen manager.
+  const esbuildBin =
+    host.os !== "windows" ? "esbuild" : packageManager.lockfile === "bun.lock" ? "esbuild.exe" : "esbuild.cmd";
+  const esbuild = resolve(repoRoot, "node_modules", ".bin", esbuildBin);
 
   // jsRuntime: command prefix for running .ts subprocesses. Propagate
   // whatever's running us — if node, the strip-types flag comes along; if

@@ -33,7 +33,7 @@ if (typeof globalThis.Bun === "undefined") {
   };
 
   const which = name => {
-    const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
+    const exts = process.platform === "win32" ? (process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";") : [""];
     for (const dir of (process.env.PATH ?? "").split(delimiter)) {
       for (const ext of exts) {
         const p = join(dir, name + ext);

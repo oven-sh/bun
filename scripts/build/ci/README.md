@@ -13,7 +13,7 @@ Change what an image contains → its hash changes → the branch that changed
 it bakes a fresh image once, and every later push — including `main` after
 you merge — computes the same hash and reuses it. There is no
 `[build images]` commit tag, no `[publish images]` step, and no version
-number to bump anywhere. Merging *is* publishing.
+number to bump anywhere. Merging _is_ publishing.
 
 ## Prerequisites
 
@@ -29,20 +29,20 @@ number to bump anywhere. Merging *is* publishing.
 
 ## The files
 
-| file | role |
-|---|---|
-| `spec.ts` | **The single source of truth.** Pure data: one typed entry per image (`LinuxBuildHostImage`, `LinuxTestImage`, `WindowsX64Image`, `WindowsArm64Image`) — a complete manifest of what's baked on that machine (versions, package lists, cross toolchains, base image, bake shape, system tuning). Facts shared between images (the Node.js version, LLVM, …) are declared once and referenced. |
-| `types.ts` | The types for the spec. The types are the checklist: a field only some images bake exists only on those images' types. |
-| `artifacts.ts` | Turns spec values into concrete `{url, sha256}` downloads. `resolveArtifacts(entry)` is THE enumeration of everything an image bake fetches. Code, not data — but its *output* is hashed. |
-| `naming.ts` | The hash and the name. `imageHash(entry)` = `sha256({epoch, image, artifacts})`. |
-| `bootstrap.ts` | Entry point run **on the bake VM** under a bare `node` (type stripping). `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`. `--dry-run` prints the complete plan for any image from any host. |
-| `components/*.ts` | One file per baked thing (nodejs, ccache, the sysroots, ...): each owns HOW its thing installs on each platform it supports and enumerates its own downloads, reading every fact from the spec entry. |
-| `components/registry.ts` | name → component; derives BOTH the ordered install steps and the hashed download bundle from an image\'s `components` list, so what is baked and what is hashed share one input. |
-| `components/paths.ts` | Derived locations composed from the spec\'s root paths; no path is written twice. |
-| `bootstrap/ops-posix.ts`, `bootstrap/ops-windows.ts` | The vocabulary: `ensureDirectory`, `installFile`, `extractArchive`, `ensureSystemUser`, `msiInstall`, `setMachineEnv`, … Each op logs its intent then the exact command. |
-| `bootstrap/runtime.ts` | Logging, `run`/`sudo`, `download` (checksum-verified), dry-run, and the failure report. |
-| `packer.ts` | Renders the Windows Packer template as JSON from a `WindowsImage` entry (no checked-in `.pkr.hcl`). |
-| `delivery.ts` | The shim `machine.mjs` runs on a fresh box: fetch the spec-pinned node, then `node bootstrap.ts`. |
+| file                                                 | role                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spec.ts`                                            | **The single source of truth.** Pure data: one typed entry per image (`LinuxBuildHostImage`, `LinuxTestImage`, `WindowsX64Image`, `WindowsArm64Image`) — a complete manifest of what's baked on that machine (versions, package lists, cross toolchains, base image, bake shape, system tuning). Facts shared between images (the Node.js version, LLVM, …) are declared once and referenced. |
+| `types.ts`                                           | The types for the spec. The types are the checklist: a field only some images bake exists only on those images' types.                                                                                                                                                                                                                                                                        |
+| `artifacts.ts`                                       | Turns spec values into concrete `{url, sha256}` downloads. `resolveArtifacts(entry)` is THE enumeration of everything an image bake fetches. Code, not data — but its _output_ is hashed.                                                                                                                                                                                                     |
+| `naming.ts`                                          | The hash and the name. `imageHash(entry)` = `sha256({epoch, image, artifacts})`.                                                                                                                                                                                                                                                                                                              |
+| `bootstrap.ts`                                       | Entry point run **on the bake VM** under a bare `node` (type stripping). `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`. `--dry-run` prints the complete plan for any image from any host.                                                                                                                                                                                           |
+| `components/*.ts`                                    | One file per baked thing (nodejs, ccache, the sysroots, ...): each owns HOW its thing installs on each platform it supports and enumerates its own downloads, reading every fact from the spec entry.                                                                                                                                                                                         |
+| `components/registry.ts`                             | name → component; derives BOTH the ordered install steps and the hashed download bundle from an image\'s `components` list, so what is baked and what is hashed share one input.                                                                                                                                                                                                              |
+| `components/paths.ts`                                | Derived locations composed from the spec\'s root paths; no path is written twice.                                                                                                                                                                                                                                                                                                             |
+| `bootstrap/ops-posix.ts`, `bootstrap/ops-windows.ts` | The vocabulary: `ensureDirectory`, `installFile`, `extractArchive`, `ensureSystemUser`, `msiInstall`, `setMachineEnv`, … Each op logs its intent then the exact command.                                                                                                                                                                                                                      |
+| `bootstrap/runtime.ts`                               | Logging, `run`/`sudo`, `download` (checksum-verified), dry-run, and the failure report.                                                                                                                                                                                                                                                                                                       |
+| `packer.ts`                                          | Renders the Windows Packer template as JSON from a `WindowsImage` entry (no checked-in `.pkr.hcl`).                                                                                                                                                                                                                                                                                           |
+| `delivery.ts`                                        | The shim `machine.mjs` runs on a fresh box: fetch the spec-pinned node, then `node bootstrap.ts`.                                                                                                                                                                                                                                                                                             |
 
 ## Common tasks
 
@@ -60,7 +60,7 @@ so exactly the images whose downloads changed re-bake.
 **Change bootstrap logic without changing any fact** (a fix in
 `linux.ts`, a change to `agent.mjs`): the hashes do NOT change and existing
 images are reused — recipe code is deliberately outside the hash so a comment
-edit never triggers an hour-long bake. When such a change *must* reach the
+edit never triggers an hour-long bake. When such a change _must_ reach the
 images, bump `epoch` in `spec.ts`. That is the one manual step left, and
 it is intentional.
 
@@ -68,9 +68,11 @@ it is intentional.
 every field you owe), and map a CI platform to it in `.buildkite/ci.mjs`.
 
 **Review what a bake will do**, without touching anything:
+
 ```sh
 node scripts/build/ci/bootstrap.ts --image=linux-aarch64-13-debian --ci --repo-ref=main --dry-run
 ```
+
 Prints every step, every command, every download (URL + whether it is
 checksum-pinned), and every file write. Works from any OS.
 
@@ -130,5 +132,5 @@ the URL string is identical so the artifact bundle can't see it — bump
 - **Verbose output, tight code.** Every step is named and timed, every
   command echoed with its output, every download logged with size and
   checksum outcome, every failure reported with step + command + exit code
-  + output. The bake log is the only artifact left when a build fails an
-  hour in.
+  - output. The bake log is the only artifact left when a build fails an
+    hour in.

@@ -21,7 +21,9 @@ import { log, run, runOutput, sudo, verify, warn, which } from "./runtime.ts";
 
 /** Create a directory (and parents). Optional octal mode / "user:group". */
 export async function ensureDirectory(path: string, options: { mode?: string; owner?: string } = {}): Promise<void> {
-  log(`ensuring directory ${path}${options.mode ? ` (mode ${options.mode})` : ""}${options.owner ? ` (owner ${options.owner})` : ""}`);
+  log(
+    `ensuring directory ${path}${options.mode ? ` (mode ${options.mode})` : ""}${options.owner ? ` (owner ${options.owner})` : ""}`,
+  );
   await sudo(["mkdir", "-p", path]);
   if (options.mode) await sudo(["chmod", options.mode, path]);
   if (options.owner) await sudo(["chown", options.owner, path]);

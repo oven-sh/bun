@@ -50,12 +50,16 @@ export const crossBinutils: Component = {
             // x64 asan cross needs amd64 compiler-rt. Best-effort: apt.llvm.org
             // may not carry amd64 on every arm64 repo.
             await sudo(["dpkg", "--add-architecture", "amd64"], { allowFailure: true });
-            await sudo(["apt-get", "update", "-qq"], { allowFailure: true, env: { DEBIAN_FRONTEND: "noninteractive" } });
+            await sudo(["apt-get", "update", "-qq"], {
+              allowFailure: true,
+              env: { DEBIAN_FRONTEND: "noninteractive" },
+            });
             const result = await sudo(
               ["apt-get", "install", "--yes", "--no-install-recommends", `libclang-rt-${image.llvm.major}-dev:amd64`],
               { allowFailure: true, env: { DEBIAN_FRONTEND: "noninteractive" } },
             );
-            if (result.exitCode !== 0) warn("amd64 compiler-rt unavailable from apt.llvm.org; x64 asan cross-links may fail");
+            if (result.exitCode !== 0)
+              warn("amd64 compiler-rt unavailable from apt.llvm.org; x64 asan cross-links may fail");
           },
         },
       ];
@@ -276,7 +280,8 @@ for deb in $tmp/gcc13/*.deb; do dpkg-deb -x "$deb" '${sysroot}'; done
 rm -rf "$tmp"`,
               });
               await verify(`${sysroot} has usr/include/c++/13 after the gcc-13 overlay`, () => {
-                if (!existsSync(`${sysroot}/usr/include/c++/13`)) throw new Error(`${sysroot} missing usr/include/c++/13`);
+                if (!existsSync(`${sysroot}/usr/include/c++/13`))
+                  throw new Error(`${sysroot} missing usr/include/c++/13`);
               });
               log(`installed: ${sysroot} (ubuntu:20.04 glibc ${g.glibcVersion} + gcc-13 libstdc++)`);
             }
@@ -412,7 +417,8 @@ export const windowsSysroot: Component = {
             await ensureSymlink("lib", `${sysroot}/Windows Kits/10/Lib`);
             await removePaths(xwinDir, `${sysroot}.cache`);
             await verify(`${sysroot} has an MSVC tree`, () => {
-              if (!existsSync(`${sysroot}/VC/Tools/MSVC`)) throw new Error(`${sysroot}/VC/Tools/MSVC missing after splat`);
+              if (!existsSync(`${sysroot}/VC/Tools/MSVC`))
+                throw new Error(`${sysroot}/VC/Tools/MSVC missing after splat`);
             });
           },
         },

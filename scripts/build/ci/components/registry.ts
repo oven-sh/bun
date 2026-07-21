@@ -15,12 +15,20 @@
 // component with no half for the image's OS, is a loud error, not a skip.
 
 import type { Download } from "../artifacts.ts";
-import type { LinuxImage, WindowsImage } from "../types.ts";
 import type { Step } from "../bootstrap/runtime.ts";
+import type { LinuxImage, WindowsImage } from "../types.ts";
 import { chromium } from "./browsers-linux.ts";
 import { ciUser } from "./ci-user.ts";
 import type { ArtifactBundle, Component, LinuxContext, WindowsContext } from "./component.ts";
-import { androidNdk, crossBinutils, freebsdSysroot, glibcSysroot, macosSdk, muslSysroot, windowsSysroot } from "./cross-linux.ts";
+import {
+  androidNdk,
+  crossBinutils,
+  freebsdSysroot,
+  glibcSysroot,
+  macosSdk,
+  muslSysroot,
+  windowsSysroot,
+} from "./cross-linux.ts";
 import { nodejs } from "./nodejs.ts";
 import { prefetch } from "./prefetch.ts";
 import { age, buildkiteAgent, bun, curlH3 } from "./runtimes.ts";

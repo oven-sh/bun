@@ -238,7 +238,6 @@ if ($c) { $c.Path }`,
 // Services, registry, tasks, firewall
 // ---------------------------------------------------------------------------
 
-
 /** Stop a service now and disable it (missing service = no-op). */
 export async function stopAndDisableService(name: string): Promise<void> {
   log(`stopping and disabling service ${name}`);
@@ -267,7 +266,6 @@ export async function serviceExists(name: string): Promise<boolean> {
   ]);
   return output.length > 0;
 }
-
 
 /** Register a script to run as SYSTEM at every boot. */
 export async function registerStartupTask(spec: { name: string; scriptPath: string }): Promise<void> {

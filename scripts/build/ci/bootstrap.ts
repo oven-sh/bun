@@ -65,7 +65,9 @@ async function main(): Promise<void> {
   mode.dryRun = dryRun;
   const image = imageEntry(imageKey);
 
-  banner(`Bun CI image bootstrap: ${imageName(image)} (epoch ${epoch})${ci ? " [CI]" : ""}${dryRun ? " [DRY RUN]" : ""}`);
+  banner(
+    `Bun CI image bootstrap: ${imageName(image)} (epoch ${epoch})${ci ? " [CI]" : ""}${dryRun ? " [DRY RUN]" : ""}`,
+  );
   log(`spec entry: ${image.key} (${image.os} ${image.arch})`);
   log(`components (${image.components.length}): ${image.components.join(", ")}`);
   log(`repo ref for caches: ${repoRef}`);
@@ -74,13 +76,17 @@ async function main(): Promise<void> {
 
   if (image.os === "linux") {
     if (host.os !== "linux" && !dryRun) {
-      throw new Error(`Image "${image.key}" is linux but this host is ${host.os}. Use --dry-run to inspect the plan from another OS.`);
+      throw new Error(
+        `Image "${image.key}" is linux but this host is ${host.os}. Use --dry-run to inspect the plan from another OS.`,
+      );
     }
     const ctx = { image, host, ci, repoRef, artifacts: linuxArtifacts(image) };
     await runSteps(`Bootstrap ${image.key}`, [verifyHost(image, host), ...linuxSteps(image, ctx)]);
   } else {
     if (host.os !== "windows" && !dryRun) {
-      throw new Error(`Image "${image.key}" is windows but this host is ${host.os}. Use --dry-run to inspect the plan from another OS.`);
+      throw new Error(
+        `Image "${image.key}" is windows but this host is ${host.os}. Use --dry-run to inspect the plan from another OS.`,
+      );
     }
     const ctx = { image, host, ci, repoRef, artifacts: windowsArtifacts(image) };
     await runSteps(`Bootstrap ${image.key}`, [verifyHost(image, host), ...windowsSteps(image, ctx)]);

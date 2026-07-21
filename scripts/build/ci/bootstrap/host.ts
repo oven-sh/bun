@@ -74,7 +74,9 @@ function detectDistro(os: Host["os"]): { distro: string | undefined; release: st
     if (alpine !== undefined) {
       const version = alpine.trim();
       // "3.23.0" → "3.23"; "3.23_alpha..." → edge.
-      const release = version.includes("_") ? `${version.split("_")[0]}-edge` : version.split(".").slice(0, 2).join(".");
+      const release = version.includes("_")
+        ? `${version.split("_")[0]}-edge`
+        : version.split(".").slice(0, 2).join(".");
       return { distro: "alpine", release };
     }
     const osRelease = readIfExists("/etc/os-release");

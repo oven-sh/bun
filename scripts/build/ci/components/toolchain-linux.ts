@@ -16,8 +16,8 @@ import {
   shellScript,
   verify,
 } from "../bootstrap/ops-posix.ts";
-import { download, ensureLines, log, run, runOutput, scratchDir, sudo } from "../bootstrap/runtime.ts";
 import * as win from "../bootstrap/ops-windows.ts";
+import { download, ensureLines, log, run, runOutput, scratchDir, sudo } from "../bootstrap/runtime.ts";
 import type { Component } from "./component.ts";
 import { artifact } from "./component.ts";
 import { appendToProfiles } from "./environment.ts";
@@ -241,7 +241,9 @@ export const tailscale: Component = {
         skip: !ctx.ci && "not a CI image",
         run: async () => {
           // FLOATING: tailscale's install script picks the current package.
-          const script = await download(artifact(ctx.artifacts, "tailscaleInstaller"), { name: "tailscale-install.sh" });
+          const script = await download(artifact(ctx.artifacts, "tailscaleInstaller"), {
+            name: "tailscale-install.sh",
+          });
           await sudo(["sh", script]);
         },
       },

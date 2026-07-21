@@ -97,7 +97,10 @@ export const curlH3: Component = {
             await win.extractArchive({ file: tar, into: extract });
             const dest = windowsSystem32(image, "curl-h3.exe");
             await win.installFile({ from: `${extract}\\curl.exe`, to: dest });
-            await win.installFile({ from: `${extract}\\curl-ca-bundle.crt`, to: windowsSystem32(image, "curl-ca-bundle.crt") });
+            await win.installFile({
+              from: `${extract}\\curl-ca-bundle.crt`,
+              to: windowsSystem32(image, "curl-ca-bundle.crt"),
+            });
             await win.setMachineEnv("CURL_HTTP3", dest);
             await verify("curl-h3 --version runs", () => run([dest, "--version"]).then(() => undefined));
           },

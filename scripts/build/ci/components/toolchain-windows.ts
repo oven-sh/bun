@@ -6,9 +6,15 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { ccacheWindowsDownload, ccacheWindowsFolder, intelSdeDownload, opensshWindowsDownload, powershellDownload } from "../artifacts.ts";
+import {
+  ccacheWindowsDownload,
+  ccacheWindowsFolder,
+  intelSdeDownload,
+  opensshWindowsDownload,
+  powershellDownload,
+} from "../artifacts.ts";
 import * as win from "../bootstrap/ops-windows.ts";
-import { download, log, run, scratchDir, writeText } from "../bootstrap/runtime.ts";
+import { download, log, scratchDir, writeText } from "../bootstrap/runtime.ts";
 import type { Component } from "./component.ts";
 import { artifact } from "./component.ts";
 import { windowsProgramFiles, windowsSystem32 } from "./paths.ts";
@@ -102,7 +108,10 @@ Write-Output "OpenSSH server installed and configured"`,
 } catch { }
 `;
             await writeText("C:\\ProgramData\\ssh\\fetch-ssh-keys.ps1", fetchKeys);
-            await win.registerStartupTask({ name: "FetchSshKeys", scriptPath: "C:\\ProgramData\\ssh\\fetch-ssh-keys.ps1" });
+            await win.registerStartupTask({
+              name: "FetchSshKeys",
+              scriptPath: "C:\\ProgramData\\ssh\\fetch-ssh-keys.ps1",
+            });
           },
         },
       ];
@@ -137,7 +146,6 @@ export const ccache: Component = {
   },
 };
 
-
 export const pdbAddr2line: Component = {
   name: "pdb-addr2line",
   windows: {
@@ -157,7 +165,10 @@ $env:RUSTUP_HOME = ${win.psq(`${image.rust.home}\\rustup`)}
 if ($LASTEXITCODE -ne 0) { throw "cargo install pdb-addr2line failed: $LASTEXITCODE" }`,
             });
             // Also in System32 so it's always on PATH (like bun.exe).
-            await win.installFile({ from: `${cargoBin}\\pdb-addr2line.exe`, to: windowsSystem32(image, "pdb-addr2line.exe") });
+            await win.installFile({
+              from: `${cargoBin}\\pdb-addr2line.exe`,
+              to: windowsSystem32(image, "pdb-addr2line.exe"),
+            });
           },
         },
       ];
@@ -179,7 +190,14 @@ export const visualStudio: Component = {
             // 3010 = success, reboot required.
             await win.exeInstall({
               path: installer,
-              args: ["--passive", "--norestart", "--wait", "--force", "--locale en-US", ...image.visualStudio.workloadArgs],
+              args: [
+                "--passive",
+                "--norestart",
+                "--wait",
+                "--force",
+                "--locale en-US",
+                ...image.visualStudio.workloadArgs,
+              ],
               validExitCodes: [0, 3010],
             });
           },

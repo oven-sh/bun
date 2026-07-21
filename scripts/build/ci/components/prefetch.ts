@@ -11,7 +11,13 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { enableService, ensureDirectory, removePaths, setModeRecursive, setOwnerRecursive } from "../bootstrap/ops-posix.ts";
+import {
+  enableService,
+  ensureDirectory,
+  removePaths,
+  setModeRecursive,
+  setOwnerRecursive,
+} from "../bootstrap/ops-posix.ts";
 import * as win from "../bootstrap/ops-windows.ts";
 import { ensureLines, log, mode, run, scratchDir, sudo, warn, which } from "../bootstrap/runtime.ts";
 import type { Component } from "./component.ts";
@@ -49,7 +55,10 @@ export const prefetch: Component = {
             // find package.json, so run from inside the clone.
             const prefetchDir = image.paths.prefetchDir;
             await ensureDirectory(prefetchDir, { mode: "777" });
-            const prefetched = await run([bun, "scripts/prefetch-deps.ts", prefetchDir], { cwd: clone, allowFailure: true });
+            const prefetched = await run([bun, "scripts/prefetch-deps.ts", prefetchDir], {
+              cwd: clone,
+              allowFailure: true,
+            });
             if (prefetched.exitCode !== 0) {
               warn("prefetch-deps.ts failed; baking without warm download cache");
               await removePaths(prefetchDir);

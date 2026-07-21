@@ -164,7 +164,11 @@ export const cleanup: Component = {
             });
             if (image.packages.manager === "apt") {
               await sudo(["apt-get", "clean"]);
-              await shellScript({ describe: "drop apt package lists", root: true, script: "rm -rf /var/lib/apt/lists/*" });
+              await shellScript({
+                describe: "drop apt package lists",
+                root: true,
+                script: "rm -rf /var/lib/apt/lists/*",
+              });
             } else {
               await shellScript({ describe: "drop apk cache", root: true, script: "rm -rf /var/cache/apk/*" });
             }

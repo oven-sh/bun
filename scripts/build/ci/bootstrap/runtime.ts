@@ -19,7 +19,7 @@
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Download } from "../artifacts.ts";
@@ -483,7 +483,9 @@ export async function download(what: Download, options: { name?: string } = {}):
   const path = join(scratchDir, name);
   if (mode.dryRun) {
     log(`[dry-run] would download ${what.url}`);
-    log(`[dry-run]        -> ${path} (${what.sha256 ? `sha256 must be ${what.sha256}` : "no pinned checksum: FLOATING"})`);
+    log(
+      `[dry-run]        -> ${path} (${what.sha256 ? `sha256 must be ${what.sha256}` : "no pinned checksum: FLOATING"})`,
+    );
     return path;
   }
   log(`downloading ${what.url}`);

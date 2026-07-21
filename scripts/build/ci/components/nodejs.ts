@@ -8,7 +8,13 @@
 
 import { join } from "node:path";
 import { nodejsDownload, nodejsFolderName, nodejsHeadersDownload, nodejsWinLibDownload } from "../artifacts.ts";
-import { copyIntoDirectory, ensureDirectory, extractArchive, setOwnerRecursive, verify } from "../bootstrap/ops-posix.ts";
+import {
+  copyIntoDirectory,
+  ensureDirectory,
+  extractArchive,
+  setOwnerRecursive,
+  verify,
+} from "../bootstrap/ops-posix.ts";
 import * as win from "../bootstrap/ops-windows.ts";
 import { download, log, runOutput, scratchDir, writeText } from "../bootstrap/runtime.ts";
 import type { Component } from "./component.ts";

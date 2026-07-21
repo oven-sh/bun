@@ -20,9 +20,9 @@
 // construction.
 
 import type { Download } from "../artifacts.ts";
-import type { LinuxImage, WindowsImage } from "../types.ts";
 import type { Host } from "../bootstrap/host.ts";
 import type { Step } from "../bootstrap/runtime.ts";
+import type { LinuxImage, WindowsImage } from "../types.ts";
 
 /** What a linux component's steps get. */
 export type LinuxContext = {

@@ -35,9 +35,13 @@ export const ciUser: Component = {
             // Stable checkout directory so ccache is effective across jobs.
             const hooksDir = `${home}/hooks`;
             await ensureDirectory(hooksDir, { mode: "755" });
-            await writeText(`${hooksDir}/environment`, `#!/bin/sh\nset -efu\n\nexport BUILDKITE_BUILD_CHECKOUT_PATH=${home}/build\n`, {
-              mode: 0o755,
-            });
+            await writeText(
+              `${hooksDir}/environment`,
+              `#!/bin/sh\nset -efu\n\nexport BUILDKITE_BUILD_CHECKOUT_PATH=${home}/build\n`,
+              {
+                mode: 0o755,
+              },
+            );
             await setOwnerRecursive(hooksDir, `${user}:${user}`);
           },
         },

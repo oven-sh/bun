@@ -42,9 +42,7 @@ export function agentEntry(image: LinuxImage): string {
  *   windows: <home>\\node-gyp\\Cache\\<version>
  */
 export function nodeGypCache(os: "linux" | "windows", home: string, nodeVersion: string): string {
-  return os === "windows"
-    ? `${home}\\node-gyp\\Cache\\${nodeVersion}`
-    : `${home}/.cache/node-gyp/${nodeVersion}`;
+  return os === "windows" ? `${home}\\node-gyp\\Cache\\${nodeVersion}` : `${home}/.cache/node-gyp/${nodeVersion}`;
 }
 
 /** The core-dump directory the test runner reads (from the pattern). */

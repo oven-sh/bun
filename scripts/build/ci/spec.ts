@@ -54,20 +54,20 @@
 export const epoch = 1;
 
 import type {
+  AgeSpec,
   Arch,
+  BunSpec,
   CrossToolchains,
   Image,
   LinuxBuildHostImage,
   LinuxImageBase,
   LinuxPackages,
   LinuxRustSpec,
-  LinuxTestImage,
-  NodejsSpec,
-  BunSpec,
-  LlvmSpec,
-  PinnedRelease,
-  AgeSpec,
   LinuxSharedFields,
+  LinuxTestImage,
+  LlvmSpec,
+  NodejsSpec,
+  PinnedRelease,
   WindowsImage,
   WindowsImageBase,
   WindowsSharedFields,
@@ -220,7 +220,21 @@ const linuxPaths: LinuxImageBase["paths"] = {
 };
 
 const linuxSystem: LinuxImageBase["system"] = {
-  limits: ["core", "data", "fsize", "memlock", "nofile", "rss", "stack", "cpu", "nproc", "as", "locks", "sigpending", "msgqueue"],
+  limits: [
+    "core",
+    "data",
+    "fsize",
+    "memlock",
+    "nofile",
+    "rss",
+    "stack",
+    "cpu",
+    "nproc",
+    "as",
+    "locks",
+    "sigpending",
+    "msgqueue",
+  ],
   countedLimits: { nofile: 1048576, nproc: 1048576 },
   dpkgOptions: ["force-unsafe-io", "no-debsig"],
   aptOptions: [
@@ -327,7 +341,23 @@ const ubuntuPackages: LinuxPackages = {
 const alpinePackages = (arch: Arch): LinuxPackages => ({
   manager: "apk",
   // bun's own runtime needs libgcc/libstdc++ on musl.
-  common: ["bash", "ca-certificates", "curl", "htop", "gnupg", "git", "unzip", "wget", "tar", "xz", "jq", "ccache", "gdb", "libgcc", "libstdc++"],
+  common: [
+    "bash",
+    "ca-certificates",
+    "curl",
+    "htop",
+    "gnupg",
+    "git",
+    "unzip",
+    "wget",
+    "tar",
+    "xz",
+    "jq",
+    "ccache",
+    "gdb",
+    "libgcc",
+    "libstdc++",
+  ],
   buildEssentials: [
     "build-base",
     "linux-headers",
@@ -514,7 +544,6 @@ const windowsShared: WindowsSharedFields = {
     powerScheme: "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
   },
 };
-
 
 // ---------------------------------------------------------------------------
 // Component sequences (install order is data)

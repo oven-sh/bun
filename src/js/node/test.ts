@@ -514,7 +514,14 @@ async function runOneFile(
   await drainStderr;
   const exitCode = await proc.exited;
   state.childProc = null;
-  if (!state.interrupted) state.fileNode = null;
+  if (state.interrupted) {
+    // The interrupted file's verdict is replaced by runFiles' test:interrupted
+    // report; suppress the synthesized failure and per-file summary so their
+    // fileCounts bumps are not merged without a matching event.
+    addRunCounts(counts, fileCounts);
+    return;
+  }
+  state.fileNode = null;
 
   // Two failure shapes: the file died before reporting anything (top-level
   // throw — node emits a file-level test:fail and no per-file summary), or its
@@ -546,12 +553,6 @@ async function runOneFile(
 
   // node emits the file node's completion before its verdict, and a failed
   // completion carries the error too.
-  if (state.interrupted) {
-    // The interrupted file's verdict is replaced by the test:interrupted
-    // report that runFiles emits; suppress the synthesized failure.
-    addRunCounts(counts, fileCounts);
-    return;
-  }
   reporter.emitMessage("test:complete", {
     __proto__: null,
     ...fileNode,
@@ -1888,7 +1889,6 @@ class TestNode {
   onlyFlag = false;
   // The skip/todo reason string ({ skip: 'reason' }, t.skip('reason')).
   directiveMessage: string | null = null;
-  cancelled = false;
   abortController: AbortController | undefined;
   expectFailure: ExpectFailure = false;
   started = false;
@@ -2829,7 +2829,6 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   // node cancels (rather than fails) a timed-out test and aborts t.signal.
   if ((failure as { failureType?: string } | undefined)?.failureType === "testTimeoutFailure") {
-    node.cancelled = true;
     (node.abortController ??= new AbortController()).abort();
   }
 
@@ -2951,6 +2950,15 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown)
     if (suite.failedSubtests > 0 && !suite.todoFlag) {
       parent.failedSubtests++;
       parent.firstSubtestError ??= suite.firstSubtestError;
+    }
+    // Align accounting with what actually reported and settle, so the suite's
+    // test:complete/plan/verdict match the enqueue/dequeue/start its first
+    // child already emitted walking up.
+    if (runEventsEnabled()) {
+      suite.childrenCount = suite.reportedCount;
+      suite.childrenDone = suite.reportedCount;
+      if (!suite.passed) suite.childrenFailed ||= suite.failedSubtests;
+      noteSuiteCollectionSettled(suite);
     }
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
@@ -3363,8 +3371,10 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
   const isTodoSuite = node.todoFlag || hasTodoAncestor(node);
   // A failing build/before() means setup never completed; node cancels the
   // declared children (cancelledByParent) instead of running them against
-  // broken setup. Matches executeStandaloneQueue's root-hook handling.
-  let setupFailed = false;
+  // broken setup. Matches executeStandaloneQueue's root-hook handling. A sync
+  // describe throw left node.error set with build undefined (addSuite's catch),
+  // so seed from that too.
+  let setupFailed = !isTodoSuite && node.error != null;
   const { build } = entry;
   if (build !== undefined) {
     try {
@@ -3931,6 +3941,10 @@ function before(arg0: unknown, arg1: unknown) {
     owner.hooks.before.push(hook);
     return;
   }
+  // A nested describe under a {skip: ''} ancestor still reaches here (addSuite
+  // registers it as a plain describe so its body runs), but node cancels the
+  // whole subtree without running hooks.
+  if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
   const { beforeAll } = bunTest();
   beforeAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
@@ -3959,6 +3973,7 @@ function after(arg0: unknown, arg1: unknown) {
     owner.hooks.after.push(hook);
     return;
   }
+  if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
   const { afterAll } = bunTest();
   afterAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(

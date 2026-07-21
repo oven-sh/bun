@@ -1997,22 +1997,25 @@ impl TestCommand {
 
         // Compile the `-t` / `--test-name-pattern` regex now that JSC Options
         // are finalized (so e.g. BUN_JSC_dumpCompiledRegExpPatterns applies).
-        if let Some(pattern) = ctx.test_options.test_filter_pattern.as_deref() {
-            let regex = match jsc::RegularExpression::init(
-                bun_core::String::from_bytes(pattern),
-                jsc::regular_expression::Flags::None,
-            ) {
-                Ok(r) => r,
-                Err(_) => {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
-                        bun_fmt::quote(pattern),
-                    );
-                    Global::exit(1);
+        let filter_regex: Option<core::ptr::NonNull<jsc::RegularExpression>> = ctx
+            .test_options
+            .test_filter_pattern
+            .as_deref()
+            .map(|pattern| {
+                match jsc::RegularExpression::init(
+                    bun_core::String::from_bytes(pattern),
+                    jsc::regular_expression::Flags::None,
+                ) {
+                    Ok(r) => core::ptr::NonNull::new(r).unwrap(),
+                    Err(_) => {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
+                            bun_fmt::quote(pattern),
+                        );
+                        Global::exit(1);
+                    }
                 }
-            };
-            ctx.test_options.test_filter_regex = core::ptr::NonNull::new(regex.cast::<()>());
-        }
+            });
 
         let enable_random = ctx.test_options.randomize;
         let seed: u32 = if enable_random {
@@ -2089,14 +2092,7 @@ impl TestCommand {
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
                 max_concurrency: ctx.test_options.max_concurrency,
-                // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::context); cast back to a typed `NonNull` —
-                // kept raw so `matches()` can write through it without
-                // laundering shared-ref provenance.
-                filter_regex: ctx
-                    .test_options
-                    .test_filter_regex()
-                    .map(|p| p.cast::<jsc::RegularExpression>()),
+                filter_regex,
                 snapshots: Snapshots {
                     update_snapshots: ctx.test_options.update_snapshots,
                     total: 0,

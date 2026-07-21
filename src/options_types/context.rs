@@ -410,13 +410,6 @@ pub struct TestOptions {
     pub path_ignore_patterns: Vec<Box<[u8]>>,
     pub path_ignore_patterns_from_cli: bool,
     pub test_filter_pattern: Option<Box<[u8]>>,
-    /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
-    /// of `jsc/` references. Read via `test_filter_regex()`.
-    // FORWARD_DECL(b0): erased bun_jsc::RegularExpression to break the T3→T6
-    // back-edge. High tier owns construction/destruction; this field only
-    // stores the pointer. LIFETIMES.tsv says OWNED, so the high-tier setter is
-    // responsible for freeing any previous value.
-    pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
     pub max_concurrency: u32,
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
@@ -458,16 +451,6 @@ pub struct Reporters {
     pub junit: bool,
 }
 
-impl TestOptions {
-    /// Returns the erased `*mut bun_jsc::RegularExpression`. Caller (high tier)
-    /// casts back: `unsafe { &*ptr.cast::<bun_jsc::RegularExpression>() }`.
-    #[inline]
-    pub fn test_filter_regex(&self) -> Option<core::ptr::NonNull<()>> {
-        // SAFETY: erased bun_jsc::RegularExpression — see field decl.
-        self.test_filter_regex
-    }
-}
-
 impl Default for TestOptions {
     // See `ContextData::default` — folded into the single startup call site.
     #[inline(always)]
@@ -490,7 +473,6 @@ impl Default for TestOptions {
             path_ignore_patterns: Vec::new(),
             path_ignore_patterns_from_cli: false,
             test_filter_pattern: None,
-            test_filter_regex: None,
             // Under ASAN every spawned `bun` child is several-× heavier in
             // RSS and ~2× slower to start, so `describe.concurrent` test
             // files that spawn one child per test (e.g. process-stdio,

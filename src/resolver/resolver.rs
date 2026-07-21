@@ -6417,14 +6417,19 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
-                let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
-                    tsconfigpath,
-                    if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                // `fd` is the directory being scanned. For the override branch
+                // that directory is the filesystem root, not the override's
+                // parent, so openat(fd, basename(override)) would miss.
+                let dirname_fd =
+                    if FeatureFlags::STORE_FILE_DESCRIPTORS && self.opts.tsconfig_override.is_none()
+                    {
                         fd
                     } else {
                         FD::ZERO
-                    },
-                ) {
+                    };
+                let parsed_tsconfig: Option<*mut TSConfigJSON> = match self
+                    .parse_tsconfig(tsconfigpath, dirname_fd)
+                {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;

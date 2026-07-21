@@ -169,3 +169,124 @@ export function packerDownload(
     sha256: null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Resolved artifact bundles
+// ---------------------------------------------------------------------------
+//
+// resolveArtifacts(entry) is THE enumeration of everything an image bake
+// downloads: it turns an image entry's pinned versions/bases into the
+// concrete {url, sha256} pairs. Two consumers, one object:
+//   - naming.ts hashes the bundle alongside the entry, so a change to a
+//     URL template HERE changes the image hash and re-bakes — not just a
+//     version bump in spec.ts.
+//   - the bootstrap steps read their downloads FROM the bundle, so what is
+//     hashed and what is fetched are the same value by construction.
+// A download an image performs that is not listed here is a bug.
+
+import type { LinuxImage, WindowsImage } from "./types.ts";
+
+/** Everything a linux image bake fetches. Cross-toolchain artifacts exist
+ * only on the build host bundle. */
+export type LinuxArtifacts = {
+  nodejs: Download;
+  nodejsHeaders: Download;
+  bun: Download;
+  cmake: Download;
+  curlH3: Download;
+  buildkiteAgent: Download;
+  age: Download;
+  pythonFuse: Download;
+  llvmScript: Download;
+  dockerInstaller: Download;
+  tailscaleInstaller: Download;
+  rustup: Download;
+  chromeDeb: Download | null;
+  cross: {
+    xwin: Download;
+    androidNdk: Download;
+    freebsdBase: { amd64: Download; arm64: Download };
+    gcc13FocalDebs: { amd64: Download; arm64: Download };
+    /** Ubuntu focal Packages indexes per sysroot arch, in dist order. */
+    ubuntuPackagesGz: { x86_64: Download[]; aarch64: Download[] };
+    /** xmac.mjs is fetched from the bootstrapping ref at bake time; the
+     * base is the hashed part, `{ref}` is substituted then. */
+    xmacRawTemplate: string;
+  } | null;
+};
+
+/** Everything a windows image bake fetches. */
+export type WindowsArtifacts = {
+  nodejs: Download;
+  nodejsHeaders: Download;
+  nodejsWinLib: Download;
+  bun: Download;
+  curlH3: Download;
+  buildkiteAgent: Download;
+  powershell: Download;
+  openssh: Download;
+  ccache: Download;
+  scoopInstaller: Download;
+  rustupInit: Download;
+  visualStudio: Download;
+  intelSde: Download | null;
+};
+
+export type ImageArtifacts = LinuxArtifacts | WindowsArtifacts;
+
+export function resolveLinuxArtifacts(image: LinuxImage): LinuxArtifacts {
+  let cross: LinuxArtifacts["cross"] = null;
+  if (image.buildHost) {
+    const c = image.crossToolchains;
+    cross = {
+      xwin: xwinDownload(c, image.arch),
+      androidNdk: androidNdkDownload(c),
+      freebsdBase: { amd64: freebsdBaseDownload(c, "amd64"), arm64: freebsdBaseDownload(c, "arm64") },
+      gcc13FocalDebs: { amd64: gcc13FocalDebsDownload(c, "amd64"), arm64: gcc13FocalDebsDownload(c, "arm64") },
+      ubuntuPackagesGz: {
+        x86_64: c.glibcSysroot.dists.map(dist => ({ url: ubuntuPackagesGzUrl(c, "x86_64", dist), sha256: null })),
+        aarch64: c.glibcSysroot.dists.map(dist => ({ url: ubuntuPackagesGzUrl(c, "aarch64", dist), sha256: null })),
+      },
+      xmacRawTemplate: `${c.macosSdk.xmacRawBase}/{ref}/scripts/build/xmac.mjs`,
+    };
+  }
+  return {
+    nodejs: nodejsDownload(image.nodejs, "linux", image.arch, image.abi),
+    nodejsHeaders: nodejsHeadersDownload(image.nodejs),
+    bun: bunDownload(image.bun, "linux", image.arch, image.abi),
+    cmake: cmakeDownload(image.cmake, image.arch),
+    curlH3: curlH3Download(image.curlH3, "linux", image.arch, image.abi),
+    buildkiteAgent: buildkiteAgentDownload(image.buildkiteAgent, "linux", image.arch),
+    age: ageDownload(image.age, "linux", image.arch),
+    pythonFuse: pythonFuseDownload(image.pythonFuse),
+    llvmScript: { url: image.llvm.aptScriptUrl, sha256: null },
+    dockerInstaller: { url: image.dockerInstallUrl, sha256: null },
+    tailscaleInstaller: { url: image.tailscaleInstallUrl, sha256: null },
+    rustup: { url: image.rust.rustupUrl, sha256: null },
+    chromeDeb: image.arch === "x64" && image.chromeDebUrl ? { url: image.chromeDebUrl, sha256: null } : null,
+    cross,
+  };
+}
+
+export function resolveWindowsArtifacts(image: WindowsImage): WindowsArtifacts {
+  return {
+    nodejs: nodejsDownload(image.nodejs, "windows", image.arch, null),
+    nodejsHeaders: nodejsHeadersDownload(image.nodejs),
+    nodejsWinLib: nodejsWinLibDownload(image.nodejs, image.arch),
+    bun: bunDownload(image.bun, "windows", image.arch, null),
+    curlH3: curlH3Download(image.curlH3, "windows", image.arch, null),
+    buildkiteAgent: buildkiteAgentDownload(image.buildkiteAgent, "windows", image.arch),
+    powershell: powershellDownload(image.powershell, image.arch),
+    openssh: opensshWindowsDownload(image.openssh, image.arch),
+    ccache: ccacheWindowsDownload(image.ccache, image.arch),
+    scoopInstaller: { url: image.scoop.installUrl, sha256: null },
+    rustupInit: { url: image.rust.rustupUrl, sha256: null },
+    visualStudio: { url: image.visualStudio.bootstrapperUrl, sha256: null },
+    intelSde: image.arch === "x64" ? intelSdeDownload(image.intelSde) : null,
+  };
+}
+
+/** The resolved download bundle for any image entry. */
+export function resolveArtifacts(image: LinuxImage | WindowsImage): ImageArtifacts {
+  return image.os === "linux" ? resolveLinuxArtifacts(image) : resolveWindowsArtifacts(image);
+}

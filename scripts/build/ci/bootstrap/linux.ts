@@ -10,23 +10,8 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import {
-  ageDownload,
-  androidNdkDownload,
-  buildkiteAgentDownload,
-  bunDownload,
-  bunTriplet,
-  cmakeDownload,
-  curlH3Download,
-  freebsdBaseDownload,
-  gcc13FocalDebsDownload,
-  nodejsDownload,
-  nodejsFolderName,
-  nodejsHeadersDownload,
-  pythonFuseDownload,
-  ubuntuPackagesGzUrl,
-  xwinDownload,
-} from "../artifacts.ts";
+import type { LinuxArtifacts } from "../artifacts.ts";
+import { bunTriplet, nodejsFolderName } from "../artifacts.ts";
 import type { CrossToolchains, LinuxImage } from "../types.ts";
 import type { Host } from "./host.ts";
 import {
@@ -62,6 +47,9 @@ export type LinuxContext = {
   ci: boolean;
   /** Ref of the repo to clone for the prefetch caches. */
   repoRef: string;
+  /** The resolved download bundle for this image — the same object the
+   * image hash covers, so what is fetched and what is hashed can't diverge. */
+  artifacts: LinuxArtifacts;
 };
 
 const BIN = "/usr/local/bin";
@@ -187,7 +175,7 @@ export function nodejsSteps(ctx: LinuxContext): Step[] {
       run: async () => {
         // Extract the pinned release and lay bin/, lib/, include/, share/
         // over /usr/local (npm/npx symlinks into ../lib/node_modules).
-        const tarball = await download(nodejsDownload(nodejs, "linux", image.arch, image.abi));
+        const tarball = await download(ctx.artifacts.nodejs);
         await extractArchive({ file: tarball, into: scratchDir });
         const extracted = join(scratchDir, nodejsFolderName(nodejs, "linux", image.arch, image.abi));
         for (const dir of ["bin", "lib", "include", "share"]) {
@@ -203,7 +191,7 @@ export function nodejsSteps(ctx: LinuxContext): Step[] {
       name: `Pre-seed Node.js ${nodejs.version} headers for node-gyp`,
       run: async () => {
         // So node-gyp never downloads headers at test time.
-        const tarball = await download(nodejsHeadersDownload(nodejs));
+        const tarball = await download(ctx.artifacts.nodejsHeaders);
         await extractArchive({ file: tarball, into: scratchDir });
         const extracted = join(scratchDir, `node-v${nodejs.version}`);
         await copyIntoDirectory(join(extracted, "include"), "/usr/local/include");
@@ -218,7 +206,7 @@ export function nodejsSteps(ctx: LinuxContext): Step[] {
     {
       name: `Install Bun ${image.bun.version}`,
       run: async () => {
-        const zip = await download(bunDownload(image.bun, "linux", image.arch, image.abi));
+        const zip = await download(ctx.artifacts.bun);
         await extractArchive({ file: zip, into: scratchDir });
         const triplet = bunTriplet("linux", image.arch, image.abi);
         await installFile({ from: join(scratchDir, triplet, "bun"), to: `${BIN}/bun`, mode: "755" });
@@ -234,7 +222,7 @@ export function nodejsSteps(ctx: LinuxContext): Step[] {
         // Static curl with nghttp3/ngtcp2, kept separate from the system
         // curl so nothing else changes behavior. Tests find it via
         // $CURL_HTTP3, then `curl-h3` in PATH.
-        const tarball = await download(curlH3Download(image.curlH3, "linux", image.arch, image.abi));
+        const tarball = await download(ctx.artifacts.curlH3);
         await extractArchive({ file: tarball, into: scratchDir, members: ["curl"] });
         await installFile({ from: join(scratchDir, "curl"), to: `${BIN}/curl-h3`, mode: "755" });
         await appendToProfiles(ctx, [`export CURL_HTTP3=${BIN}/curl-h3`]);
@@ -244,7 +232,7 @@ export function nodejsSteps(ctx: LinuxContext): Step[] {
     {
       name: `Install age ${image.age.version}`,
       run: async () => {
-        const tarball = await download(ageDownload(image.age, "linux", image.arch));
+        const tarball = await download(ctx.artifacts.age);
         await extractArchive({ file: tarball, into: scratchDir, members: ["age/age"] });
         await installFile({ from: join(scratchDir, "age", "age"), to: `${BIN}/age`, mode: "755" });
       },
@@ -255,7 +243,7 @@ export function nodejsSteps(ctx: LinuxContext): Step[] {
       run: async () => {
         // alpine has no wheel: build/install from source, and load the fuse
         // kernel module on boot.
-        const tarball = await download(pythonFuseDownload(image.pythonFuse));
+        const tarball = await download(ctx.artifacts.pythonFuse);
         await extractArchive({ file: tarball, into: scratchDir });
         const src = join(scratchDir, `python-fuse-${image.pythonFuse.version}`);
         await run(["python", "setup.py", "build"], { cwd: src });
@@ -290,7 +278,7 @@ export function toolchainSteps(ctx: LinuxContext): Step[] {
       name: `Install CMake ${image.cmake.version}`,
       skip: image.packages.manager === "apk" && "cmake is an apk package on alpine",
       run: async () => {
-        const installer = await download(cmakeDownload(image.cmake, image.arch));
+        const installer = await download(ctx.artifacts.cmake);
         await sudo(["sh", installer, "--skip-license", "--prefix=/usr"]);
         await verify("cmake --version runs", () => run(["cmake", "--version"]).then(() => undefined));
       },
@@ -312,7 +300,7 @@ export function toolchainSteps(ctx: LinuxContext): Step[] {
                 `/usr/share/apt/default-sequoia.config > /etc/crypto-policies/back-ends/apt-sequoia.config`,
             });
           }
-          const script = await download({ url: "https://apt.llvm.org/llvm.sh", sha256: null });
+          const script = await download(ctx.artifacts.llvmScript, { name: "llvm.sh" });
           await sudo(["bash", script, `${llvm.major}`, "all"], { env: { DEBIAN_FRONTEND: "noninteractive" } });
           // llvm-symbolizer for ASAN.
           await installPackages(ctx, [`llvm-${llvm.major}-tools`]);
@@ -334,7 +322,7 @@ export function toolchainSteps(ctx: LinuxContext): Step[] {
         const { rust } = image;
         const env = { RUSTUP_HOME: rust.home, CARGO_HOME: rust.home };
         await ensureDirectory(rust.home);
-        const installer = await download({ url: rust.rustupUrl, sha256: null }, { name: "rustup-init.sh" });
+        const installer = await download(ctx.artifacts.rustup, { name: "rustup-init.sh" });
         await sudo(["sh", installer, "-y", "--no-modify-path"], { env });
         await appendToProfiles(ctx, [
           `export RUSTUP_HOME=${rust.home}`,
@@ -357,7 +345,7 @@ export function toolchainSteps(ctx: LinuxContext): Step[] {
           // docker + compose come from the apk package list.
           await enableService("docker", { start: true });
         } else {
-          const script = await download({ url: "https://get.docker.com", sha256: null }, { name: "get-docker.sh" });
+          const script = await download(ctx.artifacts.dockerInstaller, { name: "get-docker.sh" });
           await sudo(["sh", script]);
           await enableService("docker", { start: false });
         }
@@ -370,7 +358,7 @@ export function toolchainSteps(ctx: LinuxContext): Step[] {
       skip: !ctx.ci && "not a CI image",
       run: async () => {
         // FLOATING: tailscale's install script picks the current package.
-        const script = await download({ url: "https://tailscale.com/install.sh", sha256: null }, { name: "tailscale-install.sh" });
+        const script = await download(ctx.artifacts.tailscaleInstaller, { name: "tailscale-install.sh" });
         await sudo(["sh", script]);
       },
     },
@@ -380,7 +368,7 @@ export function toolchainSteps(ctx: LinuxContext): Step[] {
 /** Chromium runtime for puppeteer-based tests (+ Chrome itself on x64). */
 export function browserSteps(ctx: LinuxContext): Step[] {
   const { image } = ctx;
-  const chromeDebUrl = image.arch === "x64" ? image.chromeDebUrl : null;
+  const chromeDeb = ctx.artifacts.chromeDeb;
   return [
     {
       name: "Install Chromium test dependencies",
@@ -388,10 +376,10 @@ export function browserSteps(ctx: LinuxContext): Step[] {
     },
     {
       name: "Install Google Chrome (system browser skips per-run Chrome-for-Testing download)",
-      skip: !chromeDebUrl && "no Chrome .deb build for this image (x64 apt only)",
+      skip: !chromeDeb && "no Chrome .deb build for this image (x64 apt only)",
       run: async () => {
         // Best-effort: a Chrome install hiccup shouldn't fail the bake.
-        const deb = await download({ url: chromeDebUrl!, sha256: null }, { name: "google-chrome.deb" });
+        const deb = await download(chromeDeb!, { name: "google-chrome.deb" });
         const result = await shellScript({
           describe: "install the Chrome .deb, letting apt resolve deps and falling back to dpkg",
           root: true,
@@ -412,6 +400,7 @@ export function crossToolchainSteps(ctx: LinuxContext): Step[] {
   const { image } = ctx;
   if (!image.buildHost) return [];
   const cross = image.crossToolchains;
+  const dl = ctx.artifacts.cross!;
   return [
     {
       name: "Install cross binutils + amd64 compiler-rt",
@@ -434,11 +423,11 @@ export function crossToolchainSteps(ctx: LinuxContext): Step[] {
     },
     {
       name: `Install FreeBSD ${cross.freebsdSysroot.version} sysroots (amd64, arm64)`,
-      run: () => installFreebsdSysroot(cross),
+      run: () => installFreebsdSysroot(cross, dl),
     },
     {
       name: `Install linux-gnu sysroots (ubuntu 20.04 / glibc ${cross.glibcSysroot.glibcVersion} + gcc-13)`,
-      run: () => installGlibcSysroot(cross),
+      run: () => installGlibcSysroot(cross, dl),
     },
     {
       name: `Install linux-musl sysroots (alpine ${cross.muslSysroot.alpineRelease})`,
@@ -446,7 +435,7 @@ export function crossToolchainSteps(ctx: LinuxContext): Step[] {
     },
     {
       name: `Install Windows sysroot (xwin ${cross.winSysroot.xwinVersion}: SDK ${cross.winSysroot.sdkVersion}, CRT ${cross.winSysroot.crtVersion})`,
-      run: () => installWindowsSysroot(image.arch, cross),
+      run: () => installWindowsSysroot(cross, dl),
     },
     {
       name: `Install macOS ${cross.macosSdk.version} SDK`,
@@ -460,7 +449,7 @@ async function installAndroidNdk(ctx: LinuxContext, cross: CrossToolchains): Pro
   if (existsSync(ndk.path)) {
     log(`${ndk.path} already exists; reusing`);
   } else {
-    const zip = await download(androidNdkDownload(cross));
+    const zip = await download(ctx.artifacts.cross!.androidNdk);
     await extractArchive({ file: zip, into: "/opt", root: true });
     await moveFile(`/opt/android-ndk-${ndk.version}`, ndk.path);
     // Trim ~1.1GB we don't use (NDK's own clang/lld, lldb, non-android
@@ -504,7 +493,7 @@ done`,
   });
 }
 
-async function installFreebsdSysroot(cross: CrossToolchains): Promise<void> {
+async function installFreebsdSysroot(cross: CrossToolchains, dl: NonNullable<LinuxArtifacts["cross"]>): Promise<void> {
   for (const fbsdArch of ["amd64", "arm64"] as const) {
     const sysroot = cross.freebsdSysroot.paths[fbsdArch];
     // Same sentinel detectFreebsdSysroot() uses, plus a /lib file so a
@@ -515,14 +504,14 @@ async function installFreebsdSysroot(cross: CrossToolchains): Promise<void> {
     }
     await removePaths(sysroot);
     await ensureDirectory(sysroot);
-    const baseTxz = await download(freebsdBaseDownload(cross, fbsdArch), { name: `freebsd-${fbsdArch}-base.txz` });
+    const baseTxz = await download(dl.freebsdBase[fbsdArch], { name: `freebsd-${fbsdArch}-base.txz` });
     await extractArchive({ file: baseTxz, into: sysroot, members: ["./usr/include", "./usr/lib", "./lib"], root: true });
   }
   // No FREEBSD_SYSROOT export — detectFreebsdSysroot() picks the
   // arch-appropriate path by well-known location.
 }
 
-async function installGlibcSysroot(cross: CrossToolchains): Promise<void> {
+async function installGlibcSysroot(cross: CrossToolchains, dl: NonNullable<LinuxArtifacts["cross"]>): Promise<void> {
   const g = cross.glibcSysroot;
   for (const srArch of ["x86_64", "aarch64"] as const) {
     const sysroot = g.paths[srArch];
@@ -537,11 +526,10 @@ async function installGlibcSysroot(cross: CrossToolchains): Promise<void> {
     // Inputs fetched up front (logged, checksummed where pinned); the
     // assembly below is one script because each stage feeds the next.
     const packagesFiles: string[] = [];
-    for (const dist of g.dists) {
-      const url = ubuntuPackagesGzUrl(cross, srArch, dist);
-      packagesFiles.push(await download({ url, sha256: null }, { name: `Packages-${srArch}-${dist}.gz` }));
+    for (const [i, pkgIndex] of dl.ubuntuPackagesGz[srArch].entries()) {
+      packagesFiles.push(await download(pkgIndex, { name: `Packages-${srArch}-${i}.gz` }));
     }
-    const gcc13 = await download(gcc13FocalDebsDownload(cross, debArch));
+    const gcc13 = await download(dl.gcc13FocalDebs[debArch]);
     const lib64 =
       srArch === "x86_64"
         ? `if [ ! -e '${sysroot}/lib64' ]; then ln -sfn 'usr/lib/${triple}' '${sysroot}/lib64'; fi`
@@ -637,7 +625,7 @@ rm -rf "$tmp"`,
   // arch-appropriate path by well-known location.
 }
 
-async function installWindowsSysroot(hostArch: LinuxImage["arch"], cross: CrossToolchains): Promise<void> {
+async function installWindowsSysroot(cross: CrossToolchains, dl: NonNullable<LinuxArtifacts["cross"]>): Promise<void> {
   const w = cross.winSysroot;
   const sysroot = w.path;
   // MSVC CRT/STL + Windows SDK splat for --os=windows cross-compiles, laid
@@ -650,7 +638,7 @@ async function installWindowsSysroot(hostArch: LinuxImage["arch"], cross: CrossT
     log(`${sysroot} already complete; reusing`);
     return;
   }
-  const tarball = await download(xwinDownload(cross, hostArch));
+  const tarball = await download(dl.xwin);
   const xwinDir = join(scratchDir, "xwin");
   await extractArchive({ file: tarball, into: xwinDir, stripComponents: 1 });
   await removePaths(sysroot, `${sysroot}.cache`);
@@ -703,7 +691,7 @@ async function installMacosSdk(ctx: LinuxContext, cross: CrossToolchains): Promi
     return;
   }
   const xmac = await download(
-    { url: `https://raw.githubusercontent.com/oven-sh/bun/${ctx.repoRef}/scripts/build/xmac.mjs`, sha256: null },
+    { url: ctx.artifacts.cross!.xmacRawTemplate.replace("{ref}", ctx.repoRef), sha256: null },
     { name: "xmac.mjs" },
   );
   const staging = join(scratchDir, "macos-sdk");
@@ -771,7 +759,7 @@ export function ciSteps(ctx: LinuxContext): Step[] {
       name: `Install buildkite-agent ${image.buildkiteAgent.version}`,
       skip: !ci && "not a CI image",
       run: async () => {
-        const tarball = await download(buildkiteAgentDownload(image.buildkiteAgent, "linux", image.arch));
+        const tarball = await download(ctx.artifacts.buildkiteAgent);
         await extractArchive({ file: tarball, into: scratchDir, members: ["buildkite-agent"] });
         await installFile({ from: join(scratchDir, "buildkite-agent"), to: `${BIN}/buildkite-agent`, mode: "755" });
         await verify("buildkite-agent --version runs", () => run([`${BIN}/buildkite-agent`, "--version"]).then(() => undefined));

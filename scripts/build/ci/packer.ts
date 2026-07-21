@@ -14,7 +14,7 @@
 //
 // Packer accepts JSON templates natively (packer build template.pkr.json).
 
-import { nodejsDownload } from "./artifacts.ts";
+import { nodejsDownload, nodejsFolderName } from "./artifacts.ts";
 import type { WindowsImage } from "./types.ts";
 
 export type PackerTemplateInput = {
@@ -42,10 +42,11 @@ export type PackerTemplateInput = {
   };
 };
 
-/** Where the bootstrap sources land on the bake VM. */
+/** Where the bootstrap sources land on the bake VM (deleted by sysprep). */
 const REMOTE_BOOTSTRAP_DIR = "C:\\bun-bootstrap";
-const REMOTE_NODE_DIR = "C:\\bun-bootstrap\\node";
-const REMOTE_AGENT_PATH = "C:\\buildkite-agent\\agent.mjs";
+/** The pinned node is unpacked inside the bootstrap dir so one cleanup
+ * removes both. */
+const REMOTE_NODE_DIR = `${REMOTE_BOOTSTRAP_DIR}\\node`;
 
 /**
  * The complete Packer JSON template for one Windows image bake.
@@ -55,7 +56,7 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
   const { image, imageName, repoRef, bootstrapDir, agentPath, azure } = input;
   const { gallery } = image;
   const node = nodejsDownload(image.nodejs, "windows", image.arch, null);
-  const nodeFolder = `node-v${image.nodejs.version}-win-${image.arch === "aarch64" ? "arm64" : "x64"}`;
+  const nodeFolder = nodejsFolderName(image.nodejs, "windows", image.arch, null);
 
   const source: Record<string, unknown> = {
     client_id: azure.clientId,
@@ -159,15 +160,16 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
           inline: [`Write-Output '>>> Running bootstrap: ${bootstrapCommand.replace(/'/g, "''")}'`, bootstrapCommand],
           valid_exit_codes: [0, 3010],
         },
-        // Step 4: upload the bundled agent and install it as an nssm service.
+        // Step 4: upload the bundled agent to its spec path and install it as
+        // an nssm service (agent.mjs `install` registers itself).
         {
           type: "file",
           source: agentPath,
-          destination: REMOTE_AGENT_PATH,
+          destination: image.paths.buildkiteAgentPath,
         },
         {
           type: "powershell",
-          inline: [`${image.paths.node} ${REMOTE_AGENT_PATH} install`],
+          inline: [`${image.paths.node} ${image.paths.buildkiteAgentPath} install`],
           valid_exit_codes: [0],
         },
         // Step 5: reboot to clear pending updates (VS Build Tools, Windows
@@ -176,49 +178,44 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
           type: "windows-restart",
           restart_timeout: "10m",
         },
+        // Sysprep sequence, inline as the final provisioner. Clears the
+        // pending-reboot markers that make sysprep bail, waits for the Azure
+        // guest agents (sysprep needs them running), then generalizes and
+        // polls until the image state confirms the reseal — with a timeout
+        // that dumps the sysprep log instead of hanging the bake.
         {
           type: "powershell",
-          inline: sysprepScript(),
+          inline: [
+            `Remove-Item -Recurse -Force ${REMOTE_BOOTSTRAP_DIR} -ErrorAction SilentlyContinue`,
+            "Remove-Item -Recurse -Force C:\\Windows\\Panther -ErrorAction SilentlyContinue",
+            "Write-Output '>>> Clearing pending reboot flags...'",
+            "Remove-Item 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending' -Recurse -Force -ErrorAction SilentlyContinue",
+            "Remove-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update' -Name 'RebootRequired' -Force -ErrorAction SilentlyContinue",
+            "Remove-Item 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired' -Recurse -Force -ErrorAction SilentlyContinue",
+            "Remove-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' -Name 'PendingFileRenameOperations' -Force -ErrorAction SilentlyContinue",
+            "Write-Output '>>> Waiting for Azure Guest Agent...'",
+            "while ((Get-Service RdAgent).Status -ne 'Running') { Start-Sleep -s 5 }",
+            "while ((Get-Service WindowsAzureGuestAgent).Status -ne 'Running') { Start-Sleep -s 5 }",
+            "Write-Output '>>> Running Sysprep...'",
+            "$global:LASTEXITCODE = 0",
+            "& $env:SystemRoot\\System32\\Sysprep\\Sysprep.exe /oobe /generalize /quiet /quit /mode:vm",
+            "$timeout = 300; $elapsed = 0",
+            "while ($true) {",
+            "  $imageState = (Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State).ImageState",
+            '  Write-Output "ImageState: $imageState ($($elapsed)s)"',
+            "  if ($imageState -eq 'IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE') { break }",
+            "  if ($elapsed -ge $timeout) {",
+            '    Write-Error "Timed out after $($timeout)s -- stuck at $imageState"',
+            '    Get-Content "$env:SystemRoot\\System32\\Sysprep\\Panther\\setupact.log" -Tail 100 -ErrorAction SilentlyContinue',
+            "    exit 1",
+            "  }",
+            "  Start-Sleep -s 10",
+            "  $elapsed += 10",
+            "}",
+            "Write-Output '>>> Sysprep complete.'",
+          ],
         },
       ],
     },
   };
-}
-
-/**
- * Sysprep sequence. Clears pending-reboot markers that make sysprep bail,
- * waits for the Azure guest agents (sysprep needs them running), then
- * generalizes and polls until the image state confirms the reseal — with a
- * timeout that dumps the sysprep log instead of hanging the bake.
- */
-function sysprepScript(): string[] {
-  return [
-    "Remove-Item -Recurse -Force C:\\bun-bootstrap -ErrorAction SilentlyContinue",
-    "Remove-Item -Recurse -Force C:\\Windows\\Panther -ErrorAction SilentlyContinue",
-    "Write-Output '>>> Clearing pending reboot flags...'",
-    "Remove-Item 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending' -Recurse -Force -ErrorAction SilentlyContinue",
-    "Remove-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update' -Name 'RebootRequired' -Force -ErrorAction SilentlyContinue",
-    "Remove-Item 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired' -Recurse -Force -ErrorAction SilentlyContinue",
-    "Remove-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' -Name 'PendingFileRenameOperations' -Force -ErrorAction SilentlyContinue",
-    "Write-Output '>>> Waiting for Azure Guest Agent...'",
-    "while ((Get-Service RdAgent).Status -ne 'Running') { Start-Sleep -s 5 }",
-    "while ((Get-Service WindowsAzureGuestAgent).Status -ne 'Running') { Start-Sleep -s 5 }",
-    "Write-Output '>>> Running Sysprep...'",
-    "$global:LASTEXITCODE = 0",
-    "& $env:SystemRoot\\System32\\Sysprep\\Sysprep.exe /oobe /generalize /quiet /quit /mode:vm",
-    "$timeout = 300; $elapsed = 0",
-    "while ($true) {",
-    "  $imageState = (Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State).ImageState",
-    '  Write-Output "ImageState: $imageState ($($elapsed)s)"',
-    "  if ($imageState -eq 'IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE') { break }",
-    "  if ($elapsed -ge $timeout) {",
-    '    Write-Error "Timed out after $($timeout)s -- stuck at $imageState"',
-    '    Get-Content "$env:SystemRoot\\System32\\Sysprep\\Panther\\setupact.log" -Tail 100 -ErrorAction SilentlyContinue',
-    "    exit 1",
-    "  }",
-    "  Start-Sleep -s 10",
-    "  $elapsed += 10",
-    "}",
-    "Write-Output '>>> Sysprep complete.'",
-  ];
 }

@@ -36,6 +36,9 @@ export type BunSpec = {
 export type LlvmSpec = {
   readonly version: string;
   readonly major: number;
+  /** apt.llvm.org's llvm.sh installs `major` from their repository
+   * (FLOATING: serves the current point release, currently `version`). */
+  readonly aptScriptUrl: string;
 };
 
 export type PinnedRelease = {
@@ -99,6 +102,9 @@ export type CrossToolchains = {
     /** The Command Line Tools release whose package contains `version`. */
     readonly cltRelease: string;
     readonly path: string;
+    /** raw.githubusercontent base the vendored xmac.mjs is fetched from
+     * (per bootstrapping ref) so bake and build share the Apple-CDN path. */
+    readonly xmacRawBase: string;
   };
   readonly androidNdk: {
     readonly version: string;
@@ -164,6 +170,9 @@ export type LinuxImageBase = {
   readonly pythonFuse: PinnedRelease;
   readonly rust: LinuxRustSpec;
   readonly packages: LinuxPackages;
+  /** FLOATING installer scripts (fetched, run, unverifiable by design). */
+  readonly dockerInstallUrl: string;
+  readonly tailscaleInstallUrl: string;
   readonly paths: {
     readonly buildkiteUser: string;
     readonly buildkiteHome: string;

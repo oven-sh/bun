@@ -93,6 +93,7 @@ export const bun: BunSpec = {
 export const llvm: LlvmSpec = {
   version: "21.1.8",
   major: 21,
+  aptScriptUrl: "https://apt.llvm.org/llvm.sh",
 };
 
 export const cmake: PinnedRelease = {
@@ -168,6 +169,7 @@ const crossToolchains: CrossToolchains = {
     version: "26.5",
     cltRelease: "26.5",
     path: "/opt/macos-sdk",
+    xmacRawBase: "https://raw.githubusercontent.com/oven-sh/bun",
   },
   androidNdk: {
     version: "r27c",
@@ -383,6 +385,9 @@ const linuxShared = {
   rust: linuxRust,
   paths: linuxPaths,
   system: linuxSystem,
+  // FLOATING installer scripts.
+  dockerInstallUrl: "https://get.docker.com",
+  tailscaleInstallUrl: "https://tailscale.com/install.sh",
 };
 
 // FLOATING: Google's current stable Chrome deb (x64 only; no arm64 build).

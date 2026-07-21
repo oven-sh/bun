@@ -11,18 +11,8 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import {
-  bunDownload,
-  buildkiteAgentDownload,
-  ccacheWindowsDownload,
-  ccacheWindowsFolder,
-  curlH3Download,
-  intelSdeDownload,
-  nodejsHeadersDownload,
-  nodejsWinLibDownload,
-  opensshWindowsDownload,
-  powershellDownload,
-} from "../artifacts.ts";
+import type { WindowsArtifacts } from "../artifacts.ts";
+import { ccacheWindowsFolder } from "../artifacts.ts";
 import type { WindowsImage } from "../types.ts";
 import type { Host } from "./host.ts";
 import {
@@ -58,6 +48,9 @@ export type WindowsContext = {
   host: Host;
   ci: boolean;
   repoRef: string;
+  /** The resolved download bundle for this image — the same object the
+   * image hash covers, so what is fetched and what is hashed can't diverge. */
+  artifacts: WindowsArtifacts;
 };
 
 const SYSTEM32 = "C:\\Windows\\System32";
@@ -103,7 +96,7 @@ powercfg /change hibernate-timeout-dc 0`,
           log("pwsh already installed");
           return;
         }
-        const msi = await download(powershellDownload(image.powershell, image.arch), { name: "pwsh.msi" });
+        const msi = await download(ctx.artifacts.powershell, { name: "pwsh.msi" });
         await msiInstall({ path: msi, extraArgs: ["ADD_PATH=1"], validExitCodes: [0, 3010] });
       },
     },
@@ -114,7 +107,7 @@ powercfg /change hibernate-timeout-dc 0`,
     {
       name: `Install Bun ${image.bun.version}`,
       run: async () => {
-        const zip = await download(bunDownload(image.bun, "windows", image.arch, null), { name: "bun.zip" });
+        const zip = await download(ctx.artifacts.bun, { name: "bun.zip" });
         const extract = join(scratchDir, "bun-extract");
         await extractArchive({ file: zip, into: extract });
         // System32 so it survives Sysprep (user-profile PATH is lost).
@@ -129,7 +122,7 @@ powercfg /change hibernate-timeout-dc 0`,
       run: async () => {
         // The bundled System32 curl.exe has no HTTP/3. Tests find this one
         // via $env:CURL_HTTP3, then `curl-h3` in PATH.
-        const tar = await download(curlH3Download(image.curlH3, "windows", image.arch, null), { name: "curl-h3.tar.xz" });
+        const tar = await download(ctx.artifacts.curlH3, { name: "curl-h3.tar.xz" });
         const extract = join(scratchDir, "curl-h3");
         await extractArchive({ file: tar, into: extract });
         await installFile({ from: `${extract}\\curl.exe`, to: `${SYSTEM32}\\curl-h3.exe` });
@@ -145,7 +138,7 @@ powercfg /change hibernate-timeout-dc 0`,
           log("ccache already installed");
           return;
         }
-        const zip = await download(ccacheWindowsDownload(image.ccache, image.arch), { name: "ccache.zip" });
+        const zip = await download(ctx.artifacts.ccache, { name: "ccache.zip" });
         const extract = join(scratchDir, "ccache-extract");
         await extractArchive({ file: zip, into: extract });
         const installDir = "C:\\Program Files\\ccache";
@@ -162,7 +155,7 @@ powercfg /change hibernate-timeout-dc 0`,
         }
         const home = image.rust.home;
         await ensureDirectory(home);
-        const init = await download({ url: image.rust.rustupUrl, sha256: null }, { name: "rustup-init.exe" });
+        const init = await download(ctx.artifacts.rustupInit, { name: "rustup-init.exe" });
         // Install paths must be set in the SAME process that runs rustup so
         // it installs directly under Program Files (not SYSTEM's profile).
         await powershellScript({
@@ -196,7 +189,7 @@ if ($LASTEXITCODE -ne 0) { throw "cargo install pdb-addr2line failed: $LASTEXITC
     {
       name: "Install Visual Studio Build Tools (NativeDesktop workload)",
       run: async () => {
-        const installer = await download({ url: image.visualStudio.bootstrapperUrl, sha256: null }, { name: "vs_installer.exe" });
+        const installer = await download(ctx.artifacts.visualStudio, { name: "vs_installer.exe" });
         // 3010 = success, reboot required.
         await exeInstall({
           path: installer,
@@ -255,10 +248,10 @@ function scoopSteps(ctx: WindowsContext): Step {
       // location so all users (incl. the agent service) see it. Its
       // installer is fetched and invoked by its own protocol — a script.
       await powershellScript({
-        describe: `install Scoop into ${image.scoop.root} via its self-installer (${image.scoop.installUrl})`,
+        describe: `install Scoop into ${image.scoop.root} via its self-installer (${ctx.artifacts.scoopInstaller.url})`,
         script: `$env:SCOOP = ${quote(image.scoop.root)}
 [Environment]::SetEnvironmentVariable('SCOOP', $env:SCOOP, 'Machine')
-iex "& {$(irm ${image.scoop.installUrl})} -RunAsAdmin -ScoopDir ${image.scoop.root}"
+iex "& {$(irm ${ctx.artifacts.scoopInstaller.url})} -RunAsAdmin -ScoopDir ${image.scoop.root}"
 scoop --version`,
       });
       await addToMachinePath(`${image.scoop.root}\\shims`);
@@ -332,8 +325,8 @@ function nodejsHeadersStep(ctx: WindowsContext): Step {
       // node.lib on every run. node-gyp on Windows looks under
       // %LOCALAPPDATA%\node-gyp\Cache\<ver>\; seed both SYSTEM's and the
       // buildkite-agent service account's LocalAppData.
-      const headers = await download(nodejsHeadersDownload(image.nodejs), { name: "node-headers.tar.gz" });
-      const lib = await download(nodejsWinLibDownload(image.nodejs, image.arch), { name: "node.lib" });
+      const headers = await download(ctx.artifacts.nodejsHeaders, { name: "node-headers.tar.gz" });
+      const lib = await download(ctx.artifacts.nodejsWinLib, { name: "node.lib" });
       const stage = join(scratchDir, "node-headers");
       await extractArchive({ file: headers, into: stage, stripComponents: 1 });
       const libArch = image.arch === "aarch64" ? "arm64" : "x64";
@@ -365,7 +358,7 @@ function intelSdeStep(ctx: WindowsContext): Step {
         log(`${sde.installDir}\\sde.exe already exists`);
         return;
       }
-      const tarXz = await download(intelSdeDownload(sde), { name: "sde-external.tar.xz" });
+      const tarXz = await download(ctx.artifacts.intelSde!, { name: "sde-external.tar.xz" });
       const extract = join(scratchDir, "sde-extract");
       await extractArchive({ file: tarXz, into: extract });
       // Keep the whole kit directory intact: sde.exe resolves its Pin
@@ -391,7 +384,7 @@ async function installOpenSsh(ctx: WindowsContext): Promise<void> {
     log("sshd already installed");
     return;
   }
-  const zip = await download(opensshWindowsDownload(image.openssh, image.arch), { name: "OpenSSH.zip" });
+  const zip = await download(ctx.artifacts.openssh, { name: "OpenSSH.zip" });
   const extract = join(scratchDir, "OpenSSH-extract");
   await extractArchive({ file: zip, into: extract });
   // Add-WindowsCapability needs DISM elevation unavailable in Packer's
@@ -451,7 +444,7 @@ function ciSteps(ctx: WindowsContext): Step[] {
       name: `Install buildkite-agent ${image.buildkiteAgent.version}`,
       skip: !ci && "not a CI image",
       run: async () => {
-        const zip = await download(buildkiteAgentDownload(image.buildkiteAgent, "windows", image.arch), { name: "buildkite-agent.zip" });
+        const zip = await download(ctx.artifacts.buildkiteAgent, { name: "buildkite-agent.zip" });
         const home = image.paths.buildkiteHome;
         await extractArchive({ file: zip, into: `${home}\\bin` });
         await addToMachinePath(`${home}\\bin`);

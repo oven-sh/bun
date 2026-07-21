@@ -20,6 +20,7 @@ import { baseSystemSteps, browserSteps, ciSteps, crossToolchainSteps, nodejsStep
 import { banner, log, mode, runSteps } from "./bootstrap/runtime.ts";
 import type { WindowsContext } from "./bootstrap/windows.ts";
 import { windowsSteps } from "./bootstrap/windows.ts";
+import { resolveLinuxArtifacts, resolveWindowsArtifacts } from "./artifacts.ts";
 import { imageEntry, imageName } from "./naming.ts";
 import { epoch } from "./spec.ts";
 
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
     if (host.os !== "linux" && !dryRun) {
       throw new Error(`Image "${image.key}" is linux but this host is ${host.os}. Use --dry-run to inspect the plan from another OS.`);
     }
-    const ctx: LinuxContext = { image, host, ci, repoRef };
+    const ctx: LinuxContext = { image, host, ci, repoRef, artifacts: resolveLinuxArtifacts(image) };
     await runSteps(`Bootstrap ${image.key}`, [
       ...baseSystemSteps(ctx),
       ...nodejsSteps(ctx),
@@ -89,7 +90,7 @@ async function main(): Promise<void> {
     if (host.os !== "windows" && !dryRun) {
       throw new Error(`Image "${image.key}" is windows but this host is ${host.os}. Use --dry-run to inspect the plan from another OS.`);
     }
-    const ctx: WindowsContext = { image, host, ci, repoRef };
+    const ctx: WindowsContext = { image, host, ci, repoRef, artifacts: resolveWindowsArtifacts(image) };
     await runSteps(`Bootstrap ${image.key}`, windowsSteps(ctx));
   }
 }

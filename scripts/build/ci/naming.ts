@@ -1,18 +1,20 @@
 // Content-addressed CI image names.
 //
 // An image is named `${entry.key}-${imageHash(entry)}` where the hash digests
-// `spec.epoch` + that image's ENTIRE entry (canonical JSON, sha256). Each
-// entry in spec.ts is a complete manifest of what's baked on the image —
-// shared facts (node version, llvm, ...) are referenced by every entry
-// that uses them — so hashing the entry hashes exactly its inputs, no
-// partitioning logic needed. Code (this file, bootstrap, agent.mjs) is
-// never hashed; see spec.epoch for how a code change reaches the images.
+// `spec.epoch` + that image's ENTIRE entry + the RESOLVED artifact bundle
+// it produces (every concrete download URL/checksum, from
+// artifacts.resolveArtifacts). spec.ts stays pure data; the URL
+// construction is code in artifacts.ts, but its OUTPUT is hashed here, so
+// editing a URL template re-bakes exactly like editing a version does.
+// Other code (bootstrap, agent.mjs) is never hashed; see spec.epoch for
+// how a code change reaches the images.
 //
 // The same name is used for the AWS AMI and the Azure gallery image
 // definition, and robobun launches CI machines by looking that exact name
 // up — no wildcards, no version numbers, no newest-wins.
 
 import { createHash } from "node:crypto";
+import { resolveArtifacts } from "./artifacts.ts";
 import { epoch, images } from "./spec.ts";
 import type { Arch, Image } from "./types.ts";
 
@@ -36,10 +38,11 @@ export function canonicalJson(value: unknown): string {
   return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
 }
 
-/** The hex digest of one image's full manifest (+ epoch). */
+/** The hex digest of one image's full manifest + resolved downloads
+ * (+ epoch). */
 export function imageHash(entry: Image): string {
   return createHash("sha256")
-    .update(canonicalJson({ epoch, image: entry }))
+    .update(canonicalJson({ epoch, image: entry, artifacts: resolveArtifacts(entry) }))
     .digest("hex")
     .slice(0, HASH_LENGTH);
 }

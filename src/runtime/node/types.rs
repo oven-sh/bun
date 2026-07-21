@@ -274,7 +274,12 @@ impl Drop for StringOrBuffer {
             Self::EncodedSlice(_encoded) => {
                 // ZigStringSlice has Drop; cleanup is implicit.
             }
-            Self::Buffer(_) => {}
+            Self::Buffer(buffer) => {
+                if buffer.pinned {
+                    buffer.pinned = false;
+                    buffer.buffer.unpin();
+                }
+            }
         }
     }
 }
@@ -453,12 +458,11 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if is_async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-                } else {
-                    Buffer::from_array_buffer(global, value)
-                };
+                // Pin on both paths: a later argument's `toString`/getter can
+                // detach the backing before the caller reads `slice()`. `Drop`
+                // releases the pin; `unprotect()` clears `pinned` first.
+                let buffer = Buffer::from_js_pinned(global, value)
+                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value));
 
                 if is_async {
                     buffer.buffer.value.protect();
@@ -524,12 +528,8 @@ impl StringOrBuffer {
         allow_string_object: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-            } else {
-                Buffer::from_array_buffer(global, value)
-            };
+            let buffer = Buffer::from_js_pinned(global, value)
+                .unwrap_or_else(|| Buffer::from_array_buffer(global, value));
             if is_async {
                 buffer.buffer.value.protect();
             }

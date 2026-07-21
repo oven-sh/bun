@@ -164,6 +164,38 @@ describe("invalid inputs", () => {
   });
 });
 
+// pbkdf2Sync captures the salt slice before converting the password. A
+// String-object password's toString() can detach the captured salt buffer and
+// recycle its backing, so the key ends up derived from freed memory. The sync
+// Buffer arm now pins the backing so transfer() copies instead of freeing.
+test("pbkdf2Sync derives from the salt bytes at call time when a String-object password detaches them", () => {
+  const keep = [];
+  const size = 1 << 16;
+  const salt = Buffer.from(new ArrayBuffer(size));
+  salt.fill(0x41);
+  const pwStr = Buffer.alloc(32, 0x41).toString();
+
+  class DetachingPassword extends String {
+    toString() {
+      salt.buffer.transfer(0);
+      Bun.gc(true);
+      for (let i = 0; i < 96; i++) {
+        const x = new Uint8Array(size);
+        x.fill(0x5a);
+        keep.push(x);
+      }
+      Bun.gc(true);
+      return pwStr;
+    }
+  }
+
+  const got = crypto.pbkdf2Sync(new DetachingPassword(pwStr), salt, 1000, 16, "sha256").toString("hex");
+  const expected = crypto.pbkdf2Sync(pwStr, Buffer.alloc(size, 0x41), 1000, 16, "sha256").toString("hex");
+  const recycled = crypto.pbkdf2Sync(pwStr, Buffer.alloc(size, 0x5a), 1000, 16, "sha256").toString("hex");
+
+  expect({ got, matchesRecycled: got === recycled }).toEqual({ got: expected, matchesRecycled: false });
+});
+
 test("keylen=0 fails async via callback", async () => {
   const { promise, resolve } = Promise.withResolvers();
   let threwSync = false;

@@ -392,6 +392,37 @@ for (let algorithmValue of algorithms) {
   });
 }
 
+// verifySync captures the password slice before converting the hash. A
+// String-object hash's toString() can detach the password buffer and recycle
+// its backing, so the comparison runs over freed memory. The sync Buffer arm
+// now pins the backing so transfer() copies instead of freeing.
+test("verifySync reads the password bytes at call time when a String-object hash detaches them", () => {
+  const keep: Uint8Array[] = [];
+  const size = 1 << 16;
+  const pwStr = Buffer.alloc(size, 0x41).toString();
+  const hash = password.hashSync(pwStr, { algorithm: "bcrypt", cost: 4 });
+  expect(password.verifySync(pwStr, hash)).toBe(true);
+
+  const pw = Buffer.from(new ArrayBuffer(size));
+  pw.fill(0x41);
+
+  class DetachingHash extends String {
+    toString() {
+      pw.buffer.transfer(0);
+      Bun.gc(true);
+      for (let i = 0; i < 96; i++) {
+        const x = new Uint8Array(size);
+        x.fill(0x5a);
+        keep.push(x);
+      }
+      Bun.gc(true);
+      return hash;
+    }
+  }
+
+  expect(password.verifySync(pw, new DetachingHash(hash) as any)).toBe(true);
+});
+
 test("verify rejects encoded argon2 hashes with cost parameters above the supported maximums", async () => {
   // Hash with small, fast parameters so this test stays cheap on debug builds.
   const hashed = password.hashSync("correct horse", {

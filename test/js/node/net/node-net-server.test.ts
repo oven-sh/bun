@@ -586,7 +586,9 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    // stderr is drained but only surfaced on failure: debug builds may emit
+    // benign warnings, so it is not asserted empty.
+    return { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
   }
 
   it("server.stop() + accepted socket.unref() lets the process exit", async () => {
@@ -613,7 +615,7 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
         srvSock.unref();
         setTimeout(() => { process.stdout.write("HUNG"); process.exit(1); }, 4000).unref();
       `),
-    ).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    ).toEqual({ stdout: "", exitCode: 0, failureDetail: "" });
   });
 
   it("server.unref() alone does not drop a ref'd accepted connection's hold", async () => {
@@ -647,6 +649,6 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
         }, 300).unref();
         setTimeout(() => { process.stdout.write("|HUNG"); process.exit(1); }, 4000).unref();
       `),
-    ).toEqual({ stdout: "alive", stderr: "", exitCode: 0 });
+    ).toEqual({ stdout: "alive", exitCode: 0, failureDetail: "" });
   });
 });

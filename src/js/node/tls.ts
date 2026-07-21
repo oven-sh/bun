@@ -494,7 +494,10 @@ function normalizePemKeyOption(key, ctxPassphrase) {
   const entries = $isArray(key) ? key : [key];
   return ArrayPrototypeMap.$call(entries, k => {
     if (!isPemKeyEntry(k)) return k;
-    const passphrase = k.passphrase ?? ctxPassphrase;
+    // Node: val?.passphrase !== undefined ? val.passphrase : passphrase - an
+    // explicit per-key null means "no passphrase for this key" and does NOT
+    // fall back to the context-level one.
+    const passphrase = k.passphrase !== undefined ? k.passphrase : ctxPassphrase;
     if (passphrase == null) return k.pem;
     const { createPrivateKey } = require("node:crypto");
     return createPrivateKey({ key: k.pem, passphrase }).export({ type: "pkcs8", format: "pem" });

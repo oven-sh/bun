@@ -48,6 +48,7 @@ const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
+const MathMin = Math.min;
 
 const { UV_ECANCELED, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
@@ -1633,7 +1634,7 @@ function Socket(options?) {
             self.destroy(err);
             return;
           }
-          const n = Math.min(dest.length, total - offset);
+          const n = MathMin(dest.length, total - offset);
           dest.set(buffer.subarray(offset, offset + n));
           offset += n;
           const ret = onreadCallback(n, dest);

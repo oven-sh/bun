@@ -479,6 +479,31 @@ extern "C"
     }
   }
 
+  void uws_app_listen_fd(int ssl, uws_app_t *app, int32_t fd, int32_t options,
+                         uws_listen_handler handler, void *user_data)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->listen_fd(
+          (LIBUS_SOCKET_DESCRIPTOR)fd, options,
+          [handler, user_data](struct us_listen_socket_t *listen_socket)
+          {
+            handler((struct us_listen_socket_t *)listen_socket, user_data);
+          });
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->listen_fd(
+          (LIBUS_SOCKET_DESCRIPTOR)fd, options,
+          [handler, user_data](struct us_listen_socket_t *listen_socket)
+          {
+            handler((struct us_listen_socket_t *)listen_socket, user_data);
+          });
+    }
+  }
+
   /* callback, path to unix domain socket */
   void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, size_t pathlen, uws_listen_domain_handler handler, void *user_data)
   {

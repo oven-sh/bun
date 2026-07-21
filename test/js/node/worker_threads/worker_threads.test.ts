@@ -1723,6 +1723,57 @@ test("process.debugPort defaults to 9229 on the main thread", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Regression: terminating (or crashing) a worker that spawned its own workers left
+// the grandchildren running as orphaned threads. Node tears a worker's own workers
+// down with it (Environment::stop_sub_worker_contexts); Bun only terminated the
+// direct worker. The grandchild below increments a SharedArrayBuffer on every
+// setImmediate turn, so an orphan is observable as the counter continuing to grow
+// after the middle worker's 'exit' has fired.
+for (const how of ["terminate", "throw"] as const) {
+  test(`terminating a worker tears down its nested workers (${how})`, async () => {
+    const keepMiddleAlive =
+      how === "terminate" ? `"setInterval(()=>{},1e6);"` : `"parentPort.on('message',()=>{throw new Error('boom')});"`;
+    const killMiddle =
+      how === "terminate" ? `await w.terminate();` : `w.postMessage("die"); await new Promise(r => w.once("exit", r));`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("worker_threads");
+        const counter = new Int32Array(new SharedArrayBuffer(4));
+        const grand = "const{workerData:d}=require('worker_threads');setImmediate(function f(){Atomics.add(d,0,1);setImmediate(f)});";
+        const middle =
+          "const{Worker,workerData:d,parentPort}=require('worker_threads');" +
+          "new Worker(" + JSON.stringify(grand) + ",{eval:true,workerData:d});" +
+          ${keepMiddleAlive};
+        const w = new Worker(middle, { eval: true, workerData: counter });
+        w.on("error", () => {});
+        // Poll (deadline, not sleep) for the grandchild to actually run.
+        const deadline = Date.now() + 30_000;
+        while (Atomics.load(counter, 0) === 0) {
+          if (Date.now() > deadline) throw new Error("grandchild never started");
+          await new Promise(r => setImmediate(r));
+        }
+        ${killMiddle}
+        const snap = Atomics.load(counter, 0);
+        // An orphaned grandchild increments once per its own event-loop turn; give
+        // it a couple hundred of ours to show up.
+        for (let i = 0; i < 200; i++) await new Promise(r => setImmediate(r));
+        console.log("leaked=" + (Atomics.load(counter, 0) - snap));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("leaked=0");
+    expect(exitCode).toBe(0);
+  });
+}
+
 // Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
 // replacement were orphaned, the founder's later writes would go nowhere. child_process
 // enumerates the JS process.env (a var deleted from the map is invisible to the child),

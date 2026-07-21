@@ -580,13 +580,12 @@ bool Worker::dispatchExit(int32_t exitCode)
     // close event to the parent; that task additionally releases parent_poll_ref
     // (parent-thread-only).
     //
-    // If posting fails — parent context no longer exists (nested worker whose
-    // middle thread has already torn down) — the ref and poll are intentionally
-    // leaked: dropping the ref here would run ~Worker → ~EventTarget on the
-    // worker thread and trip EventListenerMap's single-thread assert. Parent
-    // teardown implies process shutdown (or at least that nothing observes the
-    // leak), so this is bounded. The proper fix is for a worker to stop+join
-    // its sub-workers before tearing down its own context.
+    // If posting fails — parent context no longer exists — the ref and poll are
+    // intentionally leaked: dropping the ref here would run ~Worker →
+    // ~EventTarget on the worker thread and trip EventListenerMap's
+    // single-thread assert. A worker parent's shutdown() now waits for its
+    // sub-workers (stop_sub_workers) before markTerminating(), so this path is
+    // only reached on main-thread exit without BUN_DESTRUCT_VM_ON_EXIT.
     //
     // The create-time ref (taken in create() to keep `this` alive while the
     // worker thread runs) is released via the `betweenLookupAndEnqueue` hook —

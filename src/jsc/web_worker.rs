@@ -50,13 +50,12 @@
 //! `terminateAllAndWait()` stops every live worker and waits for each to
 //! reach `shutdown()` before process-global resolver state is freed — the
 //! main-thread analogue of Node's `Environment::stop_sub_worker_contexts()`.
+//! `stop_sub_workers()` is the per-worker analogue: `shutdown()` terminates
+//! and waits for a worker's own sub-workers before tearing down the VM they
+//! hold a `BackRef` to.
 //!
 //! Known gap vs Node.js: the worker thread is detached, not joined, so
-//! `await worker.terminate()` resolves before the OS thread is fully gone;
-//! nested workers are not stopped when their WORKER parent's context tears
-//! down (only the main thread waits). When a parent context is gone before
-//! the close task posts, the thread-held `Worker` ref is intentionally
-//! leaked (see `Worker::dispatchExit`).
+//! `await worker.terminate()` resolves before the OS thread is fully gone.
 
 use crate::JsCell;
 use core::cell::Cell;
@@ -86,13 +85,20 @@ pub struct WebWorker {
     /// Validity: when the parent is the main thread, `globalExit()` calls
     /// `terminateAllAndWait()` before freeing anything, so this stays valid
     /// through `startVM()` even with `{ref:false}`/`.unref()`. When the parent
-    /// is itself a worker, nothing joins us on its exit — the nested-worker
-    /// "Known gap" in the file header. When `parent_poll_ref` is held (the
-    /// default), the parent's loop stays alive until the close task runs.
+    /// is itself a worker, its `shutdown()` calls `stop_sub_workers()` before
+    /// unpublishing/freeing its VM, so the `BackRef` stays valid through our
+    /// own `shutdown()`. When `parent_poll_ref` is held (the default), the
+    /// parent's loop stays alive until the close task runs.
     // `BackRef` (not `&'a VirtualMachine`) because the struct is FFI-owned and
     // crosses threads; the backref invariant (parent outlives child via
     // `parent_poll_ref`) is documented above.
     parent: bun_ptr::BackRef<VirtualMachine>,
+    /// The parent's `WebWorker` when the parent VM is itself a worker, else
+    /// null. Dereferenced on the worker thread only to decrement
+    /// `sub_workers_outstanding` in `shutdown()`, and that happens while the
+    /// parent is blocked in its own `stop_sub_workers()` (before its
+    /// `dispatchExit`), so the pointee is guaranteed alive.
+    parent_worker: *const WebWorker,
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
@@ -126,6 +132,14 @@ pub struct WebWorker {
     /// Set by the parent (`notifyNeedTermination`) or by the worker itself
     /// (`exit`). The worker loop polls this between ticks.
     requested_terminate: AtomicBool,
+
+    /// Number of sub-workers (workers whose `parent_worker` is `self`) that
+    /// have been created and not yet reached the decrement point in
+    /// `shutdown()`. Incremented on this worker's thread in the child's
+    /// `create()`; decremented on the child's thread in its `shutdown()`.
+    /// `shutdown()` futex-waits on this so a terminating worker tears down its
+    /// sub-workers before freeing the VM they hold a `BackRef` to.
+    sub_workers_outstanding: AtomicU32,
 
     /// The worker's `jsc.VirtualMachine`, or null before `startVM()` / after
     /// `shutdown()` nulls it. Lives inside `arena`. `vm_lock` must be held for
@@ -330,8 +344,7 @@ mod live_workers {
 /// `dir_cache` / `dirname_store` etc.
 ///
 /// This is the `Environment::stop_sub_worker_contexts()` equivalent for the
-/// main thread; nested workers (a worker's own sub-workers at the worker's
-/// exit) remain the documented gap.
+/// main thread; `WebWorker::stop_sub_workers()` is the per-worker one.
 ///
 /// Termination is cooperative: `requested_terminate` is polled at
 /// checkpoints throughout `startVM()` and `spin()`, and for a running VM
@@ -406,6 +419,77 @@ pub(crate) extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut
 }
 
 impl WebWorker {
+    /// Request termination of every sub-worker (workers whose `parent_worker`
+    /// is `self`) and block until each has reached the decrement point in its
+    /// `shutdown()`. Called from this worker's `shutdown()` so nested workers
+    /// are torn down with their parent — Node's
+    /// `Environment::stop_sub_worker_contexts()` analogue for a worker context.
+    ///
+    /// Single sweep + wait: sub-workers are created by `new Worker()` on this
+    /// thread, and we are now in `shutdown()` on this thread, so
+    /// `sub_workers_outstanding` cannot grow. Every child either observes
+    /// `requested_terminate` at a `start_vm()`/`spin()` checkpoint or is woken
+    /// here once its `vm` is published; either way it reaches `shutdown()`
+    /// and decrements.
+    fn stop_sub_workers(&self) {
+        if self.sub_workers_outstanding.load(Ordering::Acquire) == 0 {
+            return;
+        }
+        log!("[{}] stop_sub_workers", self.execution_context_id);
+
+        let self_ptr: *const WebWorker = self;
+        loop {
+            live_workers::MUTEX.lock();
+            let mut it = live_workers::HEAD.load();
+            while let Some(nn) = NonNull::new(it) {
+                // Worker valid while registered (removed only in shutdown());
+                // MUTEX held — `ParentRef` invariant (pointee outlives borrow) holds.
+                let w = bun_ptr::ParentRef::from(nn);
+                it = w.live_next.get();
+                if w.parent_worker != self_ptr {
+                    continue;
+                }
+                if w.requested_terminate.swap(true, Ordering::Release) {
+                    continue;
+                }
+                w.vm_lock.lock();
+                let vm_ptr = w.vm_ptr();
+                if !vm_ptr.is_null() {
+                    // SAFETY: vm_ptr published under vm_lock and non-null here;
+                    // see `terminate_all_and_wait` for the full justification.
+                    unsafe { (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination() };
+                    // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
+                    unsafe { (*(*vm_ptr).event_loop()).wakeup() };
+                }
+                w.vm_lock.unlock();
+            }
+            live_workers::MUTEX.unlock();
+
+            let n = self.sub_workers_outstanding.load(Ordering::Acquire);
+            if n == 0 {
+                return;
+            }
+            let _ = Futex::wait(&self.sub_workers_outstanding, n, None);
+        }
+    }
+
+    /// Decrement `parent_worker.sub_workers_outstanding` and wake a parent
+    /// blocked in `stop_sub_workers`. `parent_worker` is live: the parent waits
+    /// on this counter before its own `dispatchExit` (the only point past which
+    /// the parent `WebWorker` may be freed).
+    fn release_parent_sub_worker(parent_worker: *const WebWorker) {
+        if parent_worker.is_null() {
+            return;
+        }
+        // SAFETY: see fn doc; atomic field access only.
+        unsafe {
+            (*parent_worker)
+                .sub_workers_outstanding
+                .fetch_sub(1, Ordering::Release);
+            Futex::wake(&(*parent_worker).sub_workers_outstanding, 1);
+        }
+    }
+
     pub fn has_requested_terminate(&self) -> bool {
         self.requested_terminate.load(Ordering::Acquire)
     }
@@ -542,11 +626,16 @@ impl WebWorker {
         }
 
         let store_fd = parent_ref.transpiler.resolver.store_fd;
+        let parent_worker: *const WebWorker = parent_ref
+            .worker_ref()
+            .map(|w| w as *const WebWorker)
+            .unwrap_or(core::ptr::null());
 
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             cpp_worker,
             // `parent` is the calling thread's live VM; non-null by FFI contract.
             parent: bun_ptr::BackRef::from(NonNull::new(parent).expect("parent VM")),
+            parent_worker,
             execution_context_id: this_context_id,
             mini,
             eval_mode,
@@ -566,6 +655,7 @@ impl WebWorker {
             live_next: Cell::new(core::ptr::null_mut()),
             live_prev: Cell::new(core::ptr::null_mut()),
             requested_terminate: AtomicBool::new(false),
+            sub_workers_outstanding: AtomicU32::new(0),
             vm: Cell::new(core::ptr::null_mut()),
             vm_lock: Mutex::new(),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
@@ -595,6 +685,15 @@ impl WebWorker {
         // Register BEFORE spawning so terminateAllAndWait() can never miss a
         // worker whose thread is already running.
         live_workers::register(worker);
+        if !parent_worker.is_null() {
+            // SAFETY: `parent_worker` is this (calling) thread's own `WebWorker`
+            // obtained via `worker_ref()` above; atomic field access only.
+            unsafe {
+                (*parent_worker)
+                    .sub_workers_outstanding
+                    .fetch_add(1, Ordering::Release);
+            }
+        }
 
         // `std::thread` is permitted (only `std::{fs,net,process}` are banned);
         // bun_threading has no generic spawn helper.
@@ -620,6 +719,7 @@ impl WebWorker {
             }
             Err(_) => {
                 live_workers::unregister(worker);
+                Self::release_parent_sub_worker(parent_worker);
                 // `worker` not yet shared (spawn failed); parent thread.
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
                 // SAFETY: `worker` is the heap allocation from `heap::into_raw`
@@ -1228,8 +1328,14 @@ impl WebWorker {
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);
 
+        // Tear down sub-workers first: they hold a `BackRef` to our VM and
+        // their `dispatchExit` posts to our context, so both must happen before
+        // steps 1/2 unpublish the VM and mark the context terminating.
+        self.stop_sub_workers();
+
         // Snapshot everything we'll need after `this` may be freed (step 4).
         let cpp_worker = self.cpp_worker;
+        let parent_worker = self.parent_worker;
         // worker-thread only field; no other thread reads `arena`.
         let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
@@ -1355,6 +1461,7 @@ impl WebWorker {
         WebWorker__dispatchExit(cpp_worker, exit_code);
         // `this` may be freed past this point.
         live_workers::mark_exited();
+        Self::release_parent_sub_worker(parent_worker);
 
         // ---- 5. Free worker-thread resources -------------------------------
         if let Some(loop_) = loop_ {

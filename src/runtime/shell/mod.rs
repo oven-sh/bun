@@ -153,7 +153,7 @@ pub use bun_shell_parser::{
 pub mod ast {
     pub use bun_shell_parser::parse::SmolList;
     use bun_shell_parser::parse::ast as p;
-    pub use p::{BinaryOp, CondExprOp, IoKind, JSBuf, RedirectFlags};
+    pub use p::{BinaryOp, CondExprOp, IoKind, JSBuf, RedirectFlags, SpecialParam};
 
     pub type Script = p::Script<'static>;
     pub type Stmt = p::Stmt<'static>;

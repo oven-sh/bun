@@ -855,10 +855,45 @@ pub mod ast {
         }
     }
 
+    /// POSIX special parameters the shell can expand. `$!` (last background
+    /// PID), `$*` / `$@` (positional lists whose word-splitting semantics the
+    /// shell does not implement), and `$-` (option flags) are rejected by the
+    /// lexer instead.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum SpecialParam {
+        /// `$?` / `${?}`: exit status of the most recently completed command.
+        ExitCode,
+        /// `$$` / `${$}`: PID of the process running the shell.
+        Pid,
+        /// `$#` / `${#}`: number of positional parameters.
+        ArgvCount,
+    }
+
+    impl SpecialParam {
+        /// The byte that names this parameter after `$` (or inside `${}`).
+        pub const fn as_byte(self) -> u8 {
+            match self {
+                SpecialParam::ExitCode => b'?',
+                SpecialParam::Pid => b'$',
+                SpecialParam::ArgvCount => b'#',
+            }
+        }
+
+        pub const fn from_byte(c: u8) -> Option<SpecialParam> {
+            match c {
+                b'?' => Some(SpecialParam::ExitCode),
+                b'$' => Some(SpecialParam::Pid),
+                b'#' => Some(SpecialParam::ArgvCount),
+                _ => None,
+            }
+        }
+    }
+
     #[derive(Clone)]
     pub enum SimpleAtom<'arena> {
         Var(&'arena [u8]),
         VarArgv(u8),
+        SpecialParam(SpecialParam),
         Text(&'arena [u8]),
         /// An empty string from a quoted context (e.g. "", '', or ${''}). Preserved as an
         /// explicit empty argument during expansion, unlike unquoted empty text which is dropped.
@@ -1852,6 +1887,16 @@ impl<'bump> Parser<'bump> {
                             }
                         }
                     }
+                    Token::SpecialParam(sp) => {
+                        let _ = self.expect(TokenTag::SpecialParam);
+                        atoms.push(ast::SimpleAtom::SpecialParam(sp));
+                        if next_delimits {
+                            let _ = self.r#match(TokenTag::Delimit);
+                            if should_break {
+                                break;
+                            }
+                        }
+                    }
                     Token::OpenParen | Token::CloseParen => {
                         self.add_error(format_args!(
                             "Unexpected token: `{}`",
@@ -2215,6 +2260,7 @@ pub enum TokenTag {
     CloseParen,
     Var,
     VarArgv,
+    SpecialParam,
     Text,
     SingleQuotedText,
     DoubleQuotedText,
@@ -2270,6 +2316,8 @@ pub enum Token {
 
     Var(TextRange),
     VarArgv(u8),
+    /// `$?`, `$$`, `$#` and the braced `${?}`, `${$}`, `${#}` forms.
+    SpecialParam(ast::SpecialParam),
     Text(TextRange),
     /// Quotation information is lost from the lexer -> parser stage and it is
     /// helpful to disambiguate from regular text and quoted text
@@ -2329,7 +2377,15 @@ impl Token {
             Token::OpenParen => b"`(`",
             Token::CloseParen => b"`)",
             Token::Var(r) => &strpool[r.start as usize..r.end as usize],
-            Token::VarArgv(n) => VARARGV_STRINGS[n as usize],
+            // Indices past 9 reach here only from the braced `${N}` form and
+            // have no static spelling; this runs on a parse-error path, so it
+            // must never panic.
+            Token::VarArgv(n) => VARARGV_STRINGS.get(n as usize).copied().unwrap_or(b"${N}"),
+            Token::SpecialParam(sp) => match sp {
+                ast::SpecialParam::ExitCode => b"$?",
+                ast::SpecialParam::Pid => b"$$",
+                ast::SpecialParam::ArgvCount => b"$#",
+            },
             Token::Text(r) => &strpool[r.start as usize..r.end as usize],
             Token::SingleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
             Token::DoubleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
@@ -2375,6 +2431,15 @@ pub struct LexError {
 /// easy for the user to accidentally use this char in their script.
 const SPECIAL_JS_CHAR: u8 = 8;
 const MAX_SUBSHELL_DEPTH: u32 = 128;
+
+/// Every `${...}` form beyond the plain `${NAME}` / `${N}` / `${?}` ones is
+/// either a parameter-expansion operator the shell does not implement or text
+/// bash itself rejects as a `bad substitution`. In both cases producing the
+/// characters literally (the behavior this message replaced) silently corrupts
+/// the command, so the lexer reports it instead.
+const ERR_BRACED_PARAM_UNSUPPORTED: &[u8] = b"Unsupported parameter expansion `${...}`. Only the plain `${NAME}` form is supported; `${NAME:-default}` and other parameter expansion operators are not supported yet. Please file an issue on GitHub.";
+const ERR_BRACED_PARAM_UNCLOSED: &[u8] =
+    b"Unclosed parameter expansion: expected a `}` to match `${`";
 pub const LEX_JS_OBJREF_PREFIX: &[u8] = b"\x08__bun_";
 pub const LEX_JS_STRING_PREFIX: &[u8] = b"\x08__bunstr_";
 
@@ -2894,6 +2959,42 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
 
+                            // `${...}`: braced parameter expansion.
+                            if !peeked.escaped && peeked.char == u32::from(b'{') {
+                                self.break_word(false)?;
+                                let _ = self.eat();
+                                if !self.eat_braced_param()? {
+                                    return Ok(());
+                                }
+                                self.word_start = self.j;
+                                fell_through = true;
+                                break 'escaped;
+                            }
+
+                            if !peeked.escaped && peeked.char < 0x80 {
+                                let next = peeked.char as u8;
+                                // `$?`, `$$`, `$#`: special parameters the
+                                // shell can expand.
+                                if let Some(special) = ast::SpecialParam::from_byte(next) {
+                                    self.break_word(false)?;
+                                    let _ = self.eat();
+                                    self.tokens.push(Token::SpecialParam(special));
+                                    self.word_start = self.j;
+                                    fell_through = true;
+                                    break 'escaped;
+                                }
+                                // `$!`, `$*`, `$@`, `$-`: POSIX special
+                                // parameters the shell does not implement.
+                                // Every POSIX shell expands these, so emitting
+                                // the two bytes literally silently corrupts
+                                // the command; reject the script the way other
+                                // unsupported syntax is rejected.
+                                if matches!(next, b'!' | b'*' | b'@' | b'-') {
+                                    self.add_error_unsupported_special_param(next);
+                                    return Ok(());
+                                }
+                            }
+
                             // Handle variable
                             self.break_word(false)?;
                             let var_tok = self.eat_var()?;
@@ -3226,6 +3327,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             && match self.tokens[self.tokens.len() - 1].tag() {
                 TokenTag::Var
                 | TokenTag::VarArgv
+                | TokenTag::SpecialParam
                 | TokenTag::Text
                 | TokenTag::SingleQuotedText
                 | TokenTag::DoubleQuotedText
@@ -3714,6 +3816,120 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             }
         }
         Ok(TextRange { start, end: self.j })
+    }
+
+    /// Lex the body of a `${...}` parameter expansion; the `${` has already
+    /// been consumed. Only the forms with a direct token are accepted:
+    /// `${NAME}`, `${N}` (a positional parameter, the only way to address
+    /// index > 9), and `${?}` / `${$}` / `${#}`.
+    ///
+    /// Anything else (`${NAME:-default}` and the rest of the operator family,
+    /// indirection, `${#NAME}`, an unterminated `${`, ...) records an error
+    /// and returns `false`; the caller must stop lexing. See
+    /// [`ERR_BRACED_PARAM_UNSUPPORTED`] for why this is an error rather than
+    /// literal text.
+    fn eat_braced_param(&mut self) -> Result<bool, LexerError> {
+        let Some(first) = self.peek() else {
+            self.add_error(ERR_BRACED_PARAM_UNCLOSED);
+            return Ok(false);
+        };
+        if first.escaped || first.char >= 0x80 {
+            self.add_error(ERR_BRACED_PARAM_UNSUPPORTED);
+            return Ok(false);
+        }
+        let first = first.char as u8;
+
+        // `${?}` / `${$}` / `${#}`
+        if let Some(special) = ast::SpecialParam::from_byte(first) {
+            let _ = self.eat();
+            if !self.eat_braced_param_close() {
+                return Ok(false);
+            }
+            self.tokens.push(Token::SpecialParam(special));
+            return Ok(true);
+        }
+
+        // `${N}`
+        if first.is_ascii_digit() {
+            let mut n: u32 = 0;
+            while let Some(c) = self.peek() {
+                if c.escaped || c.char >= 0x80 || !(c.char as u8).is_ascii_digit() {
+                    break;
+                }
+                let _ = self.eat();
+                n = n
+                    .saturating_mul(10)
+                    .saturating_add(c.char - u32::from(b'0'));
+            }
+            // `Token::VarArgv` stores a `u8`. A positional index this large
+            // never resolves to anything, so treat it like any other
+            // unsupported `${...}` body rather than silently truncating it.
+            let Ok(n) = u8::try_from(n) else {
+                self.add_error(ERR_BRACED_PARAM_UNSUPPORTED);
+                return Ok(false);
+            };
+            if !self.eat_braced_param_close() {
+                return Ok(false);
+            }
+            self.tokens.push(Token::VarArgv(n));
+            return Ok(true);
+        }
+
+        // `${NAME}`
+        let start = self.j;
+        while let Some(c) = self.peek() {
+            if c.escaped || c.char >= 0x80 {
+                break;
+            }
+            let b = c.char as u8;
+            if !(b.is_ascii_alphanumeric() || b == b'_') {
+                break;
+            }
+            let _ = self.eat();
+            self.append_char_to_str_pool(c.char)?;
+        }
+        let name = TextRange { start, end: self.j };
+        if name.len() == 0 {
+            self.add_error(ERR_BRACED_PARAM_UNSUPPORTED);
+            return Ok(false);
+        }
+        if !self.eat_braced_param_close() {
+            return Ok(false);
+        }
+        self.tokens.push(Token::Var(name));
+        Ok(true)
+    }
+
+    /// Consume the `}` terminating a `${...}` expansion. Any other character
+    /// here means the body continued into an operator form the shell does not
+    /// implement; record an error and return `false`.
+    fn eat_braced_param_close(&mut self) -> bool {
+        match self.peek() {
+            Some(c) if !c.escaped && c.char == u32::from(b'}') => {
+                let _ = self.eat();
+                true
+            }
+            Some(_) => {
+                self.add_error(ERR_BRACED_PARAM_UNSUPPORTED);
+                false
+            }
+            None => {
+                self.add_error(ERR_BRACED_PARAM_UNCLOSED);
+                false
+            }
+        }
+    }
+
+    /// Record a lexer error for a POSIX special parameter (`$!`, `$*`, `$@`,
+    /// `$-`) the shell does not implement. Every POSIX shell expands these,
+    /// so emitting the two characters literally silently corrupts the
+    /// command.
+    fn add_error_unsupported_special_param(&mut self, c: u8) {
+        let mut msg: Vec<u8> = Vec::with_capacity(128);
+        msg.extend_from_slice(b"The special shell parameter `$");
+        msg.push(c);
+        msg.extend_from_slice(b"` is not supported yet. Please file an issue on GitHub.");
+        self.add_error(&msg);
     }
 
     fn eat(&mut self) -> Option<InputChar> {

@@ -706,6 +706,95 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
+  // `${...}` in a JS template literal is a JS interpolation, so `{ raw }` is
+  // used wherever the *shell* needs to see a `${`.
+  describe("parameter expansion", () => {
+    test("special param $?", () => {
+      expect(JSON.parse(lex`echo $?`)).toEqual([{ Text: "echo" }, { Delimit: {} }, { SpecialParam: "?" }, { Eof: {} }]);
+    });
+
+    test("special param followed by a word delimits", () => {
+      expect(JSON.parse(lex`echo $? next`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { SpecialParam: "?" },
+        { Delimit: {} },
+        { Text: "next" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("$$ is read greedily", () => {
+      expect(JSON.parse(lex`echo $$HOME`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { SpecialParam: "$" },
+        { Text: "HOME" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("special param $#", () => {
+      expect(JSON.parse(lex`echo $#x`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { SpecialParam: "#" },
+        { Text: "x" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("${NAME} is the same token as $NAME", () => {
+      expect(JSON.parse(lex`echo ${{ raw: "${PORT}" }}`)).toEqual(JSON.parse(lex`echo $PORT`));
+    });
+
+    test("${NAME} bounds the name", () => {
+      expect(JSON.parse(lex`echo ${{ raw: "${FOO}bar" }}`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { Var: "FOO" },
+        { Text: "bar" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("${N} supports multi-digit positionals", () => {
+      expect(JSON.parse(lex`echo ${{ raw: "${10}" }}`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { VarArgv: 10 },
+        { Eof: {} },
+      ]);
+    });
+
+    test("braced special params", () => {
+      expect(JSON.parse(lex`echo ${{ raw: "${?}${$}${#}" }}`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { SpecialParam: "?" },
+        { SpecialParam: "$" },
+        { SpecialParam: "#" },
+        { Eof: {} },
+      ]);
+    });
+
+    test("an escaped $ never starts an expansion", () => {
+      expect(JSON.parse(lex`echo \$? \$HOME`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "$?" },
+        { Delimit: {} },
+        { Text: "$HOME" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+  });
+
   describe("errors", async () => {
     // This is disallowed because the js object references get turned into special vars: $__bun_0, $__bun_1, etc.
     // this will break things inside of a quote.

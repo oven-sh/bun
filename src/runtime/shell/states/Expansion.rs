@@ -499,6 +499,28 @@ impl Expansion {
                 // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
                 Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
             }
+            ast::SimpleAtom::SpecialParam(sp) => {
+                // `write!` on `Vec<u8>` via `io::Write` is infallible.
+                use std::io::Write as _;
+                match sp {
+                    ast::SpecialParam::ExitCode => {
+                        let _ = write!(out, "{}", shell.last_exit_code);
+                    }
+                    // The shell runs in-process and never forks, so `$$` is
+                    // this process's PID even inside `(...)` / `$(...)` —
+                    // which is also what POSIX specifies for subshells.
+                    ast::SpecialParam::Pid => {
+                        let _ = write!(out, "{}", std::process::id());
+                    }
+                    ast::SpecialParam::ArgvCount => {
+                        let _ = write!(
+                            out,
+                            "{}",
+                            Interpreter::var_argv_count(event_loop, command_ctx)
+                        );
+                    }
+                }
+            }
             ast::SimpleAtom::Asterisk => {
                 meta_offsets.push(out.len() as u32);
                 out.push(b'*');

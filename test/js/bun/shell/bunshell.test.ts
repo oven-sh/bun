@@ -1032,6 +1032,121 @@ booga"
 
       expect(procEnv).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
     });
+
+    // POSIX parameter expansion. `${...}` in a JS template literal is a JS
+    // interpolation (and `\${` reaches the shell as an *escaped* `$`), so
+    // `{ raw }` is used to splice the shell source in verbatim.
+    //
+    // Before these were implemented the lexer emitted the characters
+    // literally (`echo $?` printed `$?`), silently diverging from every
+    // POSIX shell; found by a bash-differential fuzzer.
+    describe("parameter expansion", () => {
+      const raw = (src: string) => TestBuilder.command`${{ raw: src }}`;
+
+      describe("${NAME}", () => {
+        raw("FOO=bar; echo ${FOO}").stdout("bar\n").runAsTest("basic");
+        raw('FOO=bar; echo "${FOO}"').stdout("bar\n").runAsTest("double quoted");
+        raw("FOO=bar; echo a${FOO}b").stdout("abarb\n").runAsTest("mid word");
+        // The whole point of the braced form: `$FOObar` would read the
+        // variable `FOObar`.
+        raw("FOO=bar; echo ${FOO}bar").stdout("barbar\n").runAsTest("name boundary");
+        raw("echo a${__BUN_UNSET_XYZ__}b").stdout("ab\n").runAsTest("unset is empty");
+        raw("echo '${FOO}'").stdout("${FOO}\n").runAsTest("single quotes stay literal");
+
+        test("${N} positional", async () => {
+          // `$N` and `${N}` read the same positional parameter
+          // (env.positionals.test.ts pins what that is, and its
+          // positionals3 fixture covers `$#` and multi-digit `${10}`).
+          const plain = await $`echo "[$1]"`;
+          const braced = await $`echo ${{ raw: '"[${1}]"' }}`;
+          expect(braced.stdout.toString()).toEqual(plain.stdout.toString());
+        });
+
+        // `${N}` is the only source of a positional index past 9, and the
+        // `[[ ... ]]` parse errors render the offending token. Rendering must
+        // cover every index the lexer can emit.
+        raw("[[ x $9 ]]")
+          .error("Expected a conditional expression operator, but got: $9")
+          .runAsTest("single-digit positional renders in a parse error");
+        raw("[[ x ${10} ]]")
+          .error("Expected a conditional expression operator, but got: ${N}")
+          .runAsTest("positional past 9 renders in a parse error");
+        raw("echo ${256}")
+          .error(
+            "Unsupported parameter expansion `${...}`. Only the plain `${NAME}` form is supported; `${NAME:-default}` and other parameter expansion operators are not supported yet. Please file an issue on GitHub.",
+          )
+          .runAsTest("positional index past 255 is rejected");
+      });
+
+      describe("$?", () => {
+        raw("echo $?").stdout("0\n").runAsTest("starts at 0");
+        raw("false; echo $?").stdout("1\n").runAsTest("after a failing builtin");
+        raw('false; echo "$?"').stdout("1\n").runAsTest("double quoted");
+        raw("false; echo a$?b").stdout("a1b\n").runAsTest("mid word");
+        raw("false; echo ${?}").stdout("1\n").runAsTest("braced");
+        TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "process.exit(42)"; echo $?`
+          .stdout("42\n")
+          .runAsTest("after an external command");
+        // The right operand of `||` / `&&` sees the left operand's status.
+        raw("false || echo $?").stdout("1\n").runAsTest("right of ||");
+        raw("true && false; echo $?").stdout("1\n").runAsTest("after &&");
+        raw("if false; then echo no; else echo $?; fi").stdout("1\n").runAsTest("in an else branch");
+        // A command substitution runs in its own environment and must not
+        // overwrite the parent's `$?` (POSIX: `$?` is the status of the
+        // last *foreground pipeline*).
+        raw("false; echo $(true)$?").stdout("1\n").runAsTest("not clobbered by $()");
+        raw("echo '$?'").stdout("$?\n").runAsTest("single quotes stay literal");
+      });
+
+      describe("$$", () => {
+        // The shell runs in-process, so `$$` is this process's PID.
+        raw("echo $$").stdout(`${process.pid}\n`).runAsTest("unbraced");
+        raw('echo "$$"').stdout(`${process.pid}\n`).runAsTest("double quoted");
+        raw("echo ${$}").stdout(`${process.pid}\n`).runAsTest("braced");
+        // `$$` is read greedily: `$$HOME` is `$$` then the literal `HOME`,
+        // never `$` + `$HOME`.
+        raw("echo $$HOME").stdout(`${process.pid}HOME\n`).runAsTest("greedy");
+      });
+
+      describe("$#", () => {
+        // `$N` already resolves to `process.argv[N]` (see
+        // env.positionals.test.ts), so the count is `process.argv.length - 1`.
+        const count = `${process.argv.length - 1}`;
+        raw("echo $#").stdout(`${count}\n`).runAsTest("unbraced");
+        raw("echo ${#}").stdout(`${count}\n`).runAsTest("braced");
+        raw('echo "[$#]"').stdout(`[${count}]\n`).runAsTest("double quoted");
+      });
+
+      // Parameter expansions the shell does not implement are a hard parse
+      // error instead of flowing through as literal text, consistent with
+      // how `&` and `|&` are reported.
+      describe("unsupported forms are parse errors", () => {
+        const operatorError =
+          "Unsupported parameter expansion `${...}`. Only the plain `${NAME}` form is supported; `${NAME:-default}` and other parameter expansion operators are not supported yet. Please file an issue on GitHub.";
+        const unclosedError = "Unclosed parameter expansion: expected a `}` to match `${`";
+        const specialError = (c: string) =>
+          `The special shell parameter \`$${c}\` is not supported yet. Please file an issue on GitHub.`;
+
+        raw("echo ${FOO:-fallback}").error(operatorError).runAsTest("${FOO:-fallback}");
+        raw("echo ${FOO:=x}").error(operatorError).runAsTest("${FOO:=x}");
+        raw("echo ${FOO%.txt}").error(operatorError).runAsTest("${FOO%.txt}");
+        raw("echo ${#FOO}").error(operatorError).runAsTest("${#FOO}");
+        raw("echo ${!FOO}").error(operatorError).runAsTest("${!FOO}");
+        raw("echo ${}").error(operatorError).runAsTest("${}");
+        raw('echo "${FOO:-x}"').error(operatorError).runAsTest("double quoted operator");
+        raw("echo ${FOO").error(unclosedError).runAsTest("unclosed");
+
+        raw('echo "$@"').error(specialError("@")).runAsTest("$@");
+        raw("echo $*").error(specialError("*")).runAsTest("$*");
+        raw("echo $!").error(specialError("!")).runAsTest("$!");
+        raw("echo $-").error(specialError("-")).runAsTest("$-");
+
+        // A `$` not introducing any expansion is still literal, as in POSIX.
+        raw('echo 100$ "$ " a$%b').stdout("100$ $  a$%b\n").runAsTest("bare $ stays literal");
+        // An escaped `$` never starts an expansion.
+        raw("echo \\${FOO:-x} \\$? \\$@").stdout("${FOO:-x} $? $@\n").runAsTest("escaped $ stays literal");
+      });
+    });
   });
 
   describe("cd & pwd", () => {

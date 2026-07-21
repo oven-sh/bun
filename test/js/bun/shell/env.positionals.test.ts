@@ -73,6 +73,28 @@ test("$ argv: standalone: only 10", async () => {
   expect(out.split("\n")).toEqual([script, "a", "bb", "c", "d", "e", "f", "g", "h", "i", "a0", ""]);
 });
 
+// `$#` is the positional count and `${N}` is the braced form of `$N` (and the
+// only way to address index > 9: `$10` lexes as `$1` then a literal `0`).
+test("$ argv: standalone: $# and ${N}", async () => {
+  const script = path.join(import.meta.dir, "fixtures", "positionals3.bun.sh");
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "run", script, "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stderr).toBeDefined();
+  const err = await stderr.text();
+  expect(err).toBeEmpty();
+
+  expect(stdout).toBeDefined();
+  const out = await stdout.text();
+  expect(out.split("\n")).toEqual(["11", "a", "j", "bxc", "11", ""]);
+  expect(await exited).toBe(0);
+});
+
 test("$ argv: standalone: non-ascii", async () => {
   const script = path.join(import.meta.dir, "fixtures", "positionals2.bun.sh");
   const { stdout, stderr, exited } = spawn({

@@ -875,15 +875,12 @@ test("late keep-alive request to a node:http server after close() dispatches whi
   );
 });
 
-test("server wrapper survives GC while a websocket is connected after stop()", async () => {
+test("server wrapper survives GC while a websocket is connected and is collected after stop()", async () => {
   // The previous test exercises the one-tick HTTP keep-alive race; this one
-  // covers the steadier websocket case. After a graceful stop() with a live
-  // websocket, the user may drop their `server` binding. The native struct
-  // stays alive (active_websockets > 0), but stop() previously downgraded
-  // js_value immediately, so GC could finalize the JS wrapper — and with it
-  // m_routeList — while the connection was still in use. With the downgrade
-  // deferred into deinit_if_we_can's idle predicate, the wrapper must outlive
-  // the websocket and become collectable only after the last close.
+  // covers the websocket case. While a websocket is connected (listener still
+  // open) the wrapper must survive GC even with no user-held `server`
+  // binding; once stop() runs (which now also ends open websockets with 1001)
+  // deinit_if_we_can downgrades js_value and the wrapper becomes collectable.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -917,6 +914,8 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
         await drain(0);
         const baseline = serverCount();
 
+        let serverRef;
+        const closed = Promise.withResolvers();
         const ws = await (async () => {
           const server = Bun.serve({
             port: 0,
@@ -928,19 +927,18 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
             },
             websocket: { open() {}, message() {}, close() {} },
           });
+          serverRef = new WeakRef(server);
 
           const opened = Promise.withResolvers();
           const ws = new WebSocket("ws://127.0.0.1:" + server.port);
           ws.onopen = () => opened.resolve();
           ws.onerror = e => opened.reject(e);
+          ws.onclose = () => closed.resolve();
           await opened.promise;
-
-          // Graceful stop: listener closes, the live websocket stays open.
-          server.stop();
           return ws;
         })();
-        // The only \`server\` binding is now out of scope; only the live
-        // websocket keeps the native side around.
+        // The only strong \`server\` binding is now out of scope; js_value
+        // stays Strong while the listener/socket are live.
 
         for (let i = 0; i < 30; i++) {
           Bun.gc(true);
@@ -948,17 +946,17 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
           await new Promise(r => setImmediate(r));
           await Bun.sleep(10);
         }
-        const afterStopGC = serverCount();
+        const whileConnected = serverCount();
 
-        const closed = Promise.withResolvers();
-        ws.onclose = () => closed.resolve();
-        ws.close();
+        // Graceful stop now also ends open websockets with 1001.
+        await serverRef.deref().stop();
+        serverRef = null;
         await closed.promise;
 
         await drain(baseline);
-        const afterCloseGC = serverCount();
+        const afterStop = serverCount();
 
-        console.log(JSON.stringify({ baseline, afterStopGC, afterCloseGC }));
+        console.log(JSON.stringify({ baseline, whileConnected, afterStop, closeCode: ws.readyState }));
         process.exit(0);
       `,
     ],
@@ -968,15 +966,13 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const { baseline, afterStopGC, afterCloseGC } = JSON.parse(stdout.trim() || "{}");
+  const { baseline, whileConnected, afterStop } = JSON.parse(stdout.trim() || "{}");
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  // js_value stays Strong while a websocket is connected → GC must not
-  // collect the wrapper. baseline already includes the prototype(s), so the
-  // live instance shows as baseline+1.
-  expect(afterStopGC).toBeGreaterThan(baseline);
-  // Last websocket closing triggers deinit_if_we_can → downgrade → wrapper
-  // becomes collectable again (no leak).
-  expect(afterCloseGC).toBe(baseline);
+  // baseline already includes the prototype(s), so the live instance shows as
+  // baseline+1 while connected.
+  expect(whileConnected).toBeGreaterThan(baseline);
+  // stop() ended the websocket and downgraded the wrapper: no leak.
+  expect(afterStop).toBe(baseline);
 }, 15_000);
 
 test("should be able to async upgrade using custom protocol", async () => {
@@ -2194,11 +2190,13 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         const echoed = Promise.withResolvers();
         const closed = Promise.withResolvers();
 
-        // Scope server so the only post-stop root is the connected websocket.
-        // Assign client directly to the outer var rather than returning it —
-        // returning keeps the async frame's scope (which contains server)
-        // alive via the resolved-value chain in JSC.
+        // Scope server so the only strong root while the ws is open is the
+        // native side (listener + ServerWebSocket). Assign client directly to
+        // the outer var rather than returning it — returning keeps the async
+        // frame's scope (which contains server) alive via the resolved-value
+        // chain in JSC.
         let client;
+        let serverRef;
         await (async () => {
           const server = Bun.serve({
             port: 0,
@@ -2210,18 +2208,17 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
               message(ws, m) { ws.send(server.port + ":" + m); },
             },
           });
+          serverRef = new WeakRef(server);
           client = new WebSocket(server.url.href.replace("http", "ws"));
           client.onopen = () => clientOpen.resolve();
           client.onmessage = e => echoed.resolve(e.data);
           client.onclose = () => closed.resolve();
           await opened.promise;      // server-side ws created (roots wrapper)
           await clientOpen.promise;  // client ready to send (avoid InvalidStateError)
-          server.stop(); // graceful — listener gone, ws stays
         })();
 
-        // server out of scope. Wrapper is rooted only via:
-        //   ServerWebSocket(this_value strong) → JSServerWebSocket → m_server → JSServer
-        // GC must NOT collect while the ws is open.
+        // server out of scope. Wrapper is rooted via js_value (Strong while
+        // listener/socket live) and the wsHandlers cycle. GC must NOT collect.
         Bun.gc(true); fullGC();
         const whileConnected = liveServer();
 
@@ -2229,12 +2226,12 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         client.send("hi");
         const echo = await echoed.promise;
 
-        client.close();
+        // Graceful stop now also ends open websockets with 1001.
+        await serverRef.deref().stop();
+        serverRef = null;
         await closed.promise;
         client = null;
-        // The last ws closing triggers on_websocket_closed → deinit_if_we_can,
-        // which downgrades the wrapper without an explicit stop(true) — that's
-        // the path under test, so no force-finish here.
+        // stop() drained the last ws and ran deinit_if_we_can → downgrade.
         const afterClose = await gcUntilCountAtMost(baseline);
 
         console.log(JSON.stringify({ baseline, whileConnected, echo, afterClose }));
@@ -2594,10 +2591,12 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         const opened = Promise.withResolvers();
         const closed = Promise.withResolvers();
         let ws;
-        // Scope server so the module-level frame holds no reference to the
-        // wrapper when message(ws) runs; after ws.close() downgrades js_value
-        // and clears m_server, the wrapper must have zero roots for Bun.gc to
-        // reach wsOnError.
+        let serverRef;
+        // Scope server so the module-level frame holds no strong reference to
+        // the wrapper when message(ws) runs; after ws.close() + stop()
+        // downgrade js_value, the wrapper must have zero roots for Bun.gc to
+        // reach wsOnError. A WeakRef lets the handler call stop() without
+        // itself rooting the wrapper.
         await (async () => {
           const server = Bun.serve({
             port: 0, hostname: "127.0.0.1",
@@ -2605,19 +2604,21 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
             websocket: {
               open() {},
               message(ws) {
-                ws.close(); // last socket of a stopped server → wrapper downgrades
+                ws.close(); // last socket → count=0
+                serverRef.deref()?.stop(); // listener gone → wrapper downgrades
+                serverRef = null;
                 Bun.gc(true);
                 throw new Error("boom");
               },
               error(e) { errorFired++; },
             },
           });
+          serverRef = new WeakRef(server);
           ws = new WebSocket("ws://127.0.0.1:" + server.port);
           ws.onopen = () => opened.resolve();
           ws.onerror = e => opened.reject(e);
           ws.onclose = () => closed.resolve();
           await opened.promise;
-          server.stop(); // graceful: listener gone, this ws keeps wrapper Strong
         })();
         ws.send("go");
         await closed.promise;

@@ -2,7 +2,7 @@
 // events/waits, and the timer syscalls (NtCreateThreadEx, NtSetTimerEx, ...)
 const { Worker } = require("worker_threads");
 
-const results = await Promise.all(
+console.log("STAGE: workers"); const results = await Promise.all(
   [0, 1, 2].map(
     i =>
       new Promise((resolve, reject) => {
@@ -21,7 +21,7 @@ const results = await Promise.all(
   ),
 );
 
-// timers: interval + timeouts interleaved
+console.log("STAGE: timers");
 let ticks = 0;
 await new Promise(resolve => {
   const iv = setInterval(() => {
@@ -36,4 +36,4 @@ const t0 = Bun.nanoseconds();
 await Bun.sleep(30);
 const slept = (Bun.nanoseconds() - t0) / 1e6;
 
-console.log(`worker ok ${results.join(",")} ticks=${ticks} slept=${Math.round(slept)}ms`);
+console.log("STAGE: done"); console.log(`worker ok ${results.join(",")} ticks=${ticks} slept=${Math.round(slept)}ms`);

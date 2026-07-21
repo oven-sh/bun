@@ -14,9 +14,22 @@
 // CRASH and HANG are the bugs. Everything is deterministic: the coordinate
 // (syscall + callsite RVA + hit) plus the program replays the finding.
 
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { classifySym, ensureDir, moduleOf, nameOf, parseTrace, readTrace, replayCoordinate, runOnce, stamp, statusName, symbolize } from "./lib";
+import { basename, join } from "node:path";
+import {
+  classifySym,
+  digestStacks,
+  ensureDir,
+  lastStage,
+  moduleOf,
+  nameOf,
+  parseTrace,
+  readTrace,
+  replayCoordinate,
+  runOnce,
+  stamp,
+  statusName,
+  symbolize,
+} from "./lib";
 
 const argv = process.argv.slice(2);
 const flag = (n: string, d?: string) => {
@@ -162,6 +175,15 @@ for (const r of baseTrace.recs) {
 const syms = await symbolize(bun, [...coords.values()].flatMap(c => c.repRvas));
 const coordModule = (c: Coord) => moduleOf({ rvas: c.repRvas } as any, syms);
 const symText = (rva: string) => syms.get(rva)?.sym ?? "?";
+// The frame to NAME a fault site by: the first candidate frame belonging to
+// the coordinate's owning module. The nearest scraped frame (the schedule
+// key) can be an unrelated stack leftover (a mimalloc frame in front of a
+// libuv call); the owner frame is stable and meaningful. Key kept for replay.
+const ownerFrame = (c: Coord): string => {
+  const mod = coordModule(c);
+  for (const rva of c.repRvas) if (classifySym(syms.get(rva)) === mod) return `${symText(rva)} (bun+0x${rva})`;
+  return `${symText(c.rva)} (bun+0x${c.rva})`;
+};
 
 let candidates = [...coords.values()];
 if (modFilter) candidates = candidates.filter(c => modFilter.includes(coordModule(c)));
@@ -297,12 +319,20 @@ const findings = results.filter(r => r.outcome === "CRASH" || r.outcome === "HAN
 //                     but it is NOT the deterministic finding it looked like
 //   not-reproduced  - did not fire / recur; likely a nondeterministic callsite
 type Verdict = "confirmed" | "slow" | "load-dependent" | "not-reproduced";
-const verdicts = new Map<Result, { verdict: Verdict; outcomes: string[] }>();
+interface Verify {
+  verdict: Verdict;
+  outcomes: string[];
+  stage: string | null; // last STAGE marker the program printed
+  stacks: string[]; // digested thread stacks (hangs) or crash frames
+}
+const verdicts = new Map<Result, Verify>();
 if (findings.length) {
   console.log(`\n=== verifying ${findings.length} finding(s) standalone (x3, ${(2 * timeoutMs) / 1000}s timeout) ===`);
   for (const f of findings) {
     const sched = `${f.job.coord.sysName} ${f.job.coord.rva} ${f.job.hit} ${f.job.mode} ${f.job.status}`;
     const outcomes: string[] = [];
+    let stage: string | null = null;
+    let stacks: string[] = [];
     for (let n = 1; n <= 3; n++) {
       const rr = await replayCoordinate({
         bun,
@@ -310,17 +340,28 @@ if (findings.length) {
         schedule: sched,
         dir: join(workRoot, "verify", `${f.job.coord.sys}-${f.job.coord.rva}-${n}`),
         timeoutMs: 2 * timeoutMs,
-        capture: false,
+        // Capture WHERE it is stuck (hang stacks / crash stack) on the
+        // first replay: the single most useful fact about a finding.
+        capture: n === 1,
       });
       outcomes.push(rr.outcome);
+      if (n === 1) {
+        stage = lastStage(rr.stdout);
+        const raw = rr.hangStacks ?? rr.crashDump ?? "";
+        stacks = raw ? digestStacks(raw) : [];
+      }
     }
     const bad = outcomes.filter(o => o === "CRASH" || o === "HANG").length;
     const slow = outcomes.filter(o => o === "slow").length;
     const fired = outcomes.filter(o => o !== "no-fire").length;
     const verdict: Verdict =
       bad >= 2 ? "confirmed" : bad === 0 && slow >= 2 ? "slow" : bad === 0 && fired > 0 ? "load-dependent" : "not-reproduced";
-    verdicts.set(f, { verdict, outcomes });
-    console.log(`  ${verdict.padEnd(15)} ${f.outcome} ${f.job.coord.sysName} @${f.job.coord.rva} standalone: ${outcomes.join(",")}`);
+    verdicts.set(f, { verdict, outcomes, stage, stacks });
+    console.log(
+      `  ${verdict.padEnd(15)} ${f.outcome} ${f.job.coord.sysName} @${f.job.coord.rva} ` +
+        `standalone: ${outcomes.join(",")}` +
+        (stage ? ` | last stage: ${stage}` : ""),
+    );
   }
 }
 
@@ -337,6 +378,71 @@ if (findings.length) {
   }
 }
 
+// --- findings.md: the one file a hunter opens ---------------------------------
+// A card per finding, richest facts first: what fault, where the process is
+// stuck (digested stacks), how far the program got (last stage), and how to
+// replay it. Slow-near-watchdog runs get their own note: they usually share
+// a cause with a sibling HANG (an internal ~timeout path).
+{
+  const md: string[] = [];
+  const rel = (ms: number) => (ms >= timeoutMs * 0.8 ? " **(near watchdog: likely an internal timeout/retry path)**" : "");
+  md.push(`# winsysfuzz findings: ${basename(progArgs[0] ?? "program")}`);
+  md.push("");
+  md.push(`- program: \`${progArgs.join(" ")}\``);
+  md.push(`- ${results.length} runs; outcomes: ${[...counts.entries()].map(([k, v]) => `${k}=${v}`).join(" ")}`);
+  md.push(`- baseline exit=${base.exitCode} in ${base.ms}ms; watchdog ${timeoutMs / 1000}s (verify at ${(2 * timeoutMs) / 1000}s)`);
+  md.push("");
+  if (!findings.length) md.push("No CRASH/HANG findings in this sweep.");
+  // Cards ordered by what to chase first: confirmed, then slow, then the
+  // load-dependent / not-reproduced tail.
+  const vrank: Record<string, number> = { confirmed: 0, slow: 1, "load-dependent": 2, "not-reproduced": 3 };
+  const sortedFindings = [...findings].sort(
+    (a, b) => (vrank[verdicts.get(a)?.verdict ?? ""] ?? 9) - (vrank[verdicts.get(b)?.verdict ?? ""] ?? 9),
+  );
+  for (const f of sortedFindings) {
+    const v = verdicts.get(f);
+    md.push(`## [${v?.verdict ?? "?"}] ${f.outcome} - ${f.job.coord.sysName} (${f.job.mode} ${f.job.status}) [${f.job.expect}]`);
+    md.push(`- **where the fault fired**: \`${ownerFrame(f.job.coord)}\` [${coordModule(f.job.coord)}]`);
+    md.push(`- **standalone replays**: ${v?.outcomes.join(", ") ?? "-"}`);
+    // Status differential: how did OTHER faults at this same coordinate turn
+    // out? "one status hangs while its siblings finish at ~30s" is the clue
+    // that an error path exists but doesn't cover this status.
+    const siblings = results.filter(
+      r => r.job.coord.key === f.job.coord.key && r !== f && r.outcome !== "no-fire",
+    );
+    if (siblings.length)
+      md.push(
+        `- **same callsite, other faults**: ` +
+          siblings.map(s => `${s.job.mode} ${s.job.status} -> ${s.outcome} (${Math.round(s.ms / 100) / 10}s)`).join("; "),
+      );
+    if (v?.stage) md.push(`- **last stage reached**: \`${v.stage}\` (the program hung/died after this)`);
+    if (v?.stacks.length) {
+      md.push(`- **where the process is** (top frames per thread at capture):`);
+      for (const line of v.stacks.slice(0, 10)) md.push(`  - ${line}`);
+    }
+    md.push("- **replay**:");
+    md.push("```powershell");
+    md.push(
+      `bun driver\\repro.ts --bun "${bun}" --schedule "${f.job.coord.sysName} ${f.job.coord.rva} ${f.job.hit} ${f.job.mode} ${f.job.status}" --program ${progArgs.join(" ")}`,
+    );
+    md.push("```");
+    md.push("");
+  }
+  const slows = results.filter(r => r.outcome === "slow");
+  if (slows.length) {
+    md.push(`## slow runs (${slows.length}) - finished, but the fault made them crawl`);
+    for (const r of slows)
+      md.push(
+        `- ${r.job.coord.sysName} ${r.job.mode} ${r.job.status} @\`${ownerFrame(r.job.coord)}\` ` +
+          `[${coordModule(r.job.coord)}] took ${r.ms}ms${rel(r.ms)}`,
+      );
+    md.push("");
+  }
+  const findingsPath = join(workRoot, "findings.md");
+  await Bun.write(findingsPath, md.join("\n") + "\n");
+  console.log(`\nfindings: ${findingsPath}`);
+}
+
 await Bun.write(
   outPath,
   JSON.stringify(
@@ -348,6 +454,8 @@ await Bun.write(
         outcome: r.outcome,
         verdict: verdicts.get(r)?.verdict ?? null,
         standalone: verdicts.get(r)?.outcomes ?? null,
+        lastStage: verdicts.get(r)?.stage ?? null,
+        stacks: verdicts.get(r)?.stacks ?? null,
         expect: r.job.expect,
         syscall: r.job.coord.sysName,
         rva: r.job.coord.rva,

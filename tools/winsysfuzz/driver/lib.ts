@@ -356,6 +356,39 @@ export async function replayCoordinate(opts: {
   };
 }
 
+// Condense raw cdb '~*kv' output into a per-thread digest: symbol names only,
+// top few frames per thread, so "main thread parked in uv__poll <- uv_run"
+// is one line instead of a 12KB wade. Raw output stays available for depth.
+export function digestStacks(text: string, framesPerThread = 6): string[] {
+  const out: string[] = [];
+  let cur: { id: string; frames: string[] } | null = null;
+  const flush = () => {
+    if (cur) out.push(`thread ${cur.id}: ${cur.frames.length ? cur.frames.join(" <- ") : "(no symbols)"}`);
+  };
+  for (const line of text.split(/\r?\n/)) {
+    const th = /^\s*(?:\.\s*)?(\d+)\s+Id:\s+[0-9a-f]+\.([0-9a-f]+)/i.exec(line);
+    if (th) {
+      flush();
+      cur = { id: `${th[1]} (tid ${th[2]})`, frames: [] };
+      continue;
+    }
+    if (!cur || cur.frames.length >= framesPerThread) continue;
+    const fr = /:\s+([A-Za-z0-9_]+)!([^\s\[+]+)/.exec(line);
+    // Drop the interceptor's own frames (winsysfuzz!WsfExport sits between
+    // every hooked syscall and its caller) so the chain reads naturally.
+    if (fr && fr[1].toLowerCase() !== "winsysfuzz" && fr[2] !== "WsfExport") cur.frames.push(fr[2]);
+  }
+  flush();
+  return out;
+}
+
+// Workloads print 'STAGE: <name>' before each step; the last one seen in a
+// hung/slow run's stdout localizes the failure to a step for free.
+export function lastStage(stdout: string): string | null {
+  const stages = stdout.split("\n").filter(l => l.startsWith("STAGE: "));
+  return stages.length ? stages[stages.length - 1].slice(7).trim() : null;
+}
+
 // Re-run a target under the debugger, break on access violation, dump state.
 export async function captureCrash(cmdline: string[], env: Record<string, string>, outFile: string): Promise<string> {
   if (!cdb) return "(cdb.exe not installed: no crash stack captured — run setup.ps1 -InstallDebuggers)";

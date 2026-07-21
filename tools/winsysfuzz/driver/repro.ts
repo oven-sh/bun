@@ -9,7 +9,18 @@
 // kill), the faulting stack for a CRASH, and a copy-pasteable repro command.
 
 import { join } from "node:path";
-import { ensureDir, moduleOf, replayCoordinate, statusName, symbolize, wsfrun, stamp, type ReplayResult } from "./lib";
+import {
+  digestStacks,
+  ensureDir,
+  lastStage,
+  moduleOf,
+  replayCoordinate,
+  statusName,
+  symbolize,
+  wsfrun,
+  stamp,
+  type ReplayResult,
+} from "./lib";
 
 const argv = process.argv.slice(2);
 const flag = (n: string, d?: string) => {
@@ -75,14 +86,14 @@ const md: string[] = [];
 md.push(`# winsysfuzz finding: ${topOutcome} at ${schedSys}`);
 md.push("");
 md.push(`- **schedule**: \`${schedule}\``);
-md.push(`- **fault**: ${schedSys} → ${statusName(schedStatus?.toLowerCase() ?? "")} (${schedMode})`);
+md.push(`- **fault**: ${schedSys} -> ${statusName(schedStatus?.toLowerCase() ?? "")} (${schedMode})`);
 md.push(`- **owner module**: ${owner}`);
 md.push(
   `- **determinism**: ${topOutcome} in ${topCount}/${runs.length} replays` +
     (tally.size > 1
       ? ` (also: ${[...tally.entries()]
           .filter(([o]) => o !== topOutcome)
-          .map(([o, c]) => `${o}×${c}`)
+          .map(([o, c]) => `${o}x${c}`)
           .join(", ")})`
       : ""),
 );
@@ -99,7 +110,7 @@ md.push(reproCmd);
 md.push("```");
 for (const r of runs) {
   md.push("");
-  md.push(`## Run ${r.n}: ${r.outcome} (exit=${r.exitCode}, ${r.ms}ms, fault fired ${r.fired}×)`);
+  md.push(`## Run ${r.n}: ${r.outcome} (exit=${r.exitCode}, ${r.ms}ms, fault fired ${r.fired}x)`);
   const so = r.stdout.trim();
   const se = r.stderr.trim();
   if (so) {
@@ -114,8 +125,12 @@ for (const r of runs) {
     md.push(se.slice(-1500));
     md.push("```");
   }
+  const stage = lastStage(r.stdout);
+  if (stage) md.push(`- last stage reached: \`${stage}\` (hung/died after this)`);
   if (r.hangStacks) {
-    md.push("### thread stacks captured at hang (before kill)");
+    md.push("### where each thread is (digest)");
+    for (const line of digestStacks(r.hangStacks)) md.push(`- ${line}`);
+    md.push("### full thread stacks captured at hang (before kill)");
     md.push("```");
     md.push(r.hangStacks.slice(0, 12000));
     md.push("```");

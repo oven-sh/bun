@@ -663,7 +663,12 @@ function getEmulatorBinary(platform) {
  */
 function hasWebKitChanges(options) {
   const { changedFiles = [] } = options;
-  return changedFiles.some(file => file.includes("scripts/build/deps/webkit.ts"));
+  // Kept pointing at the removed SetupWebKit.cmake (always false) until
+  // verify-baseline.ts's --jit-stress path is fixed: it runs wasm fixtures
+  // without BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING / parsed //@ flags, so
+  // fixtures using wasm-GC types (bbq-osr-with-exceptions,
+  // omg-tail-call-clobber-scratch-register) fail to parse under it.
+  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
 }
 
 /**

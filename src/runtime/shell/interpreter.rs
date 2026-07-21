@@ -588,6 +588,7 @@ impl Interpreter {
                 __cwd: cwd_arr,
                 cwd_fd,
                 async_pids: SmolList::default(),
+                last_exit_code: 0,
             }),
             root_io: JsCell::new(IO {
                 stdin: crate::shell::io::InKind::Fd(stdin_reader),
@@ -1793,6 +1794,10 @@ pub struct ShellExecEnv {
     pub __cwd: Vec<u8>,
     pub cwd_fd: Fd,
     pub async_pids: SmolList<PidT, 4>,
+    /// Exit status of the most recently completed command in this execution
+    /// context (POSIX `$?`). Read by the `exit` builtin when called with no
+    /// argument. Updated by `Stmt::child_done` and `Binary::child_done`.
+    pub last_exit_code: ExitCode,
 }
 
 pub enum Bufio {
@@ -1958,6 +1963,9 @@ impl ShellExecEnv {
             __cwd: self.__cwd.clone(),
             cwd_fd: dupedfd,
             async_pids: SmolList::default(),
+            // Inherited so a subshell/command-substitution sees the parent's
+            // value; writes never propagate back (POSIX behavior).
+            last_exit_code: self.last_exit_code,
         });
         Ok(bun_core::heap::into_raw(duped))
     }

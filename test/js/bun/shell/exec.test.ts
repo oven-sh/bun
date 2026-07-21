@@ -55,7 +55,7 @@ describe("bun exec", () => {
       ["rm",     1, "rm: illegal option -- -\n", ""],
       ["mv",     1, "mv: illegal option -- -\n", ""],
       ["ls",     1, "ls: illegal option -- -\n", ""],
-      ["exit",   1, "exit: numeric argument required\n", ""],
+      ["exit",   2, "exit: numeric argument required\n", ""],
       ["true",   0, "", ""],
       ["false",  1, "", ""],
       // ["yes",    1, "", ""],

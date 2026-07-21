@@ -49,6 +49,25 @@ target_link_libraries(wsfrun PRIVATE detours)
 add_executable(wsfsym src/symbolize.cpp)
 target_link_libraries(wsfsym PRIVATE dbghelp)
 
+# System32's dbghelp.dll is too old to parse PDBs from current toolchains. If
+# Debugging Tools for Windows is installed, deploy its modern dbghelp/symsrv
+# beside wsfsym.exe (DLL search order prefers the app directory). Without it
+# wsfsym still runs but symbols won't resolve — setup.ps1 flags that.
+find_program(WSF_CDB cdb.exe PATHS
+  "$ENV{ProgramFiles\(x86\)}/Windows Kits/10/Debuggers/x64"
+  "$ENV{ProgramFiles}/Windows Kits/10/Debuggers/x64"
+  NO_DEFAULT_PATH)
+if(WSF_CDB)
+  get_filename_component(WSF_DBGTOOLS "${WSF_CDB}" DIRECTORY)
+  message(STATUS "Debugging Tools found: ${WSF_DBGTOOLS} (deploying modern dbghelp)")
+  add_custom_command(TARGET wsfsym POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${WSF_DBGTOOLS}/dbghelp.dll" "${WSF_DBGTOOLS}/symsrv.dll" $<TARGET_FILE_DIR:wsfsym>
+    COMMENT "Deploying modern dbghelp.dll/symsrv.dll beside wsfsym.exe")
+else()
+  message(WARNING "Debugging Tools for Windows not found: wsfsym symbols will not resolve and hang/crash capture is disabled. Run setup.ps1 -InstallDebuggers.")
+endif()
+
 if(MSVC)
   foreach(t winsysfuzz wsfrun wsfsym)
     target_compile_options(${t} PRIVATE /W3 /wd4996)

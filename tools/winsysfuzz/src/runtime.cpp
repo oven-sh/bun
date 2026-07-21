@@ -241,6 +241,12 @@ CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, const ULONG_PTR* args, int a
       uintptr_t v = *p;
       if (v < g_txtBase || v >= g_txtEnd) continue;
       if (!AfterCall(v)) continue;
+      // The same return address recurs across recursive/loop frames and as
+      // stack leftovers; a duplicate carries no new attribution, so skip it
+      // to let the walk reach deeper distinct callers.
+      bool dup = false;
+      for (uint8_t k = 0; k < nframes_; k++) if (frames_[k] == v) { dup = true; break; }
+      if (dup) continue;
       frames_[nframes_++] = v;
       if (bunFrame_ == 0) bunFrame_ = v;
     }
@@ -280,7 +286,7 @@ void CallCtx::FormatRvas(char* out, size_t cap) const {
   size_t len = 0;
   int emitted = 0;
   out[0] = '\0';
-  for (int i = 0; i < nframes_ && emitted < 3; i++) {
+  for (int i = 0; i < nframes_ && emitted < 4; i++) {
     uintptr_t ip = frames_[i];
     if (ip < g_txtBase || ip >= g_txtEnd) continue; // frame0 may be outside bun
     int n = snprintf(out + len, cap - len, "%s%llx", emitted ? "," : "",

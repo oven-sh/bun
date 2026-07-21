@@ -4739,13 +4739,13 @@ pub mod ret {
                     // items dropped here (auto free)
                     Ok(array)
                 }
-                Readdir::Buffers(items) => {
+                Readdir::Buffers(mut items) => {
                     // Node returns `Buffer[]` for `{ encoding: "buffer" }`, not
                     // `Uint8Array[]`. Ownership of every `Buffer`'s bytes
                     // transfers to JSC via `to_node_buffer`; the boxed slice
                     // itself is freed when `items` drops.
                     let array = JSValue::create_empty_array(global_object, items.len())?;
-                    for (i, item) in items.iter().enumerate() {
+                    for (i, item) in items.iter_mut().enumerate() {
                         let res = item.to_node_buffer(global_object);
                         if res == JSValue::ZERO {
                             return Ok(JSValue::ZERO);
@@ -7157,16 +7157,10 @@ impl NodeFS {
                     if let Some(file) = unsafe { &mut *graph }.find(path.as_bytes()) {
                         let contents: &[u8] = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
-                            // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
-                            // `into_boxed_slice()` so the allocation layout JSC frees with
-                            // matches what we hand it (capacity == len).
-                            let raw =
-                                bun_core::heap::into_raw(contents.to_vec().into_boxed_slice());
-                            // SAFETY: ownership of the allocation is transferred to JSC; the
-                            // ArrayBuffer finalizer reconstructs the Box and frees it
-                            // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
-                            Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                                unsafe { &mut *raw },
+                            // Ownership of the boxed slice transfers to JSC; the
+                            // ArrayBuffer finalizer frees it.
+                            Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_owned_bytes(
+                                contents.to_vec().into_boxed_slice(),
                                 bun_jsc::JSType::Uint8Array,
                             )))
                         } else if string_type == ReadFileStringType::Default {
@@ -7303,15 +7297,12 @@ impl NodeFS {
                             };
                         }
                     }
-                    let raw = bun_core::heap::into_raw(
+                    // Ownership of the boxed slice transfers to JSC; the
+                    // ArrayBuffer finalizer frees it.
+                    Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_owned_bytes(
                         temporary_read_buffer_before_stat_call
                             .to_vec()
                             .into_boxed_slice(),
-                    );
-                    // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
-                    // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
-                    Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                        unsafe { &mut *raw },
                         bun_jsc::JSType::Uint8Array,
                     )))
                 }
@@ -7470,11 +7461,10 @@ impl NodeFS {
         match args.encoding {
             Encoding::Buffer => {
                 buf.truncate(final_len);
-                let raw = bun_core::heap::into_raw(buf.into_boxed_slice());
-                // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
-                // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
-                Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                    unsafe { &mut *raw },
+                // Ownership of the boxed slice transfers to JSC; the
+                // ArrayBuffer finalizer frees it.
+                Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_owned_bytes(
+                    buf.into_boxed_slice(),
                     bun_jsc::JSType::Uint8Array,
                 )))
             }

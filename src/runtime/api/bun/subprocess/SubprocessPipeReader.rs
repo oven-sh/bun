@@ -308,14 +308,14 @@ impl PipeReader {
         match &mut self.state {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
-                // `state.done` is now empty via `take()`.
-                // `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
-                // with `owns_buffer = true` (freed via mimalloc on the JS side); leak the
-                // boxed slice so JS becomes the owner — same pattern as
-                // `MarkedArrayBuffer::from_string`.
-                let slice: &'static mut [u8] = Box::leak(bytes.into_boxed_slice());
-                MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
-                    .to_node_buffer(global_this)
+                // `state.done` is now empty via `take()`. Ownership of the
+                // boxed slice transfers to JSC (freed via the deallocator
+                // installed by `to_node_buffer`).
+                MarkedArrayBuffer::from_owned_bytes(
+                    bytes.into_boxed_slice(),
+                    jsc::JSType::Uint8Array,
+                )
+                .to_node_buffer(global_this)
             }
             _ => JSValue::UNDEFINED,
         }

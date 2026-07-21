@@ -4,7 +4,6 @@
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { validateString } = require("internal/validators");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
-const { validateString } = require("internal/validators");
 const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler } = $cpp(
   "NodeV8.cpp",
   "Bun::createNodeV8Binding",

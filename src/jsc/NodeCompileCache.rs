@@ -947,7 +947,14 @@ pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
     // SAFETY: C++ passes null or a live BunString plus valid out-params.
     let dir_utf8 = unsafe { dir.as_ref() }.map(|d| d.to_utf8());
     let dir_slice = dir_utf8.as_ref().map(|d| d.slice());
-    let result = enable(dir_slice, if portable < 0 { None } else { Some(portable != 0) });
+    let result = enable(
+        dir_slice,
+        if portable < 0 {
+            None
+        } else {
+            Some(portable != 0)
+        },
+    );
     if let Some(directory) = result.directory {
         // SAFETY: out-param is valid for write per fn contract.
         unsafe { *out_directory = BunString::clone_utf8(&directory) };

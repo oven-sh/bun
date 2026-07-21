@@ -1120,6 +1120,12 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
+            // `to_js_string` can run user `toString()`, which may re-entrantly
+            // `ws.close()`/`terminate()` and end the raw socket; re-check.
+            if self.is_closed() {
+                bun_output::scoped_log!(WebSocketServer, "send() closed");
+                return Ok(JSValue::js_number(0.0));
+            }
             let view = js_string.view(global_this);
             let slice = view.to_slice();
 

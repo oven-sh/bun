@@ -737,6 +737,46 @@ describe("ServerWebSocket", () => {
       done();
     },
   }));
+  for (const how of ["close", "terminate"] as const) {
+    it.concurrent(`send() returns 0 when message toString() calls ws.${how}()`, async () => {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      using server = serve({
+        port: 0,
+        fetch(req, srv) {
+          if (srv.upgrade(req)) return;
+          return new Response();
+        },
+        websocket: {
+          open(ws) {
+            try {
+              // @ts-expect-error send() accepts toString()-able objects
+              const ret = ws.send({
+                toString() {
+                  ws[how]();
+                  return "hello-from-server";
+                },
+              });
+              resolve(ret);
+            } catch (e) {
+              reject(e);
+            }
+          },
+          message() {},
+          close() {},
+        },
+      });
+      const ws = new WebSocket(`ws://${server.hostname}:${server.port}/`);
+      let received: string | undefined;
+      ws.onmessage = e => (received = String(e.data));
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+      ws.onclose = () => onClosed();
+      const sendReturn = await promise;
+      await closed;
+      // The socket was closed during toString() coercion before the write, so
+      // send() must report dropped (0), not the byte length of the message.
+      expect({ sendReturn, received }).toEqual({ sendReturn: 0, received: undefined });
+    });
+  }
   describe("sendBinary()", () => {
     for (const { label, message, bytes } of buffers) {
       test(label, done => ({

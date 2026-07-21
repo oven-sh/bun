@@ -631,11 +631,17 @@ impl Expect {
             .phase
             .entry(buntest)
             .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
+        Ok(Self::build_snapshot_name(execution_entry, hint))
+    }
 
-        let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
+    /// Build `{describe...} {testName}[: {hint}]` from an `ExecutionEntry`.
+    /// Shared by `get_snapshot_name` (writes keys to `.snap`) and the
+    /// obsolete-key reconciliation in `Execution::on_sequence_completed`.
+    pub(crate) fn build_snapshot_name(entry: &bun_test::ExecutionEntry, hint: &[u8]) -> Vec<u8> {
+        let test_name: &[u8] = entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
         let mut length: usize = 0;
-        let mut curr_scope = execution_entry.base.parent;
+        let mut curr_scope = entry.base.parent;
         while let Some(scope) = curr_scope {
             // SAFETY: `parent` is a live `*mut DescribeScope` owned by the BunTest arena.
             let scope = unsafe { &*scope };
@@ -665,7 +671,7 @@ impl Expect {
             buf[index..].copy_from_slice(test_name);
         }
         // copy describe scopes in reverse order
-        curr_scope = execution_entry.base.parent;
+        curr_scope = entry.base.parent;
         while let Some(scope) = curr_scope {
             // SAFETY: `parent` is a live `*mut DescribeScope` owned by the BunTest arena.
             let scope = unsafe { &*scope };
@@ -679,7 +685,7 @@ impl Expect {
             curr_scope = scope.base.parent;
         }
 
-        Ok(buf)
+        buf
     }
 
     // Codegen's `host_fn_finalize` calls this via `|b| Expect::finalize(b)`

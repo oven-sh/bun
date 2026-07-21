@@ -1322,7 +1322,9 @@ impl BunTest {
             // `NonNull<CommandLineReporter>` carries write provenance from
             // `enter_file`'s `&mut`; single-threaded, no other borrow live.
             unsafe {
-                (*self.reporter.unwrap().as_ptr()).jest.unhandled_errors_between_tests += 1;
+                let reporter = &mut *self.reporter.unwrap().as_ptr();
+                reporter.jest.unhandled_errors_between_tests += 1;
+                reporter.jest.snapshots.mark_file_partial(self.file_id);
             }
             bun_core::pretty_errorln!(
                 "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",

@@ -2023,6 +2023,8 @@ impl TestCommand {
         let mut snapshot_values: bun_collections::HashMap<u64, Box<[u8]>> =
             bun_collections::HashMap::new();
         let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
+        let mut snapshot_unchecked_keys: StringHashMap<()> = StringHashMap::new();
+        let mut snapshot_skipped_test_names: Vec<(FileId, Box<[u8]>)> = Vec::new();
         let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
             ArrayHashMap::new();
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
@@ -2084,6 +2086,8 @@ impl TestCommand {
                     added: 0,
                     passed: 0,
                     failed: 0,
+                    obsolete: 0,
+                    removed: 0,
                     // SAFETY: lifetime-erase to `'static`; the backing locals are
                     // declared in this never-returning frame (`exec()` only exits
                     // via process exit).
@@ -2092,6 +2096,15 @@ impl TestCommand {
                     values: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_values) },
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.
                     counts: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_counts) },
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
+                    unchecked_keys: unsafe {
+                        bun_ptr::detach_lifetime_mut(&mut snapshot_unchecked_keys)
+                    },
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
+                    skipped_test_names: unsafe {
+                        bun_ptr::detach_lifetime_mut(&mut snapshot_skipped_test_names)
+                    },
+                    partial_file_ids: Vec::new(),
                     _current_file: None,
                     snapshot_dir_path: None,
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.
@@ -2832,13 +2845,20 @@ impl TestCommand {
                 }
 
                 let mut print_expect_calls = summary.expectations > 0;
-                if reporter.jest.snapshots.total > 0 {
+                let obsolete = reporter.jest.snapshots.obsolete;
+                let removed = reporter.jest.snapshots.removed;
+                if reporter.jest.snapshots.total > 0 || obsolete > 0 || removed > 0 {
                     let passed = reporter.jest.snapshots.passed;
                     let failed = reporter.jest.snapshots.failed;
                     let added = reporter.jest.snapshots.added;
 
                     let mut first = true;
-                    if print_expect_calls && added == 0 && failed == 0 {
+                    if print_expect_calls
+                        && added == 0
+                        && failed == 0
+                        && obsolete == 0
+                        && removed == 0
+                    {
                         print_expect_calls = false;
                         pretty_error!(
                             "{}{:5>} snapshots, {:5>} expect() calls",
@@ -2863,12 +2883,33 @@ impl TestCommand {
                             }
                         }
 
+                        if removed > 0 {
+                            if first {
+                                first = false;
+                                pretty_error!("<b>{} removed<r>", removed);
+                            } else {
+                                pretty_error!("<b>, {} removed<r>", removed);
+                            }
+                        }
+
                         if failed > 0 {
                             if first {
+                                first = false;
                                 pretty_error!("<red>{} failed<r>", failed);
                             } else {
                                 pretty_error!(", <red>{} failed<r>", failed);
                             }
+                        }
+
+                        if obsolete > 0 {
+                            if first {
+                                pretty_error!("<yellow>{} obsolete<r>", obsolete);
+                            } else {
+                                pretty_error!(", <yellow>{} obsolete<r>", obsolete);
+                            }
+                            pretty_error!(
+                                "\n<d>To remove obsolete snapshots, run <r><cyan>bun test -u<r>"
+                            );
                         }
                     }
 

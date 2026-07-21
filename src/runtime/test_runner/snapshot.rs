@@ -28,12 +28,26 @@ pub struct Snapshots<'a> {
     pub added: usize,
     pub passed: usize,
     pub failed: usize,
+    pub obsolete: usize,
+    pub removed: usize,
 
     pub file_buf: &'a mut Vec<u8>,
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
     // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
     pub values: &'a mut HashMap<u64, Box<[u8]>>,
     pub counts: &'a mut StringHashMap<usize>,
+    /// Snapshot keys loaded from the `.snap` file but not yet matched this run.
+    /// Remaining entries at file close are obsolete (or removed under `-u`).
+    pub unchecked_keys: &'a mut StringHashMap<()>,
+    /// Full names of every test whose sequence completed in the current file.
+    /// Reconciled against `unchecked_keys` at `write_snapshot_file` so ordering
+    /// relative to the first `toMatchSnapshot` call does not matter.
+    pub skipped_test_names: &'a mut Vec<(FileId, Box<[u8]>)>,
+    /// Files whose run was partial: `.only()` drops siblings before sequencing,
+    /// a failing hook or test can jump past later tests, and a throwing describe
+    /// callback unsequences its children during collection. Unchecked keys are
+    /// ignored for the obsolete tally when the file being flushed is listed.
+    pub partial_file_ids: Vec<FileId>,
     pub _current_file: Option<File>,
     /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
     /// here, never freed): the runner is process-global and its files are
@@ -158,6 +172,10 @@ impl<'a> Snapshots<'a> {
         name_with_counter.extend_from_slice(counter_string);
 
         let name_hash: u64 = hash(&name_with_counter);
+        let was_in_file = self
+            .unchecked_keys
+            .remove(name_with_counter.as_slice())
+            .is_some();
         // reshaped for borrowck — `get` then early-return borrows `*self.values`
         // immutably for the whole fn body (NLL limitation with returned borrows), preventing
         // the later `insert`. Probe with `contains_key` first; re-lookup on hit.
@@ -201,7 +219,11 @@ impl<'a> Snapshots<'a> {
         )
         .map_err(|_| crate::Error::WriteError)?;
 
-        self.added += 1;
+        if was_in_file {
+            self.passed += 1;
+        } else {
+            self.added += 1;
+        }
         self.values
             .insert(name_hash, Box::<[u8]>::from(target_value));
         Ok(None)
@@ -314,6 +336,7 @@ impl<'a> Snapshots<'a> {
                                                     Box::<[u8]>::from(value);
                                                 let name_hash: u64 = hash(key);
                                                 self.values.insert(name_hash, value_clone);
+                                                let _ = self.unchecked_keys.put(key, ());
                                             }
                                         }
                                     }
@@ -332,18 +355,86 @@ impl<'a> Snapshots<'a> {
 
     pub fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
+            if self.update_snapshots {
+                // Skipped tests' entries are not rewritten into `file_buf`, so
+                // they are physically removed; keep them in the tally.
+                self.removed += self.unchecked_keys.len();
+            } else if !self.partial_file_ids.contains(&file.id) {
+                for (id, name) in self.skipped_test_names.iter() {
+                    if *id == file.id {
+                        Self::mark_snapshots_as_checked_for_test(self.unchecked_keys, name);
+                    }
+                }
+                self.obsolete += self.unchecked_keys.len();
+            }
+
             file.file
                 .write_all(self.file_buf)
                 .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+            if self.update_snapshots {
+                bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64)
+                    .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+            }
             let _ = file.file.close();
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();
 
             self.values.clear();
+            self.unchecked_keys.clear();
 
             self.counts.clear();
         }
         Ok(())
+    }
+
+    /// Record a test that did not run its full body (skip/todo/filtered/fail)
+    /// so its snapshot keys are excluded from the obsolete tally.
+    pub fn note_skipped_test(&mut self, file_id: FileId, test_name: Box<[u8]>) {
+        self.skipped_test_names.push((file_id, test_name));
+    }
+
+    /// Mark `file_id` as having run partially so its unchecked keys are not
+    /// tallied as obsolete.
+    pub fn mark_file_partial(&mut self, file_id: FileId) {
+        if !self.partial_file_ids.contains(&file_id) {
+            self.partial_file_ids.push(file_id);
+        }
+    }
+
+    /// Remove every unchecked snapshot key that belongs to `test_name` so that
+    /// skipped/todo/filtered tests do not cause false-positive obsolete counts.
+    fn mark_snapshots_as_checked_for_test(unchecked_keys: &mut StringHashMap<()>, test_name: &[u8]) {
+        if unchecked_keys.is_empty() {
+            return;
+        }
+        unchecked_keys.retain(|key, ()| {
+            let key: &[u8] = key.as_ref();
+            // Snapshot keys are `{snapshot_name} {counter}`; strip the trailing
+            // decimal counter before comparing (matches Jest's `keyToTestName`).
+            let mut end = key.len();
+            while end > 0 && key[end - 1].is_ascii_digit() {
+                end -= 1;
+            }
+            if end == key.len() || end == 0 || key[end - 1] != b' ' {
+                return true;
+            }
+            let stripped = &key[..end - 1];
+            if strings::eql(stripped, test_name) {
+                return false;
+            }
+            // Also match `{test_name}: {hint}` so skipped tests with hinted
+            // snapshots are not counted obsolete. The key format is ambiguous
+            // (a distinct test literally named `{test_name}: {hint}` collides),
+            // trading a rare false negative for Jest's false positive here.
+            if stripped.len() > test_name.len() + 2
+                && strings::starts_with(stripped, test_name)
+                && stripped[test_name.len()] == b':'
+                && stripped[test_name.len() + 1] == b' '
+            {
+                return false;
+            }
+            true
+        });
     }
 
     pub fn add_inline_snapshot_to_write(
@@ -879,10 +970,7 @@ impl<'a> Snapshots<'a> {
             // SAFETY: buf[pos] == 0 written above
             let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-            if self.update_snapshots {
-                flags |= bun_sys::O::TRUNC;
-            }
+            let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
             let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
                 bun_sys::Result::Ok(fd) => fd,
                 bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
@@ -893,24 +981,35 @@ impl<'a> Snapshots<'a> {
                 file: bun_sys::File::from_fd(fd),
             };
 
-            if self.update_snapshots {
-                self.file_buf.extend_from_slice(Self::FILE_HEADER);
-            } else {
-                let length = file.file.get_end_pos().map_err(Error::from)?;
-                if length == 0 {
-                    self.file_buf.extend_from_slice(Self::FILE_HEADER);
-                } else {
-                    let mut tmp = vec![0u8; length];
-                    let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
-                    #[cfg(windows)]
-                    {
-                        file.file.seek_to(0).map_err(Error::from)?;
-                    }
-                    self.file_buf.extend_from_slice(&tmp);
+            let length = file.file.get_end_pos().map_err(Error::from)?;
+            if length > 0 {
+                let mut tmp = vec![0u8; length];
+                let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
+                #[cfg(windows)]
+                {
+                    file.file.seek_to(0).map_err(Error::from)?;
                 }
+                self.file_buf.extend_from_slice(&tmp);
             }
 
-            self.parse_file(&file)?;
+            if self.update_snapshots {
+                // Rebuild from scratch; keep `unchecked_keys` so rewritten
+                // entries are not miscounted as "added" and dropped ones are
+                // tallied as "removed". A malformed prior file is ignored here
+                // since the rewrite replaces it anyway.
+                let _ = self.parse_file(&file);
+                self.file_buf.clear();
+                self.values.clear();
+            } else {
+                self.parse_file(&file)?;
+            }
+            if self.file_buf.is_empty() {
+                self.file_buf.extend_from_slice(Self::FILE_HEADER);
+            }
+
+            // Drop stale entries from files that never opened a snapshot file
+            // (`write_snapshot_file` was a no-op for them).
+            self.skipped_test_names.retain(|(id, _)| *id == file_id);
             self._current_file = Some(file);
         }
 

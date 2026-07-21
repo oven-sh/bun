@@ -652,6 +652,28 @@ impl Execution {
                 _ => Result::Pass,
             };
         }
+        if let Some(runner) = super::jest::Jest::runner() {
+            // SAFETY: `buntest` is the live parent BunTest (owns `sequence`).
+            let (file_id, root_only) = {
+                let bt = unsafe { buntest.as_ref() };
+                (bt.file_id, bt.collection.root_scope.base.only)
+            };
+            if root_only != super::bun_test::Only::No || sequence.result.is_fail() {
+                runner.snapshots.mark_file_partial(file_id);
+            }
+            if let Some(entry_ptr) = sequence.test_entry {
+                if sequence.result != Result::Pass
+                    || matches!(sequence.entry_mode(), ScopeMode::Failing)
+                {
+                    // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+                    let entry = unsafe { entry_ptr.as_ref() };
+                    let name = super::expect::Expect::build_snapshot_name(entry, b"");
+                    runner
+                        .snapshots
+                        .note_skipped_test(file_id, name.into_boxed_slice());
+                }
+            }
+        }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases

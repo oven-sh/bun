@@ -31,7 +31,6 @@ add_library(detours STATIC
   ${DETOURS_SRC}/creatwth.cpp
 )
 target_include_directories(detours PUBLIC ${DETOURS_SRC})
-target_compile_definitions(detours PUBLIC WIN32_LEAN_AND_MEAN)
 
 # --- interceptor DLL ---------------------------------------------------------
 add_library(winsysfuzz SHARED

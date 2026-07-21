@@ -31,7 +31,17 @@ namespace {
 // Our own log writes hit NtWriteFile, which is hooked. Any hook entered while
 // another is active on this thread passes straight through: no logging, no
 // faulting. Depth (not a bool) so nested reentry stays correct.
-__declspec(thread) int t_depth = 0;
+//
+// NOT compiler TLS (__declspec(thread)): hooks fire on the loader's parallel
+// worker threads during process init, before those threads have a TLS array
+// — gs:[58h] is null there and implicit TLS access AVs. Instead the depth
+// lives in a TlsAlloc'd index inside TEB->TlsSlots, the inline 64-slot array
+// present in every TEB from thread birth, read directly (no TlsGetValue,
+// which would clobber last-error mid-syscall).
+DWORD g_tls = TLS_OUT_OF_INDEXES;
+
+inline intptr_t Depth() { return (intptr_t)NtCurrentTeb()->TlsSlots[g_tls]; }
+inline void SetDepth(intptr_t d) { NtCurrentTeb()->TlsSlots[g_tls] = (PVOID)d; }
 
 // --- state ------------------------------------------------------------------
 volatile bool g_ready = false;
@@ -42,7 +52,8 @@ volatile LONG64 g_seq = 0;
 uintptr_t g_bunBase = 0;
 uintptr_t g_bunEnd = 0;
 
-int g_frames = 6; // frames captured per call (WSF_FRAMES)
+// WSF_FRAMES scales the stack-scrape depth (x32 qwords); 0 = _ReturnAddress only.
+int g_frames = 6;
 
 struct Rule {
   uint32_t sys;
@@ -165,26 +176,52 @@ void LoadSchedule(const char* path) {
 
 } // namespace
 
+// Entry-only record for syscalls that never return (NtContinue, ...). No
+// context spans the call, so the depth guard is balanced entirely here —
+// nothing leaks when control never comes back. 'E' record, no status.
+void LogEntryOnly(uint32_t sysId, uintptr_t retAddr) {
+  intptr_t d = Depth();
+  if (!g_ready || d != 0) return;
+  SetDepth(1);
+  uintptr_t rva = (retAddr >= g_bunBase && retAddr < g_bunEnd) ? retAddr - g_bunBase : 0;
+  LONG64 seq = InterlockedIncrement64(&g_seq);
+  LogLine("E %lld %lu %u %llx %llx\n", seq, GetCurrentThreadId(), sysId,
+          (unsigned long long)rva, (unsigned long long)retAddr);
+  SetDepth(0);
+}
+
 // --- CallCtx ---------------------------------------------------------------
 
 CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, const ULONG_PTR* args, int argc)
     : sys_(sysId), args_(args), argc_(argc) {
-  live_ = g_ready && t_depth == 0;
-  t_depth++;
+  intptr_t d = Depth();
+  live_ = g_ready && d == 0;
+  SetDepth(d + 1);
   nframes_ = 0;
   if (!live_) return;
   frames_[0] = retAddr;
   nframes_ = 1;
-  // Walk up past kernelbase/ntdll wrappers to find the bun.exe frame that
-  // originated this call — stable attribution across wrapper layers.
-  void* stack[kMaxFrames];
-  USHORT n = RtlCaptureStackBackTrace(1, (DWORD)g_frames, stack, nullptr);
-  for (USHORT k = 0; k < n && nframes_ < kMaxFrames; k++) {
-    uintptr_t ip = (uintptr_t)stack[k];
-    frames_[nframes_++] = ip;
-    if (bunFrame_ == 0 && ip >= g_bunBase && ip < g_bunEnd) bunFrame_ = ip;
+  if (retAddr >= g_bunBase && retAddr < g_bunEnd) bunFrame_ = retAddr;
+  // Find the bun.exe frame behind kernelbase/ntdll wrappers WITHOUT the
+  // unwinder: RtlCaptureStackBackTrace takes the function-table lock, and
+  // hooks fire on threads already holding it (loader, heap, JIT table
+  // registration) — deadlock. Instead scrape our own stack conservatively:
+  // scan raw qwords above us (bounded by TEB StackBase) for the nearest
+  // value inside bun's image. Lock-free pure reads; stable per code path,
+  // which is all the schedule's callsite key requires.
+  if (g_frames > 0) {
+    auto* tib = (NT_TIB*)NtCurrentTeb();
+    uintptr_t* sp = (uintptr_t*)&sp;
+    uintptr_t* end = (uintptr_t*)tib->StackBase;
+    uintptr_t* limit = sp + (size_t)g_frames * 32;
+    if (limit > end) limit = end;
+    for (uintptr_t* p = sp; p < limit && nframes_ < kMaxFrames; p++) {
+      uintptr_t v = *p;
+      if (v < g_bunBase || v >= g_bunEnd) continue;
+      frames_[nframes_++] = v;
+      if (bunFrame_ == 0) bunFrame_ = v;
+    }
   }
-  if (bunFrame_ == 0 && retAddr >= g_bunBase && retAddr < g_bunEnd) bunFrame_ = retAddr;
 }
 
 bool CallCtx::PreFault() {
@@ -212,7 +249,7 @@ bool CallCtx::PreFault() {
   return false;
 }
 
-CallCtx::~CallCtx() { t_depth--; }
+CallCtx::~CallCtx() { SetDepth(Depth() - 1); }
 
 ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
   ULONG_PTR ret = real;
@@ -230,7 +267,11 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
 // --- runtime init ----------------------------------------------------------
 
 bool RuntimeInit() {
-  t_depth++; // everything during init passes through, unlogged
+  g_tls = TlsAlloc();
+  // TlsSlots is the TEB's inline 64-entry array; higher indexes live in
+  // an expansion block that may not exist on early threads.
+  if (g_tls == TLS_OUT_OF_INDEXES || g_tls >= 64) return false;
+  SetDepth(Depth() + 1); // everything during init passes through, unlogged
 
   // bun.exe image range for callsite attribution.
   HMODULE exe = GetModuleHandleW(nullptr);
@@ -248,7 +289,7 @@ bool RuntimeInit() {
 
   char tmp[MAX_PATH];
   if (EnvA("WSF_FRAMES", tmp, sizeof tmp)) g_frames = atoi(tmp);
-  if (g_frames < 1) g_frames = 1;
+  if (g_frames < 0) g_frames = 0; // 0 = no stack walk, _ReturnAddress only
   if (g_frames > kMaxFrames - 1) g_frames = kMaxFrames - 1;
 
   char exePath[MAX_PATH];
@@ -263,12 +304,12 @@ bool RuntimeInit() {
 
   if (EnvA("WSF_SCHEDULE", tmp, sizeof tmp)) LoadSchedule(tmp);
 
-  t_depth--;
+  SetDepth(Depth() - 1);
   return true;
 }
 
 void RuntimeShutdown() {
-  t_depth++;
+  SetDepth(Depth() + 1);
   g_ready = false;
   if (g_log != INVALID_HANDLE_VALUE) {
     LogLine("# end seq=%lld\n", (long long)g_seq);
@@ -277,7 +318,7 @@ void RuntimeShutdown() {
   }
   free(g_rules);
   g_rules = nullptr;
-  t_depth--;
+  SetDepth(Depth() - 1);
 }
 
 // g_ready is flipped by dllmain after AttachHooks commits, so no hook fires

@@ -25,9 +25,11 @@ stubs, so `winsysfuzz.dll` hooks those exports in-process (Microsoft Detours)
 and thereby sees the whole process — dependencies included — while running
 against the **unmodified shipped `bun.exe`**.
 
-Attribution survives the wrapper layers: each hook captures the caller
-stack and finds the first frame inside `bun.exe`'s image, recorded as a
-module-relative RVA (ASLR-stable). Symbolize it against bun's PDB and a
+Attribution survives the wrapper layers: each hook conservatively scrapes
+its own stack for the nearest return address inside `bun.exe`'s image,
+recorded as a module-relative RVA (ASLR-stable). (Never the OS unwinder —
+it takes the function-table lock, and hooks fire on threads already holding
+it; a real deadlock we hit.) Symbolize it against bun's PDB and a
 fault reads as "`STATUS_SHARING_VIOLATION` injected at `NtCreateFile` from
 `uv__fs_open`". That RVA is also the schedule's callsite key.
 
@@ -36,9 +38,12 @@ fault reads as "`STATUS_SHARING_VIOLATION` injected at `NtCreateFile` from
 `NtTrace.cfg` (rogerorr/NtTrace, MIT — vendored here with its header intact)
 is a SAL-annotated prototype database of 537 ntdll entry points. `codegen.ts`
 parses it and generates the Detours hook table, a metadata table, and a JSON
-manifest for the driver. Arity is all a faithful x64 trampoline needs (every
-argument is one 8-byte slot); the `_In_`/`_Out_`/`_opt_` annotations and type
-names feed the trace printer and, later, the hostile-argument mutator.
+manifest for the driver. Every argument is one 8-byte slot on x64 and the
+kernel ignores extras, so each trampoline forwards a fixed superset of slots
+— which makes the cfg's arity drift on newer Windows builds harmless (its
+`NtWaitForWorkViaWorkerFactory` is 2 args; the kernel takes 5). The declared
+count and the `_In_`/`_Out_`/`_opt_` annotations still feed the trace printer
+and, later, the hostile-argument mutator.
 
 ## Layout
 

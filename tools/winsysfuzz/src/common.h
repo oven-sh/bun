@@ -3,6 +3,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <winternl.h>
 #include <intrin.h>
 #include <stdint.h>
 
@@ -49,6 +50,9 @@ class CallCtx {
 
 // Append a formatted header/note line to the trace log ('#' lines by convention).
 void LogNote(const char* fmt, ...);
+
+// Entry-only 'E' record for syscalls that never return (see codegen noReturn).
+void LogEntryOnly(uint32_t sysId, uintptr_t retAddr);
 
 // Runtime setup/teardown, called from DllMain.
 bool RuntimeInit();

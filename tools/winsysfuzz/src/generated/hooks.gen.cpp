@@ -7,12 +7,12 @@ namespace wsf {
 static const char* const NtAddAtom_types[] = {"PWSTR", "ULONG", "PRTL_ATOM"};
 static const char* const NtAddAtom_names[] = {"AtomName", "AtomNameLength", "Atom"};
 static const uint8_t NtAddAtom_dirs[] = {0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtAddAtom)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAddAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAddAtom)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAddAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAddAtom, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAddAtom(a0, a1, a2);
+  ULONG_PTR r = Real_NtAddAtom(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -20,12 +20,12 @@ static ULONG_PTR NTAPI Hook_NtAddAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) 
 static const char* const NtAddAtomEx_types[] = {"PWSTR", "ULONG", "PRTL_ATOM", "ULONG"};
 static const char* const NtAddAtomEx_names[] = {"AtomName", "AtomNameLength", "Atom", "Scope"};
 static const uint8_t NtAddAtomEx_dirs[] = {0, 0, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtAddAtomEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAddAtomEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtAddAtomEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAddAtomEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtAddAtomEx, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAddAtomEx(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtAddAtomEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -33,12 +33,12 @@ static ULONG_PTR NTAPI Hook_NtAddAtomEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
 static const char* const NtDeleteAtom_types[] = {"RTL_ATOM"};
 static const char* const NtDeleteAtom_names[] = {"Atom"};
 static const uint8_t NtDeleteAtom_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtDeleteAtom)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeleteAtom(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtDeleteAtom)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeleteAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteAtom, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteAtom(a0);
+  ULONG_PTR r = Real_NtDeleteAtom(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -46,12 +46,12 @@ static ULONG_PTR NTAPI Hook_NtDeleteAtom(ULONG_PTR a0) {
 static const char* const NtFindAtom_types[] = {"PWSTR", "ULONG", "PRTL_ATOM"};
 static const char* const NtFindAtom_names[] = {"AtomName", "AtomNameLength", "Atom"};
 static const uint8_t NtFindAtom_dirs[] = {0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtFindAtom)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFindAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtFindAtom)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFindAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtFindAtom, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFindAtom(a0, a1, a2);
+  ULONG_PTR r = Real_NtFindAtom(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -59,12 +59,12 @@ static ULONG_PTR NTAPI Hook_NtFindAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2)
 static const char* const NtQueryInformationAtom_types[] = {"RTL_ATOM", "ATOM_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationAtom_names[] = {"Atom", "AtomInformationClass", "AtomInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationAtom_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationAtom)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationAtom)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationAtom(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationAtom, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationAtom(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationAtom(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -72,12 +72,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationAtom(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtCreateProfile_types[] = {"PHANDLE", "HANDLE", "PVOID", "ULONG", "ULONG", "PULONG", "ULONG", "KPROFILE_SOURCE", "KAFFINITY"};
 static const char* const NtCreateProfile_names[] = {"ProfileHandle", "Process", "ProfileBase", "ProfileSize", "BucketSize", "Buffer", "BufferSize", "ProfileSource", "Affinity"};
 static const uint8_t NtCreateProfile_dirs[] = {1, 0, 0, 0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateProfile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateProfile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtCreateProfile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateProfile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtCreateProfile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtCreateProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -85,12 +85,12 @@ static ULONG_PTR NTAPI Hook_NtCreateProfile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtCreateProfileEx_types[] = {"PHANDLE", "HANDLE", "PVOID", "ULONG", "ULONG", "PULONG", "ULONG", "ULONG", "ULONG", "PGROUP_AFFINITY"};
 static const char* const NtCreateProfileEx_names[] = {"ProfileHandle", "Process", "ProfileBase", "ProfileSize", "BucketSize", "Buffer", "BufferSize", "ProfileSource", "GroupAffinityCount", "GroupAffinity"};
 static const uint8_t NtCreateProfileEx_dirs[] = {1, 128, 0, 0, 0, 0, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateProfileEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateProfileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) {
+static ULONG_PTR (NTAPI *Real_NtCreateProfileEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateProfileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtCreateProfileEx, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateProfileEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+  ULONG_PTR r = Real_NtCreateProfileEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -98,12 +98,12 @@ static ULONG_PTR NTAPI Hook_NtCreateProfileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtDebugActiveProcess_types[] = {"HANDLE", "HANDLE"};
 static const char* const NtDebugActiveProcess_names[] = {"Process", "DebugHandle"};
 static const uint8_t NtDebugActiveProcess_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtDebugActiveProcess)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDebugActiveProcess(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtDebugActiveProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDebugActiveProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtDebugActiveProcess, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDebugActiveProcess(a0, a1);
+  ULONG_PTR r = Real_NtDebugActiveProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -111,12 +111,12 @@ static ULONG_PTR NTAPI Hook_NtDebugActiveProcess(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtDebugContinue_types[] = {"HANDLE", "PCLIENT_ID", "NTSTATUS"};
 static const char* const NtDebugContinue_names[] = {"DebugHandle", "ClientId", "Status"};
 static const uint8_t NtDebugContinue_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtDebugContinue)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDebugContinue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtDebugContinue)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDebugContinue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtDebugContinue, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDebugContinue(a0, a1, a2);
+  ULONG_PTR r = Real_NtDebugContinue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -124,12 +124,12 @@ static ULONG_PTR NTAPI Hook_NtDebugContinue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtQueryDebugFilterState_types[] = {"ULONG", "ULONG"};
 static const char* const NtQueryDebugFilterState_names[] = {"Component", "Level"};
 static const uint8_t NtQueryDebugFilterState_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtQueryDebugFilterState)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryDebugFilterState(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryDebugFilterState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryDebugFilterState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryDebugFilterState, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDebugFilterState(a0, a1);
+  ULONG_PTR r = Real_NtQueryDebugFilterState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -137,12 +137,12 @@ static ULONG_PTR NTAPI Hook_NtQueryDebugFilterState(ULONG_PTR a0, ULONG_PTR a1) 
 static const char* const NtQueryIntervalProfile_types[] = {"KPROFILE_SOURCE", "PULONG"};
 static const char* const NtQueryIntervalProfile_names[] = {"Source", "Interval"};
 static const uint8_t NtQueryIntervalProfile_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryIntervalProfile)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryIntervalProfile(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryIntervalProfile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryIntervalProfile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryIntervalProfile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryIntervalProfile(a0, a1);
+  ULONG_PTR r = Real_NtQueryIntervalProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -150,12 +150,12 @@ static ULONG_PTR NTAPI Hook_NtQueryIntervalProfile(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtQueryPerformanceCounter_types[] = {"PLARGE_INTEGER", "PLARGE_INTEGER"};
 static const char* const NtQueryPerformanceCounter_names[] = {"Counter", "Freq"};
 static const uint8_t NtQueryPerformanceCounter_dirs[] = {1, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryPerformanceCounter)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryPerformanceCounter(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryPerformanceCounter)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryPerformanceCounter(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryPerformanceCounter, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryPerformanceCounter(a0, a1);
+  ULONG_PTR r = Real_NtQueryPerformanceCounter(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -163,12 +163,12 @@ static ULONG_PTR NTAPI Hook_NtQueryPerformanceCounter(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtRegisterThreadTerminatePort_types[] = {"HANDLE"};
 static const char* const NtRegisterThreadTerminatePort_names[] = {"PortHandle"};
 static const uint8_t NtRegisterThreadTerminatePort_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtRegisterThreadTerminatePort)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRegisterThreadTerminatePort(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtRegisterThreadTerminatePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRegisterThreadTerminatePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtRegisterThreadTerminatePort, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRegisterThreadTerminatePort(a0);
+  ULONG_PTR r = Real_NtRegisterThreadTerminatePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -176,12 +176,12 @@ static ULONG_PTR NTAPI Hook_NtRegisterThreadTerminatePort(ULONG_PTR a0) {
 static const char* const NtRemoveProcessDebug_types[] = {"HANDLE", "HANDLE"};
 static const char* const NtRemoveProcessDebug_names[] = {"ProcessHandle", "DebugHandle"};
 static const uint8_t NtRemoveProcessDebug_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtRemoveProcessDebug)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRemoveProcessDebug(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRemoveProcessDebug)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRemoveProcessDebug(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRemoveProcessDebug, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRemoveProcessDebug(a0, a1);
+  ULONG_PTR r = Real_NtRemoveProcessDebug(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -189,12 +189,12 @@ static ULONG_PTR NTAPI Hook_NtRemoveProcessDebug(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetDebugFilterState_types[] = {"ULONG", "ULONG", "BOOLEAN"};
 static const char* const NtSetDebugFilterState_names[] = {"Component", "Level", "State"};
 static const uint8_t NtSetDebugFilterState_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetDebugFilterState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetDebugFilterState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtSetDebugFilterState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetDebugFilterState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetDebugFilterState, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetDebugFilterState(a0, a1, a2);
+  ULONG_PTR r = Real_NtSetDebugFilterState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -202,12 +202,12 @@ static ULONG_PTR NTAPI Hook_NtSetDebugFilterState(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtSetInformationDebugObject_types[] = {"HANDLE", "DEBUGOBJECTINFOCLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtSetInformationDebugObject_names[] = {"DebugHandle", "Class", "Buffer", "Length", "ReturnLength"};
 static const uint8_t NtSetInformationDebugObject_dirs[] = {0, 0, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtSetInformationDebugObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationDebugObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationDebugObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationDebugObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetInformationDebugObject, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationDebugObject(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtSetInformationDebugObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -215,12 +215,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationDebugObject(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtSetIntervalProfile_types[] = {"ULONG", "KPROFILE_SOURCE"};
 static const char* const NtSetIntervalProfile_names[] = {"Interval", "Source"};
 static const uint8_t NtSetIntervalProfile_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetIntervalProfile)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetIntervalProfile(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetIntervalProfile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetIntervalProfile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetIntervalProfile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetIntervalProfile(a0, a1);
+  ULONG_PTR r = Real_NtSetIntervalProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -228,12 +228,12 @@ static ULONG_PTR NTAPI Hook_NtSetIntervalProfile(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtStartProfile_types[] = {"HANDLE"};
 static const char* const NtStartProfile_names[] = {"ProfileHandle"};
 static const uint8_t NtStartProfile_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtStartProfile)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtStartProfile(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtStartProfile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtStartProfile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtStartProfile, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtStartProfile(a0);
+  ULONG_PTR r = Real_NtStartProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -241,12 +241,12 @@ static ULONG_PTR NTAPI Hook_NtStartProfile(ULONG_PTR a0) {
 static const char* const NtStopProfile_types[] = {"HANDLE"};
 static const char* const NtStopProfile_names[] = {"ProfileHandle"};
 static const uint8_t NtStopProfile_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtStopProfile)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtStopProfile(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtStopProfile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtStopProfile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtStopProfile, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtStopProfile(a0);
+  ULONG_PTR r = Real_NtStopProfile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -254,12 +254,12 @@ static ULONG_PTR NTAPI Hook_NtStopProfile(ULONG_PTR a0) {
 static const char* const NtSystemDebugControl_types[] = {"SYSDBG_COMMAND", "PVOID", "ULONG", "PVOID", "ULONG", "PULONG"};
 static const char* const NtSystemDebugControl_names[] = {"Command", "InputBuffer", "InputBufferLength", "OutputBuffer", "OutputBufferLength", "ReturnLength"};
 static const uint8_t NtSystemDebugControl_dirs[] = {0, 0, 0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtSystemDebugControl)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSystemDebugControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtSystemDebugControl)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSystemDebugControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSystemDebugControl, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSystemDebugControl(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtSystemDebugControl(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -267,12 +267,12 @@ static ULONG_PTR NTAPI Hook_NtSystemDebugControl(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtTraceControl_types[] = {"ULONG", "PVOID", "ULONG", "PVOID", "ULONG", "PULONG"};
 static const char* const NtTraceControl_names[] = {"CtrlCode", "InputBuffer", "InputBufferLength", "OutputBuffer", "OutputBufferLength", "ReturnLength"};
 static const uint8_t NtTraceControl_dirs[] = {0, 0, 0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtTraceControl)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtTraceControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtTraceControl)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtTraceControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtTraceControl, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTraceControl(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtTraceControl(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -280,12 +280,12 @@ static ULONG_PTR NTAPI Hook_NtTraceControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
 static const char* const NtWaitForDebugEvent_types[] = {"HANDLE", "BOOLEAN", "PLARGE_INTEGER", "PULONG"};
 static const char* const NtWaitForDebugEvent_names[] = {"DebugHandle", "Alertable", "Timeout", "Result"};
 static const uint8_t NtWaitForDebugEvent_dirs[] = {0, 0, 128, 1};
-static ULONG_PTR (NTAPI *Real_NtWaitForDebugEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWaitForDebugEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtWaitForDebugEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWaitForDebugEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtWaitForDebugEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForDebugEvent(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtWaitForDebugEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -293,12 +293,12 @@ static ULONG_PTR NTAPI Hook_NtWaitForDebugEvent(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtAddBootEntry_types[] = {"PUNICODE_STRING", "PUNICODE_STRING"};
 static const char* const NtAddBootEntry_names[] = {"Name", "Value"};
 static const uint8_t NtAddBootEntry_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtAddBootEntry)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAddBootEntry(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtAddBootEntry)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAddBootEntry(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAddBootEntry, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAddBootEntry(a0, a1);
+  ULONG_PTR r = Real_NtAddBootEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -306,12 +306,12 @@ static ULONG_PTR NTAPI Hook_NtAddBootEntry(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtAddDriverEntry_types[] = {"PUNICODE_STRING", "PUNICODE_STRING"};
 static const char* const NtAddDriverEntry_names[] = {"Name", "Path"};
 static const uint8_t NtAddDriverEntry_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtAddDriverEntry)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAddDriverEntry(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtAddDriverEntry)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAddDriverEntry(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAddDriverEntry, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAddDriverEntry(a0, a1);
+  ULONG_PTR r = Real_NtAddDriverEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -319,12 +319,12 @@ static ULONG_PTR NTAPI Hook_NtAddDriverEntry(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCancelDeviceWakeupRequest_types[] = {"HANDLE"};
 static const char* const NtCancelDeviceWakeupRequest_names[] = {"DeviceHandle"};
 static const uint8_t NtCancelDeviceWakeupRequest_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtCancelDeviceWakeupRequest)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCancelDeviceWakeupRequest(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtCancelDeviceWakeupRequest)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCancelDeviceWakeupRequest(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtCancelDeviceWakeupRequest, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelDeviceWakeupRequest(a0);
+  ULONG_PTR r = Real_NtCancelDeviceWakeupRequest(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -332,12 +332,12 @@ static ULONG_PTR NTAPI Hook_NtCancelDeviceWakeupRequest(ULONG_PTR a0) {
 static const char* const NtDeleteBootEntry_types[] = {"PUNICODE_STRING"};
 static const char* const NtDeleteBootEntry_names[] = {"Name"};
 static const uint8_t NtDeleteBootEntry_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtDeleteBootEntry)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeleteBootEntry(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtDeleteBootEntry)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeleteBootEntry(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteBootEntry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteBootEntry(a0);
+  ULONG_PTR r = Real_NtDeleteBootEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -345,12 +345,12 @@ static ULONG_PTR NTAPI Hook_NtDeleteBootEntry(ULONG_PTR a0) {
 static const char* const NtDeleteDriverEntry_types[] = {"PUNICODE_STRING"};
 static const char* const NtDeleteDriverEntry_names[] = {"Name"};
 static const uint8_t NtDeleteDriverEntry_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtDeleteDriverEntry)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeleteDriverEntry(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtDeleteDriverEntry)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeleteDriverEntry(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteDriverEntry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteDriverEntry(a0);
+  ULONG_PTR r = Real_NtDeleteDriverEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -358,12 +358,12 @@ static ULONG_PTR NTAPI Hook_NtDeleteDriverEntry(ULONG_PTR a0) {
 static const char* const NtDisableLastKnownGood_types[] = {nullptr};
 static const char* const NtDisableLastKnownGood_names[] = {nullptr};
 static const uint8_t NtDisableLastKnownGood_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtDisableLastKnownGood)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtDisableLastKnownGood() {
+static ULONG_PTR (NTAPI *Real_NtDisableLastKnownGood)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDisableLastKnownGood(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtDisableLastKnownGood, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDisableLastKnownGood();
+  ULONG_PTR r = Real_NtDisableLastKnownGood(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -371,12 +371,12 @@ static ULONG_PTR NTAPI Hook_NtDisableLastKnownGood() {
 static const char* const NtEnableLastKnownGood_types[] = {nullptr};
 static const char* const NtEnableLastKnownGood_names[] = {nullptr};
 static const uint8_t NtEnableLastKnownGood_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtEnableLastKnownGood)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtEnableLastKnownGood() {
+static ULONG_PTR (NTAPI *Real_NtEnableLastKnownGood)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtEnableLastKnownGood(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtEnableLastKnownGood, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnableLastKnownGood();
+  ULONG_PTR r = Real_NtEnableLastKnownGood(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -384,12 +384,12 @@ static ULONG_PTR NTAPI Hook_NtEnableLastKnownGood() {
 static const char* const NtEnumerateBootEntries_types[] = {"PVOID", "PULONG"};
 static const char* const NtEnumerateBootEntries_names[] = {"Buffer", "BufferLength"};
 static const uint8_t NtEnumerateBootEntries_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtEnumerateBootEntries)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtEnumerateBootEntries(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtEnumerateBootEntries)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtEnumerateBootEntries(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtEnumerateBootEntries, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateBootEntries(a0, a1);
+  ULONG_PTR r = Real_NtEnumerateBootEntries(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -397,12 +397,12 @@ static ULONG_PTR NTAPI Hook_NtEnumerateBootEntries(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtEnumerateDriverEntries_types[] = {"PVOID", "PULONG"};
 static const char* const NtEnumerateDriverEntries_names[] = {"Buffer", "BufferLength"};
 static const uint8_t NtEnumerateDriverEntries_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtEnumerateDriverEntries)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtEnumerateDriverEntries(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtEnumerateDriverEntries)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtEnumerateDriverEntries(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtEnumerateDriverEntries, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateDriverEntries(a0, a1);
+  ULONG_PTR r = Real_NtEnumerateDriverEntries(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -410,12 +410,12 @@ static ULONG_PTR NTAPI Hook_NtEnumerateDriverEntries(ULONG_PTR a0, ULONG_PTR a1)
 static const char* const NtGetDevicePowerState_types[] = {"HANDLE", "PDEVICE_POWER_STATE"};
 static const char* const NtGetDevicePowerState_names[] = {"DeviceHandle", "State"};
 static const uint8_t NtGetDevicePowerState_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtGetDevicePowerState)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetDevicePowerState(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtGetDevicePowerState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetDevicePowerState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtGetDevicePowerState, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetDevicePowerState(a0, a1);
+  ULONG_PTR r = Real_NtGetDevicePowerState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -423,12 +423,12 @@ static ULONG_PTR NTAPI Hook_NtGetDevicePowerState(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtGetPlugPlayEvent_types[] = {"HANDLE", "PVOID", "PPLUGPLAY_EVENT_BLOCK", "ULONG"};
 static const char* const NtGetPlugPlayEvent_names[] = {"EventHandle", "Context", "EventBlock", "EventBufferSize"};
 static const uint8_t NtGetPlugPlayEvent_dirs[] = {0, 128, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtGetPlugPlayEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetPlugPlayEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtGetPlugPlayEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetPlugPlayEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtGetPlugPlayEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetPlugPlayEvent(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtGetPlugPlayEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -436,12 +436,12 @@ static ULONG_PTR NTAPI Hook_NtGetPlugPlayEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtInitiatePowerAction_types[] = {"POWER_ACTION", "SYSTEM_POWER_STATE", "ULONG", "BOOLEAN"};
 static const char* const NtInitiatePowerAction_names[] = {"Action", "State", "Flags", "Asynch"};
 static const uint8_t NtInitiatePowerAction_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtInitiatePowerAction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtInitiatePowerAction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtInitiatePowerAction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtInitiatePowerAction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtInitiatePowerAction, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtInitiatePowerAction(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtInitiatePowerAction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -449,12 +449,12 @@ static ULONG_PTR NTAPI Hook_NtInitiatePowerAction(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtLoadDriver_types[] = {"PUNICODE_STRING"};
 static const char* const NtLoadDriver_names[] = {"DriverName"};
 static const uint8_t NtLoadDriver_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtLoadDriver)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLoadDriver(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtLoadDriver)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLoadDriver(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtLoadDriver, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadDriver(a0);
+  ULONG_PTR r = Real_NtLoadDriver(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -462,12 +462,12 @@ static ULONG_PTR NTAPI Hook_NtLoadDriver(ULONG_PTR a0) {
 static const char* const NtModifyBootEntry_types[] = {"PBOOT_ENTRY"};
 static const char* const NtModifyBootEntry_names[] = {"BootEntry"};
 static const uint8_t NtModifyBootEntry_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtModifyBootEntry)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtModifyBootEntry(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtModifyBootEntry)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtModifyBootEntry(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtModifyBootEntry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtModifyBootEntry(a0);
+  ULONG_PTR r = Real_NtModifyBootEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -475,12 +475,12 @@ static ULONG_PTR NTAPI Hook_NtModifyBootEntry(ULONG_PTR a0) {
 static const char* const NtModifyDriverEntry_types[] = {"PDRIVER_ENTRY"};
 static const char* const NtModifyDriverEntry_names[] = {"DriverEntry"};
 static const uint8_t NtModifyDriverEntry_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtModifyDriverEntry)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtModifyDriverEntry(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtModifyDriverEntry)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtModifyDriverEntry(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtModifyDriverEntry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtModifyDriverEntry(a0);
+  ULONG_PTR r = Real_NtModifyDriverEntry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -488,12 +488,12 @@ static ULONG_PTR NTAPI Hook_NtModifyDriverEntry(ULONG_PTR a0) {
 static const char* const NtPlugPlayControl_types[] = {"ULONG", "PVOID", "ULONG"};
 static const char* const NtPlugPlayControl_names[] = {"Class", "Buffer", "BufferSize"};
 static const uint8_t NtPlugPlayControl_dirs[] = {0, 2, 0};
-static ULONG_PTR (NTAPI *Real_NtPlugPlayControl)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPlugPlayControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtPlugPlayControl)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPlugPlayControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtPlugPlayControl, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPlugPlayControl(a0, a1, a2);
+  ULONG_PTR r = Real_NtPlugPlayControl(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -501,12 +501,12 @@ static ULONG_PTR NTAPI Hook_NtPlugPlayControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtPowerInformation_types[] = {"POWER_INFORMATION_LEVEL", "PVOID", "ULONG", "PVOID", "ULONG"};
 static const char* const NtPowerInformation_names[] = {"InformationLevel", "InputBuffer", "InputLength", "OutputBuffer", "OutputLength"};
 static const uint8_t NtPowerInformation_dirs[] = {0, 128, 0, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtPowerInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPowerInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtPowerInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPowerInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtPowerInformation, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPowerInformation(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtPowerInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -514,12 +514,12 @@ static ULONG_PTR NTAPI Hook_NtPowerInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtQueryBootEntryOrder_types[] = {"PULONG", "PULONG"};
 static const char* const NtQueryBootEntryOrder_names[] = {"OrderArray", "OrderCount"};
 static const uint8_t NtQueryBootEntryOrder_dirs[] = {128, 2};
-static ULONG_PTR (NTAPI *Real_NtQueryBootEntryOrder)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryBootEntryOrder(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryBootEntryOrder)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryBootEntryOrder(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryBootEntryOrder, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryBootEntryOrder(a0, a1);
+  ULONG_PTR r = Real_NtQueryBootEntryOrder(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -527,12 +527,12 @@ static ULONG_PTR NTAPI Hook_NtQueryBootEntryOrder(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtQueryBootOptions_types[] = {"PVOID", "PULONG"};
 static const char* const NtQueryBootOptions_names[] = {"Buffer", "BufferLength"};
 static const uint8_t NtQueryBootOptions_dirs[] = {129, 2};
-static ULONG_PTR (NTAPI *Real_NtQueryBootOptions)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryBootOptions(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryBootOptions)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryBootOptions(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryBootOptions, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryBootOptions(a0, a1);
+  ULONG_PTR r = Real_NtQueryBootOptions(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -540,12 +540,12 @@ static ULONG_PTR NTAPI Hook_NtQueryBootOptions(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtQueryDriverEntryOrder_types[] = {"PULONG", "PULONG"};
 static const char* const NtQueryDriverEntryOrder_names[] = {"OrderArray", "OrderCount"};
 static const uint8_t NtQueryDriverEntryOrder_dirs[] = {129, 2};
-static ULONG_PTR (NTAPI *Real_NtQueryDriverEntryOrder)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryDriverEntryOrder(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryDriverEntryOrder)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryDriverEntryOrder(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryDriverEntryOrder, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDriverEntryOrder(a0, a1);
+  ULONG_PTR r = Real_NtQueryDriverEntryOrder(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -553,12 +553,12 @@ static ULONG_PTR NTAPI Hook_NtQueryDriverEntryOrder(ULONG_PTR a0, ULONG_PTR a1) 
 static const char* const NtReplacePartitionUnit_types[] = {"PUNICODE_STRING", "PUNICODE_STRING", "ULONG"};
 static const char* const NtReplacePartitionUnit_names[] = {"TargetInstancePath", "SpareInstancePath", "Flags"};
 static const uint8_t NtReplacePartitionUnit_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtReplacePartitionUnit)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReplacePartitionUnit(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtReplacePartitionUnit)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReplacePartitionUnit(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtReplacePartitionUnit, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplacePartitionUnit(a0, a1, a2);
+  ULONG_PTR r = Real_NtReplacePartitionUnit(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -566,12 +566,12 @@ static ULONG_PTR NTAPI Hook_NtReplacePartitionUnit(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtRequestDeviceWakeup_types[] = {"HANDLE"};
 static const char* const NtRequestDeviceWakeup_names[] = {"DeviceHandle"};
 static const uint8_t NtRequestDeviceWakeup_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtRequestDeviceWakeup)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRequestDeviceWakeup(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtRequestDeviceWakeup)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRequestDeviceWakeup(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtRequestDeviceWakeup, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRequestDeviceWakeup(a0);
+  ULONG_PTR r = Real_NtRequestDeviceWakeup(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -579,12 +579,12 @@ static ULONG_PTR NTAPI Hook_NtRequestDeviceWakeup(ULONG_PTR a0) {
 static const char* const NtRequestWakeupLatency_types[] = {"ULONG"};
 static const char* const NtRequestWakeupLatency_names[] = {"LatencyTime"};
 static const uint8_t NtRequestWakeupLatency_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtRequestWakeupLatency)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRequestWakeupLatency(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtRequestWakeupLatency)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRequestWakeupLatency(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtRequestWakeupLatency, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRequestWakeupLatency(a0);
+  ULONG_PTR r = Real_NtRequestWakeupLatency(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -592,12 +592,12 @@ static ULONG_PTR NTAPI Hook_NtRequestWakeupLatency(ULONG_PTR a0) {
 static const char* const NtSerializeBoot_types[] = {nullptr};
 static const char* const NtSerializeBoot_names[] = {nullptr};
 static const uint8_t NtSerializeBoot_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSerializeBoot)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtSerializeBoot() {
+static ULONG_PTR (NTAPI *Real_NtSerializeBoot)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSerializeBoot(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtSerializeBoot, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSerializeBoot();
+  ULONG_PTR r = Real_NtSerializeBoot(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -605,12 +605,12 @@ static ULONG_PTR NTAPI Hook_NtSerializeBoot() {
 static const char* const NtSetBootEntryOrder_types[] = {"PULONG", "ULONG"};
 static const char* const NtSetBootEntryOrder_names[] = {"OrderArray", "OrderCount"};
 static const uint8_t NtSetBootEntryOrder_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetBootEntryOrder)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetBootEntryOrder(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetBootEntryOrder)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetBootEntryOrder(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetBootEntryOrder, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetBootEntryOrder(a0, a1);
+  ULONG_PTR r = Real_NtSetBootEntryOrder(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -618,12 +618,12 @@ static ULONG_PTR NTAPI Hook_NtSetBootEntryOrder(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetBootOptions_types[] = {"PVOID", "ULONG"};
 static const char* const NtSetBootOptions_names[] = {"Buffer", "BufferLength"};
 static const uint8_t NtSetBootOptions_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetBootOptions)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetBootOptions(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetBootOptions)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetBootOptions(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetBootOptions, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetBootOptions(a0, a1);
+  ULONG_PTR r = Real_NtSetBootOptions(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -631,12 +631,12 @@ static ULONG_PTR NTAPI Hook_NtSetBootOptions(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetDriverEntryOrder_types[] = {"PULONG", "ULONG"};
 static const char* const NtSetDriverEntryOrder_names[] = {"OrderArray", "OrderCount"};
 static const uint8_t NtSetDriverEntryOrder_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetDriverEntryOrder)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetDriverEntryOrder(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetDriverEntryOrder)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetDriverEntryOrder(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetDriverEntryOrder, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetDriverEntryOrder(a0, a1);
+  ULONG_PTR r = Real_NtSetDriverEntryOrder(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -644,12 +644,12 @@ static ULONG_PTR NTAPI Hook_NtSetDriverEntryOrder(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetSystemPowerState_types[] = {"POWER_ACTION", "SYSTEM_POWER_STATE", "ULONG"};
 static const char* const NtSetSystemPowerState_names[] = {"Action", "State", "Flags"};
 static const uint8_t NtSetSystemPowerState_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetSystemPowerState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetSystemPowerState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtSetSystemPowerState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetSystemPowerState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetSystemPowerState, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSystemPowerState(a0, a1, a2);
+  ULONG_PTR r = Real_NtSetSystemPowerState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -657,12 +657,12 @@ static ULONG_PTR NTAPI Hook_NtSetSystemPowerState(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtSetThreadExecutionState_types[] = {"ULONG", "PULONG"};
 static const char* const NtSetThreadExecutionState_names[] = {"State", "PreviousState"};
 static const uint8_t NtSetThreadExecutionState_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtSetThreadExecutionState)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetThreadExecutionState(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetThreadExecutionState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetThreadExecutionState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetThreadExecutionState, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetThreadExecutionState(a0, a1);
+  ULONG_PTR r = Real_NtSetThreadExecutionState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -670,12 +670,12 @@ static ULONG_PTR NTAPI Hook_NtSetThreadExecutionState(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtUnloadDriver_types[] = {"PUNICODE_STRING"};
 static const char* const NtUnloadDriver_names[] = {"DriverName"};
 static const uint8_t NtUnloadDriver_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtUnloadDriver)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUnloadDriver(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtUnloadDriver)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUnloadDriver(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtUnloadDriver, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnloadDriver(a0);
+  ULONG_PTR r = Real_NtUnloadDriver(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -683,12 +683,12 @@ static ULONG_PTR NTAPI Hook_NtUnloadDriver(ULONG_PTR a0) {
 static const char* const NtVdmControl_types[] = {"ULONG", "PVOID"};
 static const char* const NtVdmControl_names[] = {"ControlCode", "ControlData"};
 static const uint8_t NtVdmControl_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtVdmControl)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtVdmControl(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtVdmControl)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtVdmControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtVdmControl, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtVdmControl(a0, a1);
+  ULONG_PTR r = Real_NtVdmControl(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -696,12 +696,12 @@ static ULONG_PTR NTAPI Hook_NtVdmControl(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCreateCpuPartition_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES", "PVOID", "ULONG"};
 static const char* const NtCreateCpuPartition_names[] = {"PartitionHandle", "DesiredAccess", "ObjectAttributes", "Buffer", "Reserved"};
 static const uint8_t NtCreateCpuPartition_dirs[] = {1, 0, 0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateCpuPartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtCreateCpuPartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateCpuPartition, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateCpuPartition(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtCreateCpuPartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -709,12 +709,12 @@ static ULONG_PTR NTAPI Hook_NtCreateCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtEnumerateSystemEnvironmentValuesEx_types[] = {"ULONG", "PVOID", "ULONG"};
 static const char* const NtEnumerateSystemEnvironmentValuesEx_names[] = {"Class", "Buffer", "BufferLength"};
 static const uint8_t NtEnumerateSystemEnvironmentValuesEx_dirs[] = {0, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtEnumerateSystemEnvironmentValuesEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtEnumerateSystemEnvironmentValuesEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtEnumerateSystemEnvironmentValuesEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtEnumerateSystemEnvironmentValuesEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtEnumerateSystemEnvironmentValuesEx, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateSystemEnvironmentValuesEx(a0, a1, a2);
+  ULONG_PTR r = Real_NtEnumerateSystemEnvironmentValuesEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -722,12 +722,12 @@ static ULONG_PTR NTAPI Hook_NtEnumerateSystemEnvironmentValuesEx(ULONG_PTR a0, U
 static const char* const NtGetCurrentProcessorNumber_types[] = {nullptr};
 static const char* const NtGetCurrentProcessorNumber_names[] = {nullptr};
 static const uint8_t NtGetCurrentProcessorNumber_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtGetCurrentProcessorNumber)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetCurrentProcessorNumber() {
+static ULONG_PTR (NTAPI *Real_NtGetCurrentProcessorNumber)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetCurrentProcessorNumber(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtGetCurrentProcessorNumber, (uintptr_t)_ReturnAddress(), args, 0);
   if (false) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetCurrentProcessorNumber();
+  ULONG_PTR r = Real_NtGetCurrentProcessorNumber(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -735,12 +735,12 @@ static ULONG_PTR NTAPI Hook_NtGetCurrentProcessorNumber() {
 static const char* const NtGetCurrentProcessorNumberEx_types[] = {"PULONG"};
 static const char* const NtGetCurrentProcessorNumberEx_names[] = {"ProcNumber"};
 static const uint8_t NtGetCurrentProcessorNumberEx_dirs[] = {129};
-static ULONG_PTR (NTAPI *Real_NtGetCurrentProcessorNumberEx)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetCurrentProcessorNumberEx(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtGetCurrentProcessorNumberEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetCurrentProcessorNumberEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtGetCurrentProcessorNumberEx, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetCurrentProcessorNumberEx(a0);
+  ULONG_PTR r = Real_NtGetCurrentProcessorNumberEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -748,12 +748,12 @@ static ULONG_PTR NTAPI Hook_NtGetCurrentProcessorNumberEx(ULONG_PTR a0) {
 static const char* const NtIsSystemResumeAutomatic_types[] = {nullptr};
 static const char* const NtIsSystemResumeAutomatic_names[] = {nullptr};
 static const uint8_t NtIsSystemResumeAutomatic_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtIsSystemResumeAutomatic)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtIsSystemResumeAutomatic() {
+static ULONG_PTR (NTAPI *Real_NtIsSystemResumeAutomatic)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtIsSystemResumeAutomatic(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtIsSystemResumeAutomatic, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtIsSystemResumeAutomatic();
+  ULONG_PTR r = Real_NtIsSystemResumeAutomatic(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -761,12 +761,12 @@ static ULONG_PTR NTAPI Hook_NtIsSystemResumeAutomatic() {
 static const char* const NtOpenCpuPartition_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenCpuPartition_names[] = {"PartitionHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenCpuPartition_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenCpuPartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenCpuPartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenCpuPartition, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenCpuPartition(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenCpuPartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -774,12 +774,12 @@ static ULONG_PTR NTAPI Hook_NtOpenCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtQueryDefaultLocale_types[] = {"BOOLEAN", "PLCID"};
 static const char* const NtQueryDefaultLocale_names[] = {"UserProfile", "DefaultLocaleId"};
 static const uint8_t NtQueryDefaultLocale_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryDefaultLocale)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryDefaultLocale(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryDefaultLocale)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryDefaultLocale(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryDefaultLocale, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDefaultLocale(a0, a1);
+  ULONG_PTR r = Real_NtQueryDefaultLocale(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -787,12 +787,12 @@ static ULONG_PTR NTAPI Hook_NtQueryDefaultLocale(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtQueryDefaultUILanguage_types[] = {"PULONG"};
 static const char* const NtQueryDefaultUILanguage_names[] = {"LanguageId"};
 static const uint8_t NtQueryDefaultUILanguage_dirs[] = {1};
-static ULONG_PTR (NTAPI *Real_NtQueryDefaultUILanguage)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryDefaultUILanguage(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtQueryDefaultUILanguage)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryDefaultUILanguage(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtQueryDefaultUILanguage, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDefaultUILanguage(a0);
+  ULONG_PTR r = Real_NtQueryDefaultUILanguage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -800,12 +800,12 @@ static ULONG_PTR NTAPI Hook_NtQueryDefaultUILanguage(ULONG_PTR a0) {
 static const char* const NtQueryInformationCpuPartition_types[] = {"HANDLE", "CPU_PARTITION_QUERY_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationCpuPartition_names[] = {"PartitionHandle", "CpuPartitionInformationClass", "PartitionInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationCpuPartition_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationCpuPartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationCpuPartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationCpuPartition, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationCpuPartition(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationCpuPartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -813,12 +813,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationCpuPartition(ULONG_PTR a0, ULONG_P
 static const char* const NtQueryInstallUILanguage_types[] = {"PULONG"};
 static const char* const NtQueryInstallUILanguage_names[] = {"LanguageId"};
 static const uint8_t NtQueryInstallUILanguage_dirs[] = {1};
-static ULONG_PTR (NTAPI *Real_NtQueryInstallUILanguage)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInstallUILanguage(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtQueryInstallUILanguage)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInstallUILanguage(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtQueryInstallUILanguage, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInstallUILanguage(a0);
+  ULONG_PTR r = Real_NtQueryInstallUILanguage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -826,12 +826,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInstallUILanguage(ULONG_PTR a0) {
 static const char* const NtQuerySystemEnvironmentValue_types[] = {"PUNICODE_STRING", "PWSTR", "ULONG", "PULONG"};
 static const char* const NtQuerySystemEnvironmentValue_names[] = {"Name", "Value", "Length", "ReturnLength"};
 static const uint8_t NtQuerySystemEnvironmentValue_dirs[] = {0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQuerySystemEnvironmentValue)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySystemEnvironmentValue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtQuerySystemEnvironmentValue)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySystemEnvironmentValue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtQuerySystemEnvironmentValue, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySystemEnvironmentValue(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtQuerySystemEnvironmentValue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -839,12 +839,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySystemEnvironmentValue(ULONG_PTR a0, ULONG_PT
 static const char* const NtQuerySystemEnvironmentValueEx_types[] = {"PUNICODE_STRING", "PVOID", "PVOID", "PULONG", "PULONG"};
 static const char* const NtQuerySystemEnvironmentValueEx_names[] = {"VariableName", "Guid", "Buffer", "BufferLength", "Attributes"};
 static const uint8_t NtQuerySystemEnvironmentValueEx_dirs[] = {0, 0, 1, 2, 2};
-static ULONG_PTR (NTAPI *Real_NtQuerySystemEnvironmentValueEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySystemEnvironmentValueEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQuerySystemEnvironmentValueEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySystemEnvironmentValueEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQuerySystemEnvironmentValueEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySystemEnvironmentValueEx(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQuerySystemEnvironmentValueEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -852,12 +852,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySystemEnvironmentValueEx(ULONG_PTR a0, ULONG_
 static const char* const NtQuerySystemInformation_types[] = {"SYSTEM_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQuerySystemInformation_names[] = {"SystemInformationClass", "SystemInformation", "Length", "ReturnLength"};
 static const uint8_t NtQuerySystemInformation_dirs[] = {0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQuerySystemInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySystemInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtQuerySystemInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySystemInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtQuerySystemInformation, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySystemInformation(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtQuerySystemInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -865,12 +865,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySystemInformation(ULONG_PTR a0, ULONG_PTR a1,
 static const char* const NtQuerySystemInformationEx_types[] = {"SYSTEM_INFORMATION_CLASS", "PULONG", "ULONG", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQuerySystemInformationEx_names[] = {"SystemInformationClass", "QueryType", "Alignment", "SystemInformation", "Length", "ReturnLength"};
 static const uint8_t NtQuerySystemInformationEx_dirs[] = {0, 0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQuerySystemInformationEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySystemInformationEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtQuerySystemInformationEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySystemInformationEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQuerySystemInformationEx, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySystemInformationEx(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtQuerySystemInformationEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -878,12 +878,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySystemInformationEx(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtSetDefaultLocale_types[] = {"BOOLEAN", "LCID"};
 static const char* const NtSetDefaultLocale_names[] = {"UserProfile", "LocaleId"};
 static const uint8_t NtSetDefaultLocale_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetDefaultLocale)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetDefaultLocale(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetDefaultLocale)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetDefaultLocale(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetDefaultLocale, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetDefaultLocale(a0, a1);
+  ULONG_PTR r = Real_NtSetDefaultLocale(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -891,12 +891,12 @@ static ULONG_PTR NTAPI Hook_NtSetDefaultLocale(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetDefaultUILanguage_types[] = {"ULONG"};
 static const char* const NtSetDefaultUILanguage_names[] = {"LanguageId"};
 static const uint8_t NtSetDefaultUILanguage_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetDefaultUILanguage)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetDefaultUILanguage(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSetDefaultUILanguage)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetDefaultUILanguage(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetDefaultUILanguage, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetDefaultUILanguage(a0);
+  ULONG_PTR r = Real_NtSetDefaultUILanguage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -904,12 +904,12 @@ static ULONG_PTR NTAPI Hook_NtSetDefaultUILanguage(ULONG_PTR a0) {
 static const char* const NtSetInformationCpuPartition_types[] = {"HANDLE", "CPU_PARTITION_SET_INFORMATION_CLASS", "PVOID", "ULONG", "ULONG", "ULONG", "PULONG"};
 static const char* const NtSetInformationCpuPartition_names[] = {"PartitionHandle", "CpuPartitionInformationClass", "Buffer", "BufferLength", "Unknown", "Unknown", "ReturnLength"};
 static const uint8_t NtSetInformationCpuPartition_dirs[] = {0, 0, 0, 0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtSetInformationCpuPartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationCpuPartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationCpuPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtSetInformationCpuPartition, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationCpuPartition(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtSetInformationCpuPartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -917,12 +917,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationCpuPartition(ULONG_PTR a0, ULONG_PTR
 static const char* const NtSetSystemEnvironmentValue_types[] = {"PUNICODE_STRING", "PUNICODE_STRING"};
 static const char* const NtSetSystemEnvironmentValue_names[] = {"Name", "Value"};
 static const uint8_t NtSetSystemEnvironmentValue_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetSystemEnvironmentValue)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetSystemEnvironmentValue(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetSystemEnvironmentValue)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetSystemEnvironmentValue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetSystemEnvironmentValue, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSystemEnvironmentValue(a0, a1);
+  ULONG_PTR r = Real_NtSetSystemEnvironmentValue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -930,12 +930,12 @@ static ULONG_PTR NTAPI Hook_NtSetSystemEnvironmentValue(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtSetSystemEnvironmentValueEx_types[] = {"PUNICODE_STRING", "PVOID", "PVOID", "ULONG", "ULONG"};
 static const char* const NtSetSystemEnvironmentValueEx_names[] = {"Name", "Guid", "Buffer", "BufferLength", "Attributes"};
 static const uint8_t NtSetSystemEnvironmentValueEx_dirs[] = {0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetSystemEnvironmentValueEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetSystemEnvironmentValueEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtSetSystemEnvironmentValueEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetSystemEnvironmentValueEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetSystemEnvironmentValueEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSystemEnvironmentValueEx(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtSetSystemEnvironmentValueEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -943,12 +943,12 @@ static ULONG_PTR NTAPI Hook_NtSetSystemEnvironmentValueEx(ULONG_PTR a0, ULONG_PT
 static const char* const NtSetSystemInformation_types[] = {"SYSTEM_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtSetSystemInformation_names[] = {"SystemInformationClass", "SystemInformation", "Length"};
 static const uint8_t NtSetSystemInformation_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetSystemInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetSystemInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtSetSystemInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetSystemInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetSystemInformation, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSystemInformation(a0, a1, a2);
+  ULONG_PTR r = Real_NtSetSystemInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -956,12 +956,12 @@ static ULONG_PTR NTAPI Hook_NtSetSystemInformation(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtWow64GetCurrentProcessorNumber_types[] = {nullptr};
 static const char* const NtWow64GetCurrentProcessorNumber_names[] = {nullptr};
 static const uint8_t NtWow64GetCurrentProcessorNumber_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtWow64GetCurrentProcessorNumber)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64GetCurrentProcessorNumber() {
+static ULONG_PTR (NTAPI *Real_NtWow64GetCurrentProcessorNumber)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64GetCurrentProcessorNumber(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtWow64GetCurrentProcessorNumber, (uintptr_t)_ReturnAddress(), args, 0);
   if (false) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64GetCurrentProcessorNumber();
+  ULONG_PTR r = Real_NtWow64GetCurrentProcessorNumber(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -969,12 +969,12 @@ static ULONG_PTR NTAPI Hook_NtWow64GetCurrentProcessorNumber() {
 static const char* const NtWow64GetCurrentProcessorNumberEx_types[] = {"PPROCESSOR_NUMBER"};
 static const char* const NtWow64GetCurrentProcessorNumberEx_names[] = {"ProcNumber"};
 static const uint8_t NtWow64GetCurrentProcessorNumberEx_dirs[] = {1};
-static ULONG_PTR (NTAPI *Real_NtWow64GetCurrentProcessorNumberEx)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64GetCurrentProcessorNumberEx(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtWow64GetCurrentProcessorNumberEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64GetCurrentProcessorNumberEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWow64GetCurrentProcessorNumberEx, (uintptr_t)_ReturnAddress(), args, 1);
   if (false) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64GetCurrentProcessorNumberEx(a0);
+  ULONG_PTR r = Real_NtWow64GetCurrentProcessorNumberEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -982,12 +982,12 @@ static ULONG_PTR NTAPI Hook_NtWow64GetCurrentProcessorNumberEx(ULONG_PTR a0) {
 static const char* const NtAreMappedFilesTheSame_types[] = {"PVOID", "PVOID"};
 static const char* const NtAreMappedFilesTheSame_names[] = {"Address1", "Address2"};
 static const uint8_t NtAreMappedFilesTheSame_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtAreMappedFilesTheSame)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAreMappedFilesTheSame(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtAreMappedFilesTheSame)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAreMappedFilesTheSame(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAreMappedFilesTheSame, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAreMappedFilesTheSame(a0, a1);
+  ULONG_PTR r = Real_NtAreMappedFilesTheSame(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -995,12 +995,12 @@ static ULONG_PTR NTAPI Hook_NtAreMappedFilesTheSame(ULONG_PTR a0, ULONG_PTR a1) 
 static const char* const NtAssociateWaitCompletionPacket_types[] = {"HANDLE", "HANDLE", "HANDLE", "PVOID", "PVOID", "NTSTATUS", "ULONG_PTR", "PBOOLEAN"};
 static const char* const NtAssociateWaitCompletionPacket_names[] = {"WaitCompletionPacketHandle", "IoCompletionHandle", "TargetObjectHandle", "KeyContext", "ApcContext", "IoStatus", "IoStatusInformation", "AlreadySignaled"};
 static const uint8_t NtAssociateWaitCompletionPacket_dirs[] = {0, 0, 0, 128, 128, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtAssociateWaitCompletionPacket)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAssociateWaitCompletionPacket(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtAssociateWaitCompletionPacket)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAssociateWaitCompletionPacket(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtAssociateWaitCompletionPacket, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAssociateWaitCompletionPacket(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtAssociateWaitCompletionPacket(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1008,12 +1008,12 @@ static ULONG_PTR NTAPI Hook_NtAssociateWaitCompletionPacket(ULONG_PTR a0, ULONG_
 static const char* const NtCancelIoFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK"};
 static const char* const NtCancelIoFile_names[] = {"FileHandle", "IoStatusBlock"};
 static const uint8_t NtCancelIoFile_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtCancelIoFile)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCancelIoFile(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCancelIoFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCancelIoFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCancelIoFile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelIoFile(a0, a1);
+  ULONG_PTR r = Real_NtCancelIoFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1021,12 +1021,12 @@ static ULONG_PTR NTAPI Hook_NtCancelIoFile(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCancelIoFileEx_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PIO_STATUS_BLOCK"};
 static const char* const NtCancelIoFileEx_names[] = {"hFile", "IoStatusBlockIn", "IoStatusBlock"};
 static const uint8_t NtCancelIoFileEx_dirs[] = {0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtCancelIoFileEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCancelIoFileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtCancelIoFileEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCancelIoFileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCancelIoFileEx, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelIoFileEx(a0, a1, a2);
+  ULONG_PTR r = Real_NtCancelIoFileEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1034,12 +1034,12 @@ static ULONG_PTR NTAPI Hook_NtCancelIoFileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtCancelSynchronousIoFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PIO_STATUS_BLOCK"};
 static const char* const NtCancelSynchronousIoFile_names[] = {"ThreadHandle", "IoStatusBlockIn", "IoStatusBlock"};
 static const uint8_t NtCancelSynchronousIoFile_dirs[] = {0, 128, 1};
-static ULONG_PTR (NTAPI *Real_NtCancelSynchronousIoFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCancelSynchronousIoFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtCancelSynchronousIoFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCancelSynchronousIoFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCancelSynchronousIoFile, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelSynchronousIoFile(a0, a1, a2);
+  ULONG_PTR r = Real_NtCancelSynchronousIoFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1047,12 +1047,12 @@ static ULONG_PTR NTAPI Hook_NtCancelSynchronousIoFile(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtCancelWaitCompletionPacket_types[] = {"HANDLE", "BOOLEAN"};
 static const char* const NtCancelWaitCompletionPacket_names[] = {"CompletionHandle", "Flag"};
 static const uint8_t NtCancelWaitCompletionPacket_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtCancelWaitCompletionPacket)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCancelWaitCompletionPacket(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCancelWaitCompletionPacket)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCancelWaitCompletionPacket(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCancelWaitCompletionPacket, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelWaitCompletionPacket(a0, a1);
+  ULONG_PTR r = Real_NtCancelWaitCompletionPacket(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1060,12 +1060,12 @@ static ULONG_PTR NTAPI Hook_NtCancelWaitCompletionPacket(ULONG_PTR a0, ULONG_PTR
 static const char* const NtClose_types[] = {"HANDLE"};
 static const char* const NtClose_names[] = {"Handle"};
 static const uint8_t NtClose_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtClose)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtClose(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtClose)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtClose(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtClose, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtClose(a0);
+  ULONG_PTR r = Real_NtClose(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1073,12 +1073,12 @@ static ULONG_PTR NTAPI Hook_NtClose(ULONG_PTR a0) {
 static const char* const NtCopyFileChunk_types[] = {"HANDLE", "HANDLE", "HANDLE", "PIO_STATUS_BLOCK", "ULONG", "PLARGE_INTEGER", "PLARGE_INTEGER", "PVOID", "PVOID", "ULONG"};
 static const char* const NtCopyFileChunk_names[] = {"SourceHandle", "DestHandle", "EventHandle", "PioStatusBlock", "Length", "SourceOffset", "DestOffset", "SourceKey", "DestKey", "Flags"};
 static const uint8_t NtCopyFileChunk_dirs[] = {0, 0, 128, 1, 0, 0, 0, 128, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtCopyFileChunk)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCopyFileChunk(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) {
+static ULONG_PTR (NTAPI *Real_NtCopyFileChunk)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCopyFileChunk(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtCopyFileChunk, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCopyFileChunk(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+  ULONG_PTR r = Real_NtCopyFileChunk(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1086,12 +1086,12 @@ static ULONG_PTR NTAPI Hook_NtCopyFileChunk(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtCreateFile_types[] = {"PHANDLE", "FILE_ACCESS_MASK", "POBJECT_ATTRIBUTES", "PIO_STATUS_BLOCK", "PLARGE_INTEGER", "ULONG", "ULONG", "ULONG", "ULONG", "PVOID", "ULONG"};
 static const char* const NtCreateFile_names[] = {"FileHandle", "DesiredAccess", "ObjectAttributes", "IoStatusBlock", "AllocationSize", "FileAttributes", "ShareAccess", "CreateDisposition", "CreateOptions", "EaBuffer", "EaLength"};
 static const uint8_t NtCreateFile_dirs[] = {1, 0, 0, 1, 128, 0, 0, 0, 0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) {
+static ULONG_PTR (NTAPI *Real_NtCreateFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtCreateFile, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+  ULONG_PTR r = Real_NtCreateFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1099,12 +1099,12 @@ static ULONG_PTR NTAPI Hook_NtCreateFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtCreateIoCompletion_types[] = {"PHANDLE", "FILE_ACCESS_MASK", "POBJECT_ATTRIBUTES", "ULONG"};
 static const char* const NtCreateIoCompletion_names[] = {"IoHandle", "DesiredAccess", "ObjectAttributes", "NumberOfConcurrentThreads"};
 static const uint8_t NtCreateIoCompletion_dirs[] = {1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateIoCompletion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCreateIoCompletion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateIoCompletion, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateIoCompletion(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCreateIoCompletion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1112,12 +1112,12 @@ static ULONG_PTR NTAPI Hook_NtCreateIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtCreateMailslotFile_types[] = {"PHANDLE", "FILE_ACCESS_MASK", "POBJECT_ATTRIBUTES", "PIO_STATUS_BLOCK", "ULONG", "ULONG", "ULONG", "PLARGE_INTEGER"};
 static const char* const NtCreateMailslotFile_names[] = {"Handle", "DesiredAccess", "ObjectAttributes", "IoStatusBlock", "CreateOptions", "InBufferSize", "MaxMessageSize", "ReadTimeout"};
 static const uint8_t NtCreateMailslotFile_dirs[] = {1, 0, 0, 1, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateMailslotFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateMailslotFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtCreateMailslotFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateMailslotFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtCreateMailslotFile, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateMailslotFile(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtCreateMailslotFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1125,12 +1125,12 @@ static ULONG_PTR NTAPI Hook_NtCreateMailslotFile(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtCreateNamedPipeFile_types[] = {"PHANDLE", "FILE_ACCESS_MASK", "POBJECT_ATTRIBUTES", "PIO_STATUS_BLOCK", "ULONG", "ULONG", "ULONG", "BOOLEAN", "BOOLEAN", "BOOLEAN", "ULONG", "ULONG", "ULONG", "PLARGE_INTEGER"};
 static const char* const NtCreateNamedPipeFile_names[] = {"NamedPipeHandle", "DesiredAccess", "ObjectAttributes", "IoStatusBlock", "ShareAccess", "CreateDisposition", "CreateOptions", "MessageType", "MessageRead", "NonBlocking", "MaxInstances", "InBufferSize", "OutBufferSize", "Timeout"};
 static const uint8_t NtCreateNamedPipeFile_dirs[] = {1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateNamedPipeFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateNamedPipeFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13) {
+static ULONG_PTR (NTAPI *Real_NtCreateNamedPipeFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateNamedPipeFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13};
   CallCtx ctx(SYS_NtCreateNamedPipeFile, (uintptr_t)_ReturnAddress(), args, 14);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateNamedPipeFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13);
+  ULONG_PTR r = Real_NtCreateNamedPipeFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1138,12 +1138,12 @@ static ULONG_PTR NTAPI Hook_NtCreateNamedPipeFile(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtCreatePagingFile_types[] = {"PUNICODE_STRING", "PLARGE_INTEGER", "PLARGE_INTEGER", "PLARGE_INTEGER"};
 static const char* const NtCreatePagingFile_names[] = {"PageFileName", "MinSize", "MaxSize", "ActualSize"};
 static const uint8_t NtCreatePagingFile_dirs[] = {0, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtCreatePagingFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreatePagingFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCreatePagingFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreatePagingFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreatePagingFile, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreatePagingFile(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCreatePagingFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1151,12 +1151,12 @@ static ULONG_PTR NTAPI Hook_NtCreatePagingFile(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtCreateWaitCompletionPacket_types[] = {"PHANDLE", "FILE_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtCreateWaitCompletionPacket_names[] = {"WaitCompletionPacketHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtCreateWaitCompletionPacket_dirs[] = {1, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateWaitCompletionPacket)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateWaitCompletionPacket(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtCreateWaitCompletionPacket)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateWaitCompletionPacket(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCreateWaitCompletionPacket, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateWaitCompletionPacket(a0, a1, a2);
+  ULONG_PTR r = Real_NtCreateWaitCompletionPacket(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1164,12 +1164,12 @@ static ULONG_PTR NTAPI Hook_NtCreateWaitCompletionPacket(ULONG_PTR a0, ULONG_PTR
 static const char* const NtDeleteFile_types[] = {"POBJECT_ATTRIBUTES"};
 static const char* const NtDeleteFile_names[] = {"ObjectAttributes"};
 static const uint8_t NtDeleteFile_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtDeleteFile)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeleteFile(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtDeleteFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeleteFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteFile, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteFile(a0);
+  ULONG_PTR r = Real_NtDeleteFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1177,12 +1177,12 @@ static ULONG_PTR NTAPI Hook_NtDeleteFile(ULONG_PTR a0) {
 static const char* const NtDeviceIoControlFile_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "ULONG", "PVOID", "ULONG", "PVOID", "ULONG"};
 static const char* const NtDeviceIoControlFile_names[] = {"FileHandle", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "IoControlCode", "InputBuffer", "InputBufferLength", "OutputBuffer", "OutputBufferLength"};
 static const uint8_t NtDeviceIoControlFile_dirs[] = {0, 0, 128, 128, 1, 0, 0, 0, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtDeviceIoControlFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeviceIoControlFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) {
+static ULONG_PTR (NTAPI *Real_NtDeviceIoControlFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeviceIoControlFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtDeviceIoControlFile, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeviceIoControlFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+  ULONG_PTR r = Real_NtDeviceIoControlFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1190,12 +1190,12 @@ static ULONG_PTR NTAPI Hook_NtDeviceIoControlFile(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtFlushBuffersFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK"};
 static const char* const NtFlushBuffersFile_names[] = {"FileHandle", "IoStatusBlock"};
 static const uint8_t NtFlushBuffersFile_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtFlushBuffersFile)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFlushBuffersFile(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtFlushBuffersFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFlushBuffersFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtFlushBuffersFile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushBuffersFile(a0, a1);
+  ULONG_PTR r = Real_NtFlushBuffersFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1203,12 +1203,12 @@ static ULONG_PTR NTAPI Hook_NtFlushBuffersFile(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtFlushBuffersFileEx_types[] = {"HANDLE", "ULONG", "PVOID", "ULONG", "PIO_STATUS_BLOCK"};
 static const char* const NtFlushBuffersFileEx_names[] = {"FileHandle", "Flags", "Parameters", "ParametersSize", "IoStatusBlock"};
 static const uint8_t NtFlushBuffersFileEx_dirs[] = {0, 0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtFlushBuffersFileEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFlushBuffersFileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtFlushBuffersFileEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFlushBuffersFileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtFlushBuffersFileEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushBuffersFileEx(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtFlushBuffersFileEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1216,12 +1216,12 @@ static ULONG_PTR NTAPI Hook_NtFlushBuffersFileEx(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtFsControlFile_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "ULONG", "PVOID", "ULONG", "PVOID", "ULONG"};
 static const char* const NtFsControlFile_names[] = {"FileHandle", "Event", "UserApcRoutine", "UserApcContext", "UserIoStatus", "FsControlCode", "InputBuffer", "InputBufferLength", "OutputBuffer", "OutputBufferLength"};
 static const uint8_t NtFsControlFile_dirs[] = {0, 0, 128, 128, 1, 0, 128, 128, 129, 128};
-static ULONG_PTR (NTAPI *Real_NtFsControlFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFsControlFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) {
+static ULONG_PTR (NTAPI *Real_NtFsControlFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFsControlFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtFsControlFile, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFsControlFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+  ULONG_PTR r = Real_NtFsControlFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1229,12 +1229,12 @@ static ULONG_PTR NTAPI Hook_NtFsControlFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtLockFile_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "PLARGE_INTEGER", "PLARGE_INTEGER", "ULONG", "BOOLEAN", "BOOLEAN"};
 static const char* const NtLockFile_names[] = {"FileHandle", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "Offset", "Length", "Key", "FailImmediately", "ExclusiveLock"};
 static const uint8_t NtLockFile_dirs[] = {0, 0, 128, 128, 1, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtLockFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLockFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) {
+static ULONG_PTR (NTAPI *Real_NtLockFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLockFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtLockFile, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLockFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+  ULONG_PTR r = Real_NtLockFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1242,12 +1242,12 @@ static ULONG_PTR NTAPI Hook_NtLockFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
 static const char* const NtNotifyChangeDirectoryFile_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "ULONG", "BOOLEAN"};
 static const char* const NtNotifyChangeDirectoryFile_names[] = {"DirectoryHandle", "EventHandle", "ApcRoutine", "ApcContext", "IoStatusBlock", "Buffer", "BufferLength", "CompletionFilter", "Recursive"};
 static const uint8_t NtNotifyChangeDirectoryFile_dirs[] = {0, 0, 128, 128, 1, 1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtNotifyChangeDirectoryFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtNotifyChangeDirectoryFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtNotifyChangeDirectoryFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtNotifyChangeDirectoryFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtNotifyChangeDirectoryFile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtNotifyChangeDirectoryFile(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtNotifyChangeDirectoryFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1255,12 +1255,12 @@ static ULONG_PTR NTAPI Hook_NtNotifyChangeDirectoryFile(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtOpenFile_types[] = {"PHANDLE", "FILE_ACCESS_MASK", "POBJECT_ATTRIBUTES", "PIO_STATUS_BLOCK", "ULONG", "ULONG"};
 static const char* const NtOpenFile_names[] = {"FileHandle", "DesiredAccess", "ObjectAttributes", "IoStatusBlock", "ShareAccess", "OpenOptions"};
 static const uint8_t NtOpenFile_dirs[] = {1, 0, 0, 1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtOpenFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtOpenFile, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenFile(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtOpenFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1268,12 +1268,12 @@ static ULONG_PTR NTAPI Hook_NtOpenFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
 static const char* const NtOpenIoCompletion_types[] = {"PHANDLE", "FILE_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenIoCompletion_names[] = {"Handle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenIoCompletion_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenIoCompletion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenIoCompletion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenIoCompletion, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenIoCompletion(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenIoCompletion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1281,12 +1281,12 @@ static ULONG_PTR NTAPI Hook_NtOpenIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtQueryAttributesFile_types[] = {"POBJECT_ATTRIBUTES", "PFILE_BASIC_INFORMATION"};
 static const char* const NtQueryAttributesFile_names[] = {"ObjectAttributes", "Attributes"};
 static const uint8_t NtQueryAttributesFile_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryAttributesFile)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryAttributesFile(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryAttributesFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryAttributesFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryAttributesFile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryAttributesFile(a0, a1);
+  ULONG_PTR r = Real_NtQueryAttributesFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1294,12 +1294,12 @@ static ULONG_PTR NTAPI Hook_NtQueryAttributesFile(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtQueryDirectoryFile_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "FILE_INFORMATION_CLASS", "BOOLEAN", "PUNICODE_STRING", "BOOLEAN"};
 static const char* const NtQueryDirectoryFile_names[] = {"FileHandle", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "FileInformation", "Length", "FileInformationClass", "ReturnSingleEntry", "FileName", "RestartScan"};
 static const uint8_t NtQueryDirectoryFile_dirs[] = {0, 128, 128, 128, 1, 1, 0, 0, 0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtQueryDirectoryFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryDirectoryFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) {
+static ULONG_PTR (NTAPI *Real_NtQueryDirectoryFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryDirectoryFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtQueryDirectoryFile, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDirectoryFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+  ULONG_PTR r = Real_NtQueryDirectoryFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1307,12 +1307,12 @@ static ULONG_PTR NTAPI Hook_NtQueryDirectoryFile(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtQueryDirectoryFileEx_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "FILE_INFORMATION_CLASS", "ULONG", "PUNICODE_STRING"};
 static const char* const NtQueryDirectoryFileEx_names[] = {"FileHandle", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "FileInformation", "Length", "FileInformationClass", "QueryFlags", "FileName"};
 static const uint8_t NtQueryDirectoryFileEx_dirs[] = {0, 128, 128, 128, 1, 1, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtQueryDirectoryFileEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryDirectoryFileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) {
+static ULONG_PTR (NTAPI *Real_NtQueryDirectoryFileEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryDirectoryFileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtQueryDirectoryFileEx, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDirectoryFileEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+  ULONG_PTR r = Real_NtQueryDirectoryFileEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1320,12 +1320,12 @@ static ULONG_PTR NTAPI Hook_NtQueryDirectoryFileEx(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtQueryEaFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "BOOLEAN", "PVOID", "ULONG", "PULONG", "BOOLEAN"};
 static const char* const NtQueryEaFile_names[] = {"FileHandle", "IoStatusBlock", "Buffer", "Length", "SingleEntry", "Eas", "EasLength", "Index", "Restart"};
 static const uint8_t NtQueryEaFile_dirs[] = {0, 1, 1, 0, 0, 128, 0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtQueryEaFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryEaFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtQueryEaFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryEaFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtQueryEaFile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryEaFile(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtQueryEaFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1333,12 +1333,12 @@ static ULONG_PTR NTAPI Hook_NtQueryEaFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtQueryFullAttributesFile_types[] = {"POBJECT_ATTRIBUTES", "PFILE_NETWORK_OPEN_INFORMATION"};
 static const char* const NtQueryFullAttributesFile_names[] = {"ObjectAttributes", "Attributes"};
 static const uint8_t NtQueryFullAttributesFile_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryFullAttributesFile)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryFullAttributesFile(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryFullAttributesFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryFullAttributesFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryFullAttributesFile, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryFullAttributesFile(a0, a1);
+  ULONG_PTR r = Real_NtQueryFullAttributesFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1346,12 +1346,12 @@ static ULONG_PTR NTAPI Hook_NtQueryFullAttributesFile(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtQueryInformationByName_types[] = {"POBJECT_ATTRIBUTES", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "FILE_INFORMATION_CLASS"};
 static const char* const NtQueryInformationByName_names[] = {"ObjectAttributes", "IoStatusBlock", "FileInformation", "Length", "FileInformationClass"};
 static const uint8_t NtQueryInformationByName_dirs[] = {0, 1, 1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationByName)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationByName(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationByName)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationByName(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationByName, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationByName(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationByName(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1359,12 +1359,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationByName(ULONG_PTR a0, ULONG_PTR a1,
 static const char* const NtQueryInformationFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "FILE_INFORMATION_CLASS"};
 static const char* const NtQueryInformationFile_names[] = {"FileHandle", "IoStatusBlock", "FileInformation", "Length", "FileInformationClass"};
 static const uint8_t NtQueryInformationFile_dirs[] = {0, 1, 1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationFile, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationFile(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1372,12 +1372,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationFile(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtQueryIoCompletion_types[] = {"HANDLE", "ULONG", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryIoCompletion_names[] = {"IoHandle", "Class", "IoInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryIoCompletion_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryIoCompletion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryIoCompletion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryIoCompletion, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryIoCompletion(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryIoCompletion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1385,12 +1385,12 @@ static ULONG_PTR NTAPI Hook_NtQueryIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtQueryOleDirectoryFile_types[] = {nullptr};
 static const char* const NtQueryOleDirectoryFile_names[] = {nullptr};
 static const uint8_t NtQueryOleDirectoryFile_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtQueryOleDirectoryFile)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryOleDirectoryFile() {
+static ULONG_PTR (NTAPI *Real_NtQueryOleDirectoryFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryOleDirectoryFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtQueryOleDirectoryFile, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryOleDirectoryFile();
+  ULONG_PTR r = Real_NtQueryOleDirectoryFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1398,12 +1398,12 @@ static ULONG_PTR NTAPI Hook_NtQueryOleDirectoryFile() {
 static const char* const NtQueryQuotaInformationFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "BOOLEAN", "PVOID", "ULONG", "PSID", "BOOLEAN"};
 static const char* const NtQueryQuotaInformationFile_names[] = {"FileHandle", "IoStatusBlock", "Buffer", "Length", "ReturnSingleEntry", "SidList", "SidListLength", "StartSid", "RestartScan"};
 static const uint8_t NtQueryQuotaInformationFile_dirs[] = {0, 1, 1, 0, 0, 128, 0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtQueryQuotaInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryQuotaInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtQueryQuotaInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryQuotaInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtQueryQuotaInformationFile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryQuotaInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtQueryQuotaInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1411,12 +1411,12 @@ static ULONG_PTR NTAPI Hook_NtQueryQuotaInformationFile(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtQueryVolumeInformationFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "FS_INFORMATION_CLASS"};
 static const char* const NtQueryVolumeInformationFile_names[] = {"FileHandle", "IoStatusBlock", "FsInformation", "Length", "FsInformationClass"};
 static const uint8_t NtQueryVolumeInformationFile_dirs[] = {0, 1, 1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtQueryVolumeInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryVolumeInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryVolumeInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryVolumeInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryVolumeInformationFile, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryVolumeInformationFile(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryVolumeInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1424,12 +1424,12 @@ static ULONG_PTR NTAPI Hook_NtQueryVolumeInformationFile(ULONG_PTR a0, ULONG_PTR
 static const char* const NtReadFile_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "PLARGE_INTEGER", "PULONG"};
 static const char* const NtReadFile_names[] = {"FileHandle", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "Buffer", "Length", "ByteOffset", "Key"};
 static const uint8_t NtReadFile_dirs[] = {0, 128, 128, 128, 1, 1, 0, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtReadFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReadFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtReadFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReadFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtReadFile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadFile(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtReadFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1437,12 +1437,12 @@ static ULONG_PTR NTAPI Hook_NtReadFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
 static const char* const NtReadFileScatter_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "PLARGE_INTEGER", "PULONG"};
 static const char* const NtReadFileScatter_names[] = {"FileHandle", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "Buffer", "BufferLength", "Offset", "Key"};
 static const uint8_t NtReadFileScatter_dirs[] = {0, 128, 128, 128, 1, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtReadFileScatter)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReadFileScatter(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtReadFileScatter)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReadFileScatter(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtReadFileScatter, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadFileScatter(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtReadFileScatter(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1450,12 +1450,12 @@ static ULONG_PTR NTAPI Hook_NtReadFileScatter(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtRemoveIoCompletion_types[] = {"HANDLE", "PULONG", "PVOID", "PIO_STATUS_BLOCK", "PLARGE_INTEGER"};
 static const char* const NtRemoveIoCompletion_names[] = {"IoHandle", "Key", "Overlapped", "IoStatusBlock", "Timeout"};
 static const uint8_t NtRemoveIoCompletion_dirs[] = {0, 1, 1, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtRemoveIoCompletion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRemoveIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtRemoveIoCompletion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRemoveIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtRemoveIoCompletion, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRemoveIoCompletion(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtRemoveIoCompletion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1463,12 +1463,12 @@ static ULONG_PTR NTAPI Hook_NtRemoveIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtRemoveIoCompletionEx_types[] = {"HANDLE", "PVOID", "ULONG", "PULONG", "PLARGE_INTEGER", "BOOLEAN"};
 static const char* const NtRemoveIoCompletionEx_names[] = {"IoCompletionHandle", "IoCompletionInformation", "Count", "NumEntriesRemoved", "Timeout", "Alertable"};
 static const uint8_t NtRemoveIoCompletionEx_dirs[] = {0, 1, 0, 1, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtRemoveIoCompletionEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRemoveIoCompletionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtRemoveIoCompletionEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRemoveIoCompletionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtRemoveIoCompletionEx, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRemoveIoCompletionEx(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtRemoveIoCompletionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1476,12 +1476,12 @@ static ULONG_PTR NTAPI Hook_NtRemoveIoCompletionEx(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtSetEaFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PVOID", "ULONG"};
 static const char* const NtSetEaFile_names[] = {"FileHandle", "IoStatusBlock", "Buffer", "BufferLength"};
 static const uint8_t NtSetEaFile_dirs[] = {0, 1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetEaFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetEaFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetEaFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetEaFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetEaFile, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetEaFile(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetEaFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1489,12 +1489,12 @@ static ULONG_PTR NTAPI Hook_NtSetEaFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
 static const char* const NtSetInformationFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "FILE_INFORMATION_CLASS"};
 static const char* const NtSetInformationFile_names[] = {"FileHandle", "IoStatusBlock", "FileInformation", "Length", "FileInformationClass"};
 static const uint8_t NtSetInformationFile_dirs[] = {0, 1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetInformationFile, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationFile(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtSetInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1502,12 +1502,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtSetIoCompletion_types[] = {"HANDLE", "ULONG", "PVOID", "NTSTATUS", "ULONG"};
 static const char* const NtSetIoCompletion_names[] = {"IoHandle", "Key", "Overlapped", "Status", "DataLength"};
 static const uint8_t NtSetIoCompletion_dirs[] = {0, 0, 2, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetIoCompletion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtSetIoCompletion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetIoCompletion, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetIoCompletion(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtSetIoCompletion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1515,12 +1515,12 @@ static ULONG_PTR NTAPI Hook_NtSetIoCompletion(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtSetIoCompletionEx_types[] = {"HANDLE", "HANDLE", "PVOID", "PVOID", "NTSTATUS", "ULONG"};
 static const char* const NtSetIoCompletionEx_names[] = {"IoCompletionHandle", "IoCompletionReserveHandle", "KeyContext", "ApcContext", "IoStatus", "IoStatusInformation"};
 static const uint8_t NtSetIoCompletionEx_dirs[] = {0, 0, 0, 128, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetIoCompletionEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetIoCompletionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtSetIoCompletionEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetIoCompletionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSetIoCompletionEx, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetIoCompletionEx(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtSetIoCompletionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1528,12 +1528,12 @@ static ULONG_PTR NTAPI Hook_NtSetIoCompletionEx(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtSetQuotaInformationFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PVOID", "ULONG"};
 static const char* const NtSetQuotaInformationFile_names[] = {"FileHandle", "IoStatusBlock", "Buffer", "Length"};
 static const uint8_t NtSetQuotaInformationFile_dirs[] = {0, 1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetQuotaInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetQuotaInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetQuotaInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetQuotaInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetQuotaInformationFile, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetQuotaInformationFile(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetQuotaInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1541,12 +1541,12 @@ static ULONG_PTR NTAPI Hook_NtSetQuotaInformationFile(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtSetVolumeInformationFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "FS_INFORMATION_CLASS"};
 static const char* const NtSetVolumeInformationFile_names[] = {"FileHandle", "IoStatusBlock", "FsInformation", "Length", "FsInformationClass"};
 static const uint8_t NtSetVolumeInformationFile_dirs[] = {0, 1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetVolumeInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetVolumeInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtSetVolumeInformationFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetVolumeInformationFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetVolumeInformationFile, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetVolumeInformationFile(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtSetVolumeInformationFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1554,12 +1554,12 @@ static ULONG_PTR NTAPI Hook_NtSetVolumeInformationFile(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtTranslateFilePath_types[] = {"PVOID", "ULONG", "PVOID", "ULONG"};
 static const char* const NtTranslateFilePath_names[] = {"InputPath", "OutputType", "OutputFilePath", "OutputFilePathLength"};
 static const uint8_t NtTranslateFilePath_dirs[] = {0, 0, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtTranslateFilePath)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtTranslateFilePath(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtTranslateFilePath)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtTranslateFilePath(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtTranslateFilePath, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTranslateFilePath(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtTranslateFilePath(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1567,12 +1567,12 @@ static ULONG_PTR NTAPI Hook_NtTranslateFilePath(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtUnlockFile_types[] = {"HANDLE", "PIO_STATUS_BLOCK", "PLARGE_INTEGER", "PLARGE_INTEGER", "ULONG"};
 static const char* const NtUnlockFile_names[] = {"FileHandle", "IoStatusBlock", "Offset", "Length", "Key"};
 static const uint8_t NtUnlockFile_dirs[] = {0, 1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtUnlockFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUnlockFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtUnlockFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUnlockFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtUnlockFile, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnlockFile(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtUnlockFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1580,12 +1580,12 @@ static ULONG_PTR NTAPI Hook_NtUnlockFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtWriteFile_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "PLARGE_INTEGER", "PULONG"};
 static const char* const NtWriteFile_names[] = {"FileHandle", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "Buffer", "Length", "ByteOffset", "Key"};
 static const uint8_t NtWriteFile_dirs[] = {0, 128, 128, 128, 1, 0, 0, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtWriteFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWriteFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtWriteFile)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWriteFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtWriteFile, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWriteFile(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtWriteFile(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1593,12 +1593,12 @@ static ULONG_PTR NTAPI Hook_NtWriteFile(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
 static const char* const NtWriteFileGather_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "PLARGE_INTEGER", "PULONG"};
 static const char* const NtWriteFileGather_names[] = {"FileHandle", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "Segments", "Length", "ByteOffset", "Key"};
 static const uint8_t NtWriteFileGather_dirs[] = {0, 128, 128, 128, 1, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtWriteFileGather)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWriteFileGather(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtWriteFileGather)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWriteFileGather(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtWriteFileGather, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWriteFileGather(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtWriteFileGather(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1606,12 +1606,12 @@ static ULONG_PTR NTAPI Hook_NtWriteFileGather(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtCreateIoRing_types[] = {"PHANDLE", "ULONG", "PIO_RING_STRUCTV1", "ULONG", "PNT_IORING_INFO"};
 static const char* const NtCreateIoRing_names[] = {"pIoRingHandle", "CreateParametersSize", "CreateParameters", "OutputParametersSize", "pRingInfo"};
 static const uint8_t NtCreateIoRing_dirs[] = {1, 0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtCreateIoRing)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateIoRing(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtCreateIoRing)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateIoRing(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateIoRing, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateIoRing(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtCreateIoRing(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1619,12 +1619,12 @@ static ULONG_PTR NTAPI Hook_NtCreateIoRing(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
 static const char* const NtQueryIoRingCapabilities_types[] = {"SIZE_T", "PNT_IORING_CAPABILITIES"};
 static const char* const NtQueryIoRingCapabilities_names[] = {"CapabilitiesLength", "Capabilities"};
 static const uint8_t NtQueryIoRingCapabilities_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryIoRingCapabilities)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryIoRingCapabilities(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryIoRingCapabilities)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryIoRingCapabilities(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryIoRingCapabilities, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryIoRingCapabilities(a0, a1);
+  ULONG_PTR r = Real_NtQueryIoRingCapabilities(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1632,12 +1632,12 @@ static ULONG_PTR NTAPI Hook_NtQueryIoRingCapabilities(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtSetInformationIoRing_types[] = {"HANDLE", "ULONG", "ULONG", "PVOID"};
 static const char* const NtSetInformationIoRing_names[] = {"Handle", "InformationClass", "InformationLength", "IoRingInformation"};
 static const uint8_t NtSetInformationIoRing_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationIoRing)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationIoRing(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationIoRing)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationIoRing(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationIoRing, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationIoRing(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationIoRing(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1645,12 +1645,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationIoRing(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtSubmitIoRing_types[] = {"HANDLE", "IORING_CREATE_REQUIRED_FLAGS", "ULONG", "PLARGE_INTEGER"};
 static const char* const NtSubmitIoRing_names[] = {"Handle", "Flags", "EntryCount", "Timeout"};
 static const uint8_t NtSubmitIoRing_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSubmitIoRing)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSubmitIoRing(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSubmitIoRing)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSubmitIoRing(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSubmitIoRing, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSubmitIoRing(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSubmitIoRing(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1658,12 +1658,12 @@ static ULONG_PTR NTAPI Hook_NtSubmitIoRing(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
 static const char* const NtAssignProcessToJobObject_types[] = {"HANDLE", "HANDLE"};
 static const char* const NtAssignProcessToJobObject_names[] = {"JobHandle", "ProcessHandle"};
 static const uint8_t NtAssignProcessToJobObject_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtAssignProcessToJobObject)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAssignProcessToJobObject(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtAssignProcessToJobObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAssignProcessToJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAssignProcessToJobObject, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAssignProcessToJobObject(a0, a1);
+  ULONG_PTR r = Real_NtAssignProcessToJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1671,12 +1671,12 @@ static ULONG_PTR NTAPI Hook_NtAssignProcessToJobObject(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtCreateJobObject_types[] = {"PHANDLE", "JOB_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtCreateJobObject_names[] = {"JobHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtCreateJobObject_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateJobObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtCreateJobObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCreateJobObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateJobObject(a0, a1, a2);
+  ULONG_PTR r = Real_NtCreateJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1684,12 +1684,12 @@ static ULONG_PTR NTAPI Hook_NtCreateJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtCreateJobSet_types[] = {"ULONG", "PVOID", "ULONG"};
 static const char* const NtCreateJobSet_names[] = {"JobNumber", "UserJobSet", "Flags"};
 static const uint8_t NtCreateJobSet_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateJobSet)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateJobSet(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtCreateJobSet)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateJobSet(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCreateJobSet, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateJobSet(a0, a1, a2);
+  ULONG_PTR r = Real_NtCreateJobSet(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1697,12 +1697,12 @@ static ULONG_PTR NTAPI Hook_NtCreateJobSet(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
 static const char* const NtIsProcessInJob_types[] = {"HANDLE", "HANDLE"};
 static const char* const NtIsProcessInJob_names[] = {"hProcess", "hJob"};
 static const uint8_t NtIsProcessInJob_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtIsProcessInJob)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtIsProcessInJob(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtIsProcessInJob)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtIsProcessInJob(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtIsProcessInJob, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtIsProcessInJob(a0, a1);
+  ULONG_PTR r = Real_NtIsProcessInJob(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1710,12 +1710,12 @@ static ULONG_PTR NTAPI Hook_NtIsProcessInJob(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtOpenJobObject_types[] = {"PHANDLE", "JOB_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenJobObject_names[] = {"JobHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenJobObject_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenJobObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenJobObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenJobObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenJobObject(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1723,12 +1723,12 @@ static ULONG_PTR NTAPI Hook_NtOpenJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtQueryInformationJobObject_types[] = {"HANDLE", "JOB_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationJobObject_names[] = {"JobHandle", "JobInformationClass", "JobInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationJobObject_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationJobObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationJobObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationJobObject, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationJobObject(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1736,12 +1736,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationJobObject(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtSetInformationJobObject_types[] = {"HANDLE", "JOB_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationJobObject_names[] = {"Handle", "Class", "Buffer", "BufferLength"};
 static const uint8_t NtSetInformationJobObject_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationJobObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationJobObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationJobObject, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationJobObject(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1749,12 +1749,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationJobObject(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtTerminateJobObject_types[] = {"HANDLE", "NTSTATUS"};
 static const char* const NtTerminateJobObject_names[] = {"JobHandle", "ExitStatus"};
 static const uint8_t NtTerminateJobObject_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtTerminateJobObject)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtTerminateJobObject(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtTerminateJobObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtTerminateJobObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtTerminateJobObject, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTerminateJobObject(a0, a1);
+  ULONG_PTR r = Real_NtTerminateJobObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1762,12 +1762,12 @@ static ULONG_PTR NTAPI Hook_NtTerminateJobObject(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtAcceptConnectPort_types[] = {"PHANDLE", "PVOID", "PPORT_MESSAGE", "BOOLEAN", "PPORT_VIEW", "PREMOTE_PORT_VIEW"};
 static const char* const NtAcceptConnectPort_names[] = {"PortHandle", "PortContext", "ConnectionRequest", "AcceptConnection", "ServerView", "ClientView"};
 static const uint8_t NtAcceptConnectPort_dirs[] = {1, 128, 0, 0, 130, 129};
-static ULONG_PTR (NTAPI *Real_NtAcceptConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAcceptConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtAcceptConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAcceptConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAcceptConnectPort, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAcceptConnectPort(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtAcceptConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1775,12 +1775,12 @@ static ULONG_PTR NTAPI Hook_NtAcceptConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtAlpcAcceptConnectPort_types[] = {"PHANDLE", "HANDLE", "ULONG", "POBJECT_ATTRIBUTES", "PALPC_PORT_ATTRIBUTES", "PVOID", "PPORT_MESSAGE", "PALPC_MESSAGE_ATTRIBUTES", "BOOLEAN"};
 static const char* const NtAlpcAcceptConnectPort_names[] = {"PortHandle", "ConnectionPortHandle", "Flags", "ObjectAttributes", "PortAttributes", "PortContext", "ConnectionRequest", "ConnectionMessageAttributes", "AcceptConnection"};
 static const uint8_t NtAlpcAcceptConnectPort_dirs[] = {1, 0, 0, 0, 0, 128, 0, 130, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcAcceptConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcAcceptConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtAlpcAcceptConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcAcceptConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtAlpcAcceptConnectPort, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcAcceptConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtAlpcAcceptConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1788,12 +1788,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcAcceptConnectPort(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtAlpcCancelMessage_types[] = {"HANDLE", "ULONG", "PALPC_CONTEXT_ATTR"};
 static const char* const NtAlpcCancelMessage_names[] = {"PortHandle", "Flags", "MessageContext"};
 static const uint8_t NtAlpcCancelMessage_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcCancelMessage)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcCancelMessage(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcCancelMessage)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcCancelMessage(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcCancelMessage, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCancelMessage(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcCancelMessage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1801,12 +1801,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcCancelMessage(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtAlpcConnectPort_types[] = {"PHANDLE", "PUNICODE_STRING", "POBJECT_ATTRIBUTES", "PALPC_PORT_ATTRIBUTES", "ULONG", "PSID", "PPORT_MESSAGE", "PULONG", "PALPC_MESSAGE_ATTRIBUTES", "PALPC_MESSAGE_ATTRIBUTES", "PLARGE_INTEGER"};
 static const char* const NtAlpcConnectPort_names[] = {"PortHandle", "PortName", "ObjectAttributes", "PortAttributes", "Flags", "RequiredServerSid", "ConnectionMessage", "BufferLength", "OutMessageAttributes", "InMessageAttributes", "Timeout"};
 static const uint8_t NtAlpcConnectPort_dirs[] = {1, 0, 0, 128, 0, 128, 2, 130, 130, 130, 128};
-static ULONG_PTR (NTAPI *Real_NtAlpcConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) {
+static ULONG_PTR (NTAPI *Real_NtAlpcConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtAlpcConnectPort, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+  ULONG_PTR r = Real_NtAlpcConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1814,12 +1814,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtAlpcConnectPortEx_types[] = {"PHANDLE", "PUNICODE_STRING", "POBJECT_ATTRIBUTES", "PALPC_INFO", "ULONG", "PSECURITY_DESCRIPTOR", "PPORT_MESSAGE", "PULONG", "PALPC_MESSAGE_ATTRIBUTES", "PALPC_MESSAGE_ATTRIBUTES", "PLARGE_INTEGER"};
 static const char* const NtAlpcConnectPortEx_names[] = {"PortHandle", "PortName", "ObjectAttributes", "PortInformation", "ConnectionFlags", "pSelfRelativeSD", "ConnectionMessage", "BufferLength", "OutMessageAttributes", "InMessageAttributes", "Timeout"};
 static const uint8_t NtAlpcConnectPortEx_dirs[] = {1, 0, 0, 0, 0, 0, 2, 130, 130, 130, 128};
-static ULONG_PTR (NTAPI *Real_NtAlpcConnectPortEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcConnectPortEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) {
+static ULONG_PTR (NTAPI *Real_NtAlpcConnectPortEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcConnectPortEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtAlpcConnectPortEx, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcConnectPortEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+  ULONG_PTR r = Real_NtAlpcConnectPortEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1827,12 +1827,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcConnectPortEx(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtAlpcCreatePort_types[] = {"PHANDLE", "POBJECT_ATTRIBUTES", "PALPC_INFO"};
 static const char* const NtAlpcCreatePort_names[] = {"PortHandle", "ObjectAttributes", "PortInformation"};
 static const uint8_t NtAlpcCreatePort_dirs[] = {1, 0, 130};
-static ULONG_PTR (NTAPI *Real_NtAlpcCreatePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcCreatePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcCreatePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcCreatePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcCreatePort, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCreatePort(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcCreatePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1840,12 +1840,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcCreatePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtAlpcCreatePortSection_types[] = {"HANDLE", "ULONG", "HANDLE", "ULONG", "PHANDLE", "PULONG"};
 static const char* const NtAlpcCreatePortSection_names[] = {"PortHandle", "AlpcSectionFlag", "SectionHandle", "SectionSize", "AlpcSectionHandle", "ResSize"};
 static const uint8_t NtAlpcCreatePortSection_dirs[] = {0, 0, 128, 0, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtAlpcCreatePortSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcCreatePortSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtAlpcCreatePortSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcCreatePortSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAlpcCreatePortSection, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCreatePortSection(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtAlpcCreatePortSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1853,12 +1853,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcCreatePortSection(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtAlpcCreateResourceReserve_types[] = {"HANDLE", "ULONG", "ULONG", "PHANDLE"};
 static const char* const NtAlpcCreateResourceReserve_names[] = {"PortHandle", "Flags", "MessageSize", "ResourceId"};
 static const uint8_t NtAlpcCreateResourceReserve_dirs[] = {0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtAlpcCreateResourceReserve)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcCreateResourceReserve(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtAlpcCreateResourceReserve)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcCreateResourceReserve(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtAlpcCreateResourceReserve, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCreateResourceReserve(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtAlpcCreateResourceReserve(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1866,12 +1866,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcCreateResourceReserve(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtAlpcCreateSectionView_types[] = {"HANDLE", "ULONG", "PALPC_MESSAGE_VIEW"};
 static const char* const NtAlpcCreateSectionView_names[] = {"PortHandle", "FlagUnusedMustbeZero", "pMessageBuffer"};
 static const uint8_t NtAlpcCreateSectionView_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcCreateSectionView)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcCreateSectionView(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcCreateSectionView)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcCreateSectionView(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcCreateSectionView, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCreateSectionView(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcCreateSectionView(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1879,12 +1879,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcCreateSectionView(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtAlpcCreateSecurityContext_types[] = {"HANDLE", "ULONG", "PALPC_SECURITY_ATTR"};
 static const char* const NtAlpcCreateSecurityContext_names[] = {"PortHandle", "Flags", "SecurityAttribute"};
 static const uint8_t NtAlpcCreateSecurityContext_dirs[] = {0, 0, 2};
-static ULONG_PTR (NTAPI *Real_NtAlpcCreateSecurityContext)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcCreateSecurityContext(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcCreateSecurityContext)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcCreateSecurityContext(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcCreateSecurityContext, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcCreateSecurityContext(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcCreateSecurityContext(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1892,12 +1892,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcCreateSecurityContext(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtAlpcDeletePortSection_types[] = {"HANDLE", "ULONG", "HANDLE"};
 static const char* const NtAlpcDeletePortSection_names[] = {"PortHandle", "Flags", "SectionHandle"};
 static const uint8_t NtAlpcDeletePortSection_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcDeletePortSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcDeletePortSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcDeletePortSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcDeletePortSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcDeletePortSection, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcDeletePortSection(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcDeletePortSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1905,12 +1905,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcDeletePortSection(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtAlpcDeleteResourceReserve_types[] = {"HANDLE", "ULONG", "HANDLE"};
 static const char* const NtAlpcDeleteResourceReserve_names[] = {"PortHandle", "Flags", "ResourceHandle"};
 static const uint8_t NtAlpcDeleteResourceReserve_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcDeleteResourceReserve)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcDeleteResourceReserve(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcDeleteResourceReserve)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcDeleteResourceReserve(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcDeleteResourceReserve, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcDeleteResourceReserve(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcDeleteResourceReserve(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1918,12 +1918,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcDeleteResourceReserve(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtAlpcDeleteSectionView_types[] = {"HANDLE", "ULONG", "PVOID"};
 static const char* const NtAlpcDeleteSectionView_names[] = {"PortHandle", "Flags", "ViewBase"};
 static const uint8_t NtAlpcDeleteSectionView_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcDeleteSectionView)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcDeleteSectionView(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcDeleteSectionView)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcDeleteSectionView(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcDeleteSectionView, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcDeleteSectionView(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcDeleteSectionView(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1931,12 +1931,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcDeleteSectionView(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtAlpcDeleteSecurityContext_types[] = {"HANDLE", "ULONG", "HANDLE"};
 static const char* const NtAlpcDeleteSecurityContext_names[] = {"PortHandle", "Flags", "ContextHandle"};
 static const uint8_t NtAlpcDeleteSecurityContext_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcDeleteSecurityContext)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcDeleteSecurityContext(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcDeleteSecurityContext)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcDeleteSecurityContext(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcDeleteSecurityContext, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcDeleteSecurityContext(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcDeleteSecurityContext(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1944,12 +1944,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcDeleteSecurityContext(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtAlpcDisconnectPort_types[] = {"HANDLE", "ULONG"};
 static const char* const NtAlpcDisconnectPort_names[] = {"PortHandle", "Flags"};
 static const uint8_t NtAlpcDisconnectPort_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcDisconnectPort)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcDisconnectPort(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtAlpcDisconnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcDisconnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAlpcDisconnectPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcDisconnectPort(a0, a1);
+  ULONG_PTR r = Real_NtAlpcDisconnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1957,12 +1957,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcDisconnectPort(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtAlpcImpersonateClientContainerOfPort_types[] = {"HANDLE", "PPORT_MESSAGE", "ULONG"};
 static const char* const NtAlpcImpersonateClientContainerOfPort_names[] = {"PortHandle", "Message", "Flags"};
 static const uint8_t NtAlpcImpersonateClientContainerOfPort_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcImpersonateClientContainerOfPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcImpersonateClientContainerOfPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcImpersonateClientContainerOfPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcImpersonateClientContainerOfPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcImpersonateClientContainerOfPort, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcImpersonateClientContainerOfPort(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcImpersonateClientContainerOfPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1970,12 +1970,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcImpersonateClientContainerOfPort(ULONG_PTR a0,
 static const char* const NtAlpcImpersonateClientOfPort_types[] = {"HANDLE", "PPORT_MESSAGE", "PVOID"};
 static const char* const NtAlpcImpersonateClientOfPort_names[] = {"PortHandle", "PortMessage", "Reserved"};
 static const uint8_t NtAlpcImpersonateClientOfPort_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcImpersonateClientOfPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcImpersonateClientOfPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcImpersonateClientOfPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcImpersonateClientOfPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcImpersonateClientOfPort, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcImpersonateClientOfPort(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcImpersonateClientOfPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1983,12 +1983,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcImpersonateClientOfPort(ULONG_PTR a0, ULONG_PT
 static const char* const NtAlpcOpenSenderProcess_types[] = {"PHANDLE", "HANDLE", "PPORT_MESSAGE", "ULONG", "ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtAlpcOpenSenderProcess_names[] = {"ProcessHandle", "PortHandle", "PortMessage", "Flags", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtAlpcOpenSenderProcess_dirs[] = {1, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcOpenSenderProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcOpenSenderProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtAlpcOpenSenderProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcOpenSenderProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAlpcOpenSenderProcess, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcOpenSenderProcess(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtAlpcOpenSenderProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -1996,12 +1996,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcOpenSenderProcess(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtAlpcOpenSenderThread_types[] = {"PHANDLE", "HANDLE", "PPORT_MESSAGE", "ULONG", "ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtAlpcOpenSenderThread_names[] = {"ThreadHandle", "PortHandle", "PortMessage", "Flags", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtAlpcOpenSenderThread_dirs[] = {1, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcOpenSenderThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcOpenSenderThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtAlpcOpenSenderThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcOpenSenderThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAlpcOpenSenderThread, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcOpenSenderThread(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtAlpcOpenSenderThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2009,12 +2009,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcOpenSenderThread(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtAlpcQueryInformation_types[] = {"HANDLE", "ALPC_PORT_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtAlpcQueryInformation_names[] = {"PortHandle", "PortInformationClass", "PortInformation", "Length", "ReturnLength"};
 static const uint8_t NtAlpcQueryInformation_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtAlpcQueryInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcQueryInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtAlpcQueryInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcQueryInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtAlpcQueryInformation, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcQueryInformation(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtAlpcQueryInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2022,12 +2022,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcQueryInformation(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtAlpcQueryInformationMessage_types[] = {"HANDLE", "PPORT_MESSAGE", "ALPC_MESSAGE_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtAlpcQueryInformationMessage_names[] = {"PortHandle", "PortMessage", "MessageInformationClass", "MessageInformation", "Length", "ReturnLength"};
 static const uint8_t NtAlpcQueryInformationMessage_dirs[] = {0, 0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtAlpcQueryInformationMessage)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcQueryInformationMessage(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtAlpcQueryInformationMessage)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcQueryInformationMessage(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAlpcQueryInformationMessage, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcQueryInformationMessage(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtAlpcQueryInformationMessage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2035,12 +2035,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcQueryInformationMessage(ULONG_PTR a0, ULONG_PT
 static const char* const NtAlpcRevokeSecurityContext_types[] = {"HANDLE", "ULONG", "HANDLE"};
 static const char* const NtAlpcRevokeSecurityContext_names[] = {"PortHandle", "Flags", "ContextHandle"};
 static const uint8_t NtAlpcRevokeSecurityContext_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcRevokeSecurityContext)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcRevokeSecurityContext(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAlpcRevokeSecurityContext)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcRevokeSecurityContext(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAlpcRevokeSecurityContext, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcRevokeSecurityContext(a0, a1, a2);
+  ULONG_PTR r = Real_NtAlpcRevokeSecurityContext(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2048,12 +2048,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcRevokeSecurityContext(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtAlpcSendWaitReceivePort_types[] = {"HANDLE", "ULONG", "PLPC_MESSAGE", "PVOID", "PLPC_MESSAGE", "PULONG", "PVOID", "PLARGE_INTEGER"};
 static const char* const NtAlpcSendWaitReceivePort_names[] = {"PortHandle", "SendFlags", "SendMessage", "InMessageBuffer", "ReceiveBuffer", "ReceiveBufferSize", "OutMessageBuffer", "Timeout"};
 static const uint8_t NtAlpcSendWaitReceivePort_dirs[] = {0, 0, 128, 130, 129, 130, 130, 128};
-static ULONG_PTR (NTAPI *Real_NtAlpcSendWaitReceivePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcSendWaitReceivePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtAlpcSendWaitReceivePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcSendWaitReceivePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtAlpcSendWaitReceivePort, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcSendWaitReceivePort(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtAlpcSendWaitReceivePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2061,12 +2061,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcSendWaitReceivePort(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtAlpcSetInformation_types[] = {"HANDLE", "ALPC_PORT_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtAlpcSetInformation_names[] = {"PortHandle", "PortInformationClass", "PortInformation", "Length"};
 static const uint8_t NtAlpcSetInformation_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlpcSetInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlpcSetInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtAlpcSetInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlpcSetInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtAlpcSetInformation, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlpcSetInformation(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtAlpcSetInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2074,12 +2074,12 @@ static ULONG_PTR NTAPI Hook_NtAlpcSetInformation(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtCompleteConnectPort_types[] = {"HANDLE"};
 static const char* const NtCompleteConnectPort_names[] = {"PortHandle"};
 static const uint8_t NtCompleteConnectPort_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtCompleteConnectPort)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCompleteConnectPort(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtCompleteConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCompleteConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtCompleteConnectPort, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompleteConnectPort(a0);
+  ULONG_PTR r = Real_NtCompleteConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2087,12 +2087,12 @@ static ULONG_PTR NTAPI Hook_NtCompleteConnectPort(ULONG_PTR a0) {
 static const char* const NtConnectPort_types[] = {"PHANDLE", "PUNICODE_STRING", "PVOID", "PPORT_VIEW", "PREMOTE_PORT_VIEW", "PULONG", "PVOID", "PULONG"};
 static const char* const NtConnectPort_names[] = {"PortHandle", "PortName", "SecurityQos", "ClientView", "ServerView", "MaxMsgLength", "ConnectionInfo", "ConnectionInfoLength"};
 static const uint8_t NtConnectPort_dirs[] = {1, 0, 0, 130, 129, 129, 130, 130};
-static ULONG_PTR (NTAPI *Real_NtConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtConnectPort, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtConnectPort(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2100,12 +2100,12 @@ static ULONG_PTR NTAPI Hook_NtConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtCreateChannel_types[] = {"PHANDLE", "POBJECT_ATTRIBUTES"};
 static const char* const NtCreateChannel_names[] = {"ChannelHandle", "ObjectAttributes"};
 static const uint8_t NtCreateChannel_dirs[] = {1, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateChannel)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateChannel(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCreateChannel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCreateChannel, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateChannel(a0, a1);
+  ULONG_PTR r = Real_NtCreateChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2113,12 +2113,12 @@ static ULONG_PTR NTAPI Hook_NtCreateChannel(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCreatePort_types[] = {"PHANDLE", "POBJECT_ATTRIBUTES", "ULONG", "ULONG", "ULONG"};
 static const char* const NtCreatePort_names[] = {"PortHandle", "ObjectAttributes", "MaxConnectionInfoLength", "MaxMsgLength", "MaxPoolUsage"};
 static const uint8_t NtCreatePort_dirs[] = {1, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreatePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreatePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtCreatePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreatePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreatePort, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreatePort(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtCreatePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2126,12 +2126,12 @@ static ULONG_PTR NTAPI Hook_NtCreatePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtCreateWaitablePort_types[] = {"PHANDLE", "POBJECT_ATTRIBUTES", "ULONG", "ULONG", "ULONG"};
 static const char* const NtCreateWaitablePort_names[] = {"PortHandle", "ObjectAttributes", "MaxConnectionInfoLength", "MaxMsgLength", "MaxPoolUsage"};
 static const uint8_t NtCreateWaitablePort_dirs[] = {1, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateWaitablePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateWaitablePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtCreateWaitablePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateWaitablePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateWaitablePort, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateWaitablePort(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtCreateWaitablePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2139,12 +2139,12 @@ static ULONG_PTR NTAPI Hook_NtCreateWaitablePort(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtImpersonateClientOfPort_types[] = {"HANDLE", "PLPC_MESSAGE"};
 static const char* const NtImpersonateClientOfPort_names[] = {"PortHandle", "Message"};
 static const uint8_t NtImpersonateClientOfPort_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtImpersonateClientOfPort)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtImpersonateClientOfPort(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtImpersonateClientOfPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtImpersonateClientOfPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtImpersonateClientOfPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtImpersonateClientOfPort(a0, a1);
+  ULONG_PTR r = Real_NtImpersonateClientOfPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2152,12 +2152,12 @@ static ULONG_PTR NTAPI Hook_NtImpersonateClientOfPort(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtListenChannel_types[] = {"HANDLE", "PVOID"};
 static const char* const NtListenChannel_names[] = {"Handle", "Message"};
 static const uint8_t NtListenChannel_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtListenChannel)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtListenChannel(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtListenChannel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtListenChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtListenChannel, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtListenChannel(a0, a1);
+  ULONG_PTR r = Real_NtListenChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2165,12 +2165,12 @@ static ULONG_PTR NTAPI Hook_NtListenChannel(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtListenPort_types[] = {"HANDLE", "PLPC_MESSAGE"};
 static const char* const NtListenPort_names[] = {"Handle", "ConnectionData"};
 static const uint8_t NtListenPort_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtListenPort)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtListenPort(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtListenPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtListenPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtListenPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtListenPort(a0, a1);
+  ULONG_PTR r = Real_NtListenPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2178,12 +2178,12 @@ static ULONG_PTR NTAPI Hook_NtListenPort(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtOpenChannel_types[] = {"PHANDLE", "PUNICODE_STRING"};
 static const char* const NtOpenChannel_names[] = {"ChannelHandle", "ChannelName"};
 static const uint8_t NtOpenChannel_dirs[] = {1, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenChannel)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenChannel(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtOpenChannel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtOpenChannel, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenChannel(a0, a1);
+  ULONG_PTR r = Real_NtOpenChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2191,12 +2191,12 @@ static ULONG_PTR NTAPI Hook_NtOpenChannel(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtQueryInformationPort_types[] = {"HANDLE", "PORT_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationPort_names[] = {"JobHandle", "PortInformationClass", "PortInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationPort_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationPort, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationPort(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2204,12 +2204,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationPort(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtQueryPortInformationProcess_types[] = {nullptr};
 static const char* const NtQueryPortInformationProcess_names[] = {nullptr};
 static const uint8_t NtQueryPortInformationProcess_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtQueryPortInformationProcess)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryPortInformationProcess() {
+static ULONG_PTR (NTAPI *Real_NtQueryPortInformationProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryPortInformationProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtQueryPortInformationProcess, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryPortInformationProcess();
+  ULONG_PTR r = Real_NtQueryPortInformationProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2217,12 +2217,12 @@ static ULONG_PTR NTAPI Hook_NtQueryPortInformationProcess() {
 static const char* const NtReadRequestData_types[] = {"HANDLE", "PLPC_MESSAGE", "ULONG", "PVOID", "ULONG", "PULONG"};
 static const char* const NtReadRequestData_names[] = {"Handle", "Request", "Index", "Buffer", "BufferLength", "ReturnLength"};
 static const uint8_t NtReadRequestData_dirs[] = {0, 0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtReadRequestData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReadRequestData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtReadRequestData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReadRequestData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtReadRequestData, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadRequestData(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtReadRequestData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2230,12 +2230,12 @@ static ULONG_PTR NTAPI Hook_NtReadRequestData(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtReplyPort_types[] = {"HANDLE", "PLPC_MESSAGE"};
 static const char* const NtReplyPort_names[] = {"PortHandle", "pMessage"};
 static const uint8_t NtReplyPort_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtReplyPort)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReplyPort(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtReplyPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReplyPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtReplyPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplyPort(a0, a1);
+  ULONG_PTR r = Real_NtReplyPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2243,12 +2243,12 @@ static ULONG_PTR NTAPI Hook_NtReplyPort(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtReplyWaitReceivePort_types[] = {"HANDLE", "PHANDLE", "PLPC_MESSAGE", "PLPC_MESSAGE"};
 static const char* const NtReplyWaitReceivePort_names[] = {"PortHandle", "ReceiveHandle", "pMessage", "pMessage2"};
 static const uint8_t NtReplyWaitReceivePort_dirs[] = {0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtReplyWaitReceivePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReplyWaitReceivePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtReplyWaitReceivePort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReplyWaitReceivePort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtReplyWaitReceivePort, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplyWaitReceivePort(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtReplyWaitReceivePort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2256,12 +2256,12 @@ static ULONG_PTR NTAPI Hook_NtReplyWaitReceivePort(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtReplyWaitReceivePortEx_types[] = {"HANDLE", "PHANDLE", "PLPC_MESSAGE", "PLPC_MESSAGE", "PLARGE_INTEGER"};
 static const char* const NtReplyWaitReceivePortEx_names[] = {"PortHandle", "ReceiveHandle", "pMessage", "pMessage2", "Timeout"};
 static const uint8_t NtReplyWaitReceivePortEx_dirs[] = {0, 1, 0, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtReplyWaitReceivePortEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReplyWaitReceivePortEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtReplyWaitReceivePortEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReplyWaitReceivePortEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtReplyWaitReceivePortEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplyWaitReceivePortEx(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtReplyWaitReceivePortEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2269,12 +2269,12 @@ static ULONG_PTR NTAPI Hook_NtReplyWaitReceivePortEx(ULONG_PTR a0, ULONG_PTR a1,
 static const char* const NtReplyWaitReplyPort_types[] = {"HANDLE", "PLPC_MESSAGE"};
 static const char* const NtReplyWaitReplyPort_names[] = {"PortHandle", "pMessage"};
 static const uint8_t NtReplyWaitReplyPort_dirs[] = {0, 2};
-static ULONG_PTR (NTAPI *Real_NtReplyWaitReplyPort)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReplyWaitReplyPort(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtReplyWaitReplyPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReplyWaitReplyPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtReplyWaitReplyPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplyWaitReplyPort(a0, a1);
+  ULONG_PTR r = Real_NtReplyWaitReplyPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2282,12 +2282,12 @@ static ULONG_PTR NTAPI Hook_NtReplyWaitReplyPort(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtReplyWaitSendChannel_types[] = {"HANDLE", "PVOID", "PVOID"};
 static const char* const NtReplyWaitSendChannel_names[] = {"ChannelHandle", "ReplyMessage", "Message"};
 static const uint8_t NtReplyWaitSendChannel_dirs[] = {0, 128, 1};
-static ULONG_PTR (NTAPI *Real_NtReplyWaitSendChannel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReplyWaitSendChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtReplyWaitSendChannel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReplyWaitSendChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtReplyWaitSendChannel, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplyWaitSendChannel(a0, a1, a2);
+  ULONG_PTR r = Real_NtReplyWaitSendChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2295,12 +2295,12 @@ static ULONG_PTR NTAPI Hook_NtReplyWaitSendChannel(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtRequestPort_types[] = {"HANDLE", "PLPC_MESSAGE"};
 static const char* const NtRequestPort_names[] = {"PortHandle", "RequestMessage"};
 static const uint8_t NtRequestPort_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtRequestPort)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRequestPort(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRequestPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRequestPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRequestPort, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRequestPort(a0, a1);
+  ULONG_PTR r = Real_NtRequestPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2308,12 +2308,12 @@ static ULONG_PTR NTAPI Hook_NtRequestPort(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtRequestWaitReplyPort_types[] = {"HANDLE", "PLPC_MESSAGE", "PLPC_MESSAGE"};
 static const char* const NtRequestWaitReplyPort_names[] = {"PortHandle", "pRequestMessage", "pReplyMessage"};
 static const uint8_t NtRequestWaitReplyPort_dirs[] = {0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtRequestWaitReplyPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRequestWaitReplyPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtRequestWaitReplyPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRequestWaitReplyPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtRequestWaitReplyPort, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRequestWaitReplyPort(a0, a1, a2);
+  ULONG_PTR r = Real_NtRequestWaitReplyPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2321,12 +2321,12 @@ static ULONG_PTR NTAPI Hook_NtRequestWaitReplyPort(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtSecureConnectPort_types[] = {"PHANDLE", "PUNICODE_STRING", "ULONG", "PPORT_VIEW", "PSID", "PREMOTE_PORT_VIEW", "PULONG", "PVOID", "PULONG"};
 static const char* const NtSecureConnectPort_names[] = {"PortHandle", "Name", "QOS", "pSectionInfo", "SecurityInfo", "pSectionMapInfo", "MaxMsgLength", "ConnectData", "ConnectDataLength"};
 static const uint8_t NtSecureConnectPort_dirs[] = {1, 0, 0, 2, 0, 2, 1, 130, 130};
-static ULONG_PTR (NTAPI *Real_NtSecureConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSecureConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtSecureConnectPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSecureConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtSecureConnectPort, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSecureConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtSecureConnectPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2334,12 +2334,12 @@ static ULONG_PTR NTAPI Hook_NtSecureConnectPort(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtSendWaitReplyChannel_types[] = {"HANDLE", "PVOID", "PVOID", "PLARGE_INTEGER"};
 static const char* const NtSendWaitReplyChannel_names[] = {"ChannelHandle", "RequestMessage", "ReplyMessage", "Timeout"};
 static const uint8_t NtSendWaitReplyChannel_dirs[] = {0, 0, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtSendWaitReplyChannel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSendWaitReplyChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSendWaitReplyChannel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSendWaitReplyChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSendWaitReplyChannel, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSendWaitReplyChannel(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSendWaitReplyChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2347,12 +2347,12 @@ static ULONG_PTR NTAPI Hook_NtSendWaitReplyChannel(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtSetContextChannel_types[] = {"HANDLE"};
 static const char* const NtSetContextChannel_names[] = {"ChannelHandle"};
 static const uint8_t NtSetContextChannel_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetContextChannel)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetContextChannel(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSetContextChannel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetContextChannel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetContextChannel, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetContextChannel(a0);
+  ULONG_PTR r = Real_NtSetContextChannel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2360,12 +2360,12 @@ static ULONG_PTR NTAPI Hook_NtSetContextChannel(ULONG_PTR a0) {
 static const char* const NtWriteRequestData_types[] = {"HANDLE", "PLPC_MESSAGE", "ULONG", "PVOID", "ULONG", "PULONG"};
 static const char* const NtWriteRequestData_names[] = {"PortHandle", "Message", "Index", "Buffer", "BufferLength", "ReturnLength"};
 static const uint8_t NtWriteRequestData_dirs[] = {0, 0, 0, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtWriteRequestData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWriteRequestData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtWriteRequestData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWriteRequestData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtWriteRequestData, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWriteRequestData(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtWriteRequestData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2373,12 +2373,12 @@ static ULONG_PTR NTAPI Hook_NtWriteRequestData(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtAllocateUserPhysicalPages_types[] = {"HANDLE", "PULONG", "PULONG"};
 static const char* const NtAllocateUserPhysicalPages_names[] = {"hProcess", "NumberOfPages", "UserPfnArray"};
 static const uint8_t NtAllocateUserPhysicalPages_dirs[] = {0, 2, 1};
-static ULONG_PTR (NTAPI *Real_NtAllocateUserPhysicalPages)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAllocateUserPhysicalPages(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAllocateUserPhysicalPages)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAllocateUserPhysicalPages(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAllocateUserPhysicalPages, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateUserPhysicalPages(a0, a1, a2);
+  ULONG_PTR r = Real_NtAllocateUserPhysicalPages(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2386,12 +2386,12 @@ static ULONG_PTR NTAPI Hook_NtAllocateUserPhysicalPages(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtAllocateUserPhysicalPagesEx_types[] = {"HANDLE", "PULONG", "PULONG", "PVOID", "ULONG"};
 static const char* const NtAllocateUserPhysicalPagesEx_names[] = {"hProcess", "NumberOfPages", "UserPfnArray", "DataBuffer", "DataCount"};
 static const uint8_t NtAllocateUserPhysicalPagesEx_dirs[] = {0, 2, 1, 130, 0};
-static ULONG_PTR (NTAPI *Real_NtAllocateUserPhysicalPagesEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAllocateUserPhysicalPagesEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtAllocateUserPhysicalPagesEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAllocateUserPhysicalPagesEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtAllocateUserPhysicalPagesEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateUserPhysicalPagesEx(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtAllocateUserPhysicalPagesEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2399,12 +2399,12 @@ static ULONG_PTR NTAPI Hook_NtAllocateUserPhysicalPagesEx(ULONG_PTR a0, ULONG_PT
 static const char* const NtAllocateVirtualMemory_types[] = {"HANDLE", "PPVOID", "ULONG_PTR", "PSIZE_T", "ULONG", "ULONG"};
 static const char* const NtAllocateVirtualMemory_names[] = {"ProcessHandle", "lpAddress", "ZeroBits", "pSize", "flAllocationType", "flProtect"};
 static const uint8_t NtAllocateVirtualMemory_dirs[] = {0, 2, 0, 2, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAllocateVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAllocateVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtAllocateVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAllocateVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAllocateVirtualMemory, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateVirtualMemory(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtAllocateVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2412,12 +2412,12 @@ static ULONG_PTR NTAPI Hook_NtAllocateVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtAllocateVirtualMemoryEx_types[] = {"HANDLE", "PPVOID", "PSIZE_T", "ULONG", "ULONG", "PVOID", "ULONG"};
 static const char* const NtAllocateVirtualMemoryEx_names[] = {"ProcessHandle", "lpAddress", "pSize", "flAllocationType", "flProtect", "DataBuffer", "DataCount"};
 static const uint8_t NtAllocateVirtualMemoryEx_dirs[] = {0, 2, 2, 0, 0, 130, 0};
-static ULONG_PTR (NTAPI *Real_NtAllocateVirtualMemoryEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAllocateVirtualMemoryEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtAllocateVirtualMemoryEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAllocateVirtualMemoryEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtAllocateVirtualMemoryEx, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateVirtualMemoryEx(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtAllocateVirtualMemoryEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2425,12 +2425,12 @@ static ULONG_PTR NTAPI Hook_NtAllocateVirtualMemoryEx(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtCreateEnclave_types[] = {"HANDLE", "PVOID", "ULONG_PTR", "SIZE_T", "SIZE_T", "ULONG", "PVOID", "ULONG", "PULONG"};
 static const char* const NtCreateEnclave_names[] = {"ProcessHandle", "*BaseAddress", "ZeroBits", "Size", "InitialCommitment", "EnclaveType", "EnclaveInformation", "EnclaveInformationLength", "EnclaveError"};
 static const uint8_t NtCreateEnclave_dirs[] = {0, 2, 0, 0, 0, 0, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtCreateEnclave)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtCreateEnclave)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtCreateEnclave, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateEnclave(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtCreateEnclave(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2438,12 +2438,12 @@ static ULONG_PTR NTAPI Hook_NtCreateEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtCreatePartition_types[] = {"HANDLE", "PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtCreatePartition_names[] = {"ParentHandle", "PartitionHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtCreatePartition_dirs[] = {0, 1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreatePartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreatePartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCreatePartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreatePartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreatePartition, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreatePartition(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCreatePartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2451,12 +2451,12 @@ static ULONG_PTR NTAPI Hook_NtCreatePartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtCreateSection_types[] = {"PHANDLE", "SECTION_ACCESS_MASK", "POBJECT_ATTRIBUTES", "PLARGE_INTEGER", "ULONG", "ULONG", "HANDLE"};
 static const char* const NtCreateSection_names[] = {"SectionHandle", "DesiredAccess", "ObjectAttributes", "SectionSize", "Protect", "Attributes", "FileHandle"};
 static const uint8_t NtCreateSection_dirs[] = {1, 0, 0, 128, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtCreateSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtCreateSection, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateSection(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtCreateSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2464,12 +2464,12 @@ static ULONG_PTR NTAPI Hook_NtCreateSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtCreateSectionEx_types[] = {"PHANDLE", "SECTION_ACCESS_MASK", "POBJECT_ATTRIBUTES", "PLARGE_INTEGER", "ULONG", "ULONG", "HANDLE", "PVOID", "ULONG"};
 static const char* const NtCreateSectionEx_names[] = {"SectionHandle", "DesiredAccess", "ObjectAttributes", "SectionSize", "Protect", "Attributes", "FileHandle", "DataBuffer", "DataCount"};
 static const uint8_t NtCreateSectionEx_dirs[] = {1, 0, 0, 128, 0, 0, 0, 130, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateSectionEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateSectionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtCreateSectionEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateSectionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtCreateSectionEx, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateSectionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtCreateSectionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2477,12 +2477,12 @@ static ULONG_PTR NTAPI Hook_NtCreateSectionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtExtendSection_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtExtendSection_names[] = {"SectionHandle", "SectionSize"};
 static const uint8_t NtExtendSection_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtExtendSection)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtExtendSection(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtExtendSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtExtendSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtExtendSection, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtExtendSection(a0, a1);
+  ULONG_PTR r = Real_NtExtendSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2490,12 +2490,12 @@ static ULONG_PTR NTAPI Hook_NtExtendSection(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtFlushInstructionCache_types[] = {"HANDLE", "PVOID", "ULONG"};
 static const char* const NtFlushInstructionCache_names[] = {"Process", "BaseAddress", "Size"};
 static const uint8_t NtFlushInstructionCache_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtFlushInstructionCache)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFlushInstructionCache(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtFlushInstructionCache)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFlushInstructionCache(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtFlushInstructionCache, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushInstructionCache(a0, a1, a2);
+  ULONG_PTR r = Real_NtFlushInstructionCache(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2503,12 +2503,12 @@ static ULONG_PTR NTAPI Hook_NtFlushInstructionCache(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtFlushProcessWriteBuffers_types[] = {nullptr};
 static const char* const NtFlushProcessWriteBuffers_names[] = {nullptr};
 static const uint8_t NtFlushProcessWriteBuffers_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtFlushProcessWriteBuffers)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtFlushProcessWriteBuffers() {
+static ULONG_PTR (NTAPI *Real_NtFlushProcessWriteBuffers)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFlushProcessWriteBuffers(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtFlushProcessWriteBuffers, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushProcessWriteBuffers();
+  ULONG_PTR r = Real_NtFlushProcessWriteBuffers(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2516,12 +2516,12 @@ static ULONG_PTR NTAPI Hook_NtFlushProcessWriteBuffers() {
 static const char* const NtFlushVirtualMemory_types[] = {"HANDLE", "PPVOID", "PSIZE_T", "PIO_STATUS_BLOCK"};
 static const char* const NtFlushVirtualMemory_names[] = {"ProcessHandle", "BaseAddress", "RegionSize", "IoStatus"};
 static const uint8_t NtFlushVirtualMemory_dirs[] = {0, 2, 2, 1};
-static ULONG_PTR (NTAPI *Real_NtFlushVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFlushVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtFlushVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFlushVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtFlushVirtualMemory, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushVirtualMemory(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtFlushVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2529,12 +2529,12 @@ static ULONG_PTR NTAPI Hook_NtFlushVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtFlushWriteBuffer_types[] = {nullptr};
 static const char* const NtFlushWriteBuffer_names[] = {nullptr};
 static const uint8_t NtFlushWriteBuffer_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtFlushWriteBuffer)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtFlushWriteBuffer() {
+static ULONG_PTR (NTAPI *Real_NtFlushWriteBuffer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFlushWriteBuffer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtFlushWriteBuffer, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushWriteBuffer();
+  ULONG_PTR r = Real_NtFlushWriteBuffer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2542,12 +2542,12 @@ static ULONG_PTR NTAPI Hook_NtFlushWriteBuffer() {
 static const char* const NtFreeUserPhysicalPages_types[] = {"HANDLE", "PULONG", "PULONG"};
 static const char* const NtFreeUserPhysicalPages_names[] = {"hProcess", "NumberOfPages", "UserPfnArray"};
 static const uint8_t NtFreeUserPhysicalPages_dirs[] = {0, 2, 0};
-static ULONG_PTR (NTAPI *Real_NtFreeUserPhysicalPages)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFreeUserPhysicalPages(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtFreeUserPhysicalPages)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFreeUserPhysicalPages(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtFreeUserPhysicalPages, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFreeUserPhysicalPages(a0, a1, a2);
+  ULONG_PTR r = Real_NtFreeUserPhysicalPages(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2555,12 +2555,12 @@ static ULONG_PTR NTAPI Hook_NtFreeUserPhysicalPages(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtFreeVirtualMemory_types[] = {"HANDLE", "PPVOID", "PSIZE_T", "ULONG"};
 static const char* const NtFreeVirtualMemory_names[] = {"ProcessHandle", "lpAddress", "pSize", "flFreeType"};
 static const uint8_t NtFreeVirtualMemory_dirs[] = {0, 2, 2, 0};
-static ULONG_PTR (NTAPI *Real_NtFreeVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFreeVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtFreeVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFreeVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtFreeVirtualMemory, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFreeVirtualMemory(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtFreeVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2568,12 +2568,12 @@ static ULONG_PTR NTAPI Hook_NtFreeVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtGetWriteWatch_types[] = {"HANDLE", "ULONG", "PVOID", "ULONG", "PULONG", "PULONG", "PULONG"};
 static const char* const NtGetWriteWatch_names[] = {"ProcessHandle", "Flags", "BaseAddress", "RegionSize", "Buffer", "BufferEntries", "Granularity"};
 static const uint8_t NtGetWriteWatch_dirs[] = {0, 0, 0, 0, 1, 2, 1};
-static ULONG_PTR (NTAPI *Real_NtGetWriteWatch)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetWriteWatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtGetWriteWatch)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetWriteWatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtGetWriteWatch, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetWriteWatch(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtGetWriteWatch(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2581,12 +2581,12 @@ static ULONG_PTR NTAPI Hook_NtGetWriteWatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtInitializeEnclave_types[] = {"HANDLE", "PVOID", "PVOID", "ULONG", "PULONG"};
 static const char* const NtInitializeEnclave_names[] = {"ProcessHandle", "BaseAddress", "EnclaveInformation", "EnclaveInformationLength", "EnclaveError"};
 static const uint8_t NtInitializeEnclave_dirs[] = {0, 0, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtInitializeEnclave)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtInitializeEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtInitializeEnclave)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtInitializeEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtInitializeEnclave, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtInitializeEnclave(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtInitializeEnclave(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2594,12 +2594,12 @@ static ULONG_PTR NTAPI Hook_NtInitializeEnclave(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtLoadEnclaveData_types[] = {"HANDLE", "PVOID", "PVOID", "SIZE_T", "ULONG", "PVOID", "ULONG", "PSIZE_T", "PULONG"};
 static const char* const NtLoadEnclaveData_names[] = {"ProcessHandle", "BaseAddress", "Buffer", "BufferSize", "Protect", "PageInformation", "PageInformationLength", "NumberOfBytesWritten", "EnclaveError"};
 static const uint8_t NtLoadEnclaveData_dirs[] = {0, 0, 0, 0, 0, 0, 0, 129, 129};
-static ULONG_PTR (NTAPI *Real_NtLoadEnclaveData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLoadEnclaveData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtLoadEnclaveData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLoadEnclaveData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtLoadEnclaveData, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadEnclaveData(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtLoadEnclaveData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2607,12 +2607,12 @@ static ULONG_PTR NTAPI Hook_NtLoadEnclaveData(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtLockVirtualMemory_types[] = {"HANDLE", "PPVOID", "PSIZE_T", "ULONG"};
 static const char* const NtLockVirtualMemory_names[] = {"ProcessHandle", "lpAddress", "pSize", "LockOption"};
 static const uint8_t NtLockVirtualMemory_dirs[] = {0, 2, 2, 0};
-static ULONG_PTR (NTAPI *Real_NtLockVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLockVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtLockVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLockVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtLockVirtualMemory, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLockVirtualMemory(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtLockVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2620,12 +2620,12 @@ static ULONG_PTR NTAPI Hook_NtLockVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtManagePartition_types[] = {"HANDLE", "HANDLE", "MEMORY_PARTITION_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtManagePartition_names[] = {"TargetHandle", "SourceHandle", "PartitionInformationClass", "PartitionInformation", "PartitionInformationLength"};
 static const uint8_t NtManagePartition_dirs[] = {0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtManagePartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtManagePartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtManagePartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtManagePartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtManagePartition, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtManagePartition(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtManagePartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2633,12 +2633,12 @@ static ULONG_PTR NTAPI Hook_NtManagePartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtMapUserPhysicalPages_types[] = {"PVOID", "ULONG", "PULONG"};
 static const char* const NtMapUserPhysicalPages_names[] = {"lpAddress", "NumberOfPages", "UserPfnArray"};
 static const uint8_t NtMapUserPhysicalPages_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtMapUserPhysicalPages)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtMapUserPhysicalPages(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtMapUserPhysicalPages)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtMapUserPhysicalPages(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtMapUserPhysicalPages, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMapUserPhysicalPages(a0, a1, a2);
+  ULONG_PTR r = Real_NtMapUserPhysicalPages(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2646,12 +2646,12 @@ static ULONG_PTR NTAPI Hook_NtMapUserPhysicalPages(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtMapUserPhysicalPagesScatter_types[] = {"PPVOID", "ULONG", "PULONG"};
 static const char* const NtMapUserPhysicalPagesScatter_names[] = {"VirtualAddresses", "NumberOfPages", "PageArray"};
 static const uint8_t NtMapUserPhysicalPagesScatter_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtMapUserPhysicalPagesScatter)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtMapUserPhysicalPagesScatter(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtMapUserPhysicalPagesScatter)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtMapUserPhysicalPagesScatter(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtMapUserPhysicalPagesScatter, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMapUserPhysicalPagesScatter(a0, a1, a2);
+  ULONG_PTR r = Real_NtMapUserPhysicalPagesScatter(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2659,12 +2659,12 @@ static ULONG_PTR NTAPI Hook_NtMapUserPhysicalPagesScatter(ULONG_PTR a0, ULONG_PT
 static const char* const NtMapViewOfSection_types[] = {"HANDLE", "HANDLE", "PPVOID", "ULONG", "ULONG", "PLARGE_INTEGER", "PSIZE_T", "SECTION_INHERIT", "ULONG", "ULONG"};
 static const char* const NtMapViewOfSection_names[] = {"SectionHandle", "ProcessHandle", "BaseAddress", "ZeroBits", "CommitSize", "SectionOffset", "ViewSize", "InheritDisposition", "AllocationType", "Protect"};
 static const uint8_t NtMapViewOfSection_dirs[] = {0, 0, 2, 0, 0, 130, 2, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtMapViewOfSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) = nullptr;
-static ULONG_PTR NTAPI Hook_NtMapViewOfSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) {
+static ULONG_PTR (NTAPI *Real_NtMapViewOfSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtMapViewOfSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtMapViewOfSection, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMapViewOfSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+  ULONG_PTR r = Real_NtMapViewOfSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2672,12 +2672,12 @@ static ULONG_PTR NTAPI Hook_NtMapViewOfSection(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtMapViewOfSectionEx_types[] = {"HANDLE", "HANDLE", "PLARGE_INTEGER", "PPVOID", "PSIZE_T", "ULONG", "ULONG", "PVOID", "ULONG"};
 static const char* const NtMapViewOfSectionEx_names[] = {"SectionHandle", "ProcessHandle", "SectionOffset", "BaseAddress", "ViewSize", "AllocationType", "Protect", "DataBuffer", "DataCount"};
 static const uint8_t NtMapViewOfSectionEx_dirs[] = {0, 0, 2, 2, 2, 0, 0, 130, 0};
-static ULONG_PTR (NTAPI *Real_NtMapViewOfSectionEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtMapViewOfSectionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtMapViewOfSectionEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtMapViewOfSectionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtMapViewOfSectionEx, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMapViewOfSectionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtMapViewOfSectionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2685,12 +2685,12 @@ static ULONG_PTR NTAPI Hook_NtMapViewOfSectionEx(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtOpenPartition_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenPartition_names[] = {"PartitionHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenPartition_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenPartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenPartition)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenPartition, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenPartition(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenPartition(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2698,12 +2698,12 @@ static ULONG_PTR NTAPI Hook_NtOpenPartition(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtOpenSection_types[] = {"PHANDLE", "SECTION_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenSection_names[] = {"SectionHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenSection_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenSection, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenSection(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2711,12 +2711,12 @@ static ULONG_PTR NTAPI Hook_NtOpenSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtPssCaptureVaSpaceBulk_types[] = {"HANDLE", "PVOID", "PVOID", "SIZE_T", "PSIZE_T"};
 static const char* const NtPssCaptureVaSpaceBulk_names[] = {"ProcessHandle", "BaseAddress", "Buffer", "Length", "ReturnLength"};
 static const uint8_t NtPssCaptureVaSpaceBulk_dirs[] = {0, 0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtPssCaptureVaSpaceBulk)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPssCaptureVaSpaceBulk(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtPssCaptureVaSpaceBulk)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPssCaptureVaSpaceBulk(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtPssCaptureVaSpaceBulk, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPssCaptureVaSpaceBulk(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtPssCaptureVaSpaceBulk(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2724,12 +2724,12 @@ static ULONG_PTR NTAPI Hook_NtPssCaptureVaSpaceBulk(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtProtectVirtualMemory_types[] = {"HANDLE", "PPVOID", "PULONG", "ULONG", "PULONG"};
 static const char* const NtProtectVirtualMemory_names[] = {"ProcessHandle", "BaseAddress", "Size", "NewProtect", "OldProtect"};
 static const uint8_t NtProtectVirtualMemory_dirs[] = {0, 2, 2, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtProtectVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtProtectVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtProtectVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtProtectVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtProtectVirtualMemory, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtProtectVirtualMemory(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtProtectVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2737,12 +2737,12 @@ static ULONG_PTR NTAPI Hook_NtProtectVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtQuerySection_types[] = {"HANDLE", "SECTION_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQuerySection_names[] = {"SectionHandle", "SectionInformationClass", "SectionInformation", "Length", "ReturnLength"};
 static const uint8_t NtQuerySection_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQuerySection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQuerySection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQuerySection, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySection(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQuerySection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2750,12 +2750,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
 static const char* const NtQueryVirtualMemory_types[] = {"HANDLE", "PVOID", "MEMORY_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryVirtualMemory_names[] = {"ProcessHandle", "BaseAddress", "MemoryInformationClass", "MemoryInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryVirtualMemory_dirs[] = {0, 0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtQueryVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQueryVirtualMemory, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryVirtualMemory(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtQueryVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2763,12 +2763,12 @@ static ULONG_PTR NTAPI Hook_NtQueryVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtReadVirtualMemory_types[] = {"HANDLE", "PVOID", "PVOID", "ULONG", "PULONG"};
 static const char* const NtReadVirtualMemory_names[] = {"ProcessHandle", "BaseAddress", "Buffer", "BufferSize", "BytesRead"};
 static const uint8_t NtReadVirtualMemory_dirs[] = {0, 0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtReadVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReadVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtReadVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReadVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtReadVirtualMemory, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadVirtualMemory(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtReadVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2776,12 +2776,12 @@ static ULONG_PTR NTAPI Hook_NtReadVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtReadVirtualMemoryEx_types[] = {"HANDLE", "PVOID", "PVOID", "ULONG", "PULONG", "ULONG"};
 static const char* const NtReadVirtualMemoryEx_names[] = {"ProcessHandle", "BaseAddress", "Buffer", "BufferSize", "BytesRead", "Flags"};
 static const uint8_t NtReadVirtualMemoryEx_dirs[] = {0, 0, 1, 0, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtReadVirtualMemoryEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReadVirtualMemoryEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtReadVirtualMemoryEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReadVirtualMemoryEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtReadVirtualMemoryEx, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadVirtualMemoryEx(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtReadVirtualMemoryEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2789,12 +2789,12 @@ static ULONG_PTR NTAPI Hook_NtReadVirtualMemoryEx(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtResetWriteWatch_types[] = {"HANDLE", "PVOID", "ULONG"};
 static const char* const NtResetWriteWatch_names[] = {"ProcessHandle", "BaseAddress", "RegionSize"};
 static const uint8_t NtResetWriteWatch_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtResetWriteWatch)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtResetWriteWatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtResetWriteWatch)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtResetWriteWatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtResetWriteWatch, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtResetWriteWatch(a0, a1, a2);
+  ULONG_PTR r = Real_NtResetWriteWatch(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2802,12 +2802,12 @@ static ULONG_PTR NTAPI Hook_NtResetWriteWatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtSetInformationVirtualMemory_types[] = {"HANDLE", "VIRTUAL_MEMORY_INFORMATION_CLASS", "ULONG_PTR", "PVOID", "PVOID", "ULONG"};
 static const char* const NtSetInformationVirtualMemory_names[] = {"ProcessHandle", "VmInformationClass", "NumberOfEntries", "VirtualAddresses", "VmInformation", "VmInformationLength"};
 static const uint8_t NtSetInformationVirtualMemory_dirs[] = {0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSetInformationVirtualMemory, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationVirtualMemory(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtSetInformationVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2815,12 +2815,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationVirtualMemory(ULONG_PTR a0, ULONG_PT
 static const char* const NtUnlockVirtualMemory_types[] = {"HANDLE", "PPVOID", "PSIZE_T", "ULONG"};
 static const char* const NtUnlockVirtualMemory_names[] = {"ProcessHandle", "lpAddress", "pSize", "LockOption"};
 static const uint8_t NtUnlockVirtualMemory_dirs[] = {0, 2, 2, 0};
-static ULONG_PTR (NTAPI *Real_NtUnlockVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUnlockVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtUnlockVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUnlockVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtUnlockVirtualMemory, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnlockVirtualMemory(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtUnlockVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2828,12 +2828,12 @@ static ULONG_PTR NTAPI Hook_NtUnlockVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtUnmapViewOfSection_types[] = {"HANDLE", "PVOID"};
 static const char* const NtUnmapViewOfSection_names[] = {"ProcessHandle", "BaseAddress"};
 static const uint8_t NtUnmapViewOfSection_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtUnmapViewOfSection)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUnmapViewOfSection(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtUnmapViewOfSection)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUnmapViewOfSection(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtUnmapViewOfSection, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnmapViewOfSection(a0, a1);
+  ULONG_PTR r = Real_NtUnmapViewOfSection(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2841,12 +2841,12 @@ static ULONG_PTR NTAPI Hook_NtUnmapViewOfSection(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtUnmapViewOfSectionEx_types[] = {"HANDLE", "PVOID", "ULONG"};
 static const char* const NtUnmapViewOfSectionEx_names[] = {"ProcessHandle", "BaseAddress", "Flags"};
 static const uint8_t NtUnmapViewOfSectionEx_dirs[] = {0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtUnmapViewOfSectionEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUnmapViewOfSectionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtUnmapViewOfSectionEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUnmapViewOfSectionEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtUnmapViewOfSectionEx, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnmapViewOfSectionEx(a0, a1, a2);
+  ULONG_PTR r = Real_NtUnmapViewOfSectionEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2854,12 +2854,12 @@ static ULONG_PTR NTAPI Hook_NtUnmapViewOfSectionEx(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtWriteVirtualMemory_types[] = {"HANDLE", "PVOID", "PVOID", "ULONG", "PULONG"};
 static const char* const NtWriteVirtualMemory_names[] = {"ProcessHandle", "BaseAddress", "Buffer", "BufferLength", "ReturnedLength"};
 static const uint8_t NtWriteVirtualMemory_dirs[] = {0, 0, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtWriteVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWriteVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtWriteVirtualMemory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWriteVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWriteVirtualMemory, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWriteVirtualMemory(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtWriteVirtualMemory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2867,12 +2867,12 @@ static ULONG_PTR NTAPI Hook_NtWriteVirtualMemory(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtAllocateReserveObject_types[] = {"PHANDLE", "POBJECT_ATTRIBUTES", "ULONG"};
 static const char* const NtAllocateReserveObject_names[] = {"MemoryReserveHandle", "ObjectAttributes", "Type"};
 static const uint8_t NtAllocateReserveObject_dirs[] = {1, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtAllocateReserveObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAllocateReserveObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAllocateReserveObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAllocateReserveObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAllocateReserveObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateReserveObject(a0, a1, a2);
+  ULONG_PTR r = Real_NtAllocateReserveObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2880,12 +2880,12 @@ static ULONG_PTR NTAPI Hook_NtAllocateReserveObject(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtCompareObjects_types[] = {"HANDLE", "HANDLE"};
 static const char* const NtCompareObjects_names[] = {"Object1", "Object2"};
 static const uint8_t NtCompareObjects_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtCompareObjects)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCompareObjects(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCompareObjects)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCompareObjects(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCompareObjects, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompareObjects(a0, a1);
+  ULONG_PTR r = Real_NtCompareObjects(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2893,12 +2893,12 @@ static ULONG_PTR NTAPI Hook_NtCompareObjects(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCreateDebugObject_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES", "ULONG"};
 static const char* const NtCreateDebugObject_names[] = {"DebugHandle", "DesiredAccess", "ObjectAttributes", "Flags"};
 static const uint8_t NtCreateDebugObject_dirs[] = {1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateDebugObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateDebugObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCreateDebugObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateDebugObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateDebugObject, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateDebugObject(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCreateDebugObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2906,12 +2906,12 @@ static ULONG_PTR NTAPI Hook_NtCreateDebugObject(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtCreateDirectoryObject_types[] = {"PHANDLE", "DIRECTORY_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtCreateDirectoryObject_names[] = {"DirectoryHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtCreateDirectoryObject_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateDirectoryObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtCreateDirectoryObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCreateDirectoryObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateDirectoryObject(a0, a1, a2);
+  ULONG_PTR r = Real_NtCreateDirectoryObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2919,12 +2919,12 @@ static ULONG_PTR NTAPI Hook_NtCreateDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtCreateDirectoryObjectEx_types[] = {"PHANDLE", "DIRECTORY_ACCESS_MASK", "POBJECT_ATTRIBUTES", "HANDLE", "ULONG"};
 static const char* const NtCreateDirectoryObjectEx_names[] = {"DirectoryHandle", "DesiredAccess", "ObjectAttributes", "ShadowDirectoryHandle", "Flags"};
 static const uint8_t NtCreateDirectoryObjectEx_dirs[] = {1, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateDirectoryObjectEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateDirectoryObjectEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtCreateDirectoryObjectEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateDirectoryObjectEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateDirectoryObjectEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateDirectoryObjectEx(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtCreateDirectoryObjectEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2932,12 +2932,12 @@ static ULONG_PTR NTAPI Hook_NtCreateDirectoryObjectEx(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtCreatePrivateNamespace_types[] = {"PHANDLE", "PSECURITY_ATTRIBUTES", "PVOID", "PUNICODE_STRING"};
 static const char* const NtCreatePrivateNamespace_names[] = {"NamespaceHandle", "Attributes", "BoundaryDescriptor", "AliasPrefix"};
 static const uint8_t NtCreatePrivateNamespace_dirs[] = {1, 128, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreatePrivateNamespace)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreatePrivateNamespace(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCreatePrivateNamespace)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreatePrivateNamespace(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreatePrivateNamespace, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreatePrivateNamespace(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCreatePrivateNamespace(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2945,12 +2945,12 @@ static ULONG_PTR NTAPI Hook_NtCreatePrivateNamespace(ULONG_PTR a0, ULONG_PTR a1,
 static const char* const NtCreateSymbolicLinkObject_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES", "PUNICODE_STRING"};
 static const char* const NtCreateSymbolicLinkObject_names[] = {"LinkHandle", "DesiredAccess", "ObjectAttributes", "SymbolicLink"};
 static const uint8_t NtCreateSymbolicLinkObject_dirs[] = {1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateSymbolicLinkObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateSymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCreateSymbolicLinkObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateSymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateSymbolicLinkObject, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateSymbolicLinkObject(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCreateSymbolicLinkObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2958,12 +2958,12 @@ static ULONG_PTR NTAPI Hook_NtCreateSymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtDeletePrivateNamespace_types[] = {"HANDLE"};
 static const char* const NtDeletePrivateNamespace_names[] = {"NamespaceHandle"};
 static const uint8_t NtDeletePrivateNamespace_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtDeletePrivateNamespace)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeletePrivateNamespace(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtDeletePrivateNamespace)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeletePrivateNamespace(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeletePrivateNamespace, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeletePrivateNamespace(a0);
+  ULONG_PTR r = Real_NtDeletePrivateNamespace(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2971,12 +2971,12 @@ static ULONG_PTR NTAPI Hook_NtDeletePrivateNamespace(ULONG_PTR a0) {
 static const char* const NtDuplicateObject_types[] = {"HANDLE", "HANDLE", "HANDLE", "PHANDLE", "ACCESS_MASK", "BOOL", "ULONG"};
 static const char* const NtDuplicateObject_names[] = {"SourceProcess", "SourceHandle", "TargetProcess", "TargetHandle", "DesiredAccess", "InheritMode", "Options"};
 static const uint8_t NtDuplicateObject_dirs[] = {0, 0, 0, 1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtDuplicateObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDuplicateObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtDuplicateObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDuplicateObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtDuplicateObject, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDuplicateObject(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtDuplicateObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2984,12 +2984,12 @@ static ULONG_PTR NTAPI Hook_NtDuplicateObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtMakePermanentObject_types[] = {"HANDLE"};
 static const char* const NtMakePermanentObject_names[] = {"Object"};
 static const uint8_t NtMakePermanentObject_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtMakePermanentObject)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtMakePermanentObject(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtMakePermanentObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtMakePermanentObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtMakePermanentObject, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMakePermanentObject(a0);
+  ULONG_PTR r = Real_NtMakePermanentObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -2997,12 +2997,12 @@ static ULONG_PTR NTAPI Hook_NtMakePermanentObject(ULONG_PTR a0) {
 static const char* const NtMakeTemporaryObject_types[] = {"HANDLE"};
 static const char* const NtMakeTemporaryObject_names[] = {"Handle"};
 static const uint8_t NtMakeTemporaryObject_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtMakeTemporaryObject)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtMakeTemporaryObject(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtMakeTemporaryObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtMakeTemporaryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtMakeTemporaryObject, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMakeTemporaryObject(a0);
+  ULONG_PTR r = Real_NtMakeTemporaryObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3010,12 +3010,12 @@ static ULONG_PTR NTAPI Hook_NtMakeTemporaryObject(ULONG_PTR a0) {
 static const char* const NtOpenDirectoryObject_types[] = {"PHANDLE", "DIRECTORY_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenDirectoryObject_names[] = {"DirectoryHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenDirectoryObject_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenDirectoryObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenDirectoryObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenDirectoryObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenDirectoryObject(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenDirectoryObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3023,12 +3023,12 @@ static ULONG_PTR NTAPI Hook_NtOpenDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtOpenObjectAuditAlarm_types[] = {"PUNICODE_STRING", "PHANDLE", "PUNICODE_STRING", "PUNICODE_STRING", "PSECURITY_DESCRIPTOR", "HANDLE", "ACCESS_MASK", "ACCESS_MASK", "PPRIVILEGE_SET", "BOOLEAN", "BOOLEAN", "PBOOLEAN"};
 static const char* const NtOpenObjectAuditAlarm_names[] = {"SubsystemName", "HandleId", "ObjectTypeName", "ObjectName", "SecurityDescriptor", "ClientToken", "DesiredAccess", "GrantedAccess", "PrivilegeSet", "ObjectCreation", "AccessGranted", "OnClose"};
 static const uint8_t NtOpenObjectAuditAlarm_dirs[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtOpenObjectAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11) {
+static ULONG_PTR (NTAPI *Real_NtOpenObjectAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11};
   CallCtx ctx(SYS_NtOpenObjectAuditAlarm, (uintptr_t)_ReturnAddress(), args, 12);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenObjectAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
+  ULONG_PTR r = Real_NtOpenObjectAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3036,12 +3036,12 @@ static ULONG_PTR NTAPI Hook_NtOpenObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtOpenPrivateNamespace_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES", "PVOID"};
 static const char* const NtOpenPrivateNamespace_names[] = {"NamespaceHandle", "DesiredAccess", "ObjectAttributes", "Buffer"};
 static const uint8_t NtOpenPrivateNamespace_dirs[] = {1, 0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenPrivateNamespace)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenPrivateNamespace(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtOpenPrivateNamespace)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenPrivateNamespace(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenPrivateNamespace, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenPrivateNamespace(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtOpenPrivateNamespace(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3049,12 +3049,12 @@ static ULONG_PTR NTAPI Hook_NtOpenPrivateNamespace(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtOpenSymbolicLinkObject_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenSymbolicLinkObject_names[] = {"LinkHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenSymbolicLinkObject_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenSymbolicLinkObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenSymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenSymbolicLinkObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenSymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenSymbolicLinkObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenSymbolicLinkObject(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenSymbolicLinkObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3062,12 +3062,12 @@ static ULONG_PTR NTAPI Hook_NtOpenSymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a1,
 static const char* const NtQueryDirectoryObject_types[] = {"HANDLE", "PVOID", "ULONG", "ULONG", "ULONG", "PULONG", "PULONG"};
 static const char* const NtQueryDirectoryObject_names[] = {"DirectoryHandle", "DirectoryBuffer", "BufferLength", "OnlyFirstEntry", "FirstEntry", "Index", "ReturnedLength"};
 static const uint8_t NtQueryDirectoryObject_dirs[] = {0, 1, 0, 0, 0, 2, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryDirectoryObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtQueryDirectoryObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtQueryDirectoryObject, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryDirectoryObject(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtQueryDirectoryObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3075,12 +3075,12 @@ static ULONG_PTR NTAPI Hook_NtQueryDirectoryObject(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtQueryObject_types[] = {"HANDLE", "OBJECT_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryObject_names[] = {"ObjectHandle", "ObjectInformationClass", "ObjectInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryObject_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryObject, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryObject(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3088,12 +3088,12 @@ static ULONG_PTR NTAPI Hook_NtQueryObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtQuerySymbolicLinkObject_types[] = {"HANDLE", "PUNICODE_STRING", "PULONG"};
 static const char* const NtQuerySymbolicLinkObject_names[] = {"LinkHandle", "LinkTarget", "ReturnedLength"};
 static const uint8_t NtQuerySymbolicLinkObject_dirs[] = {0, 2, 129};
-static ULONG_PTR (NTAPI *Real_NtQuerySymbolicLinkObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtQuerySymbolicLinkObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtQuerySymbolicLinkObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySymbolicLinkObject(a0, a1, a2);
+  ULONG_PTR r = Real_NtQuerySymbolicLinkObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3101,12 +3101,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySymbolicLinkObject(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtSetInformationObject_types[] = {"HANDLE", "OBJECT_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationObject_names[] = {"Handle", "Class", "Buffer", "BufferLength"};
 static const uint8_t NtSetInformationObject_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationObject, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationObject(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3114,12 +3114,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationObject(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtSetInformationSymbolicLink_types[] = {"HANDLE", "ULONG", "PVOID", "ULONG"};
 static const char* const NtSetInformationSymbolicLink_names[] = {"Handle", "Class", "Buffer", "BufferLength"};
 static const uint8_t NtSetInformationSymbolicLink_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationSymbolicLink)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationSymbolicLink(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationSymbolicLink)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationSymbolicLink(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationSymbolicLink, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationSymbolicLink(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationSymbolicLink(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3127,12 +3127,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationSymbolicLink(ULONG_PTR a0, ULONG_PTR
 static const char* const NtAcquireCMFViewOwnership_types[] = {"PLARGE_INTEGER", "PBOOLEAN", "BOOLEAN"};
 static const char* const NtAcquireCMFViewOwnership_names[] = {"TimeStamp", "TokenTaken", "ReplaceExisting"};
 static const uint8_t NtAcquireCMFViewOwnership_dirs[] = {1, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtAcquireCMFViewOwnership)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAcquireCMFViewOwnership(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAcquireCMFViewOwnership)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAcquireCMFViewOwnership(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAcquireCMFViewOwnership, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAcquireCMFViewOwnership(a0, a1, a2);
+  ULONG_PTR r = Real_NtAcquireCMFViewOwnership(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3140,12 +3140,12 @@ static ULONG_PTR NTAPI Hook_NtAcquireCMFViewOwnership(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtAllocateLocallyUniqueId_types[] = {"PLUID"};
 static const char* const NtAllocateLocallyUniqueId_names[] = {"Luid"};
 static const uint8_t NtAllocateLocallyUniqueId_dirs[] = {1};
-static ULONG_PTR (NTAPI *Real_NtAllocateLocallyUniqueId)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAllocateLocallyUniqueId(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtAllocateLocallyUniqueId)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAllocateLocallyUniqueId(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtAllocateLocallyUniqueId, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateLocallyUniqueId(a0);
+  ULONG_PTR r = Real_NtAllocateLocallyUniqueId(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3153,12 +3153,12 @@ static ULONG_PTR NTAPI Hook_NtAllocateLocallyUniqueId(ULONG_PTR a0) {
 static const char* const NtAllocateUuids_types[] = {"PLARGE_INTEGER", "PULONG", "PULONG", "PUCHAR"};
 static const char* const NtAllocateUuids_names[] = {"UuidLastTimeAllocated", "UuidDeltaTime", "UuidSequenceNumber", "UuidSeed"};
 static const uint8_t NtAllocateUuids_dirs[] = {1, 1, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtAllocateUuids)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAllocateUuids(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtAllocateUuids)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAllocateUuids(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtAllocateUuids, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAllocateUuids(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtAllocateUuids(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3166,25 +3166,22 @@ static ULONG_PTR NTAPI Hook_NtAllocateUuids(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtCallbackReturn_types[] = {"PVOID", "ULONG", "NTSTATUS"};
 static const char* const NtCallbackReturn_names[] = {"Result", "ResultLength", "Status"};
 static const uint8_t NtCallbackReturn_dirs[] = {128, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCallbackReturn)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCallbackReturn(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
-  ULONG_PTR args[] = {a0, a1, a2};
-  CallCtx ctx(SYS_NtCallbackReturn, (uintptr_t)_ReturnAddress(), args, 3);
-  if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCallbackReturn(a0, a1, a2);
-  return ctx.Exit(r);
+static ULONG_PTR (NTAPI *Real_NtCallbackReturn)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCallbackReturn(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
+  LogEntryOnly(SYS_NtCallbackReturn, (uintptr_t)_ReturnAddress());
+  return Real_NtCallbackReturn(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Other] NTSTATUS NtCallEnclave(4 args)
 static const char* const NtCallEnclave_types[] = {"PVOID", "PVOID", "BOOLEAN", "PVOID"};
 static const char* const NtCallEnclave_names[] = {"Function", "Parameter", "WaitForThread", "*Result"};
 static const uint8_t NtCallEnclave_dirs[] = {0, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtCallEnclave)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCallEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCallEnclave)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCallEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCallEnclave, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCallEnclave(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCallEnclave(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3192,12 +3189,12 @@ static ULONG_PTR NTAPI Hook_NtCallEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtCurrentTeb_types[] = {nullptr};
 static const char* const NtCurrentTeb_names[] = {nullptr};
 static const uint8_t NtCurrentTeb_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtCurrentTeb)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtCurrentTeb() {
+static ULONG_PTR (NTAPI *Real_NtCurrentTeb)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCurrentTeb(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtCurrentTeb, (uintptr_t)_ReturnAddress(), args, 0);
   if (false) return ctx.Ret();
-  ULONG_PTR r = Real_NtCurrentTeb();
+  ULONG_PTR r = Real_NtCurrentTeb(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3205,12 +3202,12 @@ static ULONG_PTR NTAPI Hook_NtCurrentTeb() {
 static const char* const NtDirectGraphicsCall_types[] = {"ULONG", "ULONG", "ULONG", "ULONG", "ULONG"};
 static const char* const NtDirectGraphicsCall_names[] = {"Unknown", "Unknown", "Unknown", "Unknown", "Unknown"};
 static const uint8_t NtDirectGraphicsCall_dirs[] = {0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtDirectGraphicsCall)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDirectGraphicsCall(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtDirectGraphicsCall)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDirectGraphicsCall(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtDirectGraphicsCall, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDirectGraphicsCall(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtDirectGraphicsCall(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3218,12 +3215,12 @@ static ULONG_PTR NTAPI Hook_NtDirectGraphicsCall(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtDisplayString_types[] = {"PUNICODE_STRING"};
 static const char* const NtDisplayString_names[] = {"Message"};
 static const uint8_t NtDisplayString_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtDisplayString)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDisplayString(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtDisplayString)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDisplayString(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDisplayString, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDisplayString(a0);
+  ULONG_PTR r = Real_NtDisplayString(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3231,12 +3228,12 @@ static ULONG_PTR NTAPI Hook_NtDisplayString(ULONG_PTR a0) {
 static const char* const NtDrawText_types[] = {"PUNICODE_STRING"};
 static const char* const NtDrawText_names[] = {"Text"};
 static const uint8_t NtDrawText_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtDrawText)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDrawText(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtDrawText)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDrawText(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDrawText, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDrawText(a0);
+  ULONG_PTR r = Real_NtDrawText(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3244,12 +3241,12 @@ static ULONG_PTR NTAPI Hook_NtDrawText(ULONG_PTR a0) {
 static const char* const NtFlushInstallUILanguage_types[] = {"ULONG", "ULONG"};
 static const char* const NtFlushInstallUILanguage_names[] = {"InstallUILanguage", "SetComittedFlag"};
 static const uint8_t NtFlushInstallUILanguage_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtFlushInstallUILanguage)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFlushInstallUILanguage(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtFlushInstallUILanguage)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFlushInstallUILanguage(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtFlushInstallUILanguage, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushInstallUILanguage(a0, a1);
+  ULONG_PTR r = Real_NtFlushInstallUILanguage(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3257,12 +3254,12 @@ static ULONG_PTR NTAPI Hook_NtFlushInstallUILanguage(ULONG_PTR a0, ULONG_PTR a1)
 static const char* const NtGetMUIRegistryInfo_types[] = {"ULONG", "PULONG", "PVOID"};
 static const char* const NtGetMUIRegistryInfo_names[] = {"Flags", "BufferLength", "Buffer"};
 static const uint8_t NtGetMUIRegistryInfo_dirs[] = {0, 2, 1};
-static ULONG_PTR (NTAPI *Real_NtGetMUIRegistryInfo)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetMUIRegistryInfo(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtGetMUIRegistryInfo)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetMUIRegistryInfo(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtGetMUIRegistryInfo, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetMUIRegistryInfo(a0, a1, a2);
+  ULONG_PTR r = Real_NtGetMUIRegistryInfo(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3270,12 +3267,12 @@ static ULONG_PTR NTAPI Hook_NtGetMUIRegistryInfo(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtGetNlsSectionPtr_types[] = {"ULONG", "ULONG", "PVOID", "PPVOID", "PULONG"};
 static const char* const NtGetNlsSectionPtr_names[] = {"SectionType", "SectionData", "ContextData", "SectionPointer", "SectionSize"};
 static const uint8_t NtGetNlsSectionPtr_dirs[] = {0, 0, 0, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtGetNlsSectionPtr)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetNlsSectionPtr(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtGetNlsSectionPtr)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetNlsSectionPtr(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtGetNlsSectionPtr, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetNlsSectionPtr(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtGetNlsSectionPtr(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3283,12 +3280,12 @@ static ULONG_PTR NTAPI Hook_NtGetNlsSectionPtr(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtGetTickCount_types[] = {nullptr};
 static const char* const NtGetTickCount_names[] = {nullptr};
 static const uint8_t NtGetTickCount_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtGetTickCount)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetTickCount() {
+static ULONG_PTR (NTAPI *Real_NtGetTickCount)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetTickCount(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtGetTickCount, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetTickCount();
+  ULONG_PTR r = Real_NtGetTickCount(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3296,12 +3293,12 @@ static ULONG_PTR NTAPI Hook_NtGetTickCount() {
 static const char* const NtInitializeNlsFiles_types[] = {"PPVOID", "PLCID", "PLARGE_INTEGER"};
 static const char* const NtInitializeNlsFiles_names[] = {"BaseAddress", "DefaultLocaleId", "DefaultCasingTableSize"};
 static const uint8_t NtInitializeNlsFiles_dirs[] = {1, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtInitializeNlsFiles)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtInitializeNlsFiles(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtInitializeNlsFiles)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtInitializeNlsFiles(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtInitializeNlsFiles, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtInitializeNlsFiles(a0, a1, a2);
+  ULONG_PTR r = Real_NtInitializeNlsFiles(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3309,12 +3306,12 @@ static ULONG_PTR NTAPI Hook_NtInitializeNlsFiles(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtIsUILanguageComitted_types[] = {nullptr};
 static const char* const NtIsUILanguageComitted_names[] = {nullptr};
 static const uint8_t NtIsUILanguageComitted_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtIsUILanguageComitted)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtIsUILanguageComitted() {
+static ULONG_PTR (NTAPI *Real_NtIsUILanguageComitted)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtIsUILanguageComitted(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtIsUILanguageComitted, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtIsUILanguageComitted();
+  ULONG_PTR r = Real_NtIsUILanguageComitted(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3322,12 +3319,12 @@ static ULONG_PTR NTAPI Hook_NtIsUILanguageComitted() {
 static const char* const NtLoadHotPatch_types[] = {"PUNICODE_STRING", "ULONG"};
 static const char* const NtLoadHotPatch_names[] = {"HotPatchName", "LoadFlag"};
 static const uint8_t NtLoadHotPatch_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtLoadHotPatch)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLoadHotPatch(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtLoadHotPatch)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLoadHotPatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtLoadHotPatch, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadHotPatch(a0, a1);
+  ULONG_PTR r = Real_NtLoadHotPatch(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3335,12 +3332,12 @@ static ULONG_PTR NTAPI Hook_NtLoadHotPatch(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtLockProductActivationKeys_types[] = {"PULONG", "PULONG"};
 static const char* const NtLockProductActivationKeys_names[] = {"ProductBuild", "SafeMode"};
 static const uint8_t NtLockProductActivationKeys_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtLockProductActivationKeys)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLockProductActivationKeys(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtLockProductActivationKeys)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLockProductActivationKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtLockProductActivationKeys, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLockProductActivationKeys(a0, a1);
+  ULONG_PTR r = Real_NtLockProductActivationKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3348,12 +3345,12 @@ static ULONG_PTR NTAPI Hook_NtLockProductActivationKeys(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtManageHotPatch_types[] = {"HOT_PATCH_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtManageHotPatch_names[] = {"HotPatchClass", "PatchData", "Length", "ReturnedLength"};
 static const uint8_t NtManageHotPatch_dirs[] = {0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtManageHotPatch)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtManageHotPatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtManageHotPatch)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtManageHotPatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtManageHotPatch, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtManageHotPatch(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtManageHotPatch(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3361,12 +3358,12 @@ static ULONG_PTR NTAPI Hook_NtManageHotPatch(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtMapCMFModule_types[] = {"ULONG", "ULONG", "PULONG", "PULONG", "PULONG", "PPVOID"};
 static const char* const NtMapCMFModule_names[] = {"What", "Index", "CacheIndexOut", "CacheFlagsOut", "ViewSizeOut", "BaseAddress"};
 static const uint8_t NtMapCMFModule_dirs[] = {0, 0, 129, 129, 129, 129};
-static ULONG_PTR (NTAPI *Real_NtMapCMFModule)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtMapCMFModule(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtMapCMFModule)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtMapCMFModule(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtMapCMFModule, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMapCMFModule(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtMapCMFModule(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3374,12 +3371,12 @@ static ULONG_PTR NTAPI Hook_NtMapCMFModule(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
 static const char* const NtNotifyChangeSession_types[] = {"HANDLE", "ULONG", "PVOID", "ULONG", "IO_SESSION_STATE", "IO_SESSION_STATE", "PVOID", "ULONG"};
 static const char* const NtNotifyChangeSession_names[] = {"Session", "IoStateSequence", "Reserved", "Action", "IoState", "IoState2", "Buffer", "BufferSize"};
 static const uint8_t NtNotifyChangeSession_dirs[] = {0, 0, 0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtNotifyChangeSession)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtNotifyChangeSession(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtNotifyChangeSession)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtNotifyChangeSession(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtNotifyChangeSession, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtNotifyChangeSession(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtNotifyChangeSession(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3387,12 +3384,12 @@ static ULONG_PTR NTAPI Hook_NtNotifyChangeSession(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtOpenSession_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenSession_names[] = {"SessionHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenSession_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenSession)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenSession(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenSession)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenSession(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenSession, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenSession(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenSession(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3400,12 +3397,12 @@ static ULONG_PTR NTAPI Hook_NtOpenSession(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtQueryLicenseValue_types[] = {"PUNICODE_STRING", "PULONG", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryLicenseValue_names[] = {"Name", "Type", "Buffer", "Length", "ReturnedLength"};
 static const uint8_t NtQueryLicenseValue_dirs[] = {0, 129, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryLicenseValue)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryLicenseValue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryLicenseValue)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryLicenseValue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryLicenseValue, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryLicenseValue(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryLicenseValue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3413,12 +3410,12 @@ static ULONG_PTR NTAPI Hook_NtQueryLicenseValue(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtReleaseCMFViewOwnership_types[] = {nullptr};
 static const char* const NtReleaseCMFViewOwnership_names[] = {nullptr};
 static const uint8_t NtReleaseCMFViewOwnership_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtReleaseCMFViewOwnership)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtReleaseCMFViewOwnership() {
+static ULONG_PTR (NTAPI *Real_NtReleaseCMFViewOwnership)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReleaseCMFViewOwnership(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtReleaseCMFViewOwnership, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReleaseCMFViewOwnership();
+  ULONG_PTR r = Real_NtReleaseCMFViewOwnership(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3426,12 +3423,12 @@ static ULONG_PTR NTAPI Hook_NtReleaseCMFViewOwnership() {
 static const char* const NtRevertContainerImpersonation_types[] = {nullptr};
 static const char* const NtRevertContainerImpersonation_names[] = {nullptr};
 static const uint8_t NtRevertContainerImpersonation_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtRevertContainerImpersonation)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtRevertContainerImpersonation() {
+static ULONG_PTR (NTAPI *Real_NtRevertContainerImpersonation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRevertContainerImpersonation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtRevertContainerImpersonation, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRevertContainerImpersonation();
+  ULONG_PTR r = Real_NtRevertContainerImpersonation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3439,12 +3436,12 @@ static ULONG_PTR NTAPI Hook_NtRevertContainerImpersonation() {
 static const char* const NtSetLdtEntries_types[] = {"ULONG", "ULONG", "ULONG", "ULONG", "ULONG", "ULONG"};
 static const char* const NtSetLdtEntries_names[] = {"Selector1", "LdtEntry1L", "LdtEntry1H", "Selector2", "LdtEntry2L", "LdtEntry2H"};
 static const uint8_t NtSetLdtEntries_dirs[] = {0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetLdtEntries)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetLdtEntries(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtSetLdtEntries)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetLdtEntries(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSetLdtEntries, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetLdtEntries(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtSetLdtEntries(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3452,12 +3449,12 @@ static ULONG_PTR NTAPI Hook_NtSetLdtEntries(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtSetUuidSeed_types[] = {"PUCHAR"};
 static const char* const NtSetUuidSeed_names[] = {"UuidSeed"};
 static const uint8_t NtSetUuidSeed_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetUuidSeed)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetUuidSeed(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSetUuidSeed)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetUuidSeed(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetUuidSeed, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetUuidSeed(a0);
+  ULONG_PTR r = Real_NtSetUuidSeed(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3465,12 +3462,12 @@ static ULONG_PTR NTAPI Hook_NtSetUuidSeed(ULONG_PTR a0) {
 static const char* const NtShutdownSystem_types[] = {"SHUTDOWN_ACTION"};
 static const char* const NtShutdownSystem_names[] = {"Action"};
 static const uint8_t NtShutdownSystem_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtShutdownSystem)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtShutdownSystem(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtShutdownSystem)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtShutdownSystem(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtShutdownSystem, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtShutdownSystem(a0);
+  ULONG_PTR r = Real_NtShutdownSystem(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3478,12 +3475,12 @@ static ULONG_PTR NTAPI Hook_NtShutdownSystem(ULONG_PTR a0) {
 static const char* const NtTerminateEnclave_types[] = {"PVOID", "BOOLEAN"};
 static const char* const NtTerminateEnclave_names[] = {"BaseAddress", "WaitForThread"};
 static const uint8_t NtTerminateEnclave_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtTerminateEnclave)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtTerminateEnclave(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtTerminateEnclave)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtTerminateEnclave(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtTerminateEnclave, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTerminateEnclave(a0, a1);
+  ULONG_PTR r = Real_NtTerminateEnclave(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3491,12 +3488,12 @@ static ULONG_PTR NTAPI Hook_NtTerminateEnclave(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtAcquireProcessActivityReference_types[] = {"PHANDLE", "HANDLE", "PROCESS_ACTIVITY_TYPE"};
 static const char* const NtAcquireProcessActivityReference_names[] = {"pHandle", "hProcess", "Type"};
 static const uint8_t NtAcquireProcessActivityReference_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAcquireProcessActivityReference)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAcquireProcessActivityReference(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtAcquireProcessActivityReference)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAcquireProcessActivityReference(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtAcquireProcessActivityReference, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAcquireProcessActivityReference(a0, a1, a2);
+  ULONG_PTR r = Real_NtAcquireProcessActivityReference(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3504,12 +3501,12 @@ static ULONG_PTR NTAPI Hook_NtAcquireProcessActivityReference(ULONG_PTR a0, ULON
 static const char* const NtAlertMultipleThreadByThreadId_types[] = {"PHANDLE", "ULONG", "PVOID", "ULONG"};
 static const char* const NtAlertMultipleThreadByThreadId_names[] = {"ThreadIds", "Count", "Boost", "BoostCount"};
 static const uint8_t NtAlertMultipleThreadByThreadId_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtAlertMultipleThreadByThreadId)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlertMultipleThreadByThreadId(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtAlertMultipleThreadByThreadId)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlertMultipleThreadByThreadId(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtAlertMultipleThreadByThreadId, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlertMultipleThreadByThreadId(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtAlertMultipleThreadByThreadId(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3517,12 +3514,12 @@ static ULONG_PTR NTAPI Hook_NtAlertMultipleThreadByThreadId(ULONG_PTR a0, ULONG_
 static const char* const NtAlertResumeThread_types[] = {"HANDLE", "PULONG"};
 static const char* const NtAlertResumeThread_names[] = {"ThreadHandle", "pSuspendCount"};
 static const uint8_t NtAlertResumeThread_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtAlertResumeThread)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlertResumeThread(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtAlertResumeThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlertResumeThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAlertResumeThread, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlertResumeThread(a0, a1);
+  ULONG_PTR r = Real_NtAlertResumeThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3530,12 +3527,12 @@ static ULONG_PTR NTAPI Hook_NtAlertResumeThread(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtAlertThread_types[] = {"HANDLE"};
 static const char* const NtAlertThread_names[] = {"ThreadHandle"};
 static const uint8_t NtAlertThread_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtAlertThread)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlertThread(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtAlertThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlertThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtAlertThread, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlertThread(a0);
+  ULONG_PTR r = Real_NtAlertThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3543,12 +3540,12 @@ static ULONG_PTR NTAPI Hook_NtAlertThread(ULONG_PTR a0) {
 static const char* const NtAlertThreadByThreadIdEx_types[] = {"HANDLE", "PCRITICAL_SECTION"};
 static const char* const NtAlertThreadByThreadIdEx_names[] = {"ThreadHandle", "CriticalSection"};
 static const uint8_t NtAlertThreadByThreadIdEx_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtAlertThreadByThreadIdEx)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlertThreadByThreadIdEx(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtAlertThreadByThreadIdEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlertThreadByThreadIdEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAlertThreadByThreadIdEx, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlertThreadByThreadIdEx(a0, a1);
+  ULONG_PTR r = Real_NtAlertThreadByThreadIdEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3556,12 +3553,12 @@ static ULONG_PTR NTAPI Hook_NtAlertThreadByThreadIdEx(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtAlertThreadByThreadId_types[] = {"ULONG"};
 static const char* const NtAlertThreadByThreadId_names[] = {"ThreadId"};
 static const uint8_t NtAlertThreadByThreadId_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtAlertThreadByThreadId)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAlertThreadByThreadId(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtAlertThreadByThreadId)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAlertThreadByThreadId(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtAlertThreadByThreadId, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAlertThreadByThreadId(a0);
+  ULONG_PTR r = Real_NtAlertThreadByThreadId(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3569,12 +3566,12 @@ static ULONG_PTR NTAPI Hook_NtAlertThreadByThreadId(ULONG_PTR a0) {
 static const char* const NtApphelpCacheControl_types[] = {"ULONG", "PUNICODE_STRING"};
 static const char* const NtApphelpCacheControl_names[] = {"ServiceClass", "ServiceData"};
 static const uint8_t NtApphelpCacheControl_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtApphelpCacheControl)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtApphelpCacheControl(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtApphelpCacheControl)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtApphelpCacheControl(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtApphelpCacheControl, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtApphelpCacheControl(a0, a1);
+  ULONG_PTR r = Real_NtApphelpCacheControl(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3582,12 +3579,12 @@ static ULONG_PTR NTAPI Hook_NtApphelpCacheControl(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtChangeProcessState_types[] = {"HANDLE", "HANDLE", "ULONG", "PVOID", "SIZE_T", "ULONG"};
 static const char* const NtChangeProcessState_names[] = {"StateChangeHandle", "ProcessHandle", "Action", "ExtendedInformation", "ExtendedInformationLength", "Reserved"};
 static const uint8_t NtChangeProcessState_dirs[] = {0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtChangeProcessState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtChangeProcessState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtChangeProcessState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtChangeProcessState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtChangeProcessState, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtChangeProcessState(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtChangeProcessState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3595,12 +3592,12 @@ static ULONG_PTR NTAPI Hook_NtChangeProcessState(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtChangeThreadState_types[] = {"HANDLE", "HANDLE", "ULONG", "PVOID", "SIZE_T", "ULONG"};
 static const char* const NtChangeThreadState_names[] = {"StateChangeHandle", "ThreadHandle", "Action", "ExtendedInformation", "ExtendedInformationLength", "Reserved"};
 static const uint8_t NtChangeThreadState_dirs[] = {0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtChangeThreadState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtChangeThreadState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtChangeThreadState)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtChangeThreadState(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtChangeThreadState, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtChangeThreadState(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtChangeThreadState(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3608,25 +3605,22 @@ static ULONG_PTR NTAPI Hook_NtChangeThreadState(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtContinue_types[] = {"PCONTEXT", "BOOLEAN"};
 static const char* const NtContinue_names[] = {"Context", "bTest"};
 static const uint8_t NtContinue_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtContinue)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtContinue(ULONG_PTR a0, ULONG_PTR a1) {
-  ULONG_PTR args[] = {a0, a1};
-  CallCtx ctx(SYS_NtContinue, (uintptr_t)_ReturnAddress(), args, 2);
-  if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtContinue(a0, a1);
-  return ctx.Exit(r);
+static ULONG_PTR (NTAPI *Real_NtContinue)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtContinue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
+  LogEntryOnly(SYS_NtContinue, (uintptr_t)_ReturnAddress());
+  return Real_NtContinue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtContinueEx(2 args)
 static const char* const NtContinueEx_types[] = {"PCONTEXT", "BOOLEAN"};
 static const char* const NtContinueEx_names[] = {"Context", "bTest"};
 static const uint8_t NtContinueEx_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtContinueEx)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtContinueEx(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtContinueEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtContinueEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtContinueEx, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtContinueEx(a0, a1);
+  ULONG_PTR r = Real_NtContinueEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3634,12 +3628,12 @@ static ULONG_PTR NTAPI Hook_NtContinueEx(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCreateProcess_types[] = {"PHANDLE", "PROCESS_ACCESS_MASK", "POBJECT_ATTRIBUTES", "HANDLE", "BOOL", "HANDLE", "HANDLE", "HANDLE"};
 static const char* const NtCreateProcess_names[] = {"ProcessHandle", "DesiredAccess", "ObjectAttributes", "ParentProcessHandle", "Inherit", "SectionHandle", "DebugPort", "ExceptionPort"};
 static const uint8_t NtCreateProcess_dirs[] = {1, 0, 128, 0, 0, 128, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtCreateProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtCreateProcess, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateProcess(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtCreateProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3647,12 +3641,12 @@ static ULONG_PTR NTAPI Hook_NtCreateProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtCreateProcessEx_types[] = {"PHANDLE", "PROCESS_ACCESS_MASK", "POBJECT_ATTRIBUTES", "HANDLE", "BOOL", "HANDLE", "HANDLE", "HANDLE", "BOOLEAN"};
 static const char* const NtCreateProcessEx_names[] = {"ProcessHandle", "DesiredAccess", "ObjectAttributes", "ParentProcessHandle", "Inherit", "SectionHandle", "DebugPort", "ExceptionPort", "InJob"};
 static const uint8_t NtCreateProcessEx_dirs[] = {1, 0, 128, 0, 0, 128, 128, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateProcessEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateProcessEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtCreateProcessEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateProcessEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtCreateProcessEx, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateProcessEx(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtCreateProcessEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3660,12 +3654,12 @@ static ULONG_PTR NTAPI Hook_NtCreateProcessEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtCreateProcessStateChange_types[] = {"PHANDLE", "PROCESS_ACCESS_MASK", "POBJECT_ATTRIBUTES", "HANDLE", "ULONG"};
 static const char* const NtCreateProcessStateChange_names[] = {"StateChangeHandle", "DesiredAccess", "ObjectAttributes", "ProcessHandle", "Reserved"};
 static const uint8_t NtCreateProcessStateChange_dirs[] = {1, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateProcessStateChange)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateProcessStateChange(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtCreateProcessStateChange)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateProcessStateChange(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateProcessStateChange, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateProcessStateChange(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtCreateProcessStateChange(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3673,12 +3667,12 @@ static ULONG_PTR NTAPI Hook_NtCreateProcessStateChange(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtCreateThread_types[] = {"PHANDLE", "THREAD_ACCESS_MASK", "POBJECT_ATTRIBUTES", "HANDLE", "PCLIENT_ID", "PCONTEXT", "PVOID", "BOOLEAN"};
 static const char* const NtCreateThread_names[] = {"ThreadHandle", "DesiredAccess", "ObjectAttributes", "ProcessHandle", "ClientId", "ThreadContext", "UserStack", "CreateSuspended"};
 static const uint8_t NtCreateThread_dirs[] = {1, 0, 128, 0, 1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtCreateThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtCreateThread, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateThread(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtCreateThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3686,12 +3680,12 @@ static ULONG_PTR NTAPI Hook_NtCreateThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
 static const char* const NtCreateThreadEx_types[] = {"PHANDLE", "THREAD_ACCESS_MASK", "POBJECT_ATTRIBUTES", "HANDLE", "PVOID", "PVOID", "ULONG", "ULONG", "ULONG", "ULONG", "PVOID"};
 static const char* const NtCreateThreadEx_names[] = {"ThreadHandle", "DesiredAccess", "ObjectAttributes", "ProcessHandle", "StartRoutine", "Argument", "CreateFlags", "ZeroBits", "StackSize", "MaximumStackSize", "AttributeList"};
 static const uint8_t NtCreateThreadEx_dirs[] = {1, 0, 128, 0, 0, 128, 0, 128, 128, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateThreadEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateThreadEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) {
+static ULONG_PTR (NTAPI *Real_NtCreateThreadEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateThreadEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtCreateThreadEx, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateThreadEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+  ULONG_PTR r = Real_NtCreateThreadEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3699,12 +3693,12 @@ static ULONG_PTR NTAPI Hook_NtCreateThreadEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtCreateThreadStateChange_types[] = {"PHANDLE", "THREAD_ACCESS_MASK", "POBJECT_ATTRIBUTES", "HANDLE", "ULONG"};
 static const char* const NtCreateThreadStateChange_names[] = {"StateChangeHandle", "DesiredAccess", "ObjectAttributes", "ThreadHandle", "Reserved"};
 static const uint8_t NtCreateThreadStateChange_dirs[] = {1, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateThreadStateChange)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateThreadStateChange(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtCreateThreadStateChange)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateThreadStateChange(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateThreadStateChange, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateThreadStateChange(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtCreateThreadStateChange(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3712,12 +3706,12 @@ static ULONG_PTR NTAPI Hook_NtCreateThreadStateChange(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtCreateUserProcess_types[] = {"PHANDLE", "PHANDLE", "PROCESS_ACCESS_MASK", "ACCESS_MASK", "POBJECT_ATTRIBUTES", "POBJECT_ATTRIBUTES", "ULONG", "ULONG", "PRTL_USER_PROCESS_PARAMETERS", "PVOID", "PVOID"};
 static const char* const NtCreateUserProcess_names[] = {"ProcessHandle", "ThreadHandle", "ProcessDesiredAccess", "ThreadDesiredAccess", "ProcessObjectAttributes", "ThreadObjectAttributes", "ProcessFlags", "ThreadFlags", "ProcessParameters", "CreateInfo", "AttributeList"};
 static const uint8_t NtCreateUserProcess_dirs[] = {1, 1, 0, 0, 128, 128, 0, 0, 128, 2, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateUserProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateUserProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) {
+static ULONG_PTR (NTAPI *Real_NtCreateUserProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateUserProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtCreateUserProcess, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateUserProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+  ULONG_PTR r = Real_NtCreateUserProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3725,12 +3719,12 @@ static ULONG_PTR NTAPI Hook_NtCreateUserProcess(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtCreateWorkerFactory_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES", "HANDLE", "HANDLE", "PVOID", "PVOID", "ULONG", "ULONG", "ULONG"};
 static const char* const NtCreateWorkerFactory_names[] = {"WorkerFactoryHandleReturn", "DesiredAccess", "ObjectAttributes", "CompletionPortHandle", "WorkerProcessHandle", "StartRoutine", "StartParameter", "MaxThreadCount", "StackReserve", "StackCommit"};
 static const uint8_t NtCreateWorkerFactory_dirs[] = {1, 0, 128, 0, 0, 0, 128, 128, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateWorkerFactory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) {
+static ULONG_PTR (NTAPI *Real_NtCreateWorkerFactory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtCreateWorkerFactory, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+  ULONG_PTR r = Real_NtCreateWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3738,12 +3732,12 @@ static ULONG_PTR NTAPI Hook_NtCreateWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtDelayExecution_types[] = {"BOOLEAN", "PLARGE_INTEGER"};
 static const char* const NtDelayExecution_names[] = {"Alertable", "DelayInterval"};
 static const uint8_t NtDelayExecution_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtDelayExecution)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDelayExecution(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtDelayExecution)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDelayExecution(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtDelayExecution, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDelayExecution(a0, a1);
+  ULONG_PTR r = Real_NtDelayExecution(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3751,12 +3745,12 @@ static ULONG_PTR NTAPI Hook_NtDelayExecution(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtGetContextThread_types[] = {"HANDLE", "PCONTEXT"};
 static const char* const NtGetContextThread_names[] = {"ThreadHandle", "pContext"};
 static const uint8_t NtGetContextThread_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtGetContextThread)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetContextThread(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtGetContextThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetContextThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtGetContextThread, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetContextThread(a0, a1);
+  ULONG_PTR r = Real_NtGetContextThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3764,12 +3758,12 @@ static ULONG_PTR NTAPI Hook_NtGetContextThread(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtGetNextProcess_types[] = {"HANDLE", "PROCESS_ACCESS_MASK", "ULONG", "ULONG", "PHANDLE"};
 static const char* const NtGetNextProcess_names[] = {"ProcessHandle", "DesiredAccess", "HandleAttributes", "Flags", "NewProcessHandle"};
 static const uint8_t NtGetNextProcess_dirs[] = {0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtGetNextProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetNextProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtGetNextProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetNextProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtGetNextProcess, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetNextProcess(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtGetNextProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3777,12 +3771,12 @@ static ULONG_PTR NTAPI Hook_NtGetNextProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtGetNextThread_types[] = {"HANDLE", "HANDLE", "THREAD_ACCESS_MASK", "ULONG", "ULONG", "PHANDLE"};
 static const char* const NtGetNextThread_names[] = {"ProcessHandle", "ThreadHandle", "DesiredAccess", "HandleAttributes", "Flags", "NewThreadHandle"};
 static const uint8_t NtGetNextThread_dirs[] = {0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtGetNextThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetNextThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtGetNextThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetNextThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtGetNextThread, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetNextThread(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtGetNextThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3790,12 +3784,12 @@ static ULONG_PTR NTAPI Hook_NtGetNextThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtOpenProcess_types[] = {"PHANDLE", "PROCESS_ACCESS_MASK", "POBJECT_ATTRIBUTES", "PCLIENT_ID"};
 static const char* const NtOpenProcess_names[] = {"ProcessHandle", "DesiredAccess", "ObjectAttributes", "ClientId"};
 static const uint8_t NtOpenProcess_dirs[] = {1, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtOpenProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtOpenProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenProcess, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenProcess(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtOpenProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3803,12 +3797,12 @@ static ULONG_PTR NTAPI Hook_NtOpenProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtOpenThread_types[] = {"PHANDLE", "THREAD_ACCESS_MASK", "POBJECT_ATTRIBUTES", "PCLIENT_ID"};
 static const char* const NtOpenThread_names[] = {"ThreadHandle", "DesiredAccess", "ObjectAttributes", "ClientId"};
 static const uint8_t NtOpenThread_dirs[] = {1, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtOpenThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtOpenThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenThread, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenThread(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtOpenThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3816,12 +3810,12 @@ static ULONG_PTR NTAPI Hook_NtOpenThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtQueryInformationProcess_types[] = {"HANDLE", "PROCESSINFOCLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationProcess_names[] = {"ProcessHandle", "ProcessInformationClass", "ProcessInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationProcess_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationProcess, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationProcess(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3829,12 +3823,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationProcess(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtQueryInformationThread_types[] = {"HANDLE", "THREADINFOCLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationThread_names[] = {"ThreadHandle", "ThreadInformationClass", "ThreadInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationThread_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationThread, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationThread(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3842,12 +3836,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationThread(ULONG_PTR a0, ULONG_PTR a1,
 static const char* const NtQueryInformationWorkerFactory_types[] = {"HANDLE", "WORKERFACTORYINFOCLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationWorkerFactory_names[] = {"WorkerFactoryHandle", "WorkerFactoryInformationClass", "Buffer", "BufferLength", "ReturnLength"};
 static const uint8_t NtQueryInformationWorkerFactory_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationWorkerFactory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationWorkerFactory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationWorkerFactory, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationWorkerFactory(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3855,12 +3849,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationWorkerFactory(ULONG_PTR a0, ULONG_
 static const char* const NtQueueApcThread_types[] = {"HANDLE", "PVOID", "PVOID", "PVOID", "PVOID"};
 static const char* const NtQueueApcThread_names[] = {"ThreadHandle", "ApcRoutine", "Context", "Argument1", "Argument2"};
 static const uint8_t NtQueueApcThread_dirs[] = {0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtQueueApcThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueueApcThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueueApcThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueueApcThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueueApcThread, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueueApcThread(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueueApcThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3868,12 +3862,12 @@ static ULONG_PTR NTAPI Hook_NtQueueApcThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtQueueApcThreadEx_types[] = {"HANDLE", "HANDLE", "PVOID", "PVOID", "PVOID", "PVOID"};
 static const char* const NtQueueApcThreadEx_names[] = {"ThreadHandle", "ApcReserve", "ApcRoutine", "Context", "Argument1", "Argument2"};
 static const uint8_t NtQueueApcThreadEx_dirs[] = {0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtQueueApcThreadEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueueApcThreadEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtQueueApcThreadEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueueApcThreadEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQueueApcThreadEx, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueueApcThreadEx(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtQueueApcThreadEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3881,12 +3875,12 @@ static ULONG_PTR NTAPI Hook_NtQueueApcThreadEx(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtQueueApcThreadEx2_types[] = {"HANDLE", "HANDLE", "QUEUE_USER_APC_FLAGS", "PPS_APC_ROUTINE", "PVOID", "PVOID", "PVOID"};
 static const char* const NtQueueApcThreadEx2_names[] = {"ThreadHandle", "ApcReserve", "QueueUserApcFlags", "ApcRoutine", "SystemArgument1", "SystemArgument2", "SystemArgument3"};
 static const uint8_t NtQueueApcThreadEx2_dirs[] = {0, 0, 0, 0, 128, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtQueueApcThreadEx2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueueApcThreadEx2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtQueueApcThreadEx2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueueApcThreadEx2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtQueueApcThreadEx2, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueueApcThreadEx2(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtQueueApcThreadEx2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3894,25 +3888,22 @@ static ULONG_PTR NTAPI Hook_NtQueueApcThreadEx2(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtRaiseException_types[] = {"PEXCEPTION_RECORD", "PCONTEXT", "BOOL"};
 static const char* const NtRaiseException_names[] = {"Record", "Context", "SearchFrames"};
 static const uint8_t NtRaiseException_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtRaiseException)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRaiseException(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
-  ULONG_PTR args[] = {a0, a1, a2};
-  CallCtx ctx(SYS_NtRaiseException, (uintptr_t)_ReturnAddress(), args, 3);
-  if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRaiseException(a0, a1, a2);
-  return ctx.Exit(r);
+static ULONG_PTR (NTAPI *Real_NtRaiseException)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRaiseException(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
+  LogEntryOnly(SYS_NtRaiseException, (uintptr_t)_ReturnAddress());
+  return Real_NtRaiseException(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtRaiseHardError(6 args)
 static const char* const NtRaiseHardError_types[] = {"NTSTATUS", "ULONG", "ULONG", "PULONG_PTR", "HARDERROR_RESPONSE_OPTION", "PULONG"};
 static const char* const NtRaiseHardError_names[] = {"ErrorStatus", "NumberOfParameters", "ParameterMask", "Parameters", "ResponseOptions", "Response"};
 static const uint8_t NtRaiseHardError_dirs[] = {0, 0, 0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtRaiseHardError)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRaiseHardError(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtRaiseHardError)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRaiseHardError(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtRaiseHardError, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRaiseHardError(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtRaiseHardError(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3920,12 +3911,12 @@ static ULONG_PTR NTAPI Hook_NtRaiseHardError(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtReleaseWorkerFactoryWorker_types[] = {"HANDLE"};
 static const char* const NtReleaseWorkerFactoryWorker_names[] = {"WorkerFactoryHandle"};
 static const uint8_t NtReleaseWorkerFactoryWorker_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtReleaseWorkerFactoryWorker)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReleaseWorkerFactoryWorker(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtReleaseWorkerFactoryWorker)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReleaseWorkerFactoryWorker(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtReleaseWorkerFactoryWorker, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReleaseWorkerFactoryWorker(a0);
+  ULONG_PTR r = Real_NtReleaseWorkerFactoryWorker(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3933,12 +3924,12 @@ static ULONG_PTR NTAPI Hook_NtReleaseWorkerFactoryWorker(ULONG_PTR a0) {
 static const char* const NtResumeProcess_types[] = {"HANDLE"};
 static const char* const NtResumeProcess_names[] = {"hProcess"};
 static const uint8_t NtResumeProcess_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtResumeProcess)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtResumeProcess(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtResumeProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtResumeProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtResumeProcess, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtResumeProcess(a0);
+  ULONG_PTR r = Real_NtResumeProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3946,12 +3937,12 @@ static ULONG_PTR NTAPI Hook_NtResumeProcess(ULONG_PTR a0) {
 static const char* const NtResumeThread_types[] = {"HANDLE", "PULONG"};
 static const char* const NtResumeThread_names[] = {"ThreadHandle", "SuspendCount"};
 static const uint8_t NtResumeThread_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtResumeThread)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtResumeThread(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtResumeThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtResumeThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtResumeThread, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtResumeThread(a0, a1);
+  ULONG_PTR r = Real_NtResumeThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3959,12 +3950,12 @@ static ULONG_PTR NTAPI Hook_NtResumeThread(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetContextThread_types[] = {"HANDLE", "PCONTEXT"};
 static const char* const NtSetContextThread_names[] = {"ThreadHandle", "pContext"};
 static const uint8_t NtSetContextThread_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetContextThread)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetContextThread(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetContextThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetContextThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetContextThread, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetContextThread(a0, a1);
+  ULONG_PTR r = Real_NtSetContextThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3972,12 +3963,12 @@ static ULONG_PTR NTAPI Hook_NtSetContextThread(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetDefaultHardErrorPort_types[] = {"HANDLE"};
 static const char* const NtSetDefaultHardErrorPort_names[] = {"Port"};
 static const uint8_t NtSetDefaultHardErrorPort_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetDefaultHardErrorPort)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetDefaultHardErrorPort(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSetDefaultHardErrorPort)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetDefaultHardErrorPort(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetDefaultHardErrorPort, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetDefaultHardErrorPort(a0);
+  ULONG_PTR r = Real_NtSetDefaultHardErrorPort(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3985,12 +3976,12 @@ static ULONG_PTR NTAPI Hook_NtSetDefaultHardErrorPort(ULONG_PTR a0) {
 static const char* const NtSetInformationProcess_types[] = {"HANDLE", "PROCESSINFOCLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationProcess_names[] = {"ProcessHandle", "ProcessInformationClass", "ProcessInformation", "Length"};
 static const uint8_t NtSetInformationProcess_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationProcess, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationProcess(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -3998,12 +3989,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationProcess(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtSetInformationThread_types[] = {"HANDLE", "THREADINFOCLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationThread_names[] = {"ThreadHandle", "ThreadInformationClass", "ThreadInformation", "Length"};
 static const uint8_t NtSetInformationThread_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationThread, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationThread(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4011,12 +4002,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationThread(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtSetInformationWorkerFactory_types[] = {"HANDLE", "WORKERFACTORYINFOCLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationWorkerFactory_names[] = {"WorkerFactoryHandle", "InformationClass", "Buffer", "BufferLength"};
 static const uint8_t NtSetInformationWorkerFactory_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationWorkerFactory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationWorkerFactory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationWorkerFactory, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationWorkerFactory(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4024,12 +4015,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationWorkerFactory(ULONG_PTR a0, ULONG_PT
 static const char* const NtShutdownWorkerFactory_types[] = {"HANDLE", "PULONG"};
 static const char* const NtShutdownWorkerFactory_names[] = {"WorkerFactoryHandle", "PendingWorkerCount"};
 static const uint8_t NtShutdownWorkerFactory_dirs[] = {0, 2};
-static ULONG_PTR (NTAPI *Real_NtShutdownWorkerFactory)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtShutdownWorkerFactory(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtShutdownWorkerFactory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtShutdownWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtShutdownWorkerFactory, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtShutdownWorkerFactory(a0, a1);
+  ULONG_PTR r = Real_NtShutdownWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4037,12 +4028,12 @@ static ULONG_PTR NTAPI Hook_NtShutdownWorkerFactory(ULONG_PTR a0, ULONG_PTR a1) 
 static const char* const NtSuspendProcess_types[] = {"HANDLE"};
 static const char* const NtSuspendProcess_names[] = {"ProcessHandle"};
 static const uint8_t NtSuspendProcess_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSuspendProcess)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSuspendProcess(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSuspendProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSuspendProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSuspendProcess, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSuspendProcess(a0);
+  ULONG_PTR r = Real_NtSuspendProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4050,12 +4041,12 @@ static ULONG_PTR NTAPI Hook_NtSuspendProcess(ULONG_PTR a0) {
 static const char* const NtSuspendThread_types[] = {"HANDLE", "PULONG"};
 static const char* const NtSuspendThread_names[] = {"ThreadHandle", "PreviousSuspendCount"};
 static const uint8_t NtSuspendThread_dirs[] = {0, 129};
-static ULONG_PTR (NTAPI *Real_NtSuspendThread)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSuspendThread(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSuspendThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSuspendThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSuspendThread, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSuspendThread(a0, a1);
+  ULONG_PTR r = Real_NtSuspendThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4063,38 +4054,32 @@ static ULONG_PTR NTAPI Hook_NtSuspendThread(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtTerminateProcess_types[] = {"HANDLE", "NTSTATUS"};
 static const char* const NtTerminateProcess_names[] = {"ProcessHandle", "ExitStatus"};
 static const uint8_t NtTerminateProcess_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtTerminateProcess)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtTerminateProcess(ULONG_PTR a0, ULONG_PTR a1) {
-  ULONG_PTR args[] = {a0, a1};
-  CallCtx ctx(SYS_NtTerminateProcess, (uintptr_t)_ReturnAddress(), args, 2);
-  if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTerminateProcess(a0, a1);
-  return ctx.Exit(r);
+static ULONG_PTR (NTAPI *Real_NtTerminateProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtTerminateProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
+  LogEntryOnly(SYS_NtTerminateProcess, (uintptr_t)_ReturnAddress());
+  return Real_NtTerminateProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtTerminateThread(2 args)
 static const char* const NtTerminateThread_types[] = {"HANDLE", "NTSTATUS"};
 static const char* const NtTerminateThread_names[] = {"ThreadHandle", "ExitStatus"};
 static const uint8_t NtTerminateThread_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtTerminateThread)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtTerminateThread(ULONG_PTR a0, ULONG_PTR a1) {
-  ULONG_PTR args[] = {a0, a1};
-  CallCtx ctx(SYS_NtTerminateThread, (uintptr_t)_ReturnAddress(), args, 2);
-  if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTerminateThread(a0, a1);
-  return ctx.Exit(r);
+static ULONG_PTR (NTAPI *Real_NtTerminateThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtTerminateThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
+  LogEntryOnly(SYS_NtTerminateThread, (uintptr_t)_ReturnAddress());
+  return Real_NtTerminateThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtTestAlert(0 args)
 static const char* const NtTestAlert_types[] = {nullptr};
 static const char* const NtTestAlert_names[] = {nullptr};
 static const uint8_t NtTestAlert_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtTestAlert)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtTestAlert() {
+static ULONG_PTR (NTAPI *Real_NtTestAlert)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtTestAlert(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtTestAlert, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTestAlert();
+  ULONG_PTR r = Real_NtTestAlert(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4102,12 +4087,12 @@ static ULONG_PTR NTAPI Hook_NtTestAlert() {
 static const char* const NtUmsThreadYield_types[] = {"PVOID"};
 static const char* const NtUmsThreadYield_names[] = {"SchedulerParam"};
 static const uint8_t NtUmsThreadYield_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtUmsThreadYield)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUmsThreadYield(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtUmsThreadYield)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUmsThreadYield(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtUmsThreadYield, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUmsThreadYield(a0);
+  ULONG_PTR r = Real_NtUmsThreadYield(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4115,12 +4100,12 @@ static ULONG_PTR NTAPI Hook_NtUmsThreadYield(ULONG_PTR a0) {
 static const char* const NtWaitForAlertByThreadId_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtWaitForAlertByThreadId_names[] = {"Handle", "Timeout"};
 static const uint8_t NtWaitForAlertByThreadId_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtWaitForAlertByThreadId)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWaitForAlertByThreadId(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtWaitForAlertByThreadId)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWaitForAlertByThreadId(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtWaitForAlertByThreadId, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForAlertByThreadId(a0, a1);
+  ULONG_PTR r = Real_NtWaitForAlertByThreadId(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4128,12 +4113,12 @@ static ULONG_PTR NTAPI Hook_NtWaitForAlertByThreadId(ULONG_PTR a0, ULONG_PTR a1)
 static const char* const NtWaitForWorkViaWorkerFactory_types[] = {"HANDLE", "PVOID"};
 static const char* const NtWaitForWorkViaWorkerFactory_names[] = {"WorkerFactoryHandle", "MiniPacket"};
 static const uint8_t NtWaitForWorkViaWorkerFactory_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtWaitForWorkViaWorkerFactory)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWaitForWorkViaWorkerFactory(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtWaitForWorkViaWorkerFactory)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWaitForWorkViaWorkerFactory(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtWaitForWorkViaWorkerFactory, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForWorkViaWorkerFactory(a0, a1);
+  ULONG_PTR r = Real_NtWaitForWorkViaWorkerFactory(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4141,12 +4126,12 @@ static ULONG_PTR NTAPI Hook_NtWaitForWorkViaWorkerFactory(ULONG_PTR a0, ULONG_PT
 static const char* const NtWorkerFactoryWorkerReady_types[] = {"HANDLE"};
 static const char* const NtWorkerFactoryWorkerReady_names[] = {"WorkerFactoryHandle"};
 static const uint8_t NtWorkerFactoryWorkerReady_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtWorkerFactoryWorkerReady)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWorkerFactoryWorkerReady(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtWorkerFactoryWorkerReady)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWorkerFactoryWorkerReady(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWorkerFactoryWorkerReady, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWorkerFactoryWorkerReady(a0);
+  ULONG_PTR r = Real_NtWorkerFactoryWorkerReady(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4154,12 +4139,12 @@ static ULONG_PTR NTAPI Hook_NtWorkerFactoryWorkerReady(ULONG_PTR a0) {
 static const char* const NtYieldExecution_types[] = {nullptr};
 static const char* const NtYieldExecution_names[] = {nullptr};
 static const uint8_t NtYieldExecution_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtYieldExecution)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtYieldExecution() {
+static ULONG_PTR (NTAPI *Real_NtYieldExecution)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtYieldExecution(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtYieldExecution, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtYieldExecution();
+  ULONG_PTR r = Real_NtYieldExecution(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4167,12 +4152,12 @@ static ULONG_PTR NTAPI Hook_NtYieldExecution() {
 static const char* const NtCommitRegistryTransaction_types[] = {"HANDLE", "BOOL"};
 static const char* const NtCommitRegistryTransaction_names[] = {"RegistryHandle", "Wait"};
 static const uint8_t NtCommitRegistryTransaction_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtCommitRegistryTransaction)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCommitRegistryTransaction(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCommitRegistryTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCommitRegistryTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCommitRegistryTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCommitRegistryTransaction(a0, a1);
+  ULONG_PTR r = Real_NtCommitRegistryTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4180,12 +4165,12 @@ static ULONG_PTR NTAPI Hook_NtCommitRegistryTransaction(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtCompactKeys_types[] = {"ULONG", "PVOID"};
 static const char* const NtCompactKeys_names[] = {"NumberOfKeys", "KeyHandles"};
 static const uint8_t NtCompactKeys_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtCompactKeys)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCompactKeys(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCompactKeys)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCompactKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCompactKeys, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompactKeys(a0, a1);
+  ULONG_PTR r = Real_NtCompactKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4193,12 +4178,12 @@ static ULONG_PTR NTAPI Hook_NtCompactKeys(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCompressKey_types[] = {"HANDLE"};
 static const char* const NtCompressKey_names[] = {"KeyHandle"};
 static const uint8_t NtCompressKey_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtCompressKey)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCompressKey(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtCompressKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCompressKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtCompressKey, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompressKey(a0);
+  ULONG_PTR r = Real_NtCompressKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4206,12 +4191,12 @@ static ULONG_PTR NTAPI Hook_NtCompressKey(ULONG_PTR a0) {
 static const char* const NtCreateKey_types[] = {"PHANDLE", "KEY_ACCESS_MASK", "POBJECT_ATTRIBUTES", "ULONG", "PUNICODE_STRING", "ULONG", "PULONG"};
 static const char* const NtCreateKey_names[] = {"KeyHandle", "DesiredAccess", "ObjectAttributes", "TitleIndex", "Class", "CreateOptions", "Disposition"};
 static const uint8_t NtCreateKey_dirs[] = {1, 0, 0, 0, 128, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtCreateKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtCreateKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtCreateKey, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateKey(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtCreateKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4219,12 +4204,12 @@ static ULONG_PTR NTAPI Hook_NtCreateKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
 static const char* const NtCreateKeyTransacted_types[] = {"PHANDLE", "KEY_ACCESS_MASK", "POBJECT_ATTRIBUTES", "ULONG", "PUNICODE_STRING", "ULONG", "HANDLE", "PULONG"};
 static const char* const NtCreateKeyTransacted_names[] = {"KeyHandle", "DesiredAccess", "ObjectAttributes", "TitleIndex", "Class", "CreateOptions", "TransactionHandle", "Disposition"};
 static const uint8_t NtCreateKeyTransacted_dirs[] = {1, 0, 0, 0, 128, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtCreateKeyTransacted)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateKeyTransacted(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtCreateKeyTransacted)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateKeyTransacted(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtCreateKeyTransacted, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateKeyTransacted(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtCreateKeyTransacted(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4232,12 +4217,12 @@ static ULONG_PTR NTAPI Hook_NtCreateKeyTransacted(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtCreateRegistryTransaction_types[] = {"PHANDLE", "KEY_ACCESS_MASK", "POBJECT_ATTRIBUTES", "ULONG"};
 static const char* const NtCreateRegistryTransaction_names[] = {"RegistryHandle", "DesiredAccess", "ObjectAttributes", "Flags"};
 static const uint8_t NtCreateRegistryTransaction_dirs[] = {1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateRegistryTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateRegistryTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCreateRegistryTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateRegistryTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateRegistryTransaction, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateRegistryTransaction(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCreateRegistryTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4245,12 +4230,12 @@ static ULONG_PTR NTAPI Hook_NtCreateRegistryTransaction(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtDeleteKey_types[] = {"HANDLE"};
 static const char* const NtDeleteKey_names[] = {"KeyHandle"};
 static const uint8_t NtDeleteKey_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtDeleteKey)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeleteKey(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtDeleteKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeleteKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteKey, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteKey(a0);
+  ULONG_PTR r = Real_NtDeleteKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4258,12 +4243,12 @@ static ULONG_PTR NTAPI Hook_NtDeleteKey(ULONG_PTR a0) {
 static const char* const NtDeleteValueKey_types[] = {"HANDLE", "PUNICODE_STRING"};
 static const char* const NtDeleteValueKey_names[] = {"KeyHandle", "ValueName"};
 static const uint8_t NtDeleteValueKey_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtDeleteValueKey)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeleteValueKey(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtDeleteValueKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeleteValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtDeleteValueKey, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteValueKey(a0, a1);
+  ULONG_PTR r = Real_NtDeleteValueKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4271,12 +4256,12 @@ static ULONG_PTR NTAPI Hook_NtDeleteValueKey(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtEnumerateKey_types[] = {"HANDLE", "ULONG", "KEY_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtEnumerateKey_names[] = {"KeyHandle", "Index", "KeyInformationClass", "KeyInformation", "Length", "ResultLength"};
 static const uint8_t NtEnumerateKey_dirs[] = {0, 0, 0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtEnumerateKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtEnumerateKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtEnumerateKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtEnumerateKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtEnumerateKey, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateKey(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtEnumerateKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4284,12 +4269,12 @@ static ULONG_PTR NTAPI Hook_NtEnumerateKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
 static const char* const NtEnumerateValueKey_types[] = {"HANDLE", "ULONG", "KEY_VALUE_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtEnumerateValueKey_names[] = {"KeyHandle", "Index", "KeyValueInformationClass", "KeyValueInformation", "Length", "ResultLength"};
 static const uint8_t NtEnumerateValueKey_dirs[] = {0, 0, 0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtEnumerateValueKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtEnumerateValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtEnumerateValueKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtEnumerateValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtEnumerateValueKey, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateValueKey(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtEnumerateValueKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4297,12 +4282,12 @@ static ULONG_PTR NTAPI Hook_NtEnumerateValueKey(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtFlushKey_types[] = {"HANDLE"};
 static const char* const NtFlushKey_names[] = {"KeyHandle"};
 static const uint8_t NtFlushKey_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtFlushKey)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFlushKey(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtFlushKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFlushKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtFlushKey, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFlushKey(a0);
+  ULONG_PTR r = Real_NtFlushKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4310,12 +4295,12 @@ static ULONG_PTR NTAPI Hook_NtFlushKey(ULONG_PTR a0) {
 static const char* const NtFreezeRegistry_types[] = {"ULONG"};
 static const char* const NtFreezeRegistry_names[] = {"TimeOutInSeconds"};
 static const uint8_t NtFreezeRegistry_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtFreezeRegistry)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFreezeRegistry(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtFreezeRegistry)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFreezeRegistry(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtFreezeRegistry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFreezeRegistry(a0);
+  ULONG_PTR r = Real_NtFreezeRegistry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4323,12 +4308,12 @@ static ULONG_PTR NTAPI Hook_NtFreezeRegistry(ULONG_PTR a0) {
 static const char* const NtInitializeRegistry_types[] = {"ULONG"};
 static const char* const NtInitializeRegistry_names[] = {"Options"};
 static const uint8_t NtInitializeRegistry_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtInitializeRegistry)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtInitializeRegistry(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtInitializeRegistry)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtInitializeRegistry(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtInitializeRegistry, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtInitializeRegistry(a0);
+  ULONG_PTR r = Real_NtInitializeRegistry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4336,12 +4321,12 @@ static ULONG_PTR NTAPI Hook_NtInitializeRegistry(ULONG_PTR a0) {
 static const char* const NtLoadKey_types[] = {"POBJECT_ATTRIBUTES", "POBJECT_ATTRIBUTES"};
 static const char* const NtLoadKey_names[] = {"KeyObjectAttributes", "FileObjectAttributes"};
 static const uint8_t NtLoadKey_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtLoadKey)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLoadKey(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtLoadKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLoadKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtLoadKey, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadKey(a0, a1);
+  ULONG_PTR r = Real_NtLoadKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4349,12 +4334,12 @@ static ULONG_PTR NTAPI Hook_NtLoadKey(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtLoadKey2_types[] = {"POBJECT_ATTRIBUTES", "POBJECT_ATTRIBUTES", "ULONG"};
 static const char* const NtLoadKey2_names[] = {"KeyObjectAttributes", "FileObjectAttributes", "Flags"};
 static const uint8_t NtLoadKey2_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtLoadKey2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLoadKey2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtLoadKey2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLoadKey2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtLoadKey2, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadKey2(a0, a1, a2);
+  ULONG_PTR r = Real_NtLoadKey2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4362,12 +4347,12 @@ static ULONG_PTR NTAPI Hook_NtLoadKey2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2)
 static const char* const NtLoadKey3_types[] = {"POBJECT_ATTRIBUTES", "POBJECT_ATTRIBUTES", "ULONG", "PVOID", "ULONG", "KEY_ACCESS_MASK", "HANDLE", "ULONG"};
 static const char* const NtLoadKey3_names[] = {"KeyObjectAttributes", "FileObjectAttributes", "Flags", "LoadArguments", "LoadArgumentCount", "DesiredAccess", "KeyHandle", "Unkown"};
 static const uint8_t NtLoadKey3_dirs[] = {0, 0, 0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtLoadKey3)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLoadKey3(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtLoadKey3)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLoadKey3(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtLoadKey3, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadKey3(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtLoadKey3(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4375,12 +4360,12 @@ static ULONG_PTR NTAPI Hook_NtLoadKey3(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
 static const char* const NtLoadKeyEx_types[] = {"POBJECT_ATTRIBUTES", "POBJECT_ATTRIBUTES", "ULONG", "HANDLE", "PVOID", "PVOID", "PVOID", "PIO_STATUS_BLOCK"};
 static const char* const NtLoadKeyEx_names[] = {"TargetKey", "SourceFile", "Flags", "TrustClassKey", "Reserved", "ObjectContext", "CallbackReserved", "IoStatusBlock"};
 static const uint8_t NtLoadKeyEx_dirs[] = {0, 0, 0, 128, 0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtLoadKeyEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLoadKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtLoadKeyEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLoadKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtLoadKeyEx, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLoadKeyEx(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtLoadKeyEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4388,12 +4373,12 @@ static ULONG_PTR NTAPI Hook_NtLoadKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
 static const char* const NtLockRegistryKey_types[] = {"HANDLE"};
 static const char* const NtLockRegistryKey_names[] = {"KeyHandle"};
 static const uint8_t NtLockRegistryKey_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtLockRegistryKey)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtLockRegistryKey(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtLockRegistryKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtLockRegistryKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtLockRegistryKey, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtLockRegistryKey(a0);
+  ULONG_PTR r = Real_NtLockRegistryKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4401,12 +4386,12 @@ static ULONG_PTR NTAPI Hook_NtLockRegistryKey(ULONG_PTR a0) {
 static const char* const NtNotifyChangeKey_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "ULONG", "BOOLEAN", "PVOID", "ULONG", "BOOLEAN"};
 static const char* const NtNotifyChangeKey_names[] = {"KeyHandle", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "CompletionFilter", "WatchTree", "Buffer", "BufferSize", "Asynchronous"};
 static const uint8_t NtNotifyChangeKey_dirs[] = {0, 0, 128, 128, 1, 0, 0, 1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtNotifyChangeKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) = nullptr;
-static ULONG_PTR NTAPI Hook_NtNotifyChangeKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) {
+static ULONG_PTR (NTAPI *Real_NtNotifyChangeKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtNotifyChangeKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtNotifyChangeKey, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtNotifyChangeKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+  ULONG_PTR r = Real_NtNotifyChangeKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4414,12 +4399,12 @@ static ULONG_PTR NTAPI Hook_NtNotifyChangeKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtNotifyChangeMultipleKeys_types[] = {"HANDLE", "ULONG", "POBJECT_ATTRIBUTES", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "ULONG", "BOOLEAN", "PVOID", "ULONG", "BOOLEAN"};
 static const char* const NtNotifyChangeMultipleKeys_names[] = {"MasterKeyHandle", "Count", "SubordinateObjects", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "CompletionFilter", "WatchTree", "Buffer", "BufferSize", "Asynchronous"};
 static const uint8_t NtNotifyChangeMultipleKeys_dirs[] = {0, 128, 128, 128, 128, 128, 1, 0, 0, 129, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtNotifyChangeMultipleKeys)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11) = nullptr;
-static ULONG_PTR NTAPI Hook_NtNotifyChangeMultipleKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11) {
+static ULONG_PTR (NTAPI *Real_NtNotifyChangeMultipleKeys)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtNotifyChangeMultipleKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11};
   CallCtx ctx(SYS_NtNotifyChangeMultipleKeys, (uintptr_t)_ReturnAddress(), args, 12);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtNotifyChangeMultipleKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
+  ULONG_PTR r = Real_NtNotifyChangeMultipleKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4427,12 +4412,12 @@ static ULONG_PTR NTAPI Hook_NtNotifyChangeMultipleKeys(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtOpenKey_types[] = {"PHANDLE", "KEY_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenKey_names[] = {"KeyHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenKey_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenKey, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenKey(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4440,12 +4425,12 @@ static ULONG_PTR NTAPI Hook_NtOpenKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) 
 static const char* const NtOpenKeyEx_types[] = {"PHANDLE", "KEY_ACCESS_MASK", "POBJECT_ATTRIBUTES", "ULONG"};
 static const char* const NtOpenKeyEx_names[] = {"KeyHandle", "DesiredAccess", "ObjectAttributes", "OpenOptions"};
 static const uint8_t NtOpenKeyEx_dirs[] = {1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenKeyEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtOpenKeyEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenKeyEx, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenKeyEx(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtOpenKeyEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4453,12 +4438,12 @@ static ULONG_PTR NTAPI Hook_NtOpenKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
 static const char* const NtOpenKeyTransacted_types[] = {"PHANDLE", "KEY_ACCESS_MASK", "POBJECT_ATTRIBUTES", "HANDLE"};
 static const char* const NtOpenKeyTransacted_names[] = {"KeyHandle", "DesiredAccess", "ObjectAttributes", "TransactionHandle"};
 static const uint8_t NtOpenKeyTransacted_dirs[] = {1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenKeyTransacted)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenKeyTransacted(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtOpenKeyTransacted)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenKeyTransacted(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenKeyTransacted, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenKeyTransacted(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtOpenKeyTransacted(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4466,12 +4451,12 @@ static ULONG_PTR NTAPI Hook_NtOpenKeyTransacted(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtOpenKeyTransactedEx_types[] = {"PHANDLE", "KEY_ACCESS_MASK", "POBJECT_ATTRIBUTES", "ULONG", "HANDLE"};
 static const char* const NtOpenKeyTransactedEx_names[] = {"KeyHandle", "DesiredAccess", "ObjectAttributes", "OpenOptions", "TransactionHandle"};
 static const uint8_t NtOpenKeyTransactedEx_dirs[] = {1, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenKeyTransactedEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenKeyTransactedEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtOpenKeyTransactedEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenKeyTransactedEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtOpenKeyTransactedEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenKeyTransactedEx(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtOpenKeyTransactedEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4479,12 +4464,12 @@ static ULONG_PTR NTAPI Hook_NtOpenKeyTransactedEx(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtOpenRegistryTransaction_types[] = {"PHANDLE", "KEY_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenRegistryTransaction_names[] = {"RegistryHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenRegistryTransaction_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenRegistryTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenRegistryTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenRegistryTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenRegistryTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenRegistryTransaction, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenRegistryTransaction(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenRegistryTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4492,12 +4477,12 @@ static ULONG_PTR NTAPI Hook_NtOpenRegistryTransaction(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtQueryKey_types[] = {"HANDLE", "KEY_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryKey_names[] = {"KeyHandle", "KeyInformationClass", "KeyInformation", "Length", "ResultLength"};
 static const uint8_t NtQueryKey_dirs[] = {0, 0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryKey, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryKey(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4505,12 +4490,12 @@ static ULONG_PTR NTAPI Hook_NtQueryKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
 static const char* const NtQueryMultipleValueKey_types[] = {"HANDLE", "PVOID", "ULONG", "PVOID", "PULONG", "PULONG"};
 static const char* const NtQueryMultipleValueKey_names[] = {"KeyHandle", "ListOfValuesToQuery", "NumberOfItems", "ValueInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryMultipleValueKey_dirs[] = {0, 0, 0, 1, 2, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryMultipleValueKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryMultipleValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtQueryMultipleValueKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryMultipleValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQueryMultipleValueKey, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryMultipleValueKey(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtQueryMultipleValueKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4518,12 +4503,12 @@ static ULONG_PTR NTAPI Hook_NtQueryMultipleValueKey(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtQueryOpenSubKeys_types[] = {"POBJECT_ATTRIBUTES", "PULONG"};
 static const char* const NtQueryOpenSubKeys_names[] = {"TargetKey", "HandleCount"};
 static const uint8_t NtQueryOpenSubKeys_dirs[] = {0, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryOpenSubKeys)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryOpenSubKeys(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtQueryOpenSubKeys)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryOpenSubKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtQueryOpenSubKeys, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryOpenSubKeys(a0, a1);
+  ULONG_PTR r = Real_NtQueryOpenSubKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4531,12 +4516,12 @@ static ULONG_PTR NTAPI Hook_NtQueryOpenSubKeys(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtQueryOpenSubKeysEx_types[] = {"POBJECT_ATTRIBUTES", "ULONG", "PVOID", "PULONG"};
 static const char* const NtQueryOpenSubKeysEx_names[] = {"TargetKey", "BufferLength", "Buffer", "ResultLength"};
 static const uint8_t NtQueryOpenSubKeysEx_dirs[] = {0, 0, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryOpenSubKeysEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryOpenSubKeysEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtQueryOpenSubKeysEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryOpenSubKeysEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtQueryOpenSubKeysEx, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryOpenSubKeysEx(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtQueryOpenSubKeysEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4544,12 +4529,12 @@ static ULONG_PTR NTAPI Hook_NtQueryOpenSubKeysEx(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtQueryValueKey_types[] = {"HANDLE", "PUNICODE_STRING", "KEY_VALUE_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryValueKey_names[] = {"KeyHandle", "ValueName", "KeyValueInformationClass", "KeyValueInformation", "Length", "ResultLength"};
 static const uint8_t NtQueryValueKey_dirs[] = {0, 0, 0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryValueKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtQueryValueKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQueryValueKey, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryValueKey(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtQueryValueKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4557,12 +4542,12 @@ static ULONG_PTR NTAPI Hook_NtQueryValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtRenameKey_types[] = {"HANDLE", "PUNICODE_STRING"};
 static const char* const NtRenameKey_names[] = {"KeyHandle", "ReplacementName"};
 static const uint8_t NtRenameKey_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtRenameKey)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRenameKey(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRenameKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRenameKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRenameKey, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRenameKey(a0, a1);
+  ULONG_PTR r = Real_NtRenameKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4570,12 +4555,12 @@ static ULONG_PTR NTAPI Hook_NtRenameKey(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtReplaceKey_types[] = {"POBJECT_ATTRIBUTES", "HANDLE", "POBJECT_ATTRIBUTES"};
 static const char* const NtReplaceKey_names[] = {"ObjectAttributes", "Key", "ReplacedObjectAttributes"};
 static const uint8_t NtReplaceKey_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtReplaceKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReplaceKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtReplaceKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReplaceKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtReplaceKey, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReplaceKey(a0, a1, a2);
+  ULONG_PTR r = Real_NtReplaceKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4583,12 +4568,12 @@ static ULONG_PTR NTAPI Hook_NtReplaceKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtRestoreKey_types[] = {"HANDLE", "HANDLE", "ULONG"};
 static const char* const NtRestoreKey_names[] = {"KeyHandle", "FileHandle", "RestoreFlags"};
 static const uint8_t NtRestoreKey_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtRestoreKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRestoreKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtRestoreKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRestoreKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtRestoreKey, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRestoreKey(a0, a1, a2);
+  ULONG_PTR r = Real_NtRestoreKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4596,12 +4581,12 @@ static ULONG_PTR NTAPI Hook_NtRestoreKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtRollbackRegistryTransaction_types[] = {"HANDLE", "BOOL"};
 static const char* const NtRollbackRegistryTransaction_names[] = {"RegistryHandle", "Wait"};
 static const uint8_t NtRollbackRegistryTransaction_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtRollbackRegistryTransaction)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRollbackRegistryTransaction(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRollbackRegistryTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRollbackRegistryTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollbackRegistryTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollbackRegistryTransaction(a0, a1);
+  ULONG_PTR r = Real_NtRollbackRegistryTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4609,12 +4594,12 @@ static ULONG_PTR NTAPI Hook_NtRollbackRegistryTransaction(ULONG_PTR a0, ULONG_PT
 static const char* const NtSaveKey_types[] = {"HANDLE", "HANDLE"};
 static const char* const NtSaveKey_names[] = {"KeyHandle", "FileHandle"};
 static const uint8_t NtSaveKey_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtSaveKey)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSaveKey(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSaveKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSaveKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSaveKey, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSaveKey(a0, a1);
+  ULONG_PTR r = Real_NtSaveKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4622,12 +4607,12 @@ static ULONG_PTR NTAPI Hook_NtSaveKey(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSaveKeyEx_types[] = {"HANDLE", "HANDLE", "ULONG"};
 static const char* const NtSaveKeyEx_names[] = {"KeyHandle", "FileHandle", "Flags"};
 static const uint8_t NtSaveKeyEx_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSaveKeyEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSaveKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtSaveKeyEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSaveKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSaveKeyEx, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSaveKeyEx(a0, a1, a2);
+  ULONG_PTR r = Real_NtSaveKeyEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4635,12 +4620,12 @@ static ULONG_PTR NTAPI Hook_NtSaveKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
 static const char* const NtSaveMergedKeys_types[] = {"HANDLE", "HANDLE", "HANDLE"};
 static const char* const NtSaveMergedKeys_names[] = {"HighPrecedenceKeyHandle", "LowPrecedenceKeyHandle", "FileHandle"};
 static const uint8_t NtSaveMergedKeys_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSaveMergedKeys)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSaveMergedKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtSaveMergedKeys)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSaveMergedKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSaveMergedKeys, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSaveMergedKeys(a0, a1, a2);
+  ULONG_PTR r = Real_NtSaveMergedKeys(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4648,12 +4633,12 @@ static ULONG_PTR NTAPI Hook_NtSaveMergedKeys(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtSetInformationKey_types[] = {"HANDLE", "KEY_SET_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationKey_names[] = {"KeyHandle", "KeySetInformationClass", "KeyInformation", "Length"};
 static const uint8_t NtSetInformationKey_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationKey, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationKey(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4661,12 +4646,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationKey(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtSetValueKey_types[] = {"HANDLE", "PUNICODE_STRING", "ULONG", "ULONG", "PVOID", "ULONG"};
 static const char* const NtSetValueKey_names[] = {"KeyHandle", "ValueName", "TitleIndex", "Type", "Data", "DataSize"};
 static const uint8_t NtSetValueKey_dirs[] = {0, 0, 128, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetValueKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtSetValueKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSetValueKey, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetValueKey(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtSetValueKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4674,12 +4659,12 @@ static ULONG_PTR NTAPI Hook_NtSetValueKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtThawRegistry_types[] = {nullptr};
 static const char* const NtThawRegistry_names[] = {nullptr};
 static const uint8_t NtThawRegistry_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtThawRegistry)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtThawRegistry() {
+static ULONG_PTR (NTAPI *Real_NtThawRegistry)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtThawRegistry(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtThawRegistry, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtThawRegistry();
+  ULONG_PTR r = Real_NtThawRegistry(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4687,12 +4672,12 @@ static ULONG_PTR NTAPI Hook_NtThawRegistry() {
 static const char* const NtUnloadKey_types[] = {"POBJECT_ATTRIBUTES"};
 static const char* const NtUnloadKey_names[] = {"TargetKey"};
 static const uint8_t NtUnloadKey_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtUnloadKey)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUnloadKey(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtUnloadKey)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUnloadKey(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtUnloadKey, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnloadKey(a0);
+  ULONG_PTR r = Real_NtUnloadKey(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4700,12 +4685,12 @@ static ULONG_PTR NTAPI Hook_NtUnloadKey(ULONG_PTR a0) {
 static const char* const NtUnloadKey2_types[] = {"POBJECT_ATTRIBUTES", "ULONG"};
 static const char* const NtUnloadKey2_names[] = {"TargetKey", "Flags"};
 static const uint8_t NtUnloadKey2_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtUnloadKey2)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUnloadKey2(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtUnloadKey2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUnloadKey2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtUnloadKey2, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnloadKey2(a0, a1);
+  ULONG_PTR r = Real_NtUnloadKey2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4713,12 +4698,12 @@ static ULONG_PTR NTAPI Hook_NtUnloadKey2(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtUnloadKeyEx_types[] = {"POBJECT_ATTRIBUTES", "HANDLE"};
 static const char* const NtUnloadKeyEx_names[] = {"TargetKey", "Event"};
 static const uint8_t NtUnloadKeyEx_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtUnloadKeyEx)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUnloadKeyEx(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtUnloadKeyEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUnloadKeyEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtUnloadKeyEx, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnloadKeyEx(a0, a1);
+  ULONG_PTR r = Real_NtUnloadKeyEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4726,12 +4711,12 @@ static ULONG_PTR NTAPI Hook_NtUnloadKeyEx(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtAccessCheck_types[] = {"PSECURITY_DESCRIPTOR", "HANDLE", "TOKEN_ACCESS_MASK", "PGENERIC_MAPPING", "PPRIVILEGE_SET", "PULONG", "PACCESS_MASK", "PNTSTATUS"};
 static const char* const NtAccessCheck_names[] = {"SecurityDescriptor", "ClientToken", "DesiredAccess", "GenericMapping", "PrivilegeSet", "ReturnLength", "GrantedAccess", "AccessStatus"};
 static const uint8_t NtAccessCheck_dirs[] = {0, 0, 0, 0, 1, 1, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtAccessCheck)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAccessCheck(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtAccessCheck)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAccessCheck(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtAccessCheck, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheck(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtAccessCheck(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4739,12 +4724,12 @@ static ULONG_PTR NTAPI Hook_NtAccessCheck(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtAccessCheckAndAuditAlarm_types[] = {"PUNICODE_STRING", "HANDLE", "PUNICODE_STRING", "PUNICODE_STRING", "PSECURITY_DESCRIPTOR", "ACCESS_MASK", "PGENERIC_MAPPING", "BOOLEAN", "PACCESS_MASK", "PNTSTATUS", "PBOOLEAN"};
 static const char* const NtAccessCheckAndAuditAlarm_names[] = {"SubsystemName", "ObjectHandle", "ObjectTypeName", "ObjectName", "SecurityDescriptor", "DesiredAccess", "GenericMapping", "ObjectCreation", "GrantedAccess", "AccessStatus", "GenerateOnClose"};
 static const uint8_t NtAccessCheckAndAuditAlarm_dirs[] = {128, 128, 128, 128, 0, 0, 0, 0, 1, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtAccessCheckAndAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAccessCheckAndAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) {
+static ULONG_PTR (NTAPI *Real_NtAccessCheckAndAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAccessCheckAndAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtAccessCheckAndAuditAlarm, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckAndAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+  ULONG_PTR r = Real_NtAccessCheckAndAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4752,12 +4737,12 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckAndAuditAlarm(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtAccessCheckByType_types[] = {"PSECURITY_DESCRIPTOR", "PSID", "HANDLE", "TOKEN_ACCESS_MASK", "POBJECT_TYPE_LIST", "ULONG", "PGENERIC_MAPPING", "PPRIVILEGE_SET", "PULONG", "PACCESS_MASK", "PNTSTATUS"};
 static const char* const NtAccessCheckByType_names[] = {"SecurityDescriptor", "PrincipalSelfSid", "ClientToken", "DesiredAccess", "ObjectTypeList", "ObjectTypeListLength", "GenericMapping", "PrivilegeSet", "ReturnedLength", "GrantedAccess", "AccessStatus"};
 static const uint8_t NtAccessCheckByType_dirs[] = {0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtAccessCheckByType)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAccessCheckByType(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) {
+static ULONG_PTR (NTAPI *Real_NtAccessCheckByType)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAccessCheckByType(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtAccessCheckByType, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckByType(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+  ULONG_PTR r = Real_NtAccessCheckByType(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4765,12 +4750,12 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckByType(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtAccessCheckByTypeAndAuditAlarm_types[] = {"PUNICODE_STRING", "PVOID", "PUNICODE_STRING", "PUNICODE_STRING", "PSECURITY_DESCRIPTOR", "PSID", "TOKEN_ACCESS_MASK", "ULONG", "ULONG", "POBJECT_TYPE_LIST", "ULONG", "PGENERIC_MAPPING", "BOOLEAN", "PACCESS_MASK", "PULONG", "PBOOLEAN"};
 static const char* const NtAccessCheckByTypeAndAuditAlarm_names[] = {"SubsystemName", "HandleId", "ObjectTypeName", "ObjectName", "SecurityDescriptor", "PrincipalSelfSid", "DesiredAccess", "AuditType", "Flags", "ObjectTypeList", "ObjectTypeListLength", "GenericMapping", "ObjectCreation", "GrantedAccess", "AccessStatus", "GenerateOnClose"};
 static const uint8_t NtAccessCheckByTypeAndAuditAlarm_dirs[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtAccessCheckByTypeAndAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeAndAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15) {
+static ULONG_PTR (NTAPI *Real_NtAccessCheckByTypeAndAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeAndAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15};
   CallCtx ctx(SYS_NtAccessCheckByTypeAndAuditAlarm, (uintptr_t)_ReturnAddress(), args, 16);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckByTypeAndAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15);
+  ULONG_PTR r = Real_NtAccessCheckByTypeAndAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4778,12 +4763,12 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeAndAuditAlarm(ULONG_PTR a0, ULONG
 static const char* const NtAccessCheckByTypeResultList_types[] = {"PSECURITY_DESCRIPTOR", "PSID", "HANDLE", "TOKEN_ACCESS_MASK", "POBJECT_TYPE_LIST", "ULONG", "PGENERIC_MAPPING", "PPRIVILEGE_SET", "ULONG", "PACCESS_MASK", "PNTSTATUS"};
 static const char* const NtAccessCheckByTypeResultList_names[] = {"SecurityDescriptor", "PrincipalSelfSid", "TokenHandle", "DesiredAccess", "ObjectTypeList", "ObjectTypeListLength", "GenericMapping", "PrivilegeSet", "PrivilegeSetLength", "GrantedAccessList", "AccessStatusList"};
 static const uint8_t NtAccessCheckByTypeResultList_dirs[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtAccessCheckByTypeResultList)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultList(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10) {
+static ULONG_PTR (NTAPI *Real_NtAccessCheckByTypeResultList)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultList(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10};
   CallCtx ctx(SYS_NtAccessCheckByTypeResultList, (uintptr_t)_ReturnAddress(), args, 11);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckByTypeResultList(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+  ULONG_PTR r = Real_NtAccessCheckByTypeResultList(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4791,12 +4776,12 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultList(ULONG_PTR a0, ULONG_PT
 static const char* const NtAccessCheckByTypeResultListAndAuditAlarm_types[] = {"PUNICODE_STRING", "PVOID", "PUNICODE_STRING", "PUNICODE_STRING", "PSECURITY_DESCRIPTOR", "PSID", "TOKEN_ACCESS_MASK", "ULONG", "ULONG", "POBJECT_TYPE_LIST", "ULONG", "PVOID", "BOOLEAN", "PACCESS_MASK", "PNTSTATUS", "PULONG"};
 static const char* const NtAccessCheckByTypeResultListAndAuditAlarm_names[] = {"SubsystemName", "HandleId", "ObjectTypeName", "ObjectName", "SecurityDescriptor", "PrincipalSelfSid", "DesiredAccess", "AuditType", "Flags", "ObjectTypeList", "ObjectTypeListLength", "GenericMapping", "ObjectCreation", "GrantedAccessList", "AccessStatusList", "GenerateOnClose"};
 static const uint8_t NtAccessCheckByTypeResultListAndAuditAlarm_dirs[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtAccessCheckByTypeResultListAndAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultListAndAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15) {
+static ULONG_PTR (NTAPI *Real_NtAccessCheckByTypeResultListAndAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultListAndAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15};
   CallCtx ctx(SYS_NtAccessCheckByTypeResultListAndAuditAlarm, (uintptr_t)_ReturnAddress(), args, 16);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckByTypeResultListAndAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15);
+  ULONG_PTR r = Real_NtAccessCheckByTypeResultListAndAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4804,12 +4789,12 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultListAndAuditAlarm(ULONG_PTR
 static const char* const NtAccessCheckByTypeResultListAndAuditAlarmByHandle_types[] = {"PUNICODE_STRING", "PVOID", "HANDLE", "PUNICODE_STRING", "PUNICODE_STRING", "PSECURITY_DESCRIPTOR", "PSID", "TOKEN_ACCESS_MASK", "AUDIT_EVENT_TYPE", "ULONG", "POBJECT_TYPE_LIST", "ULONG", "PGENERIC_MAPPING", "BOOLEAN", "PACCESS_MASK", "PNTSTATUS", "PULONG"};
 static const char* const NtAccessCheckByTypeResultListAndAuditAlarmByHandle_names[] = {"SubsystemName", "HandleId", "TokenHandle", "ObjectTypeName", "ObjectName", "SecurityDescriptor", "PrincipalSelfSid", "DesiredAccess", "AuditType", "Flags", "ObjectTypeList", "ObjectTypeListLength", "GenericMapping", "ObjectCreation", "GrantedAccessList", "AccessStatusList", "GenerateOnClose"};
 static const uint8_t NtAccessCheckByTypeResultListAndAuditAlarmByHandle_dirs[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtAccessCheckByTypeResultListAndAuditAlarmByHandle)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultListAndAuditAlarmByHandle(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16) {
+static ULONG_PTR (NTAPI *Real_NtAccessCheckByTypeResultListAndAuditAlarmByHandle)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultListAndAuditAlarmByHandle(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16};
   CallCtx ctx(SYS_NtAccessCheckByTypeResultListAndAuditAlarmByHandle, (uintptr_t)_ReturnAddress(), args, 17);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAccessCheckByTypeResultListAndAuditAlarmByHandle(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16);
+  ULONG_PTR r = Real_NtAccessCheckByTypeResultListAndAuditAlarmByHandle(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4817,12 +4802,12 @@ static ULONG_PTR NTAPI Hook_NtAccessCheckByTypeResultListAndAuditAlarmByHandle(U
 static const char* const NtAdjustGroupsToken_types[] = {"HANDLE", "BOOLEAN", "PTOKEN_GROUPS", "ULONG", "PTOKEN_GROUPS", "PULONG"};
 static const char* const NtAdjustGroupsToken_names[] = {"TokenHandle", "ResetToDefault", "NewTokenGroups", "TokenGroupsLength", "PrevTokenGroups", "ReturnedLength"};
 static const uint8_t NtAdjustGroupsToken_dirs[] = {0, 0, 0, 0, 1, 129};
-static ULONG_PTR (NTAPI *Real_NtAdjustGroupsToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAdjustGroupsToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtAdjustGroupsToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAdjustGroupsToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAdjustGroupsToken, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAdjustGroupsToken(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtAdjustGroupsToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4830,12 +4815,12 @@ static ULONG_PTR NTAPI Hook_NtAdjustGroupsToken(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtAdjustPrivilegesToken_types[] = {"HANDLE", "BOOLEAN", "PTOKEN_PRIVILEGES", "ULONG", "PTOKEN_PRIVILEGES", "PULONG"};
 static const char* const NtAdjustPrivilegesToken_names[] = {"TokenHandle", "DisableAllPrivileges", "NewState", "BufferLength", "PreviousState", "ReturnLength"};
 static const uint8_t NtAdjustPrivilegesToken_dirs[] = {0, 0, 0, 0, 129, 1};
-static ULONG_PTR (NTAPI *Real_NtAdjustPrivilegesToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAdjustPrivilegesToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtAdjustPrivilegesToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAdjustPrivilegesToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtAdjustPrivilegesToken, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAdjustPrivilegesToken(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtAdjustPrivilegesToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4843,12 +4828,12 @@ static ULONG_PTR NTAPI Hook_NtAdjustPrivilegesToken(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtAdjustTokenClaimsAndDeviceGroups_types[] = {"HANDLE", "BOOLEAN", "BOOLEAN", "BOOLEAN", "PTOKEN_SECURITY_ATTRIBUTES_INFORMATION", "PTOKEN_SECURITY_ATTRIBUTES_INFORMATION", "PTOKEN_GROUPS", "ULONG", "PTOKEN_SECURITY_ATTRIBUTES_INFORMATION", "ULONG", "PTOKEN_SECURITY_ATTRIBUTES_INFORMATION", "ULONG", "PTOKEN_GROUPS", "PULONG", "PULONG", "PULONG"};
 static const char* const NtAdjustTokenClaimsAndDeviceGroups_names[] = {"TokenHandle", "UserResetToDefault", "DeviceResetToDefault", "DeviceGroupsResetToDefault", "NewUserState", "NewDeviceState", "NewDeviceGroupsState", "UserBufferLength", "PreviousUserState", "DeviceBufferLength", "PreviousDeviceState", "DeviceGroupsBufferLength", "PreviousDeviceGroups", "UserReturnLength", "DeviceReturnLength", "DeviceGroupsReturnBufferLength"};
 static const uint8_t NtAdjustTokenClaimsAndDeviceGroups_dirs[] = {0, 0, 0, 0, 128, 128, 128, 0, 1, 0, 1, 0, 1, 129, 129, 129};
-static ULONG_PTR (NTAPI *Real_NtAdjustTokenClaimsAndDeviceGroups)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAdjustTokenClaimsAndDeviceGroups(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15) {
+static ULONG_PTR (NTAPI *Real_NtAdjustTokenClaimsAndDeviceGroups)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAdjustTokenClaimsAndDeviceGroups(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15};
   CallCtx ctx(SYS_NtAdjustTokenClaimsAndDeviceGroups, (uintptr_t)_ReturnAddress(), args, 16);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAdjustTokenClaimsAndDeviceGroups(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15);
+  ULONG_PTR r = Real_NtAdjustTokenClaimsAndDeviceGroups(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4856,12 +4841,12 @@ static ULONG_PTR NTAPI Hook_NtAdjustTokenClaimsAndDeviceGroups(ULONG_PTR a0, ULO
 static const char* const NtCloseObjectAuditAlarm_types[] = {"PUNICODE_STRING", "HANDLE", "BOOLEAN"};
 static const char* const NtCloseObjectAuditAlarm_names[] = {"SubsystemName", "ObjectHandle", "OnClose"};
 static const uint8_t NtCloseObjectAuditAlarm_dirs[] = {0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtCloseObjectAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCloseObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtCloseObjectAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCloseObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCloseObjectAuditAlarm, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCloseObjectAuditAlarm(a0, a1, a2);
+  ULONG_PTR r = Real_NtCloseObjectAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4869,12 +4854,12 @@ static ULONG_PTR NTAPI Hook_NtCloseObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtCompareSigningLevels_types[] = {"BYTE", "BYTE"};
 static const char* const NtCompareSigningLevels_names[] = {"SigningLevel", "RequiredLevel"};
 static const uint8_t NtCompareSigningLevels_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtCompareSigningLevels)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCompareSigningLevels(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCompareSigningLevels)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCompareSigningLevels(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCompareSigningLevels, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompareSigningLevels(a0, a1);
+  ULONG_PTR r = Real_NtCompareSigningLevels(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4882,12 +4867,12 @@ static ULONG_PTR NTAPI Hook_NtCompareSigningLevels(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCompareTokens_types[] = {"HANDLE", "HANDLE", "PBOOLEAN"};
 static const char* const NtCompareTokens_names[] = {"FirstTokenHandle", "SecondTokenHandle", "Equal"};
 static const uint8_t NtCompareTokens_dirs[] = {0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtCompareTokens)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCompareTokens(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtCompareTokens)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCompareTokens(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCompareTokens, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCompareTokens(a0, a1, a2);
+  ULONG_PTR r = Real_NtCompareTokens(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4895,12 +4880,12 @@ static ULONG_PTR NTAPI Hook_NtCompareTokens(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtCreateLowBoxToken_types[] = {"PHANDLE", "HANDLE", "TOKEN_ACCESS_MASK", "POBJECT_ATTRIBUTES", "PSID", "DWORD", "PSID_AND_ATTRIBUTES", "DWORD", "PVOID"};
 static const char* const NtCreateLowBoxToken_names[] = {"LowBoxToken", "hOrgToken", "DesiredAccess", "ObjectAttributes", "AppContainerSid", "CapabilityCount", "Capabilities", "LowBoxCount", "LowBoxStruct"};
 static const uint8_t NtCreateLowBoxToken_dirs[] = {1, 0, 0, 0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateLowBoxToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateLowBoxToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8) {
+static ULONG_PTR (NTAPI *Real_NtCreateLowBoxToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateLowBoxToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8};
   CallCtx ctx(SYS_NtCreateLowBoxToken, (uintptr_t)_ReturnAddress(), args, 9);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateLowBoxToken(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+  ULONG_PTR r = Real_NtCreateLowBoxToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4908,12 +4893,12 @@ static ULONG_PTR NTAPI Hook_NtCreateLowBoxToken(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtCreateToken_types[] = {"PHANDLE", "TOKEN_ACCESS_MASK", "POBJECT_ATTRIBUTES", "TOKEN_TYPE", "PLUID", "PLARGE_INTEGER", "PTOKEN_USER", "PTOKEN_GROUPS", "PTOKEN_PRIVILEGES", "PTOKEN_OWNER", "PTOKEN_PRIMARY_GROUP", "PTOKEN_DEFAULT_DACL", "PTOKEN_SOURCE"};
 static const char* const NtCreateToken_names[] = {"TokenHandle", "DesiredAccess", "ObjectAttributes", "TokenType", "AuthenticationId", "ExpirationTime", "TokenUser", "TokenGroups", "TokenPrivileges", "TokenOwner", "TokenPrimaryGroup", "TokenDefaultDacl", "TokenSource"};
 static const uint8_t NtCreateToken_dirs[] = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12) {
+static ULONG_PTR (NTAPI *Real_NtCreateToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12};
   CallCtx ctx(SYS_NtCreateToken, (uintptr_t)_ReturnAddress(), args, 13);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);
+  ULONG_PTR r = Real_NtCreateToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4921,12 +4906,12 @@ static ULONG_PTR NTAPI Hook_NtCreateToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtCreateTokenEx_types[] = {"PHANDLE", "TOKEN_ACCESS_MASK", "POBJECT_ATTRIBUTES", "TOKEN_TYPE", "PLUID", "PLARGE_INTEGER", "PTOKEN_USER", "PTOKEN_GROUPS", "PTOKEN_PRIVILEGES", "PTOKEN_SECURITY_ATTRIBUTES_INFORMATION", "PTOKEN_SECURITY_ATTRIBUTES_INFORMATION", "PTOKEN_GROUPS", "PTOKEN_MANDATORY_POLICY", "PTOKEN_OWNER", "PTOKEN_PRIMARY_GROUP", "PTOKEN_DEFAULT_DACL", "PTOKEN_SOURCE"};
 static const char* const NtCreateTokenEx_names[] = {"TokenHandle", "DesiredAccess", "ObjectAttributes", "TokenType", "AuthenticationId", "ExpirationTime", "User", "Groups", "Privileges", "UserAttributes", "DeviceAttributes", "DeviceGroups", "TokenMandatoryPolicy", "Owner", "PrimaryGroup", "DefaultDacl", "TokenSource"};
 static const uint8_t NtCreateTokenEx_dirs[] = {1, 0, 128, 0, 0, 0, 0, 0, 0, 128, 128, 128, 128, 128, 0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateTokenEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16) {
+static ULONG_PTR (NTAPI *Real_NtCreateTokenEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16};
   CallCtx ctx(SYS_NtCreateTokenEx, (uintptr_t)_ReturnAddress(), args, 17);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateTokenEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16);
+  ULONG_PTR r = Real_NtCreateTokenEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4934,12 +4919,12 @@ static ULONG_PTR NTAPI Hook_NtCreateTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtDeleteObjectAuditAlarm_types[] = {"PUNICODE_STRING", "HANDLE", "BOOLEAN"};
 static const char* const NtDeleteObjectAuditAlarm_names[] = {"SubsystemName", "ObjectHandle", "OnClose"};
 static const uint8_t NtDeleteObjectAuditAlarm_dirs[] = {0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtDeleteObjectAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeleteObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtDeleteObjectAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeleteObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtDeleteObjectAuditAlarm, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteObjectAuditAlarm(a0, a1, a2);
+  ULONG_PTR r = Real_NtDeleteObjectAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4947,12 +4932,12 @@ static ULONG_PTR NTAPI Hook_NtDeleteObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1,
 static const char* const NtDuplicateToken_types[] = {"HANDLE", "TOKEN_ACCESS_MASK", "POBJECT_ATTRIBUTES", "BOOLEAN", "TOKEN_TYPE", "PHANDLE"};
 static const char* const NtDuplicateToken_names[] = {"ExistingTokenHandle", "DesiredAccess", "ObjectAttributes", "EffectiveOnly", "TokenType", "NewTokenHandle"};
 static const uint8_t NtDuplicateToken_dirs[] = {0, 0, 0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtDuplicateToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDuplicateToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtDuplicateToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDuplicateToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtDuplicateToken, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDuplicateToken(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtDuplicateToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4960,12 +4945,12 @@ static ULONG_PTR NTAPI Hook_NtDuplicateToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtFilterBootOption_types[] = {"ULONG", "ULONG", "ULONG", "PVOID", "ULONG"};
 static const char* const NtFilterBootOption_names[] = {"FilterOperation", "ObjectType", "ElementType", "Data", "DataSize"};
 static const uint8_t NtFilterBootOption_dirs[] = {0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtFilterBootOption)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFilterBootOption(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtFilterBootOption)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFilterBootOption(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtFilterBootOption, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFilterBootOption(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtFilterBootOption(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4973,12 +4958,12 @@ static ULONG_PTR NTAPI Hook_NtFilterBootOption(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtFilterToken_types[] = {"HANDLE", "ULONG", "PTOKEN_GROUPS", "PTOKEN_PRIVILEGES", "PTOKEN_GROUPS", "PHANDLE"};
 static const char* const NtFilterToken_names[] = {"ExistingTokenHandle", "Flags", "SidsToDisable", "PrivilegesToDelete", "RestrictedSids", "NewTokenHandle"};
 static const uint8_t NtFilterToken_dirs[] = {0, 0, 128, 128, 128, 1};
-static ULONG_PTR (NTAPI *Real_NtFilterToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFilterToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtFilterToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFilterToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtFilterToken, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFilterToken(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtFilterToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4986,12 +4971,12 @@ static ULONG_PTR NTAPI Hook_NtFilterToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtFilterTokenEx_types[] = {"HANDLE", "ULONG", "PTOKEN_GROUPS", "PTOKEN_PRIVILEGES", "PTOKEN_GROUPS", "ULONG", "PUNICODE_STRING", "ULONG", "PUNICODE_STRING", "PTOKEN_GROUPS", "PTOKEN_SECURITY_ATTRIBUTES_INFORMATION", "PTOKEN_SECURITY_ATTRIBUTES_INFORMATION", "PTOKEN_GROUPS", "PHANDLE"};
 static const char* const NtFilterTokenEx_names[] = {"TokenHandle", "Flags", "SidsToDisable", "PrivilegesToDelete", "RestrictedSids", "DisableUserClaimsCount", "UserClaimsToDisable", "DisableDeviceClaimsCount", "DeviceClaimsToDisable", "DeviceGroupsToDisable", "RestrictedUserAttributes", "RestrictedDeviceAttributes", "RestrictedDeviceGroups", "NewTokenHandle"};
 static const uint8_t NtFilterTokenEx_dirs[] = {0, 0, 128, 128, 128, 0, 128, 0, 128, 128, 128, 128, 128, 1};
-static ULONG_PTR (NTAPI *Real_NtFilterTokenEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFilterTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13) {
+static ULONG_PTR (NTAPI *Real_NtFilterTokenEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFilterTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13};
   CallCtx ctx(SYS_NtFilterTokenEx, (uintptr_t)_ReturnAddress(), args, 14);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFilterTokenEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13);
+  ULONG_PTR r = Real_NtFilterTokenEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -4999,12 +4984,12 @@ static ULONG_PTR NTAPI Hook_NtFilterTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtGetCachedSigningLevel_types[] = {"HANDLE", "PULONG", "PBYTE", "PUCHAR", "PULONG", "PULONG"};
 static const char* const NtGetCachedSigningLevel_names[] = {"File", "Flags", "SigningLevel", "Thumbprint", "ThumbprintSize", "ThumbprintAlgorithm"};
 static const uint8_t NtGetCachedSigningLevel_dirs[] = {0, 1, 1, 1, 130, 129};
-static ULONG_PTR (NTAPI *Real_NtGetCachedSigningLevel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetCachedSigningLevel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtGetCachedSigningLevel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetCachedSigningLevel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtGetCachedSigningLevel, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetCachedSigningLevel(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtGetCachedSigningLevel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5012,12 +4997,12 @@ static ULONG_PTR NTAPI Hook_NtGetCachedSigningLevel(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtImpersonateAnonymousToken_types[] = {"HANDLE"};
 static const char* const NtImpersonateAnonymousToken_names[] = {"THreadHandle"};
 static const uint8_t NtImpersonateAnonymousToken_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtImpersonateAnonymousToken)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtImpersonateAnonymousToken(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtImpersonateAnonymousToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtImpersonateAnonymousToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtImpersonateAnonymousToken, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtImpersonateAnonymousToken(a0);
+  ULONG_PTR r = Real_NtImpersonateAnonymousToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5025,12 +5010,12 @@ static ULONG_PTR NTAPI Hook_NtImpersonateAnonymousToken(ULONG_PTR a0) {
 static const char* const NtImpersonateThread_types[] = {"HANDLE", "HANDLE", "PULONG"};
 static const char* const NtImpersonateThread_names[] = {"ThreadHandle", "ThreadToImpersonate", "SecurityQualityOfService"};
 static const uint8_t NtImpersonateThread_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtImpersonateThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtImpersonateThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtImpersonateThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtImpersonateThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtImpersonateThread, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtImpersonateThread(a0, a1, a2);
+  ULONG_PTR r = Real_NtImpersonateThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5038,12 +5023,12 @@ static ULONG_PTR NTAPI Hook_NtImpersonateThread(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtOpenProcessToken_types[] = {"HANDLE", "TOKEN_ACCESS_MASK", "PHANDLE"};
 static const char* const NtOpenProcessToken_names[] = {"ProcessHandle", "DesiredAccess", "TokenHandle"};
 static const uint8_t NtOpenProcessToken_dirs[] = {0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtOpenProcessToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenProcessToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenProcessToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenProcessToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenProcessToken, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenProcessToken(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenProcessToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5051,12 +5036,12 @@ static ULONG_PTR NTAPI Hook_NtOpenProcessToken(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtOpenProcessTokenEx_types[] = {"HANDLE", "TOKEN_ACCESS_MASK", "ULONG", "PHANDLE"};
 static const char* const NtOpenProcessTokenEx_names[] = {"ProcessHandle", "DesiredAccess", "HandleAttributes", "TokenHandle"};
 static const uint8_t NtOpenProcessTokenEx_dirs[] = {0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtOpenProcessTokenEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenProcessTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtOpenProcessTokenEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenProcessTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenProcessTokenEx, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenProcessTokenEx(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtOpenProcessTokenEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5064,12 +5049,12 @@ static ULONG_PTR NTAPI Hook_NtOpenProcessTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtOpenThreadToken_types[] = {"HANDLE", "TOKEN_ACCESS_MASK", "BOOL", "PHANDLE"};
 static const char* const NtOpenThreadToken_names[] = {"ThreadHandle", "DesiredAccess", "OpenAsSelf", "TokenHandle"};
 static const uint8_t NtOpenThreadToken_dirs[] = {0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtOpenThreadToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenThreadToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtOpenThreadToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenThreadToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtOpenThreadToken, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenThreadToken(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtOpenThreadToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5077,12 +5062,12 @@ static ULONG_PTR NTAPI Hook_NtOpenThreadToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtOpenThreadTokenEx_types[] = {"HANDLE", "TOKEN_ACCESS_MASK", "BOOL", "ULONG", "PHANDLE"};
 static const char* const NtOpenThreadTokenEx_names[] = {"ThreadHandle", "DesiredAccess", "OpenAsSelf", "HandleAttributes", "TokenHandle"};
 static const uint8_t NtOpenThreadTokenEx_dirs[] = {0, 0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtOpenThreadTokenEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenThreadTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtOpenThreadTokenEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenThreadTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtOpenThreadTokenEx, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenThreadTokenEx(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtOpenThreadTokenEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5090,12 +5075,12 @@ static ULONG_PTR NTAPI Hook_NtOpenThreadTokenEx(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtPrivilegeCheck_types[] = {"HANDLE", "PPRIVILEGE_SET", "PBOOLEAN"};
 static const char* const NtPrivilegeCheck_names[] = {"TokenHandle", "PrivilegeSet", "HasPrivilege"};
 static const uint8_t NtPrivilegeCheck_dirs[] = {0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtPrivilegeCheck)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPrivilegeCheck(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtPrivilegeCheck)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPrivilegeCheck(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtPrivilegeCheck, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrivilegeCheck(a0, a1, a2);
+  ULONG_PTR r = Real_NtPrivilegeCheck(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5103,12 +5088,12 @@ static ULONG_PTR NTAPI Hook_NtPrivilegeCheck(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtPrivilegeObjectAuditAlarm_types[] = {"PUNICODE_STRING", "PVOID", "HANDLE", "TOKEN_ACCESS_MASK", "PPRIVILEGE_SET", "BOOLEAN"};
 static const char* const NtPrivilegeObjectAuditAlarm_names[] = {"SubsystemName", "HandleId", "TokenHandle", "DesiredAccess", "PrivilegeSet", "AccessGranted"};
 static const uint8_t NtPrivilegeObjectAuditAlarm_dirs[] = {0, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtPrivilegeObjectAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPrivilegeObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtPrivilegeObjectAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPrivilegeObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtPrivilegeObjectAuditAlarm, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrivilegeObjectAuditAlarm(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtPrivilegeObjectAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5116,12 +5101,12 @@ static ULONG_PTR NTAPI Hook_NtPrivilegeObjectAuditAlarm(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtPrivilegedServiceAuditAlarm_types[] = {"PUNICODE_STRING", "PUNICODE_STRING", "HANDLE", "PPRIVILEGE_SET", "BOOLEAN"};
 static const char* const NtPrivilegedServiceAuditAlarm_names[] = {"SubsystemName", "ServiceName", "TokenHandle", "PrivilegeSet", "AccessGranted"};
 static const uint8_t NtPrivilegedServiceAuditAlarm_dirs[] = {0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtPrivilegedServiceAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPrivilegedServiceAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtPrivilegedServiceAuditAlarm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPrivilegedServiceAuditAlarm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtPrivilegedServiceAuditAlarm, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrivilegedServiceAuditAlarm(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtPrivilegedServiceAuditAlarm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5129,12 +5114,12 @@ static ULONG_PTR NTAPI Hook_NtPrivilegedServiceAuditAlarm(ULONG_PTR a0, ULONG_PT
 static const char* const NtQueryInformationToken_types[] = {"HANDLE", "TOKEN_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationToken_names[] = {"TokenHandle", "TokenInformationClass", "TokenInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationToken_dirs[] = {0, 0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationToken, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationToken(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5142,12 +5127,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationToken(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtQuerySecurityAttributesToken_types[] = {"HANDLE", "PUNICODE_STRING", "ULONG", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQuerySecurityAttributesToken_names[] = {"TokenHandle", "Attributes", "NumberOfAttributes", "Buffer", "Length", "ReturnLength"};
 static const uint8_t NtQuerySecurityAttributesToken_dirs[] = {0, 0, 0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtQuerySecurityAttributesToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySecurityAttributesToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtQuerySecurityAttributesToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySecurityAttributesToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQuerySecurityAttributesToken, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySecurityAttributesToken(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtQuerySecurityAttributesToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5155,12 +5140,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySecurityAttributesToken(ULONG_PTR a0, ULONG_P
 static const char* const NtQuerySecurityObject_types[] = {"HANDLE", "SECURITY_INFORMATION", "PSECURITY_DESCRIPTOR", "ULONG", "PULONG"};
 static const char* const NtQuerySecurityObject_names[] = {"Handle", "SecurityInformation", "SecurityDescriptor", "SecurityDescriptorLength", "ReturnLength"};
 static const uint8_t NtQuerySecurityObject_dirs[] = {0, 0, 1, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtQuerySecurityObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySecurityObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQuerySecurityObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySecurityObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQuerySecurityObject, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySecurityObject(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQuerySecurityObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5168,12 +5153,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySecurityObject(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtQuerySecurityPolicy_types[] = {"PUNICODE_STRING", "PUNICODE_STRING", "PUNICODE_STRING", "PULONG", "PBOOLEAN", "PULONG"};
 static const char* const NtQuerySecurityPolicy_names[] = {"Category", "SubCategory", "Policy", "Unknown", "Enabled", "Subsystem"};
 static const uint8_t NtQuerySecurityPolicy_dirs[] = {0, 0, 0, 2, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtQuerySecurityPolicy)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySecurityPolicy(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtQuerySecurityPolicy)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySecurityPolicy(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQuerySecurityPolicy, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySecurityPolicy(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtQuerySecurityPolicy(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5181,12 +5166,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySecurityPolicy(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtSetCachedSigningLevel_types[] = {"ULONG", "BYTE", "PHANDLE", "ULONG", "HANDLE"};
 static const char* const NtSetCachedSigningLevel_names[] = {"Flags", "InputSigningLevel", "SourceFiles", "SourceFileCount", "TargetFile"};
 static const uint8_t NtSetCachedSigningLevel_dirs[] = {0, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtSetCachedSigningLevel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetCachedSigningLevel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtSetCachedSigningLevel)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetCachedSigningLevel(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtSetCachedSigningLevel, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetCachedSigningLevel(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtSetCachedSigningLevel(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5194,12 +5179,12 @@ static ULONG_PTR NTAPI Hook_NtSetCachedSigningLevel(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtSetCachedSigningLevel2_types[] = {"ULONG", "BYTE", "PHANDLE", "ULONG", "HANDLE", "PVOID"};
 static const char* const NtSetCachedSigningLevel2_names[] = {"Flags", "InputSigningLevel", "SourceFiles", "SourceFileCount", "TargetFile", "LevelInformation"};
 static const uint8_t NtSetCachedSigningLevel2_dirs[] = {0, 0, 0, 0, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtSetCachedSigningLevel2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetCachedSigningLevel2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtSetCachedSigningLevel2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetCachedSigningLevel2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtSetCachedSigningLevel2, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetCachedSigningLevel2(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtSetCachedSigningLevel2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5207,12 +5192,12 @@ static ULONG_PTR NTAPI Hook_NtSetCachedSigningLevel2(ULONG_PTR a0, ULONG_PTR a1,
 static const char* const NtSetInformationToken_types[] = {"HANDLE", "TOKEN_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationToken_names[] = {"TokenHandle", "Class", "Buffer", "BufferLength"};
 static const uint8_t NtSetInformationToken_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationToken)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationToken(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationToken, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationToken(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationToken(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5220,12 +5205,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationToken(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtSetSecurityObject_types[] = {"HANDLE", "SECURITY_INFORMATION", "PSECURITY_DESCRIPTOR"};
 static const char* const NtSetSecurityObject_names[] = {"Handle", "SecurityInformation", "SecurityDescriptor"};
 static const uint8_t NtSetSecurityObject_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetSecurityObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetSecurityObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtSetSecurityObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetSecurityObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetSecurityObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSecurityObject(a0, a1, a2);
+  ULONG_PTR r = Real_NtSetSecurityObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5233,12 +5218,12 @@ static ULONG_PTR NTAPI Hook_NtSetSecurityObject(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtAcquireCrossVmMutant_types[] = {"HANDLE", "PULONGLONG"};
 static const char* const NtAcquireCrossVmMutant_names[] = {"EventHandle", "Unknown"};
 static const uint8_t NtAcquireCrossVmMutant_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtAcquireCrossVmMutant)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtAcquireCrossVmMutant(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtAcquireCrossVmMutant)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtAcquireCrossVmMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtAcquireCrossVmMutant, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtAcquireCrossVmMutant(a0, a1);
+  ULONG_PTR r = Real_NtAcquireCrossVmMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5246,12 +5231,12 @@ static ULONG_PTR NTAPI Hook_NtAcquireCrossVmMutant(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtClearEvent_types[] = {"HANDLE"};
 static const char* const NtClearEvent_names[] = {"EventHandle"};
 static const uint8_t NtClearEvent_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtClearEvent)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtClearEvent(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtClearEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtClearEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtClearEvent, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtClearEvent(a0);
+  ULONG_PTR r = Real_NtClearEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5259,12 +5244,12 @@ static ULONG_PTR NTAPI Hook_NtClearEvent(ULONG_PTR a0) {
 static const char* const NtCreateCrossVmEvent_types[] = {"PHANDLE", "EVENT_ACCESS_MASK", "POBJECT_ATTRIBUTES", "ULONG", "PVOID", "PGUID"};
 static const char* const NtCreateCrossVmEvent_names[] = {"EventHandle", "DesiredAccess", "ObjectAttributes", "Unknown", "Unknown", "Guid"};
 static const uint8_t NtCreateCrossVmEvent_dirs[] = {1, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateCrossVmEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateCrossVmEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtCreateCrossVmEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateCrossVmEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtCreateCrossVmEvent, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateCrossVmEvent(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtCreateCrossVmEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5272,12 +5257,12 @@ static ULONG_PTR NTAPI Hook_NtCreateCrossVmEvent(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtCreateCrossVmMutant_types[] = {"PHANDLE", "MUTANT_ACCESS_MASK", "POBJECT_ATTRIBUTES", "ULONG", "PVOID", "PGUID"};
 static const char* const NtCreateCrossVmMutant_names[] = {"EventHandle", "DesiredAccess", "ObjectAttributes", "Unknown", "Unknown", "Guid"};
 static const uint8_t NtCreateCrossVmMutant_dirs[] = {1, 0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateCrossVmMutant)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateCrossVmMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtCreateCrossVmMutant)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateCrossVmMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtCreateCrossVmMutant, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateCrossVmMutant(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtCreateCrossVmMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5285,12 +5270,12 @@ static ULONG_PTR NTAPI Hook_NtCreateCrossVmMutant(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtCreateEvent_types[] = {"PHANDLE", "EVENT_ACCESS_MASK", "POBJECT_ATTRIBUTES", "EVENT_TYPE", "BOOLEAN"};
 static const char* const NtCreateEvent_names[] = {"EventHandle", "DesiredAccess", "ObjectAttributes", "EventType", "InitialState"};
 static const uint8_t NtCreateEvent_dirs[] = {1, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtCreateEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateEvent, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateEvent(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtCreateEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5298,12 +5283,12 @@ static ULONG_PTR NTAPI Hook_NtCreateEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtCreateEventPair_types[] = {"PHANDLE", "EVENT_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtCreateEventPair_names[] = {"EventHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtCreateEventPair_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateEventPair)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtCreateEventPair)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtCreateEventPair, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateEventPair(a0, a1, a2);
+  ULONG_PTR r = Real_NtCreateEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5311,12 +5296,12 @@ static ULONG_PTR NTAPI Hook_NtCreateEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtCreateKeyedEvent_types[] = {"PHANDLE", "EVENT_ACCESS_MASK", "POBJECT_ATTRIBUTES", "ULONG"};
 static const char* const NtCreateKeyedEvent_names[] = {"KeyedEventHandle", "DesiredAccess", "ObjectAttributes", "Reserved"};
 static const uint8_t NtCreateKeyedEvent_dirs[] = {1, 0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateKeyedEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCreateKeyedEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateKeyedEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateKeyedEvent(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCreateKeyedEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5324,12 +5309,12 @@ static ULONG_PTR NTAPI Hook_NtCreateKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtCreateMutant_types[] = {"PHANDLE", "MUTANT_ACCESS_MASK", "POBJECT_ATTRIBUTES", "BOOLEAN"};
 static const char* const NtCreateMutant_names[] = {"MutantHandle", "DesiredAccess", "ObjectAttributes", "InitialOwner"};
 static const uint8_t NtCreateMutant_dirs[] = {1, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateMutant)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCreateMutant)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateMutant, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateMutant(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCreateMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5337,12 +5322,12 @@ static ULONG_PTR NTAPI Hook_NtCreateMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
 static const char* const NtCreateSemaphore_types[] = {"PHANDLE", "SEMAPHORE_ACCESS_MASK", "POBJECT_ATTRIBUTES", "LONG", "LONG"};
 static const char* const NtCreateSemaphore_names[] = {"SemaphoreHandle", "DesiredAccess", "ObjectAttributes", "InitialCount", "MaxCount"};
 static const uint8_t NtCreateSemaphore_dirs[] = {1, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateSemaphore)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtCreateSemaphore)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateSemaphore, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateSemaphore(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtCreateSemaphore(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5350,12 +5335,12 @@ static ULONG_PTR NTAPI Hook_NtCreateSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtOpenEvent_types[] = {"PHANDLE", "EVENT_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenEvent_names[] = {"EventHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenEvent_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenEvent, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenEvent(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5363,12 +5348,12 @@ static ULONG_PTR NTAPI Hook_NtOpenEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
 static const char* const NtOpenEventPair_types[] = {"PHANDLE", "EVENT_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenEventPair_names[] = {"EventHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenEventPair_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenEventPair)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenEventPair)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenEventPair, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenEventPair(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5376,12 +5361,12 @@ static ULONG_PTR NTAPI Hook_NtOpenEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtOpenKeyedEvent_types[] = {"PHANDLE", "EVENT_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenKeyedEvent_names[] = {"KeyedEventHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenKeyedEvent_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenKeyedEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenKeyedEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenKeyedEvent, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenKeyedEvent(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenKeyedEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5389,12 +5374,12 @@ static ULONG_PTR NTAPI Hook_NtOpenKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtOpenMutant_types[] = {"PHANDLE", "MUTANT_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenMutant_names[] = {"MutantHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenMutant_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenMutant)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenMutant)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenMutant, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenMutant(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5402,12 +5387,12 @@ static ULONG_PTR NTAPI Hook_NtOpenMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtOpenSemaphore_types[] = {"PHANDLE", "SEMAPHORE_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenSemaphore_names[] = {"SemaphoreHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenSemaphore_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenSemaphore)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenSemaphore)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenSemaphore, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenSemaphore(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenSemaphore(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5415,12 +5400,12 @@ static ULONG_PTR NTAPI Hook_NtOpenSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 static const char* const NtPulseEvent_types[] = {"HANDLE", "PULONG"};
 static const char* const NtPulseEvent_names[] = {"EventHandle", "PrevState"};
 static const uint8_t NtPulseEvent_dirs[] = {0, 129};
-static ULONG_PTR (NTAPI *Real_NtPulseEvent)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPulseEvent(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtPulseEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPulseEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtPulseEvent, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPulseEvent(a0, a1);
+  ULONG_PTR r = Real_NtPulseEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5428,12 +5413,12 @@ static ULONG_PTR NTAPI Hook_NtPulseEvent(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtQueryEvent_types[] = {"HANDLE", "EVENT_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryEvent_names[] = {"EventHandle", "EventInformationClass", "EventInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryEvent_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryEvent, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryEvent(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5441,12 +5426,12 @@ static ULONG_PTR NTAPI Hook_NtQueryEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtQueryMutant_types[] = {"HANDLE", "MUTANT_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryMutant_names[] = {"MutantHandle", "MutantInformationClass", "MutantInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryMutant_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryMutant)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryMutant)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryMutant, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryMutant(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5454,12 +5439,12 @@ static ULONG_PTR NTAPI Hook_NtQueryMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtQuerySemaphore_types[] = {"HANDLE", "SEMAPHORE_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQuerySemaphore_names[] = {"SemaphoreHandle", "SemaphoreInformationClass", "SemaphoreInformation", "Length", "ReturnLength"};
 static const uint8_t NtQuerySemaphore_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQuerySemaphore)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQuerySemaphore)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQuerySemaphore, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySemaphore(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQuerySemaphore(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5467,12 +5452,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtReleaseKeyedEvent_types[] = {"HANDLE", "PVOID", "BOOLEAN", "PLARGE_INTEGER"};
 static const char* const NtReleaseKeyedEvent_names[] = {"KeyedEventHandle", "Key", "Alertable", "Timeout"};
 static const uint8_t NtReleaseKeyedEvent_dirs[] = {0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtReleaseKeyedEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReleaseKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtReleaseKeyedEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReleaseKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtReleaseKeyedEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReleaseKeyedEvent(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtReleaseKeyedEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5480,12 +5465,12 @@ static ULONG_PTR NTAPI Hook_NtReleaseKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtReleaseMutant_types[] = {"HANDLE", "PULONG"};
 static const char* const NtReleaseMutant_names[] = {"MutantHandle", "PreviousCount"};
 static const uint8_t NtReleaseMutant_dirs[] = {0, 129};
-static ULONG_PTR (NTAPI *Real_NtReleaseMutant)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReleaseMutant(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtReleaseMutant)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReleaseMutant(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtReleaseMutant, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReleaseMutant(a0, a1);
+  ULONG_PTR r = Real_NtReleaseMutant(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5493,12 +5478,12 @@ static ULONG_PTR NTAPI Hook_NtReleaseMutant(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtReleaseSemaphore_types[] = {"HANDLE", "ULONG", "PULONG"};
 static const char* const NtReleaseSemaphore_names[] = {"SemaphoreHandle", "Count", "PreviousCount"};
 static const uint8_t NtReleaseSemaphore_dirs[] = {0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtReleaseSemaphore)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReleaseSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtReleaseSemaphore)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReleaseSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtReleaseSemaphore, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReleaseSemaphore(a0, a1, a2);
+  ULONG_PTR r = Real_NtReleaseSemaphore(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5506,12 +5491,12 @@ static ULONG_PTR NTAPI Hook_NtReleaseSemaphore(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtResetEvent_types[] = {"HANDLE", "PULONG"};
 static const char* const NtResetEvent_names[] = {"EventHandle", "PrevState"};
 static const uint8_t NtResetEvent_dirs[] = {0, 129};
-static ULONG_PTR (NTAPI *Real_NtResetEvent)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtResetEvent(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtResetEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtResetEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtResetEvent, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtResetEvent(a0, a1);
+  ULONG_PTR r = Real_NtResetEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5519,12 +5504,12 @@ static ULONG_PTR NTAPI Hook_NtResetEvent(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetEvent_types[] = {"HANDLE", "PULONG"};
 static const char* const NtSetEvent_names[] = {"EventHandle", "PrevState"};
 static const uint8_t NtSetEvent_dirs[] = {0, 129};
-static ULONG_PTR (NTAPI *Real_NtSetEvent)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetEvent(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetEvent, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetEvent(a0, a1);
+  ULONG_PTR r = Real_NtSetEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5532,12 +5517,12 @@ static ULONG_PTR NTAPI Hook_NtSetEvent(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetEventEx_types[] = {"HANDLE", "ULONG", "ULONG"};
 static const char* const NtSetEventEx_names[] = {"EventHandle", "Unknown", "Unknown"};
 static const uint8_t NtSetEventEx_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetEventEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetEventEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtSetEventEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetEventEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetEventEx, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetEventEx(a0, a1, a2);
+  ULONG_PTR r = Real_NtSetEventEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5545,12 +5530,12 @@ static ULONG_PTR NTAPI Hook_NtSetEventEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtSetEventBoostPriority_types[] = {"HANDLE"};
 static const char* const NtSetEventBoostPriority_names[] = {"EventHandle"};
 static const uint8_t NtSetEventBoostPriority_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetEventBoostPriority)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetEventBoostPriority(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSetEventBoostPriority)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetEventBoostPriority(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetEventBoostPriority, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetEventBoostPriority(a0);
+  ULONG_PTR r = Real_NtSetEventBoostPriority(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5558,12 +5543,12 @@ static ULONG_PTR NTAPI Hook_NtSetEventBoostPriority(ULONG_PTR a0) {
 static const char* const NtSetHighEventPair_types[] = {"HANDLE"};
 static const char* const NtSetHighEventPair_names[] = {"EventHandle"};
 static const uint8_t NtSetHighEventPair_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetHighEventPair)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetHighEventPair(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSetHighEventPair)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetHighEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetHighEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetHighEventPair(a0);
+  ULONG_PTR r = Real_NtSetHighEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5571,12 +5556,12 @@ static ULONG_PTR NTAPI Hook_NtSetHighEventPair(ULONG_PTR a0) {
 static const char* const NtSetHighWaitLowEventPair_types[] = {"HANDLE"};
 static const char* const NtSetHighWaitLowEventPair_names[] = {"EventHandle"};
 static const uint8_t NtSetHighWaitLowEventPair_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetHighWaitLowEventPair)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetHighWaitLowEventPair(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSetHighWaitLowEventPair)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetHighWaitLowEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetHighWaitLowEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetHighWaitLowEventPair(a0);
+  ULONG_PTR r = Real_NtSetHighWaitLowEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5584,12 +5569,12 @@ static ULONG_PTR NTAPI Hook_NtSetHighWaitLowEventPair(ULONG_PTR a0) {
 static const char* const NtSetHighWaitLowThread_types[] = {nullptr};
 static const char* const NtSetHighWaitLowThread_names[] = {nullptr};
 static const uint8_t NtSetHighWaitLowThread_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetHighWaitLowThread)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetHighWaitLowThread() {
+static ULONG_PTR (NTAPI *Real_NtSetHighWaitLowThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetHighWaitLowThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtSetHighWaitLowThread, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetHighWaitLowThread();
+  ULONG_PTR r = Real_NtSetHighWaitLowThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5597,12 +5582,12 @@ static ULONG_PTR NTAPI Hook_NtSetHighWaitLowThread() {
 static const char* const NtSetLowEventPair_types[] = {"HANDLE"};
 static const char* const NtSetLowEventPair_names[] = {"EventHandle"};
 static const uint8_t NtSetLowEventPair_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetLowEventPair)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetLowEventPair(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSetLowEventPair)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetLowEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetLowEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetLowEventPair(a0);
+  ULONG_PTR r = Real_NtSetLowEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5610,12 +5595,12 @@ static ULONG_PTR NTAPI Hook_NtSetLowEventPair(ULONG_PTR a0) {
 static const char* const NtSetLowWaitHighEventPair_types[] = {"HANDLE"};
 static const char* const NtSetLowWaitHighEventPair_names[] = {"EventHandle"};
 static const uint8_t NtSetLowWaitHighEventPair_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetLowWaitHighEventPair)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetLowWaitHighEventPair(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSetLowWaitHighEventPair)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetLowWaitHighEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetLowWaitHighEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetLowWaitHighEventPair(a0);
+  ULONG_PTR r = Real_NtSetLowWaitHighEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5623,12 +5608,12 @@ static ULONG_PTR NTAPI Hook_NtSetLowWaitHighEventPair(ULONG_PTR a0) {
 static const char* const NtSetLowWaitHighThread_types[] = {nullptr};
 static const char* const NtSetLowWaitHighThread_names[] = {nullptr};
 static const uint8_t NtSetLowWaitHighThread_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetLowWaitHighThread)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetLowWaitHighThread() {
+static ULONG_PTR (NTAPI *Real_NtSetLowWaitHighThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetLowWaitHighThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtSetLowWaitHighThread, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetLowWaitHighThread();
+  ULONG_PTR r = Real_NtSetLowWaitHighThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5636,12 +5621,12 @@ static ULONG_PTR NTAPI Hook_NtSetLowWaitHighThread() {
 static const char* const NtSignalAndWaitForSingleObject_types[] = {"HANDLE", "HANDLE", "BOOLEAN", "PLARGE_INTEGER"};
 static const char* const NtSignalAndWaitForSingleObject_names[] = {"SignalHandle", "ObjectHandle", "Alertable", "Timeout"};
 static const uint8_t NtSignalAndWaitForSingleObject_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSignalAndWaitForSingleObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSignalAndWaitForSingleObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSignalAndWaitForSingleObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSignalAndWaitForSingleObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSignalAndWaitForSingleObject, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSignalAndWaitForSingleObject(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSignalAndWaitForSingleObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5649,12 +5634,12 @@ static ULONG_PTR NTAPI Hook_NtSignalAndWaitForSingleObject(ULONG_PTR a0, ULONG_P
 static const char* const NtTraceEvent_types[] = {"HANDLE", "ULONG", "ULONG", "PVOID"};
 static const char* const NtTraceEvent_names[] = {"TraceHandle", "Flags", "FieldSize", "Fields"};
 static const uint8_t NtTraceEvent_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtTraceEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtTraceEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtTraceEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtTraceEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtTraceEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtTraceEvent(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtTraceEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5662,12 +5647,12 @@ static ULONG_PTR NTAPI Hook_NtTraceEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtWaitForKeyedEvent_types[] = {"HANDLE", "PVOID", "BOOLEAN", "PLARGE_INTEGER"};
 static const char* const NtWaitForKeyedEvent_names[] = {"KeyedEventHandle", "Key", "Alertable", "Timeout"};
 static const uint8_t NtWaitForKeyedEvent_dirs[] = {0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtWaitForKeyedEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWaitForKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtWaitForKeyedEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWaitForKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtWaitForKeyedEvent, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForKeyedEvent(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtWaitForKeyedEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5675,12 +5660,12 @@ static ULONG_PTR NTAPI Hook_NtWaitForKeyedEvent(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtWaitForMultipleObjects_types[] = {"ULONG", "PHANDLE", "WAIT_TYPE", "BOOLEAN", "PLARGE_INTEGER"};
 static const char* const NtWaitForMultipleObjects_names[] = {"Count", "Handles", "WaitType", "Alertable", "Timeout"};
 static const uint8_t NtWaitForMultipleObjects_dirs[] = {0, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtWaitForMultipleObjects)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWaitForMultipleObjects(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtWaitForMultipleObjects)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWaitForMultipleObjects(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWaitForMultipleObjects, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForMultipleObjects(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtWaitForMultipleObjects(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5688,12 +5673,12 @@ static ULONG_PTR NTAPI Hook_NtWaitForMultipleObjects(ULONG_PTR a0, ULONG_PTR a1,
 static const char* const NtWaitForMultipleObjects32_types[] = {"ULONG", "PHANDLE", "WAIT_TYPE", "BOOLEAN", "PLARGE_INTEGER"};
 static const char* const NtWaitForMultipleObjects32_names[] = {"ObjectCount", "Handles", "WaitType", "Alertable", "Timeout"};
 static const uint8_t NtWaitForMultipleObjects32_dirs[] = {0, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtWaitForMultipleObjects32)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWaitForMultipleObjects32(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtWaitForMultipleObjects32)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWaitForMultipleObjects32(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWaitForMultipleObjects32, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForMultipleObjects32(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtWaitForMultipleObjects32(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5701,12 +5686,12 @@ static ULONG_PTR NTAPI Hook_NtWaitForMultipleObjects32(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtWaitForSingleObject_types[] = {"HANDLE", "BOOLEAN", "PLARGE_INTEGER"};
 static const char* const NtWaitForSingleObject_names[] = {"Handle", "Alertable", "Timeout"};
 static const uint8_t NtWaitForSingleObject_dirs[] = {0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtWaitForSingleObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWaitForSingleObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtWaitForSingleObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWaitForSingleObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtWaitForSingleObject, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitForSingleObject(a0, a1, a2);
+  ULONG_PTR r = Real_NtWaitForSingleObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5714,12 +5699,12 @@ static ULONG_PTR NTAPI Hook_NtWaitForSingleObject(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtWaitHighEventPair_types[] = {"HANDLE"};
 static const char* const NtWaitHighEventPair_names[] = {"EventHandle"};
 static const uint8_t NtWaitHighEventPair_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtWaitHighEventPair)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWaitHighEventPair(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtWaitHighEventPair)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWaitHighEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWaitHighEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitHighEventPair(a0);
+  ULONG_PTR r = Real_NtWaitHighEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5727,12 +5712,12 @@ static ULONG_PTR NTAPI Hook_NtWaitHighEventPair(ULONG_PTR a0) {
 static const char* const NtWaitLowEventPair_types[] = {"HANDLE"};
 static const char* const NtWaitLowEventPair_names[] = {"EventHandle"};
 static const uint8_t NtWaitLowEventPair_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtWaitLowEventPair)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWaitLowEventPair(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtWaitLowEventPair)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWaitLowEventPair(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWaitLowEventPair, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWaitLowEventPair(a0);
+  ULONG_PTR r = Real_NtWaitLowEventPair(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5740,12 +5725,12 @@ static ULONG_PTR NTAPI Hook_NtWaitLowEventPair(ULONG_PTR a0) {
 static const char* const NtCancelTimer_types[] = {"HANDLE", "PBOOLEAN"};
 static const char* const NtCancelTimer_names[] = {"TimerHandle", "CurrentState"};
 static const uint8_t NtCancelTimer_dirs[] = {0, 129};
-static ULONG_PTR (NTAPI *Real_NtCancelTimer)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCancelTimer(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCancelTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCancelTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCancelTimer, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelTimer(a0, a1);
+  ULONG_PTR r = Real_NtCancelTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5753,12 +5738,12 @@ static ULONG_PTR NTAPI Hook_NtCancelTimer(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCancelTimer2_types[] = {"HANDLE", "PBOOLEAN"};
 static const char* const NtCancelTimer2_names[] = {"TimerHandle", "State"};
 static const uint8_t NtCancelTimer2_dirs[] = {0, 129};
-static ULONG_PTR (NTAPI *Real_NtCancelTimer2)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCancelTimer2(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCancelTimer2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCancelTimer2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCancelTimer2, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCancelTimer2(a0, a1);
+  ULONG_PTR r = Real_NtCancelTimer2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5766,12 +5751,12 @@ static ULONG_PTR NTAPI Hook_NtCancelTimer2(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtConvertBetweenAuxiliaryCounterAndPerformanceCounter_types[] = {"BOOL", "PULONGLONG", "PULONGLONG", "PULONGLONG"};
 static const char* const NtConvertBetweenAuxiliaryCounterAndPerformanceCounter_names[] = {"InputIsAuxiliary", "lpInputCounterValue", "lpOutputCounterValue", "lpConversionError"};
 static const uint8_t NtConvertBetweenAuxiliaryCounterAndPerformanceCounter_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5779,12 +5764,12 @@ static ULONG_PTR NTAPI Hook_NtConvertBetweenAuxiliaryCounterAndPerformanceCounte
 static const char* const NtCreateIRTimer_types[] = {"PHANDLE", "TIMER_ACCESS_MASK"};
 static const char* const NtCreateIRTimer_names[] = {"TimerHandle", "DesiredAccess"};
 static const uint8_t NtCreateIRTimer_dirs[] = {1, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateIRTimer)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateIRTimer(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCreateIRTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateIRTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCreateIRTimer, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateIRTimer(a0, a1);
+  ULONG_PTR r = Real_NtCreateIRTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5792,12 +5777,12 @@ static ULONG_PTR NTAPI Hook_NtCreateIRTimer(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCreateTimer_types[] = {"PHANDLE", "TIMER_ACCESS_MASK", "POBJECT_ATTRIBUTES", "TIMER_TYPE"};
 static const char* const NtCreateTimer_names[] = {"TimerHandle", "DesiredAccess", "ObjectAttributes", "TimerType"};
 static const uint8_t NtCreateTimer_dirs[] = {1, 0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtCreateTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtCreateTimer, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateTimer(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtCreateTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5805,12 +5790,12 @@ static ULONG_PTR NTAPI Hook_NtCreateTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR 
 static const char* const NtCreateTimer2_types[] = {"PHANDLE", "PVOID", "POBJECT_ATTRIBUTES", "ULONG", "TIMER_ACCESS_MASK"};
 static const char* const NtCreateTimer2_names[] = {"TimerHandle", "Unknown1", "ObjectAttributes", "Attributes", "DesiredAccess"};
 static const uint8_t NtCreateTimer2_dirs[] = {1, 128, 128, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateTimer2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateTimer2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtCreateTimer2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateTimer2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtCreateTimer2, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateTimer2(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtCreateTimer2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5818,12 +5803,12 @@ static ULONG_PTR NTAPI Hook_NtCreateTimer2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR
 static const char* const NtOpenTimer_types[] = {"PHANDLE", "TIMER_ACCESS_MASK", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenTimer_names[] = {"TimerHandle", "DesiredAccess", "ObjectAttributes"};
 static const uint8_t NtOpenTimer_dirs[] = {1, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtOpenTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtOpenTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtOpenTimer, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenTimer(a0, a1, a2);
+  ULONG_PTR r = Real_NtOpenTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5831,12 +5816,12 @@ static ULONG_PTR NTAPI Hook_NtOpenTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
 static const char* const NtQueryAuxiliaryCounterFrequency_types[] = {"PULONGLONG"};
 static const char* const NtQueryAuxiliaryCounterFrequency_names[] = {"lpAuxiliaryCounterFrequency"};
 static const uint8_t NtQueryAuxiliaryCounterFrequency_dirs[] = {1};
-static ULONG_PTR (NTAPI *Real_NtQueryAuxiliaryCounterFrequency)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryAuxiliaryCounterFrequency(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtQueryAuxiliaryCounterFrequency)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryAuxiliaryCounterFrequency(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtQueryAuxiliaryCounterFrequency, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryAuxiliaryCounterFrequency(a0);
+  ULONG_PTR r = Real_NtQueryAuxiliaryCounterFrequency(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5844,12 +5829,12 @@ static ULONG_PTR NTAPI Hook_NtQueryAuxiliaryCounterFrequency(ULONG_PTR a0) {
 static const char* const NtQuerySystemTime_types[] = {"PLARGE_INTEGER"};
 static const char* const NtQuerySystemTime_names[] = {"SystemTime"};
 static const uint8_t NtQuerySystemTime_dirs[] = {1};
-static ULONG_PTR (NTAPI *Real_NtQuerySystemTime)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQuerySystemTime(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtQuerySystemTime)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQuerySystemTime(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtQuerySystemTime, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQuerySystemTime(a0);
+  ULONG_PTR r = Real_NtQuerySystemTime(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5857,12 +5842,12 @@ static ULONG_PTR NTAPI Hook_NtQuerySystemTime(ULONG_PTR a0) {
 static const char* const NtQueryTimer_types[] = {"HANDLE", "TIMER_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryTimer_names[] = {"TimerHandle", "TimerInformationClass", "TimerInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryTimer_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryTimer, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryTimer(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5870,12 +5855,12 @@ static ULONG_PTR NTAPI Hook_NtQueryTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtQueryTimerResolution_types[] = {"PULONG", "PULONG", "PULONG"};
 static const char* const NtQueryTimerResolution_names[] = {"MaxTime", "MinTime", "CurrTime"};
 static const uint8_t NtQueryTimerResolution_dirs[] = {1, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtQueryTimerResolution)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryTimerResolution(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtQueryTimerResolution)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryTimerResolution(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtQueryTimerResolution, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryTimerResolution(a0, a1, a2);
+  ULONG_PTR r = Real_NtQueryTimerResolution(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5883,12 +5868,12 @@ static ULONG_PTR NTAPI Hook_NtQueryTimerResolution(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtSetIRTimer_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtSetIRTimer_names[] = {"TimerHandle", "Time"};
 static const uint8_t NtSetIRTimer_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtSetIRTimer)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetIRTimer(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetIRTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetIRTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetIRTimer, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetIRTimer(a0, a1);
+  ULONG_PTR r = Real_NtSetIRTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5896,12 +5881,12 @@ static ULONG_PTR NTAPI Hook_NtSetIRTimer(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetSystemTime_types[] = {"PLARGE_INTEGER", "PLARGE_INTEGER"};
 static const char* const NtSetSystemTime_names[] = {"SystemTime", "PrevSystemTime"};
 static const uint8_t NtSetSystemTime_dirs[] = {0, 129};
-static ULONG_PTR (NTAPI *Real_NtSetSystemTime)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetSystemTime(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSetSystemTime)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetSystemTime(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSetSystemTime, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetSystemTime(a0, a1);
+  ULONG_PTR r = Real_NtSetSystemTime(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5909,12 +5894,12 @@ static ULONG_PTR NTAPI Hook_NtSetSystemTime(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSetTimer_types[] = {"HANDLE", "PLARGE_INTEGER", "PTIMER_APC_ROUTINE", "PVOID", "BOOLEAN", "LONG", "PBOOLEAN"};
 static const char* const NtSetTimer_names[] = {"TimerHandle", "DueTime", "TimerApcRoutine", "TimerContext", "WakeTimer", "Period", "PreviousState"};
 static const uint8_t NtSetTimer_dirs[] = {0, 0, 128, 128, 0, 128, 129};
-static ULONG_PTR (NTAPI *Real_NtSetTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtSetTimer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtSetTimer, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetTimer(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtSetTimer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5922,12 +5907,12 @@ static ULONG_PTR NTAPI Hook_NtSetTimer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2,
 static const char* const NtSetTimer2_types[] = {"HANDLE", "PLARGE_INTEGER", "PLARGE_INTEGER", "PVOID"};
 static const char* const NtSetTimer2_names[] = {"TimerHandle", "DueTime", "Period", "Parameters"};
 static const uint8_t NtSetTimer2_dirs[] = {0, 0, 128, 0};
-static ULONG_PTR (NTAPI *Real_NtSetTimer2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetTimer2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetTimer2)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetTimer2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetTimer2, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetTimer2(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetTimer2(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5935,12 +5920,12 @@ static ULONG_PTR NTAPI Hook_NtSetTimer2(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2
 static const char* const NtSetTimerEx_types[] = {"HANDLE", "TIMER_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtSetTimerEx_names[] = {"TimerHandle", "TimerSetInformationClass", "TimerSetInformation", "Length"};
 static const uint8_t NtSetTimerEx_dirs[] = {0, 0, 2, 0};
-static ULONG_PTR (NTAPI *Real_NtSetTimerEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetTimerEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetTimerEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetTimerEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetTimerEx, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetTimerEx(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetTimerEx(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5948,12 +5933,12 @@ static ULONG_PTR NTAPI Hook_NtSetTimerEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a
 static const char* const NtSetTimerResolution_types[] = {"ULONG", "BOOLEAN", "PULONG"};
 static const char* const NtSetTimerResolution_names[] = {"DesiredTime", "SetResolution", "ActualTime"};
 static const uint8_t NtSetTimerResolution_dirs[] = {0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtSetTimerResolution)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetTimerResolution(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtSetTimerResolution)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetTimerResolution(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSetTimerResolution, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetTimerResolution(a0, a1, a2);
+  ULONG_PTR r = Real_NtSetTimerResolution(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5961,12 +5946,12 @@ static ULONG_PTR NTAPI Hook_NtSetTimerResolution(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtClearAllSavepointsTransaction_types[] = {"HANDLE"};
 static const char* const NtClearAllSavepointsTransaction_names[] = {"TransactionHandle"};
 static const uint8_t NtClearAllSavepointsTransaction_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtClearAllSavepointsTransaction)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtClearAllSavepointsTransaction(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtClearAllSavepointsTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtClearAllSavepointsTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtClearAllSavepointsTransaction, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtClearAllSavepointsTransaction(a0);
+  ULONG_PTR r = Real_NtClearAllSavepointsTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5974,12 +5959,12 @@ static ULONG_PTR NTAPI Hook_NtClearAllSavepointsTransaction(ULONG_PTR a0) {
 static const char* const NtClearSavepointTransaction_types[] = {"HANDLE", "ULONG"};
 static const char* const NtClearSavepointTransaction_names[] = {"TransactionHandle", "SavePointId"};
 static const uint8_t NtClearSavepointTransaction_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtClearSavepointTransaction)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtClearSavepointTransaction(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtClearSavepointTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtClearSavepointTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtClearSavepointTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtClearSavepointTransaction(a0, a1);
+  ULONG_PTR r = Real_NtClearSavepointTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -5987,12 +5972,12 @@ static ULONG_PTR NTAPI Hook_NtClearSavepointTransaction(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtCommitComplete_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtCommitComplete_names[] = {"EnlistmentHandle", "TmVirtualClock"};
 static const uint8_t NtCommitComplete_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtCommitComplete)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCommitComplete(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCommitComplete)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCommitComplete(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCommitComplete, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCommitComplete(a0, a1);
+  ULONG_PTR r = Real_NtCommitComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6000,12 +5985,12 @@ static ULONG_PTR NTAPI Hook_NtCommitComplete(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCommitEnlistment_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtCommitEnlistment_names[] = {"EnlistmentHandle", "TmVirtualClock"};
 static const uint8_t NtCommitEnlistment_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtCommitEnlistment)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCommitEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCommitEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCommitEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCommitEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCommitEnlistment(a0, a1);
+  ULONG_PTR r = Real_NtCommitEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6013,12 +5998,12 @@ static ULONG_PTR NTAPI Hook_NtCommitEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCommitTransaction_types[] = {"HANDLE", "BOOLEAN"};
 static const char* const NtCommitTransaction_names[] = {"TransactionHandle", "Wait"};
 static const uint8_t NtCommitTransaction_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtCommitTransaction)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCommitTransaction(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtCommitTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCommitTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtCommitTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCommitTransaction(a0, a1);
+  ULONG_PTR r = Real_NtCommitTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6026,12 +6011,12 @@ static ULONG_PTR NTAPI Hook_NtCommitTransaction(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtCreateEnlistment_types[] = {"PHANDLE", "ACCESS_MASK", "HANDLE", "HANDLE", "POBJECT_ATTRIBUTES", "ULONG", "NOTIFICATION_MASK", "PVOID"};
 static const char* const NtCreateEnlistment_names[] = {"EnlistmentHandle", "DesiredAccess", "ResourceManagerHandle", "TransactionHandle", "ObjectAttributes", "CreateOptions", "NotificationMask", "EnlistmentKey"};
 static const uint8_t NtCreateEnlistment_dirs[] = {1, 0, 0, 0, 128, 128, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtCreateEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtCreateEnlistment, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateEnlistment(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtCreateEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6039,12 +6024,12 @@ static ULONG_PTR NTAPI Hook_NtCreateEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG
 static const char* const NtCreateResourceManager_types[] = {"PHANDLE", "ACCESS_MASK", "HANDLE", "PGUID", "POBJECT_ATTRIBUTES", "ULONG", "PUNICODE_STRING"};
 static const char* const NtCreateResourceManager_names[] = {"ResourceManagerHandle", "DesiredAccess", "TmHandle", "ResourceManagerGuid", "ObjectAttributes", "CreateOptions", "Description"};
 static const uint8_t NtCreateResourceManager_dirs[] = {1, 0, 0, 128, 128, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtCreateResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtCreateResourceManager, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateResourceManager(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtCreateResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6052,12 +6037,12 @@ static ULONG_PTR NTAPI Hook_NtCreateResourceManager(ULONG_PTR a0, ULONG_PTR a1, 
 static const char* const NtCreateTransaction_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES", "PVOID", "HANDLE", "ULONG", "ULONG", "ULONG", "PLARGE_INTEGER", "PUNICODE_STRING"};
 static const char* const NtCreateTransaction_names[] = {"TransactionHandle", "DesiredAccess", "ObjectAttributes", "Uow", "TmHandle", "CreateOptions", "IsolationLevel", "IsolationFlags", "Timeout", "Description"};
 static const uint8_t NtCreateTransaction_dirs[] = {1, 0, 128, 128, 128, 128, 128, 128, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9) {
+static ULONG_PTR (NTAPI *Real_NtCreateTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
   CallCtx ctx(SYS_NtCreateTransaction, (uintptr_t)_ReturnAddress(), args, 10);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+  ULONG_PTR r = Real_NtCreateTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6065,12 +6050,12 @@ static ULONG_PTR NTAPI Hook_NtCreateTransaction(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtCreateTransactionManager_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES", "PUNICODE_STRING", "ULONG", "ULONG"};
 static const char* const NtCreateTransactionManager_names[] = {"TmHandle", "DesiredAccess", "ObjectAttributes", "LogFileName", "CreateOptions", "CommitStrength"};
 static const uint8_t NtCreateTransactionManager_dirs[] = {1, 0, 128, 128, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtCreateTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtCreateTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtCreateTransactionManager, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateTransactionManager(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtCreateTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6078,12 +6063,12 @@ static ULONG_PTR NTAPI Hook_NtCreateTransactionManager(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtEnumerateTransactionObject_types[] = {"HANDLE", "KTMOBJECT_TYPE", "PKTMOBJECT_CURSOR", "ULONG", "PULONG"};
 static const char* const NtEnumerateTransactionObject_names[] = {"RootObjectHandle", "QueryType", "ObjectCursor", "ObjectCursorLength", "ReturnLength"};
 static const uint8_t NtEnumerateTransactionObject_dirs[] = {128, 0, 2, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtEnumerateTransactionObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtEnumerateTransactionObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtEnumerateTransactionObject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtEnumerateTransactionObject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtEnumerateTransactionObject, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtEnumerateTransactionObject(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtEnumerateTransactionObject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6091,12 +6076,12 @@ static ULONG_PTR NTAPI Hook_NtEnumerateTransactionObject(ULONG_PTR a0, ULONG_PTR
 static const char* const NtFreezeTransactions_types[] = {"PLARGE_INTEGER", "PLARGE_INTEGER"};
 static const char* const NtFreezeTransactions_names[] = {"FreezeTimeout", "ThawTimeout"};
 static const uint8_t NtFreezeTransactions_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtFreezeTransactions)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtFreezeTransactions(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtFreezeTransactions)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtFreezeTransactions(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtFreezeTransactions, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtFreezeTransactions(a0, a1);
+  ULONG_PTR r = Real_NtFreezeTransactions(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6104,12 +6089,12 @@ static ULONG_PTR NTAPI Hook_NtFreezeTransactions(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtGetNotificationResourceManager_types[] = {"HANDLE", "PTRANSACTION_NOTIFICATION", "ULONG", "PLARGE_INTEGER", "PULONG", "ULONG", "ULONG_PTR"};
 static const char* const NtGetNotificationResourceManager_names[] = {"ResourceManagerHandle", "TransactionNotification", "NotificationLength", "Timeout", "ReturnLength", "Asynchronous", "AsynchronousContext"};
 static const uint8_t NtGetNotificationResourceManager_dirs[] = {0, 1, 0, 0, 129, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtGetNotificationResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetNotificationResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtGetNotificationResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetNotificationResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtGetNotificationResourceManager, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetNotificationResourceManager(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtGetNotificationResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6117,12 +6102,12 @@ static ULONG_PTR NTAPI Hook_NtGetNotificationResourceManager(ULONG_PTR a0, ULONG
 static const char* const NtListTransactions_types[] = {nullptr};
 static const char* const NtListTransactions_names[] = {nullptr};
 static const uint8_t NtListTransactions_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtListTransactions)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtListTransactions() {
+static ULONG_PTR (NTAPI *Real_NtListTransactions)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtListTransactions(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtListTransactions, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtListTransactions();
+  ULONG_PTR r = Real_NtListTransactions(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6130,12 +6115,12 @@ static ULONG_PTR NTAPI Hook_NtListTransactions() {
 static const char* const NtMarshallTransaction_types[] = {nullptr};
 static const char* const NtMarshallTransaction_names[] = {nullptr};
 static const uint8_t NtMarshallTransaction_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtMarshallTransaction)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtMarshallTransaction() {
+static ULONG_PTR (NTAPI *Real_NtMarshallTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtMarshallTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtMarshallTransaction, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtMarshallTransaction();
+  ULONG_PTR r = Real_NtMarshallTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6143,12 +6128,12 @@ static ULONG_PTR NTAPI Hook_NtMarshallTransaction() {
 static const char* const NtOpenEnlistment_types[] = {"PHANDLE", "ACCESS_MASK", "HANDLE", "PVOID", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenEnlistment_names[] = {"EnlistmentHandle", "DesiredAccess", "RmHandle", "EnlistmentGuid", "ObjectAttributes"};
 static const uint8_t NtOpenEnlistment_dirs[] = {1, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtOpenEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtOpenEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtOpenEnlistment, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenEnlistment(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtOpenEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6156,12 +6141,12 @@ static ULONG_PTR NTAPI Hook_NtOpenEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_P
 static const char* const NtOpenResourceManager_types[] = {"PHANDLE", "ACCESS_MASK", "HANDLE", "PGUID", "POBJECT_ATTRIBUTES"};
 static const char* const NtOpenResourceManager_names[] = {"ResourceManagerHandle", "DesiredAccess", "TmHandle", "ResourceManagerGuid", "ObjectAttributes"};
 static const uint8_t NtOpenResourceManager_dirs[] = {1, 0, 0, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtOpenResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtOpenResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtOpenResourceManager, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenResourceManager(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtOpenResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6169,12 +6154,12 @@ static ULONG_PTR NTAPI Hook_NtOpenResourceManager(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtOpenTransaction_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES", "PVOID", "HANDLE"};
 static const char* const NtOpenTransaction_names[] = {"TransactionHandle", "DesiredAccess", "ObjectAttributes", "Uow", "TmHandle"};
 static const uint8_t NtOpenTransaction_dirs[] = {1, 0, 128, 0, 128};
-static ULONG_PTR (NTAPI *Real_NtOpenTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtOpenTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtOpenTransaction, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenTransaction(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtOpenTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6182,12 +6167,12 @@ static ULONG_PTR NTAPI Hook_NtOpenTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_
 static const char* const NtOpenTransactionManager_types[] = {"PHANDLE", "ACCESS_MASK", "POBJECT_ATTRIBUTES", "PUNICODE_STRING", "PVOID", "ULONG"};
 static const char* const NtOpenTransactionManager_names[] = {"TmHandle", "DesiredAccess", "ObjectAttributes", "LogFileName", "TmIdentity", "OpenOptions"};
 static const uint8_t NtOpenTransactionManager_dirs[] = {1, 0, 128, 128, 128, 128};
-static ULONG_PTR (NTAPI *Real_NtOpenTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtOpenTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtOpenTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtOpenTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtOpenTransactionManager, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtOpenTransactionManager(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtOpenTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6195,12 +6180,12 @@ static ULONG_PTR NTAPI Hook_NtOpenTransactionManager(ULONG_PTR a0, ULONG_PTR a1,
 static const char* const NtPrePrepareComplete_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtPrePrepareComplete_names[] = {"EnlistmentHandle", "TmVirtualClock"};
 static const uint8_t NtPrePrepareComplete_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtPrePrepareComplete)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPrePrepareComplete(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtPrePrepareComplete)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPrePrepareComplete(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtPrePrepareComplete, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrePrepareComplete(a0, a1);
+  ULONG_PTR r = Real_NtPrePrepareComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6208,12 +6193,12 @@ static ULONG_PTR NTAPI Hook_NtPrePrepareComplete(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtPrePrepareEnlistment_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtPrePrepareEnlistment_names[] = {"EnlistmentHandle", "TmVirtualClock"};
 static const uint8_t NtPrePrepareEnlistment_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtPrePrepareEnlistment)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPrePrepareEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtPrePrepareEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPrePrepareEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtPrePrepareEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrePrepareEnlistment(a0, a1);
+  ULONG_PTR r = Real_NtPrePrepareEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6221,12 +6206,12 @@ static ULONG_PTR NTAPI Hook_NtPrePrepareEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtPrepareComplete_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtPrepareComplete_names[] = {"EnlistmentHandle", "TmVirtualClock"};
 static const uint8_t NtPrepareComplete_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtPrepareComplete)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPrepareComplete(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtPrepareComplete)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPrepareComplete(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtPrepareComplete, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrepareComplete(a0, a1);
+  ULONG_PTR r = Real_NtPrepareComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6234,12 +6219,12 @@ static ULONG_PTR NTAPI Hook_NtPrepareComplete(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtPrepareEnlistment_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtPrepareEnlistment_names[] = {"EnlistmentHandle", "TmVirtualClock"};
 static const uint8_t NtPrepareEnlistment_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtPrepareEnlistment)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPrepareEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtPrepareEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPrepareEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtPrepareEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPrepareEnlistment(a0, a1);
+  ULONG_PTR r = Real_NtPrepareEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6247,12 +6232,12 @@ static ULONG_PTR NTAPI Hook_NtPrepareEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtPropagationComplete_types[] = {"HANDLE", "ULONG", "ULONG", "PVOID"};
 static const char* const NtPropagationComplete_names[] = {"ResourceManagerHandle", "RequestCookie", "BufferLength", "Buffer"};
 static const uint8_t NtPropagationComplete_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtPropagationComplete)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPropagationComplete(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtPropagationComplete)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPropagationComplete(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtPropagationComplete, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPropagationComplete(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtPropagationComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6260,12 +6245,12 @@ static ULONG_PTR NTAPI Hook_NtPropagationComplete(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtPropagationFailed_types[] = {"HANDLE", "ULONG", "NTSTATUS"};
 static const char* const NtPropagationFailed_names[] = {"ResourceManagerHandle", "RequestCookie", "PropStatus"};
 static const uint8_t NtPropagationFailed_dirs[] = {0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtPropagationFailed)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtPropagationFailed(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtPropagationFailed)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPropagationFailed(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtPropagationFailed, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPropagationFailed(a0, a1, a2);
+  ULONG_PTR r = Real_NtPropagationFailed(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6273,12 +6258,12 @@ static ULONG_PTR NTAPI Hook_NtPropagationFailed(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtPullTransaction_types[] = {nullptr};
 static const char* const NtPullTransaction_names[] = {nullptr};
 static const uint8_t NtPullTransaction_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtPullTransaction)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtPullTransaction() {
+static ULONG_PTR (NTAPI *Real_NtPullTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtPullTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtPullTransaction, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtPullTransaction();
+  ULONG_PTR r = Real_NtPullTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6286,12 +6271,12 @@ static ULONG_PTR NTAPI Hook_NtPullTransaction() {
 static const char* const NtQueryInformationEnlistment_types[] = {"HANDLE", "ENLISTMENT_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationEnlistment_names[] = {"EnlistmentHandle", "EnlistmentInformationClass", "EnlistmentInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationEnlistment_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationEnlistment, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationEnlistment(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6299,12 +6284,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationEnlistment(ULONG_PTR a0, ULONG_PTR
 static const char* const NtQueryInformationResourceManager_types[] = {"HANDLE", "RESOURCEMANAGER_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationResourceManager_names[] = {"ResourceManagerHandle", "ResourceManagerInformationClass", "ResourceManagerInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationResourceManager_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationResourceManager, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationResourceManager(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6312,12 +6297,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationResourceManager(ULONG_PTR a0, ULON
 static const char* const NtQueryInformationTransaction_types[] = {"HANDLE", "TRANSACTION_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationTransaction_names[] = {"TransactionHandle", "TransactionInformationClass", "TransactionInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationTransaction_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationTransaction, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationTransaction(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6325,12 +6310,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationTransaction(ULONG_PTR a0, ULONG_PT
 static const char* const NtQueryInformationTransactionManager_types[] = {"HANDLE", "TRANSACTIONMANAGER_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtQueryInformationTransactionManager_names[] = {"TransactionManagerHandle", "TransactionManagerInformationClass", "TransactionManagerInformation", "Length", "ReturnLength"};
 static const uint8_t NtQueryInformationTransactionManager_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtQueryInformationTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryInformationTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryInformationTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryInformationTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryInformationTransactionManager, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryInformationTransactionManager(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryInformationTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6338,12 +6323,12 @@ static ULONG_PTR NTAPI Hook_NtQueryInformationTransactionManager(ULONG_PTR a0, U
 static const char* const NtReadOnlyEnlistment_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtReadOnlyEnlistment_names[] = {"EnlistmentHandle", "TmVirtualClock"};
 static const uint8_t NtReadOnlyEnlistment_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtReadOnlyEnlistment)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtReadOnlyEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtReadOnlyEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtReadOnlyEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtReadOnlyEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtReadOnlyEnlistment(a0, a1);
+  ULONG_PTR r = Real_NtReadOnlyEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6351,12 +6336,12 @@ static ULONG_PTR NTAPI Hook_NtReadOnlyEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtRecoverEnlistment_types[] = {"HANDLE", "PVOID"};
 static const char* const NtRecoverEnlistment_names[] = {"EnlistmentHandle", "EnlistmentKey"};
 static const uint8_t NtRecoverEnlistment_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtRecoverEnlistment)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRecoverEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRecoverEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRecoverEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRecoverEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRecoverEnlistment(a0, a1);
+  ULONG_PTR r = Real_NtRecoverEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6364,12 +6349,12 @@ static ULONG_PTR NTAPI Hook_NtRecoverEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtRecoverResourceManager_types[] = {"HANDLE"};
 static const char* const NtRecoverResourceManager_names[] = {"ResourceManagerHandle"};
 static const uint8_t NtRecoverResourceManager_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtRecoverResourceManager)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRecoverResourceManager(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtRecoverResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRecoverResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtRecoverResourceManager, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRecoverResourceManager(a0);
+  ULONG_PTR r = Real_NtRecoverResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6377,12 +6362,12 @@ static ULONG_PTR NTAPI Hook_NtRecoverResourceManager(ULONG_PTR a0) {
 static const char* const NtRecoverTransactionManager_types[] = {"HANDLE"};
 static const char* const NtRecoverTransactionManager_names[] = {"TransactionManagerHandle"};
 static const uint8_t NtRecoverTransactionManager_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtRecoverTransactionManager)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRecoverTransactionManager(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtRecoverTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRecoverTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtRecoverTransactionManager, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRecoverTransactionManager(a0);
+  ULONG_PTR r = Real_NtRecoverTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6390,12 +6375,12 @@ static ULONG_PTR NTAPI Hook_NtRecoverTransactionManager(ULONG_PTR a0) {
 static const char* const NtRegisterProtocolAddressInformation_types[] = {"HANDLE", "PGUID", "ULONG", "PVOID", "ULONG"};
 static const char* const NtRegisterProtocolAddressInformation_names[] = {"ResourceManager", "ProtocolId", "ProtocolInformationSize", "ProtocolInformation", "CreateOptions"};
 static const uint8_t NtRegisterProtocolAddressInformation_dirs[] = {0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtRegisterProtocolAddressInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRegisterProtocolAddressInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtRegisterProtocolAddressInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRegisterProtocolAddressInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtRegisterProtocolAddressInformation, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRegisterProtocolAddressInformation(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtRegisterProtocolAddressInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6403,12 +6388,12 @@ static ULONG_PTR NTAPI Hook_NtRegisterProtocolAddressInformation(ULONG_PTR a0, U
 static const char* const NtRenameTransactionManager_types[] = {"PUNICODE_STRING", "PGUID"};
 static const char* const NtRenameTransactionManager_names[] = {"LogFileName", "ExistingTransactionManagerGuid"};
 static const uint8_t NtRenameTransactionManager_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtRenameTransactionManager)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRenameTransactionManager(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRenameTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRenameTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRenameTransactionManager, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRenameTransactionManager(a0, a1);
+  ULONG_PTR r = Real_NtRenameTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6416,12 +6401,12 @@ static ULONG_PTR NTAPI Hook_NtRenameTransactionManager(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtRollbackComplete_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtRollbackComplete_names[] = {"EnlistmentHandle", "TmVirtualClock"};
 static const uint8_t NtRollbackComplete_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtRollbackComplete)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRollbackComplete(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRollbackComplete)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRollbackComplete(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollbackComplete, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollbackComplete(a0, a1);
+  ULONG_PTR r = Real_NtRollbackComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6429,12 +6414,12 @@ static ULONG_PTR NTAPI Hook_NtRollbackComplete(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtRollbackEnlistment_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtRollbackEnlistment_names[] = {"EnlistmentHandle", "TmVirtualClock"};
 static const uint8_t NtRollbackEnlistment_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtRollbackEnlistment)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRollbackEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRollbackEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRollbackEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollbackEnlistment, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollbackEnlistment(a0, a1);
+  ULONG_PTR r = Real_NtRollbackEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6442,12 +6427,12 @@ static ULONG_PTR NTAPI Hook_NtRollbackEnlistment(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtRollbackSavepointTransaction_types[] = {"HANDLE", "ULONG"};
 static const char* const NtRollbackSavepointTransaction_names[] = {"TransactionHandle", "SavePointId"};
 static const uint8_t NtRollbackSavepointTransaction_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtRollbackSavepointTransaction)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRollbackSavepointTransaction(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRollbackSavepointTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRollbackSavepointTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollbackSavepointTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollbackSavepointTransaction(a0, a1);
+  ULONG_PTR r = Real_NtRollbackSavepointTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6455,12 +6440,12 @@ static ULONG_PTR NTAPI Hook_NtRollbackSavepointTransaction(ULONG_PTR a0, ULONG_P
 static const char* const NtRollbackTransaction_types[] = {"HANDLE", "BOOLEAN"};
 static const char* const NtRollbackTransaction_names[] = {"TransactionHandle", "Wait"};
 static const uint8_t NtRollbackTransaction_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtRollbackTransaction)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRollbackTransaction(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRollbackTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRollbackTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollbackTransaction, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollbackTransaction(a0, a1);
+  ULONG_PTR r = Real_NtRollbackTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6468,12 +6453,12 @@ static ULONG_PTR NTAPI Hook_NtRollbackTransaction(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtRollforwardTransactionManager_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtRollforwardTransactionManager_names[] = {"TransactionManagerHandle", "TmVirtualClock"};
 static const uint8_t NtRollforwardTransactionManager_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtRollforwardTransactionManager)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtRollforwardTransactionManager(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtRollforwardTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtRollforwardTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtRollforwardTransactionManager, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtRollforwardTransactionManager(a0, a1);
+  ULONG_PTR r = Real_NtRollforwardTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6481,12 +6466,12 @@ static ULONG_PTR NTAPI Hook_NtRollforwardTransactionManager(ULONG_PTR a0, ULONG_
 static const char* const NtSavepointComplete_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtSavepointComplete_names[] = {"TransactionHandle", "TmVirtualClock"};
 static const uint8_t NtSavepointComplete_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtSavepointComplete)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSavepointComplete(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSavepointComplete)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSavepointComplete(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSavepointComplete, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSavepointComplete(a0, a1);
+  ULONG_PTR r = Real_NtSavepointComplete(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6494,12 +6479,12 @@ static ULONG_PTR NTAPI Hook_NtSavepointComplete(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtSavepointTransaction_types[] = {"HANDLE", "BOOLEAN", "PULONG"};
 static const char* const NtSavepointTransaction_names[] = {"TransactionHandle", "Flag", "SavePointId"};
 static const uint8_t NtSavepointTransaction_dirs[] = {0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtSavepointTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSavepointTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtSavepointTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSavepointTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtSavepointTransaction, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSavepointTransaction(a0, a1, a2);
+  ULONG_PTR r = Real_NtSavepointTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6507,12 +6492,12 @@ static ULONG_PTR NTAPI Hook_NtSavepointTransaction(ULONG_PTR a0, ULONG_PTR a1, U
 static const char* const NtSetInformationEnlistment_types[] = {"HANDLE", "ENLISTMENT_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationEnlistment_names[] = {"EnlistmentHandle", "EnlistmentInformationClass", "EnlistmentInformation", "Length"};
 static const uint8_t NtSetInformationEnlistment_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationEnlistment)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationEnlistment(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationEnlistment, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationEnlistment(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationEnlistment(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6520,12 +6505,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationEnlistment(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtSetInformationResourceManager_types[] = {"HANDLE", "RESOURCEMANAGER_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationResourceManager_names[] = {"ResourceManagerHandle", "ResourceManagerInformationClass", "ResourceManagerInformation", "Length"};
 static const uint8_t NtSetInformationResourceManager_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationResourceManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationResourceManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationResourceManager, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationResourceManager(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationResourceManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6533,12 +6518,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationResourceManager(ULONG_PTR a0, ULONG_
 static const char* const NtSetInformationTransaction_types[] = {"HANDLE", "TRANSACTION_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationTransaction_names[] = {"TransactionHandle", "TransactionInformationClass", "TransactionInformation", "Length"};
 static const uint8_t NtSetInformationTransaction_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationTransaction)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationTransaction(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationTransaction, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationTransaction(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationTransaction(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6546,12 +6531,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationTransaction(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtSetInformationTransactionManager_types[] = {"HANDLE", "TRANSACTIONMANAGER_INFORMATION_CLASS", "PVOID", "ULONG"};
 static const char* const NtSetInformationTransactionManager_names[] = {"TransactionManagerHandle", "TransactionManagerInformationClass", "TransactionManagerInformation", "Length"};
 static const uint8_t NtSetInformationTransactionManager_dirs[] = {0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtSetInformationTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetInformationTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSetInformationTransactionManager)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetInformationTransactionManager(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSetInformationTransactionManager, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetInformationTransactionManager(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSetInformationTransactionManager(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6559,12 +6544,12 @@ static ULONG_PTR NTAPI Hook_NtSetInformationTransactionManager(ULONG_PTR a0, ULO
 static const char* const NtSinglePhaseReject_types[] = {"HANDLE", "PLARGE_INTEGER"};
 static const char* const NtSinglePhaseReject_names[] = {"EnlistmentHandle", "TmVirtualClock"};
 static const uint8_t NtSinglePhaseReject_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtSinglePhaseReject)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSinglePhaseReject(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtSinglePhaseReject)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSinglePhaseReject(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtSinglePhaseReject, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSinglePhaseReject(a0, a1);
+  ULONG_PTR r = Real_NtSinglePhaseReject(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6572,12 +6557,12 @@ static ULONG_PTR NTAPI Hook_NtSinglePhaseReject(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtStartTm_types[] = {nullptr};
 static const char* const NtStartTm_names[] = {nullptr};
 static const uint8_t NtStartTm_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtStartTm)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtStartTm() {
+static ULONG_PTR (NTAPI *Real_NtStartTm)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtStartTm(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtStartTm, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtStartTm();
+  ULONG_PTR r = Real_NtStartTm(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6585,12 +6570,12 @@ static ULONG_PTR NTAPI Hook_NtStartTm() {
 static const char* const NtThawTransactions_types[] = {nullptr};
 static const char* const NtThawTransactions_names[] = {nullptr};
 static const uint8_t NtThawTransactions_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtThawTransactions)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtThawTransactions() {
+static ULONG_PTR (NTAPI *Real_NtThawTransactions)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtThawTransactions(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtThawTransactions, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtThawTransactions();
+  ULONG_PTR r = Real_NtThawTransactions(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6598,12 +6583,12 @@ static ULONG_PTR NTAPI Hook_NtThawTransactions() {
 static const char* const NtCreateWnfStateName_types[] = {"PCWNF_STATE_NAME", "ULONG", "ULONG", "BOOLEAN", "PVOID", "ULONG", "PSECURITY_DESCRIPTOR"};
 static const char* const NtCreateWnfStateName_names[] = {"StateName", "Lifetime", "DataScope", "PersistData", "TypeId", "MaximumStateSize", "SecurityDescriptor"};
 static const uint8_t NtCreateWnfStateName_dirs[] = {1, 0, 0, 0, 128, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtCreateWnfStateName)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtCreateWnfStateName(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtCreateWnfStateName)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtCreateWnfStateName(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtCreateWnfStateName, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtCreateWnfStateName(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtCreateWnfStateName(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6611,12 +6596,12 @@ static ULONG_PTR NTAPI Hook_NtCreateWnfStateName(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtDeleteWnfStateData_types[] = {"PCWNF_STATE_NAME", "PVOID"};
 static const char* const NtDeleteWnfStateData_names[] = {"StateName", "ExplicitScope"};
 static const uint8_t NtDeleteWnfStateData_dirs[] = {0, 128};
-static ULONG_PTR (NTAPI *Real_NtDeleteWnfStateData)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeleteWnfStateData(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtDeleteWnfStateData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeleteWnfStateData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtDeleteWnfStateData, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteWnfStateData(a0, a1);
+  ULONG_PTR r = Real_NtDeleteWnfStateData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6624,12 +6609,12 @@ static ULONG_PTR NTAPI Hook_NtDeleteWnfStateData(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtDeleteWnfStateName_types[] = {"PCWNF_STATE_NAME"};
 static const char* const NtDeleteWnfStateName_names[] = {"StateName"};
 static const uint8_t NtDeleteWnfStateName_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtDeleteWnfStateName)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtDeleteWnfStateName(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtDeleteWnfStateName)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtDeleteWnfStateName(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtDeleteWnfStateName, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtDeleteWnfStateName(a0);
+  ULONG_PTR r = Real_NtDeleteWnfStateName(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6637,12 +6622,12 @@ static ULONG_PTR NTAPI Hook_NtDeleteWnfStateName(ULONG_PTR a0) {
 static const char* const NtGetCompleteWnfStateSubscription_types[] = {"PWNF_STATE_NAME", "PULONG", "ULONG", "ULONG", "PVOID", "ULONG"};
 static const char* const NtGetCompleteWnfStateSubscription_names[] = {"OldDescriptorStateName", "OldSubscriptionId", "OldDescriptorEventMask", "OldDescriptorStatus", "NewDeliveryDescriptor", "DescriptorSize"};
 static const uint8_t NtGetCompleteWnfStateSubscription_dirs[] = {128, 128, 128, 128, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtGetCompleteWnfStateSubscription)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtGetCompleteWnfStateSubscription(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtGetCompleteWnfStateSubscription)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtGetCompleteWnfStateSubscription(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtGetCompleteWnfStateSubscription, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtGetCompleteWnfStateSubscription(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtGetCompleteWnfStateSubscription(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6650,12 +6635,12 @@ static ULONG_PTR NTAPI Hook_NtGetCompleteWnfStateSubscription(ULONG_PTR a0, ULON
 static const char* const NtQueryWnfStateData_types[] = {"PCWNF_STATE_NAME", "PVOID", "const PVOID", "PULONG", "PVOID", "PULONG"};
 static const char* const NtQueryWnfStateData_names[] = {"StateName", "TypeId", "ExplicitScope", "ChangeStamp", "Buffer", "BufferSize"};
 static const uint8_t NtQueryWnfStateData_dirs[] = {0, 128, 128, 1, 1, 2};
-static ULONG_PTR (NTAPI *Real_NtQueryWnfStateData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryWnfStateData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5) {
+static ULONG_PTR (NTAPI *Real_NtQueryWnfStateData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryWnfStateData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5};
   CallCtx ctx(SYS_NtQueryWnfStateData, (uintptr_t)_ReturnAddress(), args, 6);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryWnfStateData(a0, a1, a2, a3, a4, a5);
+  ULONG_PTR r = Real_NtQueryWnfStateData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6663,12 +6648,12 @@ static ULONG_PTR NTAPI Hook_NtQueryWnfStateData(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtQueryWnfStateNameInformation_types[] = {"PCWNF_STATE_NAME", "ULONG", "PVOID", "PVOID", "ULONG"};
 static const char* const NtQueryWnfStateNameInformation_names[] = {"StateName", "NameInfoClass", "ExplicitScope", "InfoBuffer", "InfoBufferSize"};
 static const uint8_t NtQueryWnfStateNameInformation_dirs[] = {0, 0, 128, 1, 0};
-static ULONG_PTR (NTAPI *Real_NtQueryWnfStateNameInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtQueryWnfStateNameInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtQueryWnfStateNameInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtQueryWnfStateNameInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtQueryWnfStateNameInformation, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtQueryWnfStateNameInformation(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtQueryWnfStateNameInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6676,12 +6661,12 @@ static ULONG_PTR NTAPI Hook_NtQueryWnfStateNameInformation(ULONG_PTR a0, ULONG_P
 static const char* const NtSetWnfProcessNotificationEvent_types[] = {"HANDLE"};
 static const char* const NtSetWnfProcessNotificationEvent_names[] = {"NotificationEvent"};
 static const uint8_t NtSetWnfProcessNotificationEvent_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtSetWnfProcessNotificationEvent)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSetWnfProcessNotificationEvent(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtSetWnfProcessNotificationEvent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSetWnfProcessNotificationEvent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtSetWnfProcessNotificationEvent, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSetWnfProcessNotificationEvent(a0);
+  ULONG_PTR r = Real_NtSetWnfProcessNotificationEvent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6689,12 +6674,12 @@ static ULONG_PTR NTAPI Hook_NtSetWnfProcessNotificationEvent(ULONG_PTR a0) {
 static const char* const NtSubscribeWnfStateChange_types[] = {"PCWNF_STATE_NAME", "ULONG", "ULONG", "PULONG"};
 static const char* const NtSubscribeWnfStateChange_names[] = {"StateName", "ChangeStamp", "EventMask", "SubscriptionId"};
 static const uint8_t NtSubscribeWnfStateChange_dirs[] = {0, 128, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtSubscribeWnfStateChange)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtSubscribeWnfStateChange(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtSubscribeWnfStateChange)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtSubscribeWnfStateChange(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtSubscribeWnfStateChange, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtSubscribeWnfStateChange(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtSubscribeWnfStateChange(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6702,12 +6687,12 @@ static ULONG_PTR NTAPI Hook_NtSubscribeWnfStateChange(ULONG_PTR a0, ULONG_PTR a1
 static const char* const NtUnsubscribeWnfStateChange_types[] = {"PCWNF_STATE_NAME"};
 static const char* const NtUnsubscribeWnfStateChange_names[] = {"StateName"};
 static const uint8_t NtUnsubscribeWnfStateChange_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtUnsubscribeWnfStateChange)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUnsubscribeWnfStateChange(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtUnsubscribeWnfStateChange)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUnsubscribeWnfStateChange(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtUnsubscribeWnfStateChange, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUnsubscribeWnfStateChange(a0);
+  ULONG_PTR r = Real_NtUnsubscribeWnfStateChange(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6715,12 +6700,12 @@ static ULONG_PTR NTAPI Hook_NtUnsubscribeWnfStateChange(ULONG_PTR a0) {
 static const char* const NtUpdateWnfStateData_types[] = {"PCWNF_STATE_NAME", "PVOID", "ULONG", "PULONG", "PVOID", "ULONG", "ULONG"};
 static const char* const NtUpdateWnfStateData_names[] = {"StateName", "Buffer", "Length", "TypeId", "ExplicitScope", "MatchingChangeStamp", "CheckStamp"};
 static const uint8_t NtUpdateWnfStateData_dirs[] = {0, 0, 128, 128, 128, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtUpdateWnfStateData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtUpdateWnfStateData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtUpdateWnfStateData)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtUpdateWnfStateData(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtUpdateWnfStateData, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtUpdateWnfStateData(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtUpdateWnfStateData(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6728,12 +6713,12 @@ static ULONG_PTR NTAPI Hook_NtUpdateWnfStateData(ULONG_PTR a0, ULONG_PTR a1, ULO
 static const char* const NtWow64AllocateVirtualMemory64_types[] = {"HANDLE", "PPVOID", "ULONG_PTR", "ULONG_PTR", "PSIZE_T", "ULONG", "ULONG"};
 static const char* const NtWow64AllocateVirtualMemory64_names[] = {"ProcessHandle", "lpAddress", "ZeroBitsLow", "ZeroBitsHigh", "pSize", "flAllocationType", "flProtect"};
 static const uint8_t NtWow64AllocateVirtualMemory64_dirs[] = {0, 2, 0, 0, 2, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtWow64AllocateVirtualMemory64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64AllocateVirtualMemory64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtWow64AllocateVirtualMemory64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64AllocateVirtualMemory64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtWow64AllocateVirtualMemory64, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64AllocateVirtualMemory64(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtWow64AllocateVirtualMemory64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6741,12 +6726,12 @@ static ULONG_PTR NTAPI Hook_NtWow64AllocateVirtualMemory64(ULONG_PTR a0, ULONG_P
 static const char* const NtWow64CallFunction64_types[] = {"ULONG", "ULONG", "ULONG", "PVOID", "ULONG", "PVOID", "PULONG"};
 static const char* const NtWow64CallFunction64_names[] = {"FunctionIndex", "Flags", "InputBufferLength", "InputBuffer", "OutputBufferLength", "OutputBuffer", "ReturnStatus"};
 static const uint8_t NtWow64CallFunction64_dirs[] = {0, 0, 0, 0, 0, 1, 1};
-static ULONG_PTR (NTAPI *Real_NtWow64CallFunction64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CallFunction64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtWow64CallFunction64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CallFunction64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtWow64CallFunction64, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CallFunction64(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtWow64CallFunction64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6754,12 +6739,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CallFunction64(ULONG_PTR a0, ULONG_PTR a1, UL
 static const char* const NtWow64CsrAllocateCaptureBuffer_types[] = {"ULONG", "ULONG"};
 static const char* const NtWow64CsrAllocateCaptureBuffer_names[] = {"ArgumentCount", "BufferSize"};
 static const uint8_t NtWow64CsrAllocateCaptureBuffer_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtWow64CsrAllocateCaptureBuffer)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CsrAllocateCaptureBuffer(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtWow64CsrAllocateCaptureBuffer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CsrAllocateCaptureBuffer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtWow64CsrAllocateCaptureBuffer, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrAllocateCaptureBuffer(a0, a1);
+  ULONG_PTR r = Real_NtWow64CsrAllocateCaptureBuffer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6767,12 +6752,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrAllocateCaptureBuffer(ULONG_PTR a0, ULONG_
 static const char* const NtWow64CsrAllocateMessagePointer_types[] = {"PVOID", "ULONG", "PPVOID"};
 static const char* const NtWow64CsrAllocateMessagePointer_names[] = {"CaptureBuffer", "MessageLength", "CaptureData"};
 static const uint8_t NtWow64CsrAllocateMessagePointer_dirs[] = {0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtWow64CsrAllocateMessagePointer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CsrAllocateMessagePointer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2) {
+static ULONG_PTR (NTAPI *Real_NtWow64CsrAllocateMessagePointer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CsrAllocateMessagePointer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2};
   CallCtx ctx(SYS_NtWow64CsrAllocateMessagePointer, (uintptr_t)_ReturnAddress(), args, 3);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrAllocateMessagePointer(a0, a1, a2);
+  ULONG_PTR r = Real_NtWow64CsrAllocateMessagePointer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6780,12 +6765,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrAllocateMessagePointer(ULONG_PTR a0, ULONG
 static const char* const NtWow64CsrCaptureMessageBuffer_types[] = {"PVOID", "PVOID", "ULONG", "PPVOID"};
 static const char* const NtWow64CsrCaptureMessageBuffer_names[] = {"CaptureBuffer", "MessageBuffer", "MessageLength", "CaptureData"};
 static const uint8_t NtWow64CsrCaptureMessageBuffer_dirs[] = {0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtWow64CsrCaptureMessageBuffer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CsrCaptureMessageBuffer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtWow64CsrCaptureMessageBuffer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CsrCaptureMessageBuffer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtWow64CsrCaptureMessageBuffer, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrCaptureMessageBuffer(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtWow64CsrCaptureMessageBuffer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6793,12 +6778,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrCaptureMessageBuffer(ULONG_PTR a0, ULONG_P
 static const char* const NtWow64CsrCaptureMessageString_types[] = {"PVOID", "PSTR", "ULONG", "ULONG", "PVOID"};
 static const char* const NtWow64CsrCaptureMessageString_names[] = {"CaptureBuffer", "String", "StringLength", "MaximumLength", "CapturedString"};
 static const uint8_t NtWow64CsrCaptureMessageString_dirs[] = {0, 0, 0, 0, 1};
-static ULONG_PTR (NTAPI *Real_NtWow64CsrCaptureMessageString)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CsrCaptureMessageString(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtWow64CsrCaptureMessageString)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CsrCaptureMessageString(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWow64CsrCaptureMessageString, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrCaptureMessageString(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtWow64CsrCaptureMessageString(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6806,12 +6791,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrCaptureMessageString(ULONG_PTR a0, ULONG_P
 static const char* const NtWow64CsrClientCallServer_types[] = {"PVOID", "PVOID", "ULONG", "ULONG"};
 static const char* const NtWow64CsrClientCallServer_names[] = {"ApiMessage", "CaptureBuffer", "ApiNumber", "RequestLength"};
 static const uint8_t NtWow64CsrClientCallServer_dirs[] = {2, 130, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtWow64CsrClientCallServer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CsrClientCallServer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtWow64CsrClientCallServer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CsrClientCallServer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtWow64CsrClientCallServer, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrClientCallServer(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtWow64CsrClientCallServer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6819,12 +6804,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrClientCallServer(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtWow64CsrClientConnectToServer_types[] = {"PWSTR", "ULONG", "PVOID", "PULONG", "PBOOLEAN"};
 static const char* const NtWow64CsrClientConnectToServer_names[] = {"ObjectDirectory", "ServerId", "ConnectionInfo", "ConnectionInfoSize", "ServerToServerCall"};
 static const uint8_t NtWow64CsrClientConnectToServer_dirs[] = {0, 0, 0, 2, 1};
-static ULONG_PTR (NTAPI *Real_NtWow64CsrClientConnectToServer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CsrClientConnectToServer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtWow64CsrClientConnectToServer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CsrClientConnectToServer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWow64CsrClientConnectToServer, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrClientConnectToServer(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtWow64CsrClientConnectToServer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6832,12 +6817,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrClientConnectToServer(ULONG_PTR a0, ULONG_
 static const char* const NtWow64CsrFreeCaptureBuffer_types[] = {"PVOID"};
 static const char* const NtWow64CsrFreeCaptureBuffer_names[] = {"CaptureBuffer"};
 static const uint8_t NtWow64CsrFreeCaptureBuffer_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtWow64CsrFreeCaptureBuffer)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CsrFreeCaptureBuffer(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtWow64CsrFreeCaptureBuffer)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CsrFreeCaptureBuffer(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWow64CsrFreeCaptureBuffer, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrFreeCaptureBuffer(a0);
+  ULONG_PTR r = Real_NtWow64CsrFreeCaptureBuffer(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6845,12 +6830,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrFreeCaptureBuffer(ULONG_PTR a0) {
 static const char* const NtWow64CsrGetProcessId_types[] = {nullptr};
 static const char* const NtWow64CsrGetProcessId_names[] = {nullptr};
 static const uint8_t NtWow64CsrGetProcessId_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtWow64CsrGetProcessId)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CsrGetProcessId() {
+static ULONG_PTR (NTAPI *Real_NtWow64CsrGetProcessId)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CsrGetProcessId(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtWow64CsrGetProcessId, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrGetProcessId();
+  ULONG_PTR r = Real_NtWow64CsrGetProcessId(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6858,12 +6843,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrGetProcessId() {
 static const char* const NtWow64CsrIdentifyAlertableThread_types[] = {nullptr};
 static const char* const NtWow64CsrIdentifyAlertableThread_names[] = {nullptr};
 static const uint8_t NtWow64CsrIdentifyAlertableThread_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtWow64CsrIdentifyAlertableThread)() = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CsrIdentifyAlertableThread() {
+static ULONG_PTR (NTAPI *Real_NtWow64CsrIdentifyAlertableThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CsrIdentifyAlertableThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {0};
   CallCtx ctx(SYS_NtWow64CsrIdentifyAlertableThread, (uintptr_t)_ReturnAddress(), args, 0);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrIdentifyAlertableThread();
+  ULONG_PTR r = Real_NtWow64CsrIdentifyAlertableThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6871,12 +6856,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrIdentifyAlertableThread() {
 static const char* const NtWow64CsrVerifyRegion_types[] = {"PVOID", "ULONG"};
 static const char* const NtWow64CsrVerifyRegion_names[] = {"Buffer", "Length"};
 static const uint8_t NtWow64CsrVerifyRegion_dirs[] = {0, 0};
-static ULONG_PTR (NTAPI *Real_NtWow64CsrVerifyRegion)(ULONG_PTR a0, ULONG_PTR a1) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64CsrVerifyRegion(ULONG_PTR a0, ULONG_PTR a1) {
+static ULONG_PTR (NTAPI *Real_NtWow64CsrVerifyRegion)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64CsrVerifyRegion(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1};
   CallCtx ctx(SYS_NtWow64CsrVerifyRegion, (uintptr_t)_ReturnAddress(), args, 2);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64CsrVerifyRegion(a0, a1);
+  ULONG_PTR r = Real_NtWow64CsrVerifyRegion(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6884,12 +6869,12 @@ static ULONG_PTR NTAPI Hook_NtWow64CsrVerifyRegion(ULONG_PTR a0, ULONG_PTR a1) {
 static const char* const NtWow64DebuggerCall_types[] = {"ULONG", "ULONG", "ULONG", "ULONG", "ULONG"};
 static const char* const NtWow64DebuggerCall_names[] = {"Function", "Arg1", "Arg2", "Arg3", "arg4"};
 static const uint8_t NtWow64DebuggerCall_dirs[] = {0, 0, 0, 0, 0};
-static ULONG_PTR (NTAPI *Real_NtWow64DebuggerCall)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64DebuggerCall(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtWow64DebuggerCall)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64DebuggerCall(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWow64DebuggerCall, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64DebuggerCall(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtWow64DebuggerCall(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6897,12 +6882,12 @@ static ULONG_PTR NTAPI Hook_NtWow64DebuggerCall(ULONG_PTR a0, ULONG_PTR a1, ULON
 static const char* const NtWow64GetNativeSystemInformation_types[] = {"SYSTEM_INFORMATION_CLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtWow64GetNativeSystemInformation_names[] = {"SystemInformationClass", "SystemInformation", "Length", "ReturnLength"};
 static const uint8_t NtWow64GetNativeSystemInformation_dirs[] = {0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtWow64GetNativeSystemInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64GetNativeSystemInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3) {
+static ULONG_PTR (NTAPI *Real_NtWow64GetNativeSystemInformation)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64GetNativeSystemInformation(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3};
   CallCtx ctx(SYS_NtWow64GetNativeSystemInformation, (uintptr_t)_ReturnAddress(), args, 4);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64GetNativeSystemInformation(a0, a1, a2, a3);
+  ULONG_PTR r = Real_NtWow64GetNativeSystemInformation(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6910,12 +6895,12 @@ static ULONG_PTR NTAPI Hook_NtWow64GetNativeSystemInformation(ULONG_PTR a0, ULON
 static const char* const NtWow64InterlockedPopEntrySList_types[] = {"PVOID"};
 static const char* const NtWow64InterlockedPopEntrySList_names[] = {"ListHead"};
 static const uint8_t NtWow64InterlockedPopEntrySList_dirs[] = {2};
-static ULONG_PTR (NTAPI *Real_NtWow64InterlockedPopEntrySList)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64InterlockedPopEntrySList(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtWow64InterlockedPopEntrySList)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64InterlockedPopEntrySList(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWow64InterlockedPopEntrySList, (uintptr_t)_ReturnAddress(), args, 1);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64InterlockedPopEntrySList(a0);
+  ULONG_PTR r = Real_NtWow64InterlockedPopEntrySList(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6923,12 +6908,12 @@ static ULONG_PTR NTAPI Hook_NtWow64InterlockedPopEntrySList(ULONG_PTR a0) {
 static const char* const NtWow64IsProcessorFeaturePresent_types[] = {"ULONG"};
 static const char* const NtWow64IsProcessorFeaturePresent_names[] = {"ProcessorFeature"};
 static const uint8_t NtWow64IsProcessorFeaturePresent_dirs[] = {0};
-static ULONG_PTR (NTAPI *Real_NtWow64IsProcessorFeaturePresent)(ULONG_PTR a0) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64IsProcessorFeaturePresent(ULONG_PTR a0) {
+static ULONG_PTR (NTAPI *Real_NtWow64IsProcessorFeaturePresent)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64IsProcessorFeaturePresent(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0};
   CallCtx ctx(SYS_NtWow64IsProcessorFeaturePresent, (uintptr_t)_ReturnAddress(), args, 1);
   if (false) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64IsProcessorFeaturePresent(a0);
+  ULONG_PTR r = Real_NtWow64IsProcessorFeaturePresent(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6936,12 +6921,12 @@ static ULONG_PTR NTAPI Hook_NtWow64IsProcessorFeaturePresent(ULONG_PTR a0) {
 static const char* const NtWow64QueryInformationProcess64_types[] = {"HANDLE", "PROCESSINFOCLASS", "PVOID", "ULONG", "PULONG"};
 static const char* const NtWow64QueryInformationProcess64_names[] = {"ProcessHandle", "ProcessInformationClass", "ProcessInformation64", "Length", "ReturnLength"};
 static const uint8_t NtWow64QueryInformationProcess64_dirs[] = {0, 0, 1, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtWow64QueryInformationProcess64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64QueryInformationProcess64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4) {
+static ULONG_PTR (NTAPI *Real_NtWow64QueryInformationProcess64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64QueryInformationProcess64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4};
   CallCtx ctx(SYS_NtWow64QueryInformationProcess64, (uintptr_t)_ReturnAddress(), args, 5);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64QueryInformationProcess64(a0, a1, a2, a3, a4);
+  ULONG_PTR r = Real_NtWow64QueryInformationProcess64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6949,12 +6934,12 @@ static ULONG_PTR NTAPI Hook_NtWow64QueryInformationProcess64(ULONG_PTR a0, ULONG
 static const char* const NtWow64QueryVirtualMemory64_types[] = {"HANDLE", "PVOID", "PVOID", "MEMORY_INFORMATION_CLASS", "PVOID MemoryInformation, /* NB must be 64bit aligned", "ULONG", "ULONG", "PULONGLONG"};
 static const char* const NtWow64QueryVirtualMemory64_names[] = {"ProcessHandle", "BaseAddressLow", "BaseAddressHigh", "MemoryInformationClass", "*/", "LengthLow", "LengthHigh", "ReturnLength"};
 static const uint8_t NtWow64QueryVirtualMemory64_dirs[] = {0, 0, 0, 0, 1, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtWow64QueryVirtualMemory64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64QueryVirtualMemory64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7) {
+static ULONG_PTR (NTAPI *Real_NtWow64QueryVirtualMemory64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64QueryVirtualMemory64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7};
   CallCtx ctx(SYS_NtWow64QueryVirtualMemory64, (uintptr_t)_ReturnAddress(), args, 8);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64QueryVirtualMemory64(a0, a1, a2, a3, a4, a5, a6, a7);
+  ULONG_PTR r = Real_NtWow64QueryVirtualMemory64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6962,12 +6947,12 @@ static ULONG_PTR NTAPI Hook_NtWow64QueryVirtualMemory64(ULONG_PTR a0, ULONG_PTR 
 static const char* const NtWow64ReadVirtualMemory64_types[] = {"HANDLE", "PVOID", "PVOID", "PVOID", "ULONG", "ULONG", "PULONGLONG"};
 static const char* const NtWow64ReadVirtualMemory64_names[] = {"ProcessHandle", "AddressLow", "AddressHigh", "Buffer", "BufferSizeLow", "BufferSizeHigh", "BytesRead"};
 static const uint8_t NtWow64ReadVirtualMemory64_dirs[] = {0, 0, 0, 1, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtWow64ReadVirtualMemory64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64ReadVirtualMemory64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtWow64ReadVirtualMemory64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64ReadVirtualMemory64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtWow64ReadVirtualMemory64, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64ReadVirtualMemory64(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtWow64ReadVirtualMemory64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 
@@ -6975,12 +6960,12 @@ static ULONG_PTR NTAPI Hook_NtWow64ReadVirtualMemory64(ULONG_PTR a0, ULONG_PTR a
 static const char* const NtWow64WriteVirtualMemory64_types[] = {"HANDLE", "PVOID", "PVOID", "PVOID", "ULONG", "ULONG", "PULONGLONG"};
 static const char* const NtWow64WriteVirtualMemory64_names[] = {"ProcessHandle", "AddressLow", "AddressHigh", "Buffer", "BufferSizeLow", "BufferSizeHigh", "BytesWritten"};
 static const uint8_t NtWow64WriteVirtualMemory64_dirs[] = {0, 0, 0, 0, 0, 0, 129};
-static ULONG_PTR (NTAPI *Real_NtWow64WriteVirtualMemory64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) = nullptr;
-static ULONG_PTR NTAPI Hook_NtWow64WriteVirtualMemory64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6) {
+static ULONG_PTR (NTAPI *Real_NtWow64WriteVirtualMemory64)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtWow64WriteVirtualMemory64(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6};
   CallCtx ctx(SYS_NtWow64WriteVirtualMemory64, (uintptr_t)_ReturnAddress(), args, 7);
   if (ctx.PreFault()) return ctx.Ret();
-  ULONG_PTR r = Real_NtWow64WriteVirtualMemory64(a0, a1, a2, a3, a4, a5, a6);
+  ULONG_PTR r = Real_NtWow64WriteVirtualMemory64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
   return ctx.Exit(r);
 }
 

@@ -10,7 +10,7 @@
 //   WSF_SCHEDULE=<file>        fault schedule (see runtime.cpp)
 //   WSF_ONLY=NtA,NtB,...       hook only these
 //   WSF_EXCLUDE=NtA,NtB,...    hook everything except these
-//   WSF_FRAMES=<n>            caller frames captured per call
+//   WSF_FRAMES=<n>            stack-scrape depth for callsite (x32 qwords; 0 = _ReturnAddress only)
 
 #include "common.h"
 #include "generated/hooks.gen.h"
@@ -90,8 +90,7 @@ BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID) {
   switch (reason) {
     case DLL_PROCESS_ATTACH:
       DetourRestoreAfterWith();
-      wsf::RuntimeInit();
-      if (wsf::AttachHooks()) wsf::SetReady(true);
+      if (wsf::RuntimeInit() && wsf::AttachHooks()) wsf::SetReady(true);
       break;
     case DLL_PROCESS_DETACH:
       wsf::SetReady(false);

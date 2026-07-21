@@ -257,6 +257,110 @@ test("receiveMessageOnPort works as FIFO", () => {
   }
 }, 9999999);
 
+describe("receiveMessageOnPort interacts with the port's start/stop state like Node", () => {
+  // Node's contract: start() opens the port for delivery (messages are dispatched,
+  // even to zero listeners, and so discarded); removing the last 'message' listener
+  // stops the port again (messages buffer). receiveMessageOnPort only sees what is
+  // still buffered.
+  const tick = () => new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+
+  async function outcome(setup: (p: MessagePort) => void) {
+    const { port1, port2 } = new MessageChannel();
+    try {
+      setup(port2);
+      port1.postMessage("m");
+      await tick();
+      return receiveMessageOnPort(port2);
+    } finally {
+      port1.close();
+      port2.close();
+    }
+  }
+
+  test("start() with no listener discards", async () => {
+    expect(await outcome(p => p.start())).toBe(undefined);
+  });
+
+  test("never started buffers", async () => {
+    expect(await outcome(() => {})).toEqual({ message: "m" });
+  });
+
+  test("addEventListener then removeEventListener (last listener removed) buffers", async () => {
+    expect(
+      await outcome(p => {
+        const h = () => {};
+        p.addEventListener("message", h);
+        p.removeEventListener("message", h);
+      }),
+    ).toEqual({ message: "m" });
+  });
+
+  test("removing the last listener stops the port even after an explicit start()", async () => {
+    expect(
+      await outcome(p => {
+        p.start();
+        const h = () => {};
+        p.addEventListener("message", h);
+        p.removeEventListener("message", h);
+      }),
+    ).toEqual({ message: "m" });
+  });
+
+  test("start() after the last listener was removed resumes delivery (discards)", async () => {
+    expect(
+      await outcome(p => {
+        const h = () => {};
+        p.addEventListener("message", h);
+        p.removeEventListener("message", h);
+        p.start();
+      }),
+    ).toBe(undefined);
+  });
+
+  test("on() then off() buffers", async () => {
+    expect(
+      await outcome(p => {
+        const h = () => {};
+        p.on("message", h);
+        p.off("message", h);
+      }),
+    ).toEqual({ message: "m" });
+  });
+
+  test("on() then off() then start() discards", async () => {
+    expect(
+      await outcome(p => {
+        const h = () => {};
+        p.on("message", h);
+        p.off("message", h);
+        p.start();
+      }),
+    ).toBe(undefined);
+  });
+
+  test("onmessage = fn then onmessage = null buffers", async () => {
+    expect(
+      await outcome(p => {
+        p.onmessage = () => {};
+        p.onmessage = null;
+      }),
+    ).toEqual({ message: "m" });
+  });
+
+  test("a started-but-listenerless port does not grow its queue", async () => {
+    const { port1, port2 } = new MessageChannel();
+    try {
+      port2.start();
+      for (let i = 0; i < 200; i++) port1.postMessage("m" + i);
+      await tick();
+      expect(receiveMessageOnPort(port2)).toBe(undefined);
+    } finally {
+      port1.close();
+      port2.close();
+    }
+  });
+});
+
 test("you can override globalThis.postMessage", async () => {
   const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url));
   const message = await new Promise(resolve => {

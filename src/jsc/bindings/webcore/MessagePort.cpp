@@ -146,8 +146,11 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
 void MessagePort::start()
 {
-    if (m_started || !isEntangled())
+    if (!isEntangled())
         return;
+    // Node's port state: start() is the sole "receiving" gate. Removing the last
+    // 'message' listener flips m_started back to false (stop()); a later start()
+    // must resume, so this is not a one-shot latch.
     m_started = true;
 
     auto* context = scriptExecutionContext();
@@ -515,14 +518,10 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
     if (eventType == eventNames().messageEvent) {
-        start();
         m_hasMessageEventListener = true;
-        // start() no-ops after the first call; re-attach so a listener re-added after a
-        // pause re-schedules the drain for messages buffered meanwhile.
-        if (m_started && isEntangled()) {
-            if (auto* context = scriptExecutionContext())
-                m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
-        }
+        // start() re-attaches each time, so a listener added after a pause
+        // re-schedules the drain for messages buffered meanwhile.
+        start();
     } else if (eventType == eventNames().closeEvent) {
         m_hasCloseEventListener.store(true, std::memory_order_release);
         if (isEntangled()) {
@@ -538,8 +537,12 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
 bool MessagePort::removeEventListener(const AtomString& eventType, EventListener& listener, const EventListenerOptions& options)
 {
     auto result = EventTarget::removeEventListener(eventType, listener, options);
-    if (!hasEventListeners(eventNames().messageEvent))
+    if (eventType == eventNames().messageEvent && !hasEventListeners(eventNames().messageEvent)) {
         m_hasMessageEventListener = false;
+        // Node stops the port when the last 'message' listener goes away; further
+        // messages buffer for receiveMessageOnPort until start() (or a new listener).
+        m_started = false;
+    }
     if (!hasEventListeners(eventNames().closeEvent))
         m_hasCloseEventListener.store(false, std::memory_order_release);
     return result;

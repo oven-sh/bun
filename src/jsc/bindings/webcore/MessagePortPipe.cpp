@@ -117,9 +117,10 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         limit = std::max<size_t>(s.inbox.size(), 1000);
     }
 
-    // All 'message' listeners removed: the port is paused. Leave the inbox buffered
-    // and stop draining; a later addEventListener re-schedules this drain.
-    if (!port->hasMessageEventListener()) {
+    // Paused (removing the last 'message' listener cleared m_started): leave the
+    // inbox buffered. start() re-schedules. A started port with zero listeners
+    // still drains here — node dispatches to no one and the message is dropped.
+    if (!port->started()) {
         Locker locker { s.lock };
         s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
         return;
@@ -170,9 +171,9 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         if (globalObject->drainMicrotasks())
             break; // termination pending
 
-        // Listeners may have been removed mid-drain (port.off()); pause like the
-        // pre-loop check instead of dispatching the rest to zero listeners.
-        if (!port->hasMessageEventListener()) {
+        // The handler may have removed the last 'message' listener (which stops
+        // the port); pause like the pre-loop check and leave the rest buffered.
+        if (!port->started()) {
             Locker locker { s.lock };
             s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
             break;

@@ -515,6 +515,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Dispatch a readable event now for bytes already buffered on the socket.
+    /// No-op when nothing is buffered or under libuv/Windows.
+    pub fn ipc_recv_pending(&self) {
+        on_socket!(self.socket;
+            connected s => s.ipc_recv_pending(),
+            duplex _d => {},
+            pipe _p => {},
+            else => {},
+        )
+    }
+
     pub fn set_no_delay(&self, enabled: bool) -> bool {
         match self.socket {
             InternalSocket::Connected(s) => {

@@ -72,6 +72,14 @@ impl us_socket_t {
         c::us_socket_resume(self);
     }
 
+    /// Dispatch a readable event now for bytes already buffered on the socket,
+    /// instead of waiting for the next event-loop poll. No-op when nothing is
+    /// buffered (the read path uses `MSG_DONTWAIT`).
+    pub fn ipc_recv_pending(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_ipc_recv_pending({:p})", self);
+        c::us_socket_ipc_recv_pending(self);
+    }
+
     pub fn close(&mut self, code: CloseCode) {
         bun_core::scoped_log!(
             uws,
@@ -556,6 +564,7 @@ mod c {
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_ipc_recv_pending(s: &mut us_socket_t);
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,
             code: CloseCode,

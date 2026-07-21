@@ -146,6 +146,9 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 
 /* Loop related */
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
+/* Non-zero while a socket on_data dispatch still holds unconsumed bytes in the
+ * shared recv_buf; callers that would recv into recv_buf re-entrantly must defer. */
+int us_internal_recv_buf_is_busy(void);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);

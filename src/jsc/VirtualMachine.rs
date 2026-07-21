@@ -2851,6 +2851,10 @@ pub enum IPCInstanceUnion {
     Waiting {
         fd: bun_sys::Fd,
         mode: crate::ipc::Mode,
+        /// Set when `NODE_UNIQUE_ID` was inherited, i.e. this is a
+        /// `node:cluster` worker. Captured at env-parse time because the
+        /// cluster module deletes the variable during its own setup.
+        cluster_worker: bool,
     },
     Initialized(*mut IPCInstance),
 }
@@ -2947,6 +2951,8 @@ impl IPCInstance {
 unsafe extern "C" {
     safe fn Process__emitMessageEvent(global: &JSGlobalObject, value: JSValue, handle: JSValue);
     safe fn Process__emitDisconnectEvent(global: &JSGlobalObject);
+    #[cfg(not(windows))]
+    safe fn Process__hasMessageListeners(global: &JSGlobalObject) -> bool;
 }
 
 /// `IPC.SendQueue` owner dispatch for the child-side `IPCInstance`. Mirrors
@@ -3291,6 +3297,10 @@ impl VirtualMachine {
                 .map(|i| map.map.swap_remove_at(i).1)
                 .and_then(|v| crate::ipc::Mode::from_string(&v.value))
                 .unwrap_or(crate::ipc::Mode::Json);
+            // `node:cluster` workers inherit `NODE_UNIQUE_ID` (captured here; the
+            // module deletes it during setup). Match its truthy check so an empty
+            // value is not treated as a worker (see the drain skip below).
+            let cluster_worker = map.get(b"NODE_UNIQUE_ID").is_some_and(|v| !v.is_empty());
             // Accept only
             // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
             // Parsing as `u32` then `as i32` would silently wrap values in
@@ -3299,7 +3309,7 @@ impl VirtualMachine {
                 .ok()
                 .filter(|&n| n >= 0)
             {
-                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode),
+                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode, cluster_worker),
                 None => bun_core::warn!(
                     "Failed to parse IPC channel number '{}'",
                     bstr::BStr::new(&fd_s[..])
@@ -6458,17 +6468,33 @@ impl VirtualMachine {
     }
 
     /// Records the inherited IPC fd/mode in the waiting state until JS attaches a listener.
-    pub fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode) {
+    pub fn init_ipc_instance(
+        &mut self,
+        fd: bun_sys::Fd,
+        mode: crate::ipc::Mode,
+        cluster_worker: bool,
+    ) {
         bun_core::scoped_log!(IPC, "initIPCInstance {:?}", fd);
-        self.ipc = Some(IPCInstanceUnion::Waiting { fd, mode });
+        self.ipc = Some(IPCInstanceUnion::Waiting {
+            fd,
+            mode,
+            cluster_worker,
+        });
     }
 
     /// Returns the initialized IPC instance, lazily creating it from the waiting fd/mode.
     pub fn get_ipc_instance(&mut self) -> Option<*mut IPCInstance> {
-        let (fd, mode) = match self.ipc.as_ref()? {
+        let (fd, mode, cluster_worker) = match self.ipc.as_ref()? {
             IPCInstanceUnion::Initialized(inst) => return Some(*inst),
-            IPCInstanceUnion::Waiting { fd, mode } => (*fd, *mode),
+            IPCInstanceUnion::Waiting {
+                fd,
+                mode,
+                cluster_worker,
+            } => (*fd, *mode, *cluster_worker),
         };
+        // Only the non-Windows startup-drain path reads this.
+        #[cfg(windows)]
+        let _ = cluster_worker;
 
         bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
 
@@ -6592,6 +6618,15 @@ impl VirtualMachine {
         // SAFETY: `instance` is the live boxed IPCInstance.
         unsafe { (*instance).data.write_version_packet(self.global()) };
 
+        // Deliver a pre-startup message on the first microtask checkpoint (before
+        // `setImmediate`) like Node; deferred so `message` never fires inline from
+        // process.on/send. Cluster workers skip it (their handshake must not reorder).
+        #[cfg(not(windows))]
+        if !cluster_worker {
+            self.global()
+                .queue_microtask_callback(instance, ipc_drain_pending_microtask);
+        }
+
         Some(instance)
     }
 
@@ -6604,6 +6639,29 @@ impl VirtualMachine {
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         self.transpiler.resolver.bust_dir_cache(path)
     }
+}
+
+/// Microtask thunk for [`VirtualMachine::get_ipc_instance`]: drain IPC bytes the
+/// parent buffered before this child attached. `ctx` is the VM-owned
+/// `*mut IPCInstance` from `vm.ipc`; do not free it here.
+#[cfg(not(windows))]
+unsafe extern "C" fn ipc_drain_pending_microtask(ctx: *mut core::ffi::c_void) {
+    let instance = ctx.cast::<IPCInstance>();
+    // Only drain with a `message` listener present: otherwise the decoded message
+    // is dropped (emit no-ops), and on the lazy `process.send()` adopt path we
+    // would consume it before a listener attaches. Leave it for the poll instead.
+    // SAFETY: scheduled in the turn that created `instance`; the microtask runs
+    // before the loop can close the channel and free it.
+    if !Process__hasMessageListeners(JSGlobalObject::opaque_ref(unsafe {
+        (*instance).global_this
+    })) {
+        return;
+    }
+    let socket = match unsafe { &(*instance).data.socket } {
+        crate::ipc::SocketUnion::Open(s) => *s,
+        _ => return,
+    };
+    socket.ipc_recv_pending();
 }
 
 fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bool> {

@@ -4393,6 +4393,13 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     }
 }
 
+extern "C" bool Process__hasMessageListeners(Zig::GlobalObject* global)
+{
+    auto* process = global->processObject();
+    auto& vm = JSC::getVM(global);
+    return process->wrapped().hasEventListeners(vm.propertyNames->message);
+}
+
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
     auto* process = global->processObject();

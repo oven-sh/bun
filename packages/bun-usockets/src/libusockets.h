@@ -675,6 +675,9 @@ int us_socket_set_tos(us_socket_r s, int tos);
 int us_socket_get_tos(us_socket_r s);
 void us_socket_resume(us_socket_r s);
 void us_socket_pause(us_socket_r s);
+/* Dispatch a readable event now for bytes already buffered on the socket.
+ * No-op when nothing is buffered (MSG_DONTWAIT) or under libuv/Windows. */
+void us_socket_ipc_recv_pending(us_socket_r s);
 
 #ifdef __cplusplus
 }

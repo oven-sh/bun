@@ -470,6 +470,25 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
 #endif
 }
 
+/* Dispatch a readable event now for bytes already buffered, so an inherited IPC
+ * channel delivers a pre-startup message on the first tick. No-op when nothing
+ * is buffered (the read uses MSG_DONTWAIT). */
+void us_socket_ipc_recv_pending(struct us_socket_t *s) {
+#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+    (void) s;
+#else
+    if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+        return;
+    }
+    /* Skip if a socket on_data is still on the stack (it drained microtasks into
+     * us): recv'ing would clobber recv_buf. The bytes wait for the next poll. */
+    if (us_internal_recv_buf_is_busy()) {
+        return;
+    }
+    us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
+#endif
+}
+
 void *us_socket_get_native_handle(struct us_socket_t *s) {
     if (s->ssl) {
         return us_internal_ssl_get_native_handle(s);

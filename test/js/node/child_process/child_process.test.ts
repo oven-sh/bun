@@ -1,7 +1,7 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tempDir, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { promisify } from "node:util";
@@ -919,4 +919,87 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
     expect(r.error?.code).toBe("ENOTSUP");
   });
+});
+
+// https://github.com/oven-sh/bun/issues/32567
+// A message the parent sends before the forked child has attached its listener
+// sits in the IPC pipe buffer until the child adopts the channel. It must be
+// delivered on the child's startup turn (before the first setImmediate runs),
+// matching Node, rather than one event-loop iteration later.
+it.skipIf(isWindows)("fork: a message queued before the child is ready is delivered before setImmediate", async () => {
+  using dir = tempDir("fork-ipc-startup-order", {
+    "child.js": `
+      let immediateFired = false;
+      setImmediate(() => {
+        immediateFired = true;
+      });
+      process.on("message", message => {
+        process.send({ immediateFired, received: message });
+      });
+    `,
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
+  child.once("message", resolve);
+  child.once("error", reject);
+  child.once("exit", code => reject(new Error(`child exited before replying (code ${code})`)));
+
+  // Sent before the child has booted and attached its listener.
+  child.send({ hello: "world" });
+
+  try {
+    const message = await promise;
+    expect(message).toEqual({ immediateFired: false, received: { hello: "world" } });
+  } finally {
+    if (child.connected) child.disconnect();
+    child.kill();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32567
+// The IPC channel is adopted lazily from process.send() too, so a child that
+// sends first and attaches its 'message' listener after an async gap must not
+// have the parent's buffered message consumed (and dropped) before the listener
+// exists. The message must survive until the listener attaches, matching Node.
+it.skipIf(isWindows)("fork: a buffered message survives when the child sends before it listens", async () => {
+  using dir = tempDir("fork-ipc-send-first", {
+    "child.js": `
+      // Adopt the channel via send() before any 'message' listener exists.
+      process.send({ stage: "booting" });
+      setImmediate(() => {
+        process.on("message", message => {
+          process.send({ echo: message.seq });
+        });
+        process.send({ stage: "listening" });
+      });
+    `,
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<number[]>();
+  const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
+  const echoes: number[] = [];
+  child.on("message", (m: any) => {
+    if (m.stage === "listening") {
+      // Sentinel sent only after the child is listening, so it is never subject
+      // to the startup drain.
+      child.send({ seq: 2 });
+    } else if (m.echo !== undefined) {
+      echoes.push(m.echo);
+      if (m.echo === 2) resolve(echoes);
+    }
+  });
+  child.once("error", reject);
+  child.once("exit", code => reject(new Error(`child exited before replying (code ${code})`)));
+
+  // Queued before the child attaches its listener.
+  child.send({ seq: 1 });
+
+  try {
+    const received = await promise;
+    expect(received).toEqual([1, 2]);
+  } finally {
+    if (child.connected) child.disconnect();
+    child.kill();
+  }
 });

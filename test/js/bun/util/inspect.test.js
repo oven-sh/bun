@@ -849,6 +849,27 @@ describe("array with own indexed accessor", () => {
     expect(Bun.inspect(arr)).toBe("[ 1, [Getter/Setter], 3 ]");
   });
 
+  it("prints [Getter] for an accessor at index 0", () => {
+    const arr = [1, 2, 3];
+    let called = false;
+    Object.defineProperty(arr, 0, {
+      get() {
+        called = true;
+        throw new Error("boom");
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    expect(Bun.inspect(arr)).toBe("[\n  [Getter], 2, 3\n]");
+    expect(called).toBe(false);
+  });
+
+  it("prints [Setter] for a setter-only indexed accessor", () => {
+    const arr = [1, 2, 3];
+    Object.defineProperty(arr, 1, { set(v) {}, enumerable: true, configurable: true });
+    expect(Bun.inspect(arr)).toBe("[ 1, [Setter], 3 ]");
+  });
+
   it("console.log does not throw when an indexed getter throws", async () => {
     await using proc = Bun.spawn({
       cmd: [

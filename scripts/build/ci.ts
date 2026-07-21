@@ -346,14 +346,18 @@ function upload(paths: string[], cwd: string): void {
 
 /**
  * Base triplet (bun-os-arch[-musl][-baseline]). Variant suffix (-profile,
- * -asan) is added by the caller. Matches ci.mjs getTargetTriplet() and
- * cmake's bunTriplet — any drift breaks test-step downloads.
+ * -asan) is added by the caller. Matches ci.mjs getTargetTriplet() — any
+ * drift breaks test-step downloads.
  */
 export function computeBunTriplet(cfg: Config): string {
   let t = `bun-${cfg.os}-${cfg.arch}`;
   if (cfg.abi === "musl") t += "-musl";
   if (cfg.abi === "android") t += "-android";
-  if (cfg.baseline) t += "-baseline";
+  // linux/windows x64 (not android) always compile baseline as the only x64
+  // build, so the artifact keeps its plain name; -baseline release names
+  // are copies made by the release script.
+  const shipsBaselineX64 = cfg.x64 && cfg.abi !== "android" && (cfg.linux || cfg.windows);
+  if (cfg.baseline && !shipsBaselineX64) t += "-baseline";
   return t;
 }
 

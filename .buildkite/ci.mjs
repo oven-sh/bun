@@ -138,12 +138,11 @@ const buildPlatforms = [
   { os: "darwin", arch: "aarch64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "darwin", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  // x64 ships one baseline (Nehalem, SSE4.2) binary; SIMD is runtime-dispatched.
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
   // Android: cross-compiled from glibc amazonlinux via NDK sysroot. Host arch
   // matches target arch so only --abi/--target/--sysroot are cross.
   { os: "linux", arch: "aarch64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
@@ -163,15 +162,6 @@ const buildPlatforms = [
   // miscompile JSC on x86-64 at -O1+, so it is not the default — see the
   // ltoDefault comment in scripts/build/config.ts.
   { os: "windows", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
-  {
-    os: "windows",
-    arch: "x64",
-    baseline: true,
-    crossCompile: true,
-    distro: "amazonlinux",
-    release: "2023",
-    features: ["docker"],
-  },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
 ];
 
@@ -193,16 +183,12 @@ const testPlatforms = [
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
-  { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
 
@@ -567,7 +553,11 @@ function getBuildArgs(target, options, mode) {
     // FreeBSD cross-compiles C++ from a Linux host: os/arch must be explicit.
     args.push(`--os=${os}`, `--arch=${arch}`);
   }
-  if (baseline) args.push("--baseline=on");
+  // linux/windows x64 (glibc, musl, msvc) always compile baseline (Nehalem):
+  // SIMD is runtime-dispatched, the artifact keeps its plain name, and the
+  // -baseline release names are copies made by the release script.
+  const shipsBaselineX64 = arch === "x64" && !profile && abi !== "android" && (os === "linux" || os === "windows");
+  if (baseline || shipsBaselineX64) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
 
   // canary: options.canary can be number (revision count) or undefined
@@ -695,15 +685,16 @@ function getTargetTriplet(platform) {
 
 /**
  * Returns true if a platform needs QEMU-based baseline CPU verification.
- * x64 baseline builds verify no AVX/AVX2 instructions snuck in.
- * aarch64 builds verify no LSE/SVE instructions snuck in.
+ * linux/windows x64 builds (always Nehalem) verify no AVX/AVX2 snuck in.
+ * linux aarch64 builds verify no LSE/SVE instructions snuck in.
  * @param {Platform} platform
  * @returns {boolean}
  */
 function needsBaselineVerification(platform) {
-  const { os, arch, baseline } = platform;
-  if (os === "linux") return (arch === "x64" && baseline) || arch === "aarch64";
-  if (os === "windows") return arch === "x64" && baseline;
+  const { os, arch, abi, profile } = platform;
+  if (profile) return false;
+  if (os === "linux") return (arch === "x64" && abi !== "android") || arch === "aarch64";
+  if (os === "windows") return arch === "x64";
   return false;
 }
 
@@ -1554,7 +1545,7 @@ async function getPipeline(options = {}) {
         }
         // Windows builds are cross-compiled on Linux, but steps that end up in
         // this group still run on native Windows machines: the test shards
-        // (merged in below by group label) and x64-baseline's verify-baseline
+        // (merged in below by group label) and x64's verify-baseline
         // emulator phase. On [build images] runs they request the freshly
         // baked native Windows image, so wait for that bake too.
         if (target.os === "windows") {

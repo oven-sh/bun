@@ -860,9 +860,10 @@ describe("array with own indexed accessor", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("[Getter]");
-    expect(stdout).toContain("after");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "[ 1, [Getter], 3 ]\nafter\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

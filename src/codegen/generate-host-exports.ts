@@ -54,7 +54,7 @@ if (!outBase) {
   process.exit(1);
 }
 
-const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const scanRoots = [
   { dir: path.join(repoRoot, "src", "runtime"), crate: "bun_runtime" },
   { dir: path.join(repoRoot, "src", "jsc"), crate: "bun_jsc" },

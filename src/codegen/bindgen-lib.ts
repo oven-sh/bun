@@ -7,7 +7,7 @@
 import {
   dictionaryImpl,
   isFunc,
-  isType,
+  type isType,
   oneOfImpl,
   registerFunction,
   TypeImpl,
@@ -122,46 +122,46 @@ function builtinType<T>() {
 }
 
 /** Contains all primitive types provided by the bindings generator */
-export namespace t {
+export const t = {
   /**
    * Can only be used as an argument type.
    * Tells the code generator to pass `*JSC.JSGlobalObject` as a parameter
    */
-  export const globalObject = builtinType<never>()("globalObject");
+  globalObject: builtinType<never>()("globalObject"),
   /**
    * Can only be used as an argument type.
    * Tells the code generator to pass `*JSC.VirtualMachine` as a parameter
    */
-  export const zigVirtualMachine = builtinType<never>()("zigVirtualMachine");
+  zigVirtualMachine: builtinType<never>()("zigVirtualMachine"),
 
   /**
    * Provides the raw JSValue from the JavaScriptCore API. Avoid using this if
    * possible. This indicates the bindings generator is incapable of processing
    * your use case.
    */
-  export const any = builtinType<unknown>()("any");
+  any: builtinType<unknown>()("any"),
   /** Void function type */
-  export const undefined = builtinType<undefined>()("undefined");
+  undefined: builtinType<undefined>()("undefined"),
   /** Does not throw on parse. Equivalent to `!!value` */
-  export const boolean = builtinType<boolean>()("boolean");
+  boolean: builtinType<boolean>()("boolean"),
   /** Throws if the value is not a boolean. */
-  export const strictBoolean = builtinType<boolean>()("strictBoolean");
+  strictBoolean: builtinType<boolean>()("strictBoolean"),
 
   /**
    * Equivalent to IDL's `unrestricted double`, allowing NaN and Infinity.
    * To restrict to finite values, use `f64.finite`.
    */
-  export const f64 = builtinType<number>()("f64");
+  f64: builtinType<number>()("f64"),
 
-  export const u8 = builtinType<number>()("u8");
-  export const u16 = builtinType<number>()("u16");
-  export const u32 = builtinType<number>()("u32");
-  export const u64 = builtinType<number>()("u64");
-  export const i8 = builtinType<number>()("i8");
-  export const i16 = builtinType<number>()("i16");
-  export const i32 = builtinType<number>()("i32");
-  export const i64 = builtinType<number>()("i64");
-  export const usize = builtinType<number>()("usize");
+  u8: builtinType<number>()("u8"),
+  u16: builtinType<number>()("u16"),
+  u32: builtinType<number>()("u32"),
+  u64: builtinType<number>()("u64"),
+  i8: builtinType<number>()("i8"),
+  i16: builtinType<number>()("i16"),
+  i32: builtinType<number>()("i32"),
+  i64: builtinType<number>()("i64"),
+  usize: builtinType<number>()("usize"),
 
   /**
    * The DOMString type corresponds to strings.
@@ -171,7 +171,7 @@ export namespace t {
    *
    * @see https://webidl.spec.whatwg.org/#idl-DOMString
    */
-  export const DOMString = builtinType<string>()("DOMString");
+  DOMString: builtinType<string>()("DOMString"),
   /**
    * The {@link USVString} type corresponds to scalar value strings. Depending on the
    * context, these can be treated as sequences of code units or scalar values.
@@ -184,7 +184,7 @@ export namespace t {
    *
    * @see https://webidl.spec.whatwg.org/#idl-USVString
    */
-  export const USVString = builtinType<string>()("USVString");
+  USVString: builtinType<string>()("USVString"),
   /**
    * The ByteString type corresponds to byte sequences.
    *
@@ -198,7 +198,7 @@ export namespace t {
    *
    * https://webidl.spec.whatwg.org/#idl-ByteString
    */
-  export const ByteString = builtinType<string>()("ByteString");
+  ByteString: builtinType<string>()("ByteString"),
   /**
    * DOMString but encoded as `[]const u8`
    *
@@ -217,42 +217,42 @@ export namespace t {
    * }
    * ```
    */
-  export const UTF8String = builtinType<string>()("UTF8String");
+  UTF8String: builtinType<string>()("UTF8String"),
 
   /** An array or iterable type of T */
-  export function sequence<T>(itemType: Type<T>): Type<Iterable<T>, "sequence"> {
+  sequence<T>(itemType: Type<T>): Type<Iterable<T>, "sequence"> {
     return new TypeImpl("sequence", {
       element: itemType as TypeImpl,
       repr: "slice",
     });
-  }
+  },
 
   /** Object with arbitrary keys but a specific value type */
-  export function record<V>(valueType: Type<V>): Type<Record<string, V>, "record"> {
+  record<V>(valueType: Type<V>): Type<Record<string, V>, "record"> {
     return new TypeImpl("record", {
       value: valueType as TypeImpl,
       repr: "kv-slices",
     });
-  }
+  },
 
   /**
    * Reference a type by string name instead of by object reference.  This is
    * required in some siutations like {@link Request} which can take an existing
    * request object in as itself.
    */
-  export function ref<T>(name: string): Type<T> {
+  ref<T>(name: string): Type<T> {
     return new TypeImpl("ref", name);
-  }
+  },
 
   /**
    * Reference an external class type that is not defined with `bindgen`,
    * from either WebCore, JavaScriptCore, or Bun.
    */
-  export function externalClass<T>(name: string): Type<T> {
+  externalClass<T>(name: string): Type<T> {
     return new TypeImpl("ref", name);
-  }
+  },
 
-  export function oneOf<T extends Type<any>[]>(
+  oneOf<T extends Type<any>[]>(
     ...types: T
   ): Type<
     {
@@ -261,9 +261,9 @@ export namespace t {
     "oneOf"
   > {
     return oneOfImpl(types as unknown[] as TypeImpl[]);
-  }
+  },
 
-  export function dictionary<R extends Record<string, Type<any, AcceptedDictionaryTypeKind, true | null>>>(
+  dictionary<R extends Record<string, Type<any, AcceptedDictionaryTypeKind, true | null>>>(
     fields: R,
   ): Type<
     {
@@ -272,10 +272,10 @@ export namespace t {
     "dictionary"
   > {
     return dictionaryImpl(fields as Record<string, any>);
-  }
+  },
 
   /** Create an enum from a list of strings. */
-  export function stringEnum<T extends string[]>(
+  stringEnum<T extends string[]>(
     ...values: T
   ): Type<
     {
@@ -284,16 +284,17 @@ export namespace t {
     "stringEnum"
   > {
     return new TypeImpl("stringEnum", values.sort());
-  }
+  },
 
   /**
    * Equivalent to `stringEnum`, but using an enum sourced from the given
    * file. Use this to get an enum type that can have functions added.
    */
-  export function zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
+  zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
     return new TypeImpl("zigEnum", { file, impl });
-  }
-}
+  },
+};
+export type t = typeof t;
 
 interface FuncOptionsWithVariant extends FuncMetadata {
   /**

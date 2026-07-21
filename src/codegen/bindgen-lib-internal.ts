@@ -2,10 +2,11 @@
 // and checking on input data. The goal is to allow people not aware of
 // various footguns in JavaScript, C++, and the bindings generator to
 // always produce correct code, or bail with an error.
-import { expect } from "bun:test";
 import assert from "node:assert";
 import * as path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { FuncOptions, t } from "./bindgen-lib";
+import { hash, inspect, inspectCustom } from "./helpers";
 
 export const src = path.join(import.meta.dirname, "../");
 
@@ -72,9 +73,10 @@ interface TypeDataDefs {
 }
 type TypeData<K extends TypeKind> = K extends keyof TypeDataDefs ? TypeDataDefs[K] : any;
 
-export const enum NodeValidator {
-  validateInteger = "validateInteger",
-}
+export const NodeValidator = {
+  validateInteger: "validateInteger",
+} as const;
+export type NodeValidator = (typeof NodeValidator)[keyof typeof NodeValidator];
 
 interface Flags {
   nodeValidator?: NodeValidator;
@@ -152,9 +154,8 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         h += this.data.map(({ key, required, type }) => `${key}:${required}:${type.hash()}`).join(",");
         break;
     }
-    let hash = String(Bun.hash(h));
-    this.#hash = hash;
-    return hash;
+    this.#hash = hash(h);
+    return this.#hash;
   }
 
   /**
@@ -519,7 +520,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   [Symbol.toStringTag] = "Type";
-  [Bun.inspect.custom](depth, options, inspect) {
+  [inspectCustom](depth, options, inspect) {
     return (
       `${options.stylize("Type", "special")} ${
         this.lowersToNamedType() && this.nameDeduplicated
@@ -670,9 +671,7 @@ export function cAbiTypeForEnum(length: number): CAbiType {
   return ("u" + alignForward(length, 8)) as CAbiType;
 }
 
-export function inspect(value: any) {
-  return Bun.inspect(value, { colors: Bun.enableANSIColors });
-}
+export { inspect } from "./helpers";
 
 export function oneOfImpl(types: TypeImpl[]): TypeImpl {
   const out: TypeImpl[] = [];
@@ -803,8 +802,9 @@ export interface TypeDef {
 
 export function registerFunction(opts: FuncOptions) {
   const snapshot = snapshotCallerLocation();
+  assert(snapshot, "registerFunction must be called from a .bind.ts file");
   const filename = stackTraceFileName(snapshot);
-  expect(filename).toEndWith(".bind.ts");
+  assert(filename.endsWith(".bind.ts"), `expected .bind.ts caller, got ${filename}`);
   const zigFile = path.relative(src, filename.replace(/\.bind\.ts$/, ".zig"));
   let file = files.get(zigFile);
   if (!file) {
@@ -873,19 +873,34 @@ function validateVariant(variant: any) {
   return { minRequiredArgs };
 }
 
-function snapshotCallerLocation(): string {
+// Bun frames use plain host paths; Node ESM frames use percent-encoded
+// file:// URLs. Compare against both so checkouts at paths that
+// pathToFileURL encodes (spaces, '#') still match.
+const codegenDirForward = import.meta.dirname.replaceAll("\\", "/");
+const codegenDirUrl = pathToFileURL(import.meta.dirname).href;
+
+function snapshotCallerLocation(): string | undefined {
   const stack = new Error().stack!;
   const lines = stack.split("\n");
   let i = 1;
   for (; i < lines.length; i++) {
-    if (!lines[i].includes(import.meta.dir)) {
+    const l = lines[i].replaceAll("\\", "/");
+    if (!l.includes(codegenDirForward) && !l.includes(codegenDirUrl)) {
       return lines[i];
     }
   }
-  throw new Error("Couldn't find caller location in stack trace");
+  // No non-codegen frame: happens for the built-in `t.*` types created at
+  // bindgen-lib.ts load time under an async import() chain. Those types never
+  // lower to a named type so their ownerFile is not consulted.
+  return undefined;
 }
 
-function stackTraceFileName(line: string): string {
+function stackTraceFileName(line: string | undefined): string {
+  if (line === undefined) return "";
+  // Under Node the frame path is a file:// URL (`file:///C:/...` on Windows);
+  // anchor on the trailing :line:col so the drive-letter colon stays inside.
+  const urlMatch = /(file:\/\/\S+?):\d+:\d+\)?\s*$/.exec(line);
+  if (urlMatch) return fileURLToPath(urlMatch[1]).replaceAll("\\", "/");
   const match = /(?:at\s+|\()(.:?[^:\n(\)]*)[^(\n]*$/i.exec(line);
   assert(match, `Couldn't extract filename from stack trace line: ${line}`);
   return match[1].replaceAll("\\", "/");
@@ -1007,17 +1022,15 @@ export class Struct {
   }
 
   hash() {
-    return (this.#hash ??= String(
-      Bun.hash(
-        this.fields
-          .map(f => {
-            if (f.type instanceof Struct) {
-              return f.name + `:` + f.type.hash();
-            }
-            return f.name + `:` + f.type;
-          })
-          .join(","),
-      ),
+    return (this.#hash ??= hash(
+      this.fields
+        .map(f => {
+          if (f.type instanceof Struct) {
+            return f.name + `:` + f.type.hash();
+          }
+          return f.name + `:` + f.type;
+        })
+        .join(","),
     ));
   }
 

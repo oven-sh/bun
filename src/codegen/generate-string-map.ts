@@ -20,7 +20,8 @@
 //   bun src/codegen/generate-string-map.ts <input.ts> <out.rs>
 
 import path from "node:path";
-import { writeIfNotChanged } from "./helpers.ts";
+import { pathToFileURL } from "node:url";
+import { isMain, writeIfNotChanged } from "./helpers.ts";
 
 export interface StringMapSpec<V = unknown> {
   /** Rust ident for the lookup fn: emits `pub fn <name>(key: &[u8]) -> Option<$valueTy>`. */
@@ -283,12 +284,12 @@ export function generateStringMaps(
 }
 
 // ── CLI ─────────────────────────────────────────────────────────────────────
-if (import.meta.main) {
+if (isMain(import.meta)) {
   const [, , input, output] = process.argv;
   if (!input || !output) {
     throw new Error("usage: bun src/codegen/generate-string-map.ts <input.string-map.ts> <out.rs>");
   }
-  const mod = await import(path.resolve(input));
+  const mod = await import(pathToFileURL(path.resolve(input)).href);
   const specs = mod.default as StringMapSpec<unknown> | StringMapSpec<unknown>[];
   if (!specs) throw new Error(`${input}: missing default export`);
   writeIfNotChanged(output, generateStringMaps(specs, input));

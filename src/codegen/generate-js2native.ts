@@ -30,7 +30,7 @@ type NativeCallType = "rust" | "cpp" | "bind";
 const nativeCalls: NativeCall[] = [];
 const wrapperCalls: WrapperCall[] = [];
 
-const srcDir = path.join(import.meta.dir, "../");
+const srcDir = path.join(import.meta.dirname, "../");
 
 const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
   srcDir,
@@ -181,7 +181,7 @@ function symbol(call: Pick<NativeCall, "type" | "symbol" | "filename">) {
 function normalizeSymbolPathPrefix(input: string) {
   input = path.resolve(input);
 
-  const bunDir = path.resolve(path.join(import.meta.dir, "..", ".."));
+  const bunDir = path.resolve(path.join(import.meta.dirname, "..", ".."));
   if (input.startsWith(bunDir)) {
     input = input.slice(bunDir.length);
   }
@@ -300,7 +300,7 @@ export function getJS2NativeRust() {
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
   ]);
 
-  const srcRoot = path.resolve(import.meta.dir, "..");
+  const srcRoot = path.resolve(import.meta.dirname, "..");
   const snake = (s: string) =>
     s
       .replace(/([a-z0-9])([A-Z])/g, "$1_$2")

@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import {
-  CodeStyle,
+  type CodeStyle,
   dedent,
   headersForTypes,
   joinIndented,

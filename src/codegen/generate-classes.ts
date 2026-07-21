@@ -1,9 +1,10 @@
 // @ts-nocheck
 import { existsSync, readFileSync } from "fs";
+import { pathToFileURL } from "node:url";
 import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
-import { writeIfNotChanged } from "./helpers";
+import { inspect, writeIfNotChanged } from "./helpers";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -2017,7 +2018,7 @@ function rustSnakeIdent(name: string): string {
 // distinct `Source` structs) MUST set `rustPath` explicitly in their
 // `.classes.ts` definition; this resolver is name-based and can't infer those.
 const rustModuleResolver = (() => {
-  const runtimeRoot = path.resolve(import.meta.dir, "../runtime");
+  const runtimeRoot = path.resolve(import.meta.dirname, "../runtime");
   const fileToMod = new Map<string, string>(); // abs .rs path → crate::a::b
   const structToPath = new Map<string, string>(); // StructName → crate::a::b::StructName (shortest)
   // `(?:#[path = "…"]\s*)? (?:#[...]\s*)* pub mod NAME ;` — pub-only: a private
@@ -2785,11 +2786,11 @@ const classes: ClassDefinition[] = [];
   let errors = [];
   for (const file of files) {
     const filepath = path.resolve(file);
-    const result = require(filepath);
+    const result = await import(pathToFileURL(filepath).href);
     if (!(result?.default?.length ?? 0)) {
       errors.push(
         new TypeError(
-          `Missing classes in "${path.relative(process.cwd(), filepath)}". Expected \`export default [ define(...) ] satisfies Array<ClassDefinition>\` but got ${Bun.inspect(result).slice(0, 100) + "..."} `,
+          `Missing classes in "${path.relative(process.cwd(), filepath)}". Expected \`export default [ define(...) ] satisfies Array<ClassDefinition>\` but got ${inspect(result).slice(0, 100) + "..."} `,
         ),
       );
       continue;

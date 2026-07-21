@@ -119,7 +119,7 @@ export async function ensureMacosSdk(cfg: {
   osxSysroot: string | undefined;
   cacheDir: string;
   darwin: boolean;
-  bun: string;
+  jsRuntimeArgv: string[];
   host: { os: string };
 }): Promise<void> {
   if (!cfg.darwin || cfg.host.os === "darwin" || cfg.osxSysroot === undefined) return;
@@ -156,9 +156,11 @@ export async function ensureMacosSdk(cfg: {
   await mkdir(cfg.cacheDir, { recursive: true });
 
   try {
+    const [rt, ...rtArgs] = cfg.jsRuntimeArgv;
     const result = spawnSync(
-      cfg.bun,
+      rt,
       [
+        ...rtArgs,
         XMAC_PATH,
         "splat",
         "--accept-license",

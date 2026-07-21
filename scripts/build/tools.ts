@@ -108,29 +108,42 @@ interface Rejection {
   reason: string;
 }
 
+export interface PackageManager {
+  exe: string;
+  installArgs: string[];
+  lockfile: string;
+}
+
 /**
- * Find the bun executable for codegen (`bun install`, `bun build`, scripts
- * using Bun APIs). Must be the actual bun binary — NOT process.execPath,
- * since configure may run under node.
- *
- * Search order: ~/.bun/bin (curl-install location), then PATH, then
- * process.execPath only if it's actually bun. CI agents pin an old system
- * bun but codegen scripts need newer CLI flags, so the user install goes
- * first.
+ * Find a package manager for the codegen install steps. Prefer bun when
+ * available (reuses the checked-in bun.lock), otherwise npm.
+ * All codegen scripts run under `cfg.jsRuntime`, so bun is NOT required; this
+ * only affects which `install` command populates node_modules/.
  */
-export function findBun(os: OS): string {
+export function findPackageManager(os: OS): PackageManager {
   const exe = os === "windows" ? "bun.exe" : "bun";
   const userBun = join(homedir(), ".bun", "bin", exe);
-  if (isExecutable(userBun)) return userBun;
+  const bunPath = isExecutable(userBun)
+    ? userBun
+    : process.versions.bun !== undefined
+      ? process.execPath
+      : findTool({ names: ["bun"], required: false })?.path;
+  if (bunPath) {
+    return { exe: bunPath, installArgs: ["install", "--frozen-lockfile"], lockfile: "bun.lock" };
+  }
 
-  // Running under bun at a non-standard path — use that.
-  if (process.versions.bun !== undefined) return process.execPath;
-
-  return findTool({
-    names: ["bun"],
+  // Only bun.lock is checked in; npm resolves from package.json. Disable
+  // lockfile writes so the checkout stays clean.
+  const npm = findTool({
+    names: ["npm"],
     required: true,
-    hint: "Codegen requires bun (for `bun install`, `bun build`, and scripts using Bun APIs). Install: curl -fsSL https://bun.sh/install | bash",
-  })!.path;
+    hint: "No package manager found (tried bun, npm). Install Node.js, which bundles npm.",
+  })!;
+  return {
+    exe: npm.path,
+    installArgs: ["install", "--no-save", "--no-package-lock", "--include=dev"],
+    lockfile: "package-lock.json",
+  };
 }
 
 /**
@@ -210,16 +223,22 @@ export function clangTargetArch(clang: string): Arch | undefined {
  * Returns the absolute path or undefined (if not required).
  */
 export function findTool(spec: ToolSpec): FoundTool | undefined {
-  const exeSuffix = process.platform === "win32" ? ".exe" : "";
+  // Windows ships shims like npm.cmd with no .exe; probe PATHEXT, not just .exe.
+  const exeSuffixes =
+    process.platform === "win32"
+      ? (process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";").map(s => s.toLowerCase())
+      : [""];
   const searchPaths = [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
   const versionArg = spec.versionArg ?? "--version";
   const rejections: Rejection[] = [];
 
   for (const name of spec.names) {
-    const candidate = name.endsWith(exeSuffix) ? name : name + exeSuffix;
+    const candidates = exeSuffixes.some(s => s && name.toLowerCase().endsWith(s))
+      ? [name]
+      : exeSuffixes.map(s => name + s);
     for (const dir of searchPaths) {
-      const full = join(dir, candidate);
-      if (!isExecutable(full)) continue;
+      const full = candidates.map(c => join(dir, c)).find(isExecutable);
+      if (full === undefined) continue;
 
       if (spec.version !== undefined) {
         const v = getToolVersion(full, versionArg);

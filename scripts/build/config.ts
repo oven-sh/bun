@@ -240,15 +240,20 @@ export interface Config {
   strip: string;
   /** Set when the target is darwin. Undefined on non-darwin targets. */
   dsymutil: string | undefined;
-  /** Self-host bun for codegen (bun install, bun build). */
-  bun: string;
   /**
-   * Shell-ready command prefix for running .ts subprocesses (stream.ts,
-   * fetch-cli.ts, regen). Either the bun path or `node --experimental-strip-types`
-   * depending on what's running configure. Already quoted — splice directly
-   * into rule commands.
+   * Shell-ready command prefix for running .ts subprocesses (codegen,
+   * stream.ts, fetch-cli.ts, regen). Either the bun path or
+   * `node --experimental-strip-types` depending on what's running configure.
+   * Already quoted — splice directly into rule commands.
    */
   jsRuntime: string;
+  /** `jsRuntime` as argv for spawnSync (unquoted). */
+  jsRuntimeArgv: string[];
+  /**
+   * Package manager for the codegen install steps. Absolute path to bun if
+   * available (uses bun.lock), otherwise npm.
+   */
+  packageManager: { exe: string; installArgs: string[]; lockfile: string };
   esbuild: string;
   /** Optional — compiler launcher prefix. */
   ccache: string | undefined;
@@ -444,8 +449,9 @@ export interface Toolchain {
    */
   llvmStrip: string | undefined;
   dsymutil: string | undefined;
-  bun: string;
   jsRuntime: string;
+  jsRuntimeArgv: string[];
+  packageManager: { exe: string; installArgs: string[]; lockfile: string };
   esbuild: string;
   ccache: string | undefined;
   cmake: string;
@@ -1238,8 +1244,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : (toolchain.llvmStrip ?? toolchain.strip)
         : toolchain.strip),
     dsymutil: toolchain.dsymutil,
-    bun: toolchain.bun,
     jsRuntime: toolchain.jsRuntime,
+    jsRuntimeArgv: toolchain.jsRuntimeArgv,
+    packageManager: toolchain.packageManager,
     esbuild: toolchain.esbuild,
     ccache: toolchain.ccache,
     cmake: toolchain.cmake,

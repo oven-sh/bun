@@ -5,13 +5,19 @@
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import assert from "node:assert";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
-  ArgStrategyChildItem,
+  type ArgStrategyChildItem,
+  type CAbiType,
   CodeWriter,
-  Func,
+  type DictionaryField,
+  type Func,
   NodeValidator,
+  type ReturnStrategy,
   Struct,
   TypeImpl,
+  type TypeKind,
+  type Variant,
   alignForward,
   cAbiIntegerLimits,
   cAbiTypeName,
@@ -29,11 +35,6 @@ import {
   typeHashToNamespace,
   typeHashToReachableType,
   zid,
-  type CAbiType,
-  type DictionaryField,
-  type ReturnStrategy,
-  type TypeKind,
-  type Variant,
 } from "./bindgen-lib-internal";
 import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
 
@@ -908,9 +909,7 @@ function returnStrategyCppType(strategy: ReturnStrategy): string {
     case "jsvalue":
       return "JSC::EncodedJSValue";
     default:
-      throw new Error(
-        `TODO: returnStrategyCppType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
-      );
+      throw new Error(`returnStrategyCppType: unhandled strategy ${inspect(strategy satisfies never)}`);
   }
 }
 
@@ -922,9 +921,7 @@ function returnStrategyZigType(strategy: ReturnStrategy): string {
     case "jsvalue":
       return "jsc.JSValue";
     default:
-      throw new Error(
-        `TODO: returnStrategyZigType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
-      );
+      throw new Error(`returnStrategyZigType: unhandled strategy ${inspect(strategy satisfies never)}`);
   }
 }
 
@@ -1169,7 +1166,7 @@ for (const fileName of [...unsortedFiles].sort()) {
     files.set(zigFile, file);
   }
 
-  const exports = import.meta.require(fileName);
+  const exports = await import(pathToFileURL(fileName).href);
 
   // Mark all exported TypeImpl as reachable
   for (let [key, value] of Object.entries(exports)) {

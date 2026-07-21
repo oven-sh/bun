@@ -1,3 +1,4 @@
+import * as esbuild from "esbuild";
 import assert from "node:assert";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -34,13 +35,17 @@ function convertRustEnum(rust: string, names: string[]) {
 }
 
 function css(file: string, is_development: boolean): string {
-  const { success, stdout, stderr } = Bun.spawnSync({
-    cmd: [process.execPath, "build", file, "--minify"],
-    cwd: import.meta.dir,
-    stdio: ["ignore", "pipe", "pipe"],
+  const result = esbuild.buildSync({
+    entryPoints: [file],
+    bundle: true,
+    minify: true,
+    write: false,
+    loader: { ".css": "css", ".svg": "dataurl" },
+    logLevel: "warning",
+    absWorkingDir: import.meta.dirname,
   });
-  if (!success) throw new Error(stderr.toString("utf-8"));
-  return stdout.toString("utf-8");
+  if (result.errors.length) throw new AggregateError(result.errors);
+  return result.outputFiles[0].text;
 }
 
 async function run() {
@@ -50,25 +55,36 @@ async function run() {
   const results = await Promise.allSettled(
     ["client", "server", "error"].map(async file => {
       const side = file === "error" ? "client" : file;
-      let result = await Bun.build({
-        entrypoints: [join(base_dir, `hmr-runtime-${file}.ts`)],
+      let result = await esbuild.build({
+        entryPoints: [join(base_dir, `hmr-runtime-${file}.ts`)],
+        bundle: true,
+        format: "esm",
+        target: "esnext",
+        write: false,
         define: {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
-        minify: {
-          syntax: !debug,
-        },
-        target: side === "server" ? "bun" : "browser",
-        drop: debug ? [] : ["ASSERT", "DEBUG"],
+        minifySyntax: !debug,
+        platform: side === "server" ? "node" : "browser",
+        // esbuild's `drop` only accepts console/debugger; bun's accepted
+        // arbitrary names. `pure` + minifySyntax removes the call (arguments
+        // that have side effects survive, which is fine for assertions).
+        pure: debug ? [] : ["DEBUG.ASSERT", "DEBUG", "ASSERT"],
         conditions: [side],
+        supported: { "using": false },
+        // Server runtime runs via executeProgram (no ambient `require`): pin it
+        // to import.meta.require so esbuild's shim delegates there; the
+        // postprocessing below rewrites `import.meta` to `$importMeta`.
+        banner: side === "server" ? { js: "var require=import.meta.require;" } : undefined,
+        external: side === "server" ? ["node:*"] : undefined,
+        logLevel: "silent",
       });
-      if (!result.success) throw new AggregateError(result.logs);
-      assert(result.outputs.length === 1, "must bundle to a single file");
-      // @ts-ignore
-      let code = await result.outputs[0].text();
+      if (result.errors.length) throw new AggregateError(result.errors);
+      assert(result.outputFiles.length === 1, "must bundle to a single file");
+      let code = result.outputFiles[0].text;
 
       // A second pass is used to convert global variables into parameters, while
       // allowing for renaming to properly function when minification is enabled.
@@ -92,15 +108,21 @@ async function run() {
 
       writeIfNotChanged(generated_entrypoint, combined_source);
 
-      result = await Bun.build({
-        entrypoints: [generated_entrypoint],
+      result = await esbuild.build({
+        entryPoints: [generated_entrypoint],
+        bundle: true,
+        format: "esm",
+        target: "esnext",
+        write: false,
         minify: !debug,
-        drop: debug ? [] : ["DEBUG"],
-        target: side === "server" ? "bun" : "browser",
+        pure: debug ? [] : ["DEBUG.ASSERT", "DEBUG"],
+        platform: side === "server" ? "node" : "browser",
+        supported: { "using": false },
+        logLevel: "silent",
       });
-      if (!result.success) throw new AggregateError(result.logs);
-      assert(result.outputs.length === 1, "must bundle to a single file");
-      code = (await result.outputs[0].text()).replace(`// ${basename(generated_entrypoint)}`, "").trim();
+      if (result.errors.length) throw new AggregateError(result.errors);
+      assert(result.outputFiles.length === 1, "must bundle to a single file");
+      code = result.outputFiles[0].text.replace(`// ${basename(generated_entrypoint)}`, "").trim();
 
       rmSync(generated_entrypoint);
 

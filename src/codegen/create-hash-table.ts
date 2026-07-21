@@ -1,5 +1,6 @@
-import { spawn } from "bun";
-import path from "path";
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { writeIfNotChanged } from "./helpers";
 
 const input = process.argv[2];
@@ -7,9 +8,9 @@ const output = process.argv[3];
 
 const platform = process.env.TARGET_PLATFORM ?? process.platform;
 
-const create_hash_table = path.join(import.meta.dir, "./create_hash_table");
+const create_hash_table = path.join(import.meta.dirname, "./create_hash_table");
 
-const input_text = await Bun.file(input).text();
+const input_text = readFileSync(input, "utf8");
 const to_preprocess = [...input_text.matchAll(/@begin\s+.+?@end/gs)].map(m => m[0]).join("\n");
 
 const os = platform === "win32" ? "WINDOWS" : platform.toUpperCase();
@@ -19,26 +20,18 @@ const to_remove = new RegExp(`#if\\s+(!OS\\(${os}\\)|OS\\((${other_oses.join("|"
 const input_preprocessed = to_preprocess.replace(to_remove, "");
 
 console.log("Generating " + output + " from " + input);
-const proc = spawn({
-  cmd: ["perl", create_hash_table, "-"],
-  stdin: "pipe",
-  stdout: "pipe",
-  stderr: "inherit",
+const proc = spawnSync("perl", [create_hash_table, "-"], {
+  input: input_preprocessed,
+  stdio: ["pipe", "pipe", "inherit"],
+  encoding: "utf8",
 });
-proc.stdin.write(input_preprocessed);
-proc.stdin.end();
-await proc.exited;
-if (proc.exitCode !== 0) {
+if (proc.status !== 0) {
   console.log(
-    "Failed to generate " +
-      output +
-      ", create_hash_table exited with " +
-      (proc.exitCode || "") +
-      (proc.signalCode || ""),
+    "Failed to generate " + output + ", create_hash_table exited with " + (proc.status ?? "") + (proc.signal ?? ""),
   );
   process.exit(1);
 }
-let str = await new Response(proc.stdout).text();
+let str = proc.stdout;
 str = str.replaceAll(/^\/\/.*$/gm, "");
 str = str.replaceAll(/^#include.*$/gm, "");
 str = str.replaceAll(`namespace JSC {`, "");

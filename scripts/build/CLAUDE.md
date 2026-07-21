@@ -242,17 +242,11 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 ## Node compatibility
 
-The build system runs under Node 24+ with `--experimental-strip-types` (or Node 25+ without the flag). CI invokes it this way via `process.execPath` in `.buildkite/ci.mjs`.
+The build system runs under Node 24+ with `--experimental-strip-types` (or Node 25+ without the flag). CI invokes it this way via `process.execPath` in `.buildkite/ci.mjs`. A bun binary is NOT required.
 
-`cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (stream.ts, fetch-cli.ts, the regen rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. The subprocesses inherit whichever runtime started the build.
+`cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (codegen, stream.ts, fetch-cli.ts, the regen rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. `cfg.jsRuntimeArgv` is the same thing as argv for spawnSync.
 
-**TODO — remaining `cfg.bun` usage (codegen only):** For a fully bun-optional build:
-
-- `cfg.packageManager` — `bun install` or `npm install` for the one codegen install step.
-- Codegen `.ts` scripts (~20 ninja rules) — either verify they're node-compatible and switch to `cfg.jsRuntime`, or bundle them via esbuild first and run the output with plain node.
-- `cfg.esbuild` — already separate.
-
-With those done, `cfg.bun` disappears.
+Codegen scripts use the esbuild npm package (not `Bun.build`) for bundling the src/js modules and bake runtime; `cfg.packageManager` picks bun (preferred) or npm for the install steps. When running under Node, `src/codegen/node-loader.ts` (registered via `--import`) provides the tsconfig path mappings (`bindgen`/`bindgenv2`) that `*.bind.ts` rely on.
 
 ## Adding a workaround
 

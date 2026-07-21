@@ -43,18 +43,19 @@
 // single JSC::SourceProvider. Passing start/end positions to each function's
 // JSC::SourceCode. JSC does this, but WebCore does not seem to as of writing.
 import assert from "assert";
-import { readdirSync, rmSync } from "fs";
+import * as esbuild from "esbuild";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
-import { addCPPCharArray, cap, low, writeIfNotChanged } from "./helpers";
+import { addCPPCharArray, cap, isMain, low, writeIfNotChanged } from "./helpers";
 import { applyGlobalReplacements, define } from "./replacements";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
 
-if (import.meta.main) {
+if (isMain(import.meta)) {
   throw new Error("This script is not meant to be run directly");
 }
 
@@ -63,7 +64,7 @@ if (!CMAKE_BUILD_ROOT) {
   throw new Error("CMAKE_BUILD_ROOT is not defined");
 }
 
-const SRC_DIR = path.join(import.meta.dir, "../js/builtins");
+const SRC_DIR = path.join(import.meta.dirname, "../js/builtins");
 const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "./codegen");
 const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "./tmp_functions");
 
@@ -96,7 +97,7 @@ interface BundledBuiltin {
  */
 async function processFileSplit(filename: string): Promise<{ functions: BundledBuiltin[]; internal: boolean }> {
   const basename = path.basename(filename, ".ts");
-  let contents = await Bun.file(filename).text();
+  let contents = readFileSync(filename, "utf8");
 
   contents = applyGlobalReplacements(contents);
   const originalContents = contents;
@@ -293,7 +294,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     const useThis = true;
 
     // TODO: we should use format=IIFE so we could bundle imports and extra functions.
-    await Bun.write(
+    writeFileSync(
       tmpFile,
       `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
@@ -309,24 +310,41 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       } {${fn.source}}).$$capture_end$$;
 `,
     );
-    await Bun.sleep(1);
-    const build = await Bun.build({
-      entrypoints: [tmpFile],
+    const build = await esbuild.build({
+      entryPoints: [tmpFile],
       define,
-      target: "bun",
-      minify: { syntax: true, whitespace: false, keepNames: true },
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "esnext",
+      charset: "ascii",
+      minifySyntax: true,
+      legalComments: "none",
+      supported: { "using": false },
+      write: false,
+      logLevel: "silent",
     });
-    // TODO: Wait a few versions before removing this
-    if (!build.success) {
-      throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");
+    if (build.errors.length) {
+      throw new AggregateError(
+        build.errors,
+        "Failed bundling builtin function " + fn.name + " from " + basename + ".ts",
+      );
     }
-    if (build.outputs.length !== 1) {
+    if (build.outputFiles.length !== 1) {
       throw new Error("expected one output");
     }
-    let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
+    let output = build.outputFiles[0].text;
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
-    const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
+    // esbuild hoists array/object `define` values (and other helpers) to
+    // module scope as `var define_*_default = ...;` before `$$capture_start$$`.
+    // Fold that prologue into the function body so references stay resolvable.
+    const [, hoisted, captureBody] = output.match(/^([\s\S]*?)\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)!;
+    const prologue = hoisted
+      .replace(/^\/\/[^\n]*\n/gm, "")
+      .replace(/^\(?\$\)?;\s*$/m, "")
+      .trim();
+    const captured = prologue ? captureBody.replace(/function\s*\(.*?\)\s*{/, m => m + prologue + "\n") : captureBody;
     const finalReplacement =
       (fn.directives.sloppy
         ? captured
@@ -339,7 +357,10 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       )
         .replace(/^\((async )?function\(/, "($1function (")
         .replace(/__intrinsic__/g, "@")
-        .replace(/__no_intrinsic__/g, "") + "\n";
+        .replace(/__no_intrinsic__/g, "")
+        // Same 8-bit constraint as bundle-modules: escape regex-literal
+        // codepoints esbuild's ascii charset leaves raw.
+        .replace(/[^\x00-\x7F]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")) + "\n";
 
     const errors = [...finalReplacement.matchAll(/@bundleError\((.*)\)/g)];
     if (errors.length) {
@@ -397,6 +418,7 @@ interface BundleBuiltinFunctionsArgs {
 }
 
 export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuiltinFunctionsArgs) {
+  mkdirSync(TMP_DIR, { recursive: true });
   const filesToProcess = readdirSync(SRC_DIR)
     .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
     .sort();
@@ -439,7 +461,7 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
   }
 
   // C++ codegen
-  let bundledCPP = `// Generated by ${import.meta.path}
+  let bundledCPP = `// Generated by ${import.meta.filename}
     namespace Zig { class GlobalObject; }
     #include "root.h"
     #include "config.h"
@@ -593,7 +615,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     `;
 
   // C++ Header codegen
-  let bundledHeader = `// Generated by ${import.meta.path}
+  let bundledHeader = `// Generated by ${import.meta.filename}
     // Do not edit by hand.
     #pragma once
     namespace Zig { class GlobalObject; }
@@ -795,8 +817,8 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     `;
   // Handle builtin names
   {
-    const BunBuiltinNamesHeader = require("fs").readFileSync(
-      path.join(import.meta.dir, "../js/builtins/BunBuiltinNames.h"),
+    const BunBuiltinNamesHeader = readFileSync(
+      path.join(import.meta.dirname, "../js/builtins/BunBuiltinNames.h"),
       "utf8",
     );
     let definedBuiltinNamesStartI = BunBuiltinNamesHeader.indexOf(
@@ -827,7 +849,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
       }
     }
 
-    let additionalPrivateNamesHeader = `// Generated by ${import.meta.path}
+    let additionalPrivateNamesHeader = `// Generated by ${import.meta.filename}
 #pragma once
 
 #ifndef BUN_ADDITIONAL_BUILTIN_NAMES

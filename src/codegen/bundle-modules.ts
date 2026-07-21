@@ -8,6 +8,7 @@
 // One day, this entire setup should be rewritten, but also it would be cool if Bun natively
 // supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
 // library, instead of RegExp hacks.
+import * as esbuild from "esbuild";
 import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
@@ -16,11 +17,11 @@ import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
-import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
+import { cap, declareASCIILiteral, sleep, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
 
-const BASE = path.join(import.meta.dir, "../js");
+const BASE = path.join(import.meta.dirname, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
 
@@ -33,13 +34,34 @@ if (!CMAKE_BUILD_ROOT) {
 }
 
 globalThis.CMAKE_BUILD_ROOT = CMAKE_BUILD_ROOT;
-const bundleBuiltinFunctions = require("./bundle-functions").bundleBuiltinFunctions;
+const { bundleBuiltinFunctions } = await import("./bundle-functions");
 
 const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp_modules");
 const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "codegen");
 const JS_DIR = path.join(CMAKE_BUILD_ROOT, "js");
 
-const t = new Bun.Transpiler({ loader: "tsx" });
+// Lightweight scan for top-level ESM import/export statements. src/js/* is
+// preprocessed before bundling so we only need the statement *kind* (builtin
+// import, default export, named runtime export), not the full shape.
+function scanImportsExports(src: string) {
+  const noComments = src.replace(/\/\*[^]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const imports: { kind: "import-statement"; path: string }[] = [];
+  for (const m of noComments.matchAll(/^\s*import\s+(?!type\b)[^;'"]*?\bfrom\s*(['"])([^'"]+)\1/gm)) {
+    imports.push({ kind: "import-statement", path: m[2] });
+  }
+  for (const m of noComments.matchAll(/^\s*import\s*(['"])([^'"]+)\1/gm)) {
+    imports.push({ kind: "import-statement", path: m[2] });
+  }
+  // Column-0 only (excludes `declare namespace { … }` members) and runtime
+  // bindings only (excludes `export type` / `export interface`).
+  const body = noComments.replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, '""');
+  const exports: string[] = [];
+  if (/^export\s+default\b/m.test(body)) exports.push("default");
+  if (/^export\s+(?:async\s+)?(?:function|class|const|let|var|\{)/m.test(body)) {
+    exports.push("*named*");
+  }
+  return { imports, exports };
+}
 
 let start = performance.now();
 const silent = process.env.BUN_SILENT === "1" || process.env.CLAUDECODE;
@@ -59,7 +81,7 @@ globalThis.requireTransformer = requireTransformer;
 // work, so i have lot of debug logs that blow up the console because not sure what is going on.
 // that is also the reason for using `retry` when theoretically writing a file the first time
 // should actually write the file.
-const verbose = Bun.env.VERBOSE ? console.log : () => {};
+const verbose = process.env.VERBOSE ? console.log : () => {};
 async function retry(n, fn) {
   var err;
   while (n > 0) {
@@ -69,7 +91,7 @@ async function retry(n, fn) {
     } catch (e) {
       err = e;
       n--;
-      await Bun.sleep(5);
+      await sleep(5);
     }
   }
   throw err;
@@ -98,7 +120,7 @@ for (let i = 0; i < nativeStartIndex; i++) {
 
     // TODO: there is no reason this cannot be converted automatically.
     // import { ... } from '...' -> `const { ... } = require('...')`
-    const scannedImports = t.scan(input);
+    const scannedImports = scanImportsExports(input);
     for (const imp of scannedImports.imports) {
       if (imp.kind === "import-statement") {
         var isBuiltin = true;
@@ -143,6 +165,10 @@ for (let i = 0; i < nativeStartIndex; i++) {
     );
     let fileToTranspile = `// GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from src/js/${moduleList[i]}
+// Leading \`export {}\`: these bodies can reference \`exports\`/\`module\` as plain
+// locals; without an unambiguous ESM marker esbuild guesses CommonJS and
+// wraps the file in __commonJS(), which the JSC builtin parser rejects.
+export {};
 ${importStatements.join("\n")}
 
 ${processed.result.slice(1).trim()}
@@ -199,37 +225,37 @@ ${processed.result.slice(1).trim()}
 
 mark("Preprocess modules");
 
-// directory caching stuff breaks this sometimes. CLI rules
-const config_cli = [
-  process.execPath,
-  "build",
-  ...bundledEntryPoints,
-  ...(debug ? [] : ["--minify-syntax", "--keep-names"]),
-  "--root",
-  TMP_DIR,
-  "--target",
-  "bun",
-  ...builtinModules.map(x => ["--external", x]).flat(),
-  ...Object.keys(define)
-    .map(x => [`--define`, `${x}=${define[x]}`])
-    .flat(),
-  "--define",
-  `IS_BUN_DEVELOPMENT=${String(!!debug)}`,
-  "--define",
-  `__intrinsic__debug=${debug ? "$debug_log_enabled" : "false"}`,
-  "--outdir",
-  path.join(TMP_DIR, "modules_out"),
-];
-verbose("running: ", config_cli);
-const out = Bun.spawnSync({
-  cmd: config_cli,
-  cwd: process.cwd(),
-  env: process.env,
-  stdio: ["pipe", "pipe", "pipe"],
+const modulesResult = await esbuild.build({
+  entryPoints: bundledEntryPoints,
+  absWorkingDir: process.cwd(),
+  outbase: TMP_DIR,
+  outdir: path.join(TMP_DIR, "modules_out"),
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "esnext",
+  // JSC's builtin loader asserts `view.is8Bit()` — the source must be
+  // Latin-1, so escape everything outside ASCII.
+  charset: "ascii",
+  // Syntax minification is on in both debug and release: the $bundleError
+  // checks below depend on dead-branch elimination after the define
+  // substitutions, which esbuild only folds with minifySyntax on.
+  minifySyntax: true,
+  keepNames: true,
+  external: builtinModules.flatMap(x => [x, "node:" + x]),
+  legalComments: "none",
+  define: {
+    ...define,
+    IS_BUN_DEVELOPMENT: String(!!debug),
+    __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
+  },
+  supported: { "using": false },
+  logLevel: "warning",
+  write: true,
 });
-if (out.exitCode !== 0) {
-  console.error(out.stderr.toString());
-  process.exit(out.exitCode);
+if (modulesResult.errors.length) {
+  for (const err of modulesResult.errors) console.error(err);
+  process.exit(1);
 }
 
 mark("Bundle modules");
@@ -238,9 +264,28 @@ const outputs = new Map();
 
 for (const entrypoint of bundledEntryPoints) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
-  const file = Bun.file(path.join(TMP_DIR, "modules_out", file_path));
-  const output = await file.text();
-  let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
+  let output = fs
+    .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
+    .replace(/^\/\/ .*?\btmp_modules\b.*\n/m, "");
+  // esbuild's keepNames `__name` reads user-overridable Object.defineProperty
+  // and trusts its return value as the binding; neutralize both.
+  if (output.includes("__name(")) {
+    const hits = output.match(/^var __name = .*;$/gm);
+    if (hits?.length !== 1) {
+      throw new Error(
+        `Builtin Bundler: expected exactly one 'var __name = ...;' helper in ${file_path} ` +
+          `(found ${hits?.length ?? 0}); esbuild's keepNames output shape changed.`,
+      );
+    }
+    output = output.replace(
+      hits[0],
+      'var __name = (t, v) => { try { __defProp(t, "name", { __proto__: null, value: v, configurable: !0 }); } catch {} return t; };',
+    );
+  }
+  // Trailing newline before `})` is load-bearing: esbuild preserves `//!`
+  // legal comments, and a `//!` on the final line would swallow the wrapper
+  // close.
+  let captured = `(function (){${output.trim()}\n})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");
   captured =
@@ -254,6 +299,10 @@ for (const entrypoint of bundledEntryPoints) {
       .replace(/return \$\nexport /, "return")
       .replace(/__intrinsic__/g, "@")
       .replace(/__no_intrinsic__/g, "") + "\n";
+  // JSC's builtin loader asserts view.is8Bit(). esbuild's ascii charset covers
+  // string literals but not comments, and 0x80-0xFF is multi-byte UTF-8 on
+  // disk -> loads as 16-bit; escape every non-ASCII codepoint.
+  captured = captured.replace(/[^\x00-\x7F]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
   captured = captured.replace(
     /function\s*\(.*?\)\s*{/,
     '$&"use strict";' +
@@ -265,6 +314,13 @@ for (const entrypoint of bundledEntryPoints) {
         : "") +
       (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, "")) : ""),
   );
+  const leakedExport = captured.match(/^export\b.*/m);
+  if (leakedExport) {
+    throw new Error(
+      `Builtin Bundler: ${file_path} contains a top-level \`${leakedExport[0].slice(0, 60)}\` after ` +
+        `postprocessing; JSC rejects export inside the builtin function wrapper.`,
+    );
+  }
   const errors = [...captured.matchAll(/@bundleError\((.*)\)/g)];
   if (errors.length) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
@@ -486,7 +542,7 @@ writeIfNotChanged(
   (() => {
     let dts = `
 // GENERATED TEMP FILE - DO NOT EDIT
-// generated by ${import.meta.path}
+// generated by ${import.meta.filename}
 
 declare module "module" {
   global {
@@ -537,25 +593,25 @@ declare module "module" {
 
 mark("Generate Code");
 
-const evalFiles = new Bun.Glob(path.join(BASE, "eval", "*.ts")).scanSync();
+const evalFiles = fs.globSync(path.join(BASE, "eval", "*.ts"));
 for (const file of evalFiles) {
   const {
-    outputs: [output],
-  } = await Bun.build({
-    entrypoints: [file],
-
-    // Shrink it.
+    outputFiles: [output],
+  } = await esbuild.build({
+    entryPoints: [file],
+    bundle: true,
     minify: !debug,
-
-    target: "bun",
+    platform: "node",
     format: "esm",
-    env: "disable",
+    target: "esnext",
+    write: false,
+    supported: { "using": false },
     define: {
       "process.platform": JSON.stringify(process.env.TARGET_PLATFORM ?? process.platform),
       "process.arch": JSON.stringify(process.env.TARGET_ARCH ?? process.arch),
     },
   });
-  writeIfNotChanged(path.join(CODEGEN_DIR, "eval", path.basename(file)), await output.text());
+  writeIfNotChanged(path.join(CODEGEN_DIR, "eval", path.basename(file)), output.text);
 }
 
 if (!silent) {

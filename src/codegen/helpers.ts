@@ -1,6 +1,36 @@
-import { isAscii } from "buffer";
-import fs from "fs";
-import path from "path";
+import { isAscii } from "node:buffer";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import * as util from "node:util";
+
+/** True when this process is Bun (vs Node with type stripping). */
+export const isBun = process.versions.bun !== undefined;
+
+/** Deterministic short hash for codegen-internal dedupe keys. */
+export function hash(input: string): string {
+  return createHash("sha1").update(input).digest("hex").slice(0, 16);
+}
+
+export function inspect(value: unknown): string {
+  return util.inspect(value, { colors: process.stdout.isTTY });
+}
+
+export const inspectCustom = util.inspect.custom;
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export function isMain(meta: ImportMeta): boolean {
+  return process.argv[1] === meta.filename;
+}
+
+/** Display width for ASCII diagnostic underlines; tabs count as one column. */
+export function stringWidth(s: string): number {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
+}
 
 // MSVC has a max of 16k characters per string literal
 // Combining string literals didn't support constexpr apparently
@@ -51,18 +81,27 @@ export function low(str: string) {
 
 export function readdirRecursive(root: string): string[] {
   const files = fs.readdirSync(root, { withFileTypes: true });
-  return files.flatMap(file => {
-    const fullPath = path.join(root, file.name);
-    return file.isDirectory() ? readdirRecursive(fullPath) : fullPath;
-  });
+  return files
+    .flatMap(file => {
+      const fullPath = path.join(root, file.name);
+      return file.isDirectory() ? readdirRecursive(fullPath) : fullPath;
+    })
+    .sort();
 }
 
 export function resolveSyncOrNull(specifier: string, from: string) {
-  try {
-    return Bun.resolveSync(specifier, from);
-  } catch {
-    return null;
+  // Resolve a relative specifier against a directory, trying the same
+  // extensions the internal module registry cares about. Only used for
+  // validating cross-module require() targets inside src/js/.
+  const base = path.resolve(from, specifier);
+  for (const ext of ["", ".ts", ".js", ".mjs", ".cjs", ".tsx"]) {
+    if (fs.existsSync(base + ext) && fs.statSync(base + ext).isFile()) return base + ext;
   }
+  for (const ext of [".ts", ".js"]) {
+    const idx = path.join(base, "index" + ext);
+    if (fs.existsSync(idx)) return idx;
+  }
+  return null;
 }
 
 export function checkAscii(str: string) {
@@ -102,15 +141,17 @@ export function readdirRecursiveWithExclusionsAndExtensionsSync(
   exts: string[],
 ): string[] {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
-  return entries.flatMap(entry => {
-    if (exclusions.includes(entry.name)) return [];
-    const fullPath = path.join(dir, entry.name);
-    return entry.isDirectory()
-      ? readdirRecursiveWithExclusionsAndExtensionsSync(fullPath, exclusions, exts)
-      : exts.some(ext => fullPath.endsWith(ext))
-        ? fullPath
-        : [];
-  });
+  return entries
+    .flatMap(entry => {
+      if (exclusions.includes(entry.name)) return [];
+      const fullPath = path.join(dir, entry.name);
+      return entry.isDirectory()
+        ? readdirRecursiveWithExclusionsAndExtensionsSync(fullPath, exclusions, exts)
+        : exts.some(ext => fullPath.endsWith(ext))
+          ? fullPath
+          : [];
+    })
+    .sort();
 }
 
 export function pathToUpperSnakeCase(filepath: string) {

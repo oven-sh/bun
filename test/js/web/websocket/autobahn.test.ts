@@ -92,7 +92,7 @@ describe.skipIf(!isDockerEnabled())("autobahn", () => {
   }
 
   function runTestCase(testID: number) {
-    return new Promise((resolve, reject) => {
+    return new Promise(resolve => {
       const socket = new WebSocket(`${url}/runCase?case=${testID}&agent=${agent}`, wsOptions);
       socket.binaryType = "arraybuffer";
 
@@ -102,9 +102,9 @@ describe.skipIf(!isDockerEnabled())("autobahn", () => {
       socket.addEventListener("close", () => {
         resolve(undefined);
       });
-      socket.addEventListener("error", event => {
-        reject(event);
-      });
+      // Autobahn cases deliberately trigger protocol errors, which fire error
+      // before close; the result is read via getCaseStatus after close.
+      socket.addEventListener("error", () => {});
     });
   }
 

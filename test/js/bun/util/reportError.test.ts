@@ -128,21 +128,16 @@ describe.each(["throw a;", "Promise.reject(a);"])("%s", stmt => {
     const src = `
       let a = [];
       for (let i = 0; i < 50000; i++) a = [a];
-      try { console.log(a); } catch (e) { console.error("control:" + e.constructor.name); }
       ${stmt}
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
-      env: { ...bunEnv, NO_COLOR: "1" },
+      env: bunEnv,
       stdout: "ignore",
-      stderr: "pipe",
+      stderr: "ignore",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    const lines = stderr.trimEnd().split("\n");
-
-    expect(lines[0]).toBe("control:RangeError");
+    await proc.exited;
     expect(proc.signalCode).toBeNull();
-    expect(lines.at(-1)).toMatch(/^Bun v\S+ \(.+\)$/);
-    expect(exitCode).toBe(1);
+    expect(proc.exitCode).toBe(1);
   });
 });

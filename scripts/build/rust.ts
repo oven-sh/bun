@@ -418,7 +418,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // inline. Cross-language ThinLTO re-imports and inlines any callee under
   // the import threshold at link time, so here it only dedups the large
   // bodies nobody inlines. Nightly-only; the pinned toolchain is nightly.
-  rustflags.push("-Zshare-generics=y");
+  // Not under ASAN: routing Box/Vec allocs through the shared alloc-crate
+  // instantiation moves their frames and LSAN's conservative reachability
+  // loses some at-exit allocations it previously found (bun-info, bun-audit,
+  // issue 30205), turning benign at-exit state into reported leaks.
+  if (!cfg.asan) rustflags.push("-Zshare-generics=y");
   // Match the C++ side's CPU target (`cpuTargetFlags` in flags.ts) so Rust
   // codegen sees the same ISA. rustc's `-C target-cpu=` takes LLVM CPU names
   // (same vocabulary as clang's `-march=`/`-mcpu=`), so the mapping is 1:1.

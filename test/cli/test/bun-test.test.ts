@@ -1268,9 +1268,6 @@ describe("bun test", () => {
   });
 
   test("-t filter regex is compiled after JSC options are finalized", () => {
-    // The `-t` regex used to be compiled during CLI arg parsing, before JSC
-    // Options were read from the environment, so BUN_JSC_* regex options
-    // didn't apply to it. It's now compiled after jsc::initialize().
     const stderr = runTest({
       args: ["-t", "zzFilterMarkerzz"],
       env: { BUN_JSC_dumpCompiledRegExpPatterns: "1" },
@@ -1280,6 +1277,7 @@ describe("bun test", () => {
           expect(1).toBe(1);
         });
       `,
+      expectExitCode: 0,
     });
     expect(stderr).toContain("RegExp pattern for /zzFilterMarkerzz/");
     expect(stderr).toContain("(pass) zzFilterMarkerzz");

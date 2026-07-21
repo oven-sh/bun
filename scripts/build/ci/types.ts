@@ -224,6 +224,29 @@ export type LinuxTestImage = LinuxImageBase &
 
 export type LinuxImage = LinuxBuildHostImage | LinuxTestImage;
 
+/** The fields every linux image shares — the type of spec.ts's shared
+ * object, so a mistake in it errors at the source instead of surfacing
+ * (or not) inside whichever entry spreads it. Derived from the base, never a
+ * second field list. */
+export type LinuxSharedFields = Pick<
+  LinuxImageBase,
+  | "os"
+  | "cloud"
+  | "nodejs"
+  | "bun"
+  | "llvm"
+  | "cmake"
+  | "curlH3"
+  | "buildkiteAgent"
+  | "age"
+  | "pythonFuse"
+  | "rust"
+  | "paths"
+  | "system"
+  | "dockerInstallUrl"
+  | "tailscaleInstallUrl"
+>;
+
 // ---------------------------------------------------------------------------
 // Windows
 // ---------------------------------------------------------------------------
@@ -326,5 +349,27 @@ export type WindowsArm64Image = WindowsImageBase & {
 };
 
 export type WindowsImage = WindowsX64Image | WindowsArm64Image;
+
+/** The fields every windows image shares (see LinuxSharedFields). */
+export type WindowsSharedFields = Pick<
+  WindowsImageBase,
+  | "os"
+  | "cloud"
+  | "gallery"
+  | "nodejs"
+  | "bun"
+  | "llvm"
+  | "curlH3"
+  | "buildkiteAgent"
+  | "rust"
+  | "powershell"
+  | "openssh"
+  | "ccache"
+  | "visualStudio"
+  | "nssmFallbackZipUrl"
+  | "pdbAddr2line"
+  | "paths"
+  | "optimize"
+>;
 
 export type Image = LinuxImage | WindowsImage;

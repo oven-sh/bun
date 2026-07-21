@@ -60,6 +60,10 @@ node scripts/build/ci/bootstrap.ts --image=linux-aarch64-13-debian --ci --repo-r
 Prints every step, every command, every download (URL + whether it is
 checksum-pinned), and every file write. Works from any OS.
 
+**Check the whole fleet at once** (`bun run ci:images`): prints all 8
+content-addressed names and dry-runs every image's plan, failing loudly on
+the first one that can't. `node scripts/build/ci/check.ts`.
+
 ## How a bake happens
 
 1. `.buildkite/ci.mjs` computes `imageName(key)` for each of the 8 images

@@ -67,8 +67,10 @@ import type {
   LlvmSpec,
   PinnedRelease,
   AgeSpec,
+  LinuxSharedFields,
   WindowsImage,
   WindowsImageBase,
+  WindowsSharedFields,
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -371,9 +373,9 @@ const linuxBake = (arch: Arch): LinuxImageBase["bake"] => ({
 
 /** The tools/config every linux image shares, so an entry only spells out
  * what distinguishes it. */
-const linuxShared = {
-  os: "linux" as const,
-  cloud: "aws" as const,
+const linuxShared: LinuxSharedFields = {
+  os: "linux",
+  cloud: "aws",
   nodejs,
   bun,
   llvm,
@@ -452,9 +454,9 @@ const azureGalleryCommon: WindowsImageBase["gallery"] = {
 };
 
 /** The tools/config every windows image shares. */
-const windowsShared = {
-  os: "windows" as const,
-  cloud: "azure" as const,
+const windowsShared: WindowsSharedFields = {
+  os: "windows",
+  cloud: "azure",
   gallery: azureGalleryCommon,
   nodejs,
   bun,

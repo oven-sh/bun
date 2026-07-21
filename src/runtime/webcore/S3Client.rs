@@ -7,6 +7,7 @@ use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
 use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
+use bun_s3_signing::S3DefaultOptions;
 
 use super::s3_file as S3File;
 
@@ -35,18 +36,14 @@ macro_rules! pfmt {
 pub(crate) trait S3CredentialsExt {
     fn guess_region(endpoint: &[u8]) -> &[u8];
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
-    #[allow(clippy::too_many_arguments)]
     fn get_credentials_with_options(
         // Takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
         // has a private `ref_count` field and no `Clone`, so callers holding a borrow
         // (e.g. `&IntrusiveRc<S3Credentials>` deref) cannot produce an owned copy. The
         // real impl in `s3/credentials_jsc.rs` deep-copies internally.
         this: &S3Credentials,
-        default_options: MultiPartUploadOptions,
+        defaults: &S3DefaultOptions<'_>,
         options: Option<JSValue>,
-        default_acl: Option<ACL>,
-        default_storage_class: Option<StorageClass>,
-        default_request_payer: bool,
         global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions>;
 }
@@ -62,21 +59,12 @@ impl S3CredentialsExt for S3Credentials {
     #[inline]
     fn get_credentials_with_options(
         this: &S3Credentials,
-        default_options: MultiPartUploadOptions,
+        defaults: &S3DefaultOptions<'_>,
         options: Option<JSValue>,
-        default_acl: Option<ACL>,
-        default_storage_class: Option<StorageClass>,
-        default_request_payer: bool,
         global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions> {
         crate::webcore::s3::credentials_jsc::get_credentials_with_options(
-            this,
-            default_options,
-            options,
-            default_acl,
-            default_storage_class,
-            default_request_payer,
-            global,
+            this, defaults, options, global,
         )
     }
 }
@@ -242,6 +230,9 @@ pub struct S3Client {
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
+    pub content_type: Option<Box<[u8]>>,
+    pub content_disposition: Option<Box<[u8]>>,
+    pub content_encoding: Option<Box<[u8]>>,
     pub request_payer: bool,
 }
 
@@ -280,11 +271,8 @@ impl S3Client {
         );
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
-            MultiPartUploadOptions::default(),
+            &S3DefaultOptions::default(),
             args.next_eat(),
-            None,
-            None,
-            false,
             global,
         )?;
         Ok(Box::new(S3Client {
@@ -292,8 +280,33 @@ impl S3Client {
             options: aws_options.options,
             acl: aws_options.acl,
             storage_class: aws_options.storage_class,
+            // The `S3CredentialsWithOptions` views borrow into its own
+            // `_*_slice` fields, which die with `aws_options`; copy them out.
+            content_type: aws_options.content_type.as_deref().map(Box::<[u8]>::from),
+            content_disposition: aws_options
+                .content_disposition
+                .as_deref()
+                .map(Box::<[u8]>::from),
+            content_encoding: aws_options
+                .content_encoding
+                .as_deref()
+                .map(Box::<[u8]>::from),
             request_payer: aws_options.request_payer,
         }))
+    }
+
+    /// The handle-level `S3Options` this client was constructed with. A later
+    /// call that supplies no options bag still sends them.
+    fn default_options(&self) -> S3DefaultOptions<'_> {
+        S3DefaultOptions {
+            options: self.options,
+            acl: self.acl,
+            storage_class: self.storage_class,
+            content_type: self.content_type.as_deref(),
+            content_disposition: self.content_disposition.as_deref(),
+            content_encoding: self.content_encoding.as_deref(),
+            request_payer: self.request_payer,
+        }
     }
 
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
@@ -368,10 +381,7 @@ impl S3Client {
                 path,
                 options,
                 &ptr.credentials,
-                ptr.options,
-                ptr.acl,
-                ptr.storage_class,
-                ptr.request_payer,
+                &ptr.default_options(),
             )?,
         );
         // `to_js` runs `calculateEstimatedByteSize()`
@@ -418,10 +428,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            &ptr.default_options(),
         )?;
         S3File::get_presign_url_from(&mut blob, global, options)
     }
@@ -459,10 +466,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            &ptr.default_options(),
         )?;
         S3File::S3BlobStatTask::exists(global, &blob)
     }
@@ -500,10 +504,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            &ptr.default_options(),
         )?;
         S3File::S3BlobStatTask::size(global, &mut blob)
     }
@@ -541,10 +542,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            &ptr.default_options(),
         )?;
         S3File::S3BlobStatTask::stat(global, &blob)
     }
@@ -585,10 +583,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            &ptr.default_options(),
         )?;
         // Move into `PathOrBlob` directly; cleanup of the moved-out value is
         // handled by `Drop`.
@@ -622,10 +617,11 @@ impl S3Client {
             PathLike::default(),
             options,
             &ptr.credentials,
-            ptr.options,
-            None,
-            None,
-            ptr.request_payer,
+            &S3DefaultOptions {
+                options: ptr.options,
+                request_payer: ptr.request_payer,
+                ..Default::default()
+            },
         )?;
 
         let store = blob.store.get().as_ref().unwrap();
@@ -663,10 +659,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            &ptr.default_options(),
         )?;
         let store = blob.store.get().as_ref().unwrap();
         store.data.as_s3().unlink(store, global, options)

@@ -1775,8 +1775,13 @@ impl BlobExt for Blob {
             let proxy_owned: Option<Vec<u8>> = proxy_url.as_ref().map(|p| p.href.to_vec());
             let proxy = proxy_owned.as_deref();
 
-            if has_args && arg0.is_object() {
-                let options = arg0;
+            let options = if has_args && arg0.is_object() {
+                Some(arg0)
+            } else {
+                None
+            };
+
+            if let Some(options) = options {
                 if let Some(content_type) = options.get_truthy(global_this, "type")? {
                     // override the content type
                     if !content_type.is_string() {
@@ -1798,62 +1803,29 @@ impl BlobExt for Blob {
                         );
                     }
                 }
-
-                let content_disposition_str: Option<ZigStringSlice> =
-                    match options.get_truthy(global_this, "contentDisposition")? {
-                        Some(v) if !v.is_string() => {
-                            return Err(global_this.throw_invalid_argument_type(
-                                "write",
-                                "options.contentDisposition",
-                                "string",
-                            ));
-                        }
-                        Some(v) => Some(v.to_slice(global_this)?),
-                        None => None,
-                    };
-                let content_encoding_str: Option<ZigStringSlice> =
-                    match options.get_truthy(global_this, "contentEncoding")? {
-                        Some(v) if !v.is_string() => {
-                            return Err(global_this.throw_invalid_argument_type(
-                                "write",
-                                "options.contentEncoding",
-                                "string",
-                            ));
-                        }
-                        Some(v) => Some(v.to_slice(global_this)?),
-                        None => None,
-                    };
-
-                let credentials_with_options =
-                    s3.get_credentials_with_options(Some(options), global_this)?;
-                // `defer credentialsWithOptions.deinit()` → Drop handles slices.
-                // `writable_stream` adopts the dup'd ref by value; the
-                // MultiPartUpload derefs on done.
-                return crate::webcore::s3::client::writable_stream(
-                    credentials_with_options.credentials.dupe(),
-                    path,
-                    global_this,
-                    credentials_with_options.options,
-                    self.content_type_or_mime_type(),
-                    content_disposition_str.as_ref().map(|s| s.slice()),
-                    content_encoding_str.as_ref().map(|s| s.slice()),
-                    proxy,
-                    credentials_with_options.storage_class,
-                    credentials_with_options.request_payer,
-                );
             }
 
+            // Seeded from the store's handle-level options, then overridden by
+            // the per-call bag — the same merge every other upload entry point
+            // runs through.
+            let credentials_with_options = s3.get_credentials_with_options(options, global_this)?;
+            // `defer credentialsWithOptions.deinit()` → Drop handles slices.
+            // `writable_stream` adopts the dup'd ref by value; the
+            // MultiPartUpload derefs on done.
             return crate::webcore::s3::client::writable_stream(
-                s3.get_credentials().dupe(),
+                credentials_with_options.credentials.dupe(),
                 path,
                 global_this,
-                Default::default(),
+                credentials_with_options.options,
+                credentials_with_options.acl,
+                credentials_with_options.storage_class,
                 self.content_type_or_mime_type(),
-                None,
-                None,
+                // SAFETY: these `*const [u8]` borrow into sibling `_*_slice` fields on
+                // `credentials_with_options`, which lives for the duration of this call.
+                credentials_with_options.content_disposition.as_deref(),
+                credentials_with_options.content_encoding.as_deref(),
                 proxy,
-                None,
-                s3.request_payer,
+                credentials_with_options.request_payer,
             );
         }
 
@@ -4893,7 +4865,7 @@ pub fn write_file_with_source_destination(
                         ReadableStream::from_blob_copy_ref(
                             ctx,
                             source_blob,
-                            s3.options.part_size as crate::webcore::blob::SizeType,
+                            aws_options.options.part_size as crate::webcore::blob::SizeType,
                         )?,
                         ctx,
                     )? {
@@ -4993,7 +4965,7 @@ pub fn write_file_with_source_destination(
                     ReadableStream::from_blob_copy_ref(
                         ctx,
                         source_blob,
-                        s3.options.part_size as crate::webcore::blob::SizeType,
+                        aws_options.options.part_size as crate::webcore::blob::SizeType,
                     )?,
                     ctx,
                 )? {
@@ -5006,7 +4978,7 @@ pub fn write_file_with_source_destination(
                         s3.path(),
                         stream,
                         ctx,
-                        s3.options,
+                        aws_options.options,
                         aws_options.acl,
                         aws_options.storage_class,
                         destination_blob.content_type_or_mime_type(),

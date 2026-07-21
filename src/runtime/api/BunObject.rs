@@ -1984,11 +1984,8 @@ pub(crate) fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) 
         crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
-        Default::default(),
+        &Default::default(),
         None,
-        None,
-        None,
-        false,
         global_this,
     ) {
         Ok(v) => v,
@@ -2003,6 +2000,9 @@ pub(crate) fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) 
         options: aws_options.options,
         acl: aws_options.acl,
         storage_class: aws_options.storage_class,
+        content_type: None,
+        content_disposition: None,
+        content_encoding: None,
         request_payer: aws_options.request_payer,
     };
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);

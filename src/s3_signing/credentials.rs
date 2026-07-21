@@ -1083,6 +1083,22 @@ impl Default for SignQueryOptions {
     }
 }
 
+/// The subset of `S3Options` that describes the object being written rather
+/// than the credentials or the transport. A `S3Client` / `S3File` handle stores
+/// these so a handle-level option is still sent by a later call made without an
+/// options bag; a per-call bag overrides them field by field in
+/// `getCredentialsWithOptions`.
+#[derive(Clone, Copy, Default)]
+pub struct S3DefaultOptions<'a> {
+    pub options: MultiPartUploadOptions,
+    pub acl: Option<ACL>,
+    pub storage_class: Option<StorageClass>,
+    pub content_type: Option<&'a [u8]>,
+    pub content_disposition: Option<&'a [u8]>,
+    pub content_encoding: Option<&'a [u8]>,
+    pub request_payer: bool,
+}
+
 // transient param-pack struct; lifetime added because every field is a caller-owned
 // borrow. PORTING.md discourages struct lifetimes, but raw pointers here would be strictly worse.
 #[derive(Clone, Copy)]

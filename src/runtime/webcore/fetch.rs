@@ -1888,11 +1888,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     use crate::webcore::s3_client::S3CredentialsExt as _;
                     credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
                         &credentials_with_options.credentials,
-                        Default::default(),
+                        &Default::default(),
                         Some(s3_options),
-                        None,
-                        None,
-                        false,
                         global_this,
                     )?;
                 }

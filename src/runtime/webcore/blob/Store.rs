@@ -316,11 +316,18 @@ impl S3Ext for S3 {
         use crate::webcore::s3_client::S3CredentialsExt as _;
         S3Credentials::get_credentials_with_options(
             self.get_credentials(),
-            self.options,
+            &bun_s3_signing::S3DefaultOptions {
+                options: self.options,
+                acl: self.acl,
+                storage_class: self.storage_class,
+                // `type` lives on the `Blob` wrapping this store
+                // (`Blob::content_type_or_mime_type`), not here.
+                content_type: None,
+                content_disposition: self.content_disposition.as_deref(),
+                content_encoding: self.content_encoding.as_deref(),
+                request_payer: self.request_payer,
+            },
             options,
-            self.acl,
-            self.storage_class,
-            self.request_payer,
             global_object,
         )
     }

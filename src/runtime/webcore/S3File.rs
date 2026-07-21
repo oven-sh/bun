@@ -347,24 +347,32 @@ fn construct_s3_file_internal_store(
     construct_s3_file_with_s3_credentials(global, path, options, &existing_credentials)
 }
 
+/// Sets the blob's `Content-Type` from the resolved `type` option. Invalid
+/// blob types are ignored, matching `new Blob([], { type })`.
+fn apply_content_type(blob: &Blob, global: &JSGlobalObject, content_type: &[u8]) {
+    if !blob::is_valid_blob_type(content_type) {
+        return;
+    }
+    blob.content_type_was_set.set(true);
+    blob.content_type
+        .set(match global.bun_vm().as_mut().mime_type(content_type) {
+            Some(mime) => blob::BlobContentType::from(mime),
+            None => blob::BlobContentType::from_lowercased(content_type),
+        });
+}
+
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it
 pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     global: &JSGlobalObject,
     path: PathLike,
     options: Option<JSValue>,
     default_credentials: &s3::S3Credentials,
-    default_options: s3::MultiPartUploadOptions,
-    default_acl: Option<s3::ACL>,
-    default_storage_class: Option<s3::StorageClass>,
-    default_request_payer: bool,
+    defaults: &s3::S3DefaultOptions<'_>,
 ) -> JsResult<Blob> {
     let aws_options = <s3::S3Credentials>::get_credentials_with_options(
         default_credentials,
-        default_options,
+        defaults,
         options,
-        default_acl,
-        default_storage_class,
-        default_request_payer,
         global,
     )?;
 
@@ -381,32 +389,25 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
         }
     };
     // store cleanup on early return is handled by Drop
-    store.data.as_s3_mut().options = aws_options.options;
-    store.data.as_s3_mut().acl = aws_options.acl;
-    store.data.as_s3_mut().storage_class = aws_options.storage_class;
-    store.data.as_s3_mut().request_payer = aws_options.request_payer;
+    let s3 = store.data.as_s3_mut();
+    s3.options = aws_options.options;
+    s3.acl = aws_options.acl;
+    s3.storage_class = aws_options.storage_class;
+    s3.request_payer = aws_options.request_payer;
+    // Owned copies: the `aws_options` views borrow into its `_*_slice` fields,
+    // which die at the end of this call, while the store outlives it.
+    s3.content_disposition = aws_options
+        .content_disposition
+        .as_deref()
+        .map(Box::<[u8]>::from);
+    s3.content_encoding = aws_options
+        .content_encoding
+        .as_deref()
+        .map(Box::<[u8]>::from);
 
     let blob = Blob::init_with_store(store, global);
-    if let Some(opts) = options {
-        if opts.is_object() {
-            if let Some(file_type) = opts.get_truthy(global, "type")? {
-                'inner: {
-                    if file_type.is_string() {
-                        let str = file_type.to_slice(global)?;
-                        let slice = str.slice();
-                        if !blob::is_valid_blob_type(slice) {
-                            break 'inner;
-                        }
-                        blob.content_type_was_set.set(true);
-                        blob.content_type
-                            .set(match global.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => blob::BlobContentType::from(mime),
-                                None => blob::BlobContentType::from_lowercased(slice),
-                            });
-                    }
-                }
-            }
-        }
+    if let Some(content_type) = aws_options.content_type.as_deref() {
+        apply_content_type(&blob, global, content_type);
     }
     Ok(blob)
 }
@@ -417,45 +418,13 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
     options: Option<JSValue>,
     existing_credentials: &s3::S3Credentials,
 ) -> JsResult<Blob> {
-    let aws_options = <s3::S3Credentials>::get_credentials_with_options(
-        existing_credentials,
-        Default::default(),
-        options,
-        None,
-        None,
-        false,
+    construct_s3_file_with_s3_credentials_and_options(
         global,
-    )?;
-    let mut store = blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
-    // store cleanup on early return is handled by Drop
-    store.data.as_s3_mut().options = aws_options.options;
-    store.data.as_s3_mut().acl = aws_options.acl;
-    store.data.as_s3_mut().storage_class = aws_options.storage_class;
-    store.data.as_s3_mut().request_payer = aws_options.request_payer;
-
-    let blob = Blob::init_with_store(store, global);
-    if let Some(opts) = options {
-        if opts.is_object() {
-            if let Some(file_type) = opts.get_truthy(global, "type")? {
-                'inner: {
-                    if file_type.is_string() {
-                        let str = file_type.to_slice(global)?;
-                        let slice = str.slice();
-                        if !blob::is_valid_blob_type(slice) {
-                            break 'inner;
-                        }
-                        blob.content_type_was_set.set(true);
-                        blob.content_type
-                            .set(match global.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => blob::BlobContentType::from(mime),
-                                None => blob::BlobContentType::from_lowercased(slice),
-                            });
-                    }
-                }
-            }
-        }
-    }
-    Ok(blob)
+        path,
+        options,
+        existing_credentials,
+        &Default::default(),
+    )
 }
 
 fn construct_s3_file_internal(

@@ -8,7 +8,8 @@ use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as _};
 
 use bun_s3_signing::{
-    ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, StorageClass,
+    ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, S3DefaultOptions,
+    StorageClass,
 };
 use bun_url::URL;
 
@@ -65,14 +66,23 @@ const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \
 const STORAGE_CLASS_ONE_OF: &str = "\"STANDARD\", \"STANDARD_IA\", \"INTELLIGENT_TIERING\", \"EXPRESS_ONEZONE\", \
 \"ONEZONE_IA\", \"GLACIER\", \"GLACIER_IR\", \"REDUCED_REDUNDANCY\", \"OUTPOSTS\", \"DEEP_ARCHIVE\", \"SNOW\"";
 
-#[allow(clippy::too_many_arguments)]
+/// Points `slot` at `utf8`'s bytes and moves `utf8` into `owner`, which keeps
+/// them alive for the `S3CredentialsWithOptions`' lifetime. The heap allocation
+/// behind `utf8` does not move when the slice handle is moved into `owner`, so
+/// the raw pointer stays valid.
+fn set_content_field(
+    slot: &mut Option<bun_ptr::RawSlice<u8>>,
+    owner: &mut Option<bun_core::ZigStringSlice>,
+    utf8: bun_core::ZigStringSlice,
+) {
+    *slot = Some(bun_ptr::RawSlice::new(utf8.slice()));
+    *owner = Some(utf8);
+}
+
 pub(crate) fn get_credentials_with_options(
     this: &S3Credentials,
-    default_options: MultiPartUploadOptions,
+    defaults: &S3DefaultOptions<'_>,
     options: Option<JSValue>,
-    default_acl: Option<ACL>,
-    default_storage_class: Option<StorageClass>,
-    default_request_payer: bool,
     global_object: &JSGlobalObject,
 ) -> JsResult<S3CredentialsWithOptions> {
     bun_analytics::features::s3.fetch_add(1, Ordering::Relaxed);
@@ -82,13 +92,37 @@ pub(crate) fn get_credentials_with_options(
     // deep field copy with a fresh ref-count.
     let mut new_credentials = S3CredentialsWithOptions {
         credentials: this.clone(),
-        options: default_options,
-        acl: default_acl,
-        storage_class: default_storage_class,
-        request_payer: default_request_payer,
+        options: defaults.options,
+        acl: defaults.acl,
+        storage_class: defaults.storage_class,
+        request_payer: defaults.request_payer,
         ..Default::default()
     };
     // errdefer new_credentials.deinit() — handled by Drop on early return
+
+    // The handle-level defaults are copied in first so that a per-call bag
+    // below can overwrite them field by field.
+    if let Some(content_disposition) = defaults.content_disposition {
+        set_content_field(
+            &mut new_credentials.content_disposition,
+            &mut new_credentials._content_disposition_slice,
+            bun_core::ZigStringSlice::Owned(content_disposition.to_vec()),
+        );
+    }
+    if let Some(content_type) = defaults.content_type {
+        set_content_field(
+            &mut new_credentials.content_type,
+            &mut new_credentials._content_type_slice,
+            bun_core::ZigStringSlice::Owned(content_type.to_vec()),
+        );
+    }
+    if let Some(content_encoding) = defaults.content_encoding {
+        set_content_field(
+            &mut new_credentials.content_encoding,
+            &mut new_credentials._content_encoding_slice,
+            bun_core::ZigStringSlice::Owned(content_encoding.to_vec()),
+        );
+    }
 
     if let Some(opts) = options {
         if opts.is_object() {
@@ -256,8 +290,11 @@ pub(crate) fn get_credentials_with_options(
                         "contentDisposition must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_disposition = Some(bun_ptr::RawSlice::new(utf8.slice()));
-                new_credentials._content_disposition_slice = Some(utf8);
+                set_content_field(
+                    &mut new_credentials.content_disposition,
+                    &mut new_credentials._content_disposition_slice,
+                    utf8,
+                );
             }
 
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"type", true)? {
@@ -266,8 +303,11 @@ pub(crate) fn get_credentials_with_options(
                         "type must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_type = Some(bun_ptr::RawSlice::new(utf8.slice()));
-                new_credentials._content_type_slice = Some(utf8);
+                set_content_field(
+                    &mut new_credentials.content_type,
+                    &mut new_credentials._content_type_slice,
+                    utf8,
+                );
             }
 
             if let Some(utf8) =
@@ -278,8 +318,11 @@ pub(crate) fn get_credentials_with_options(
                         "contentEncoding must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_encoding = Some(bun_ptr::RawSlice::new(utf8.slice()));
-                new_credentials._content_encoding_slice = Some(utf8);
+                set_content_field(
+                    &mut new_credentials.content_encoding,
+                    &mut new_credentials._content_encoding_slice,
+                    utf8,
+                );
             }
 
             if let Some(request_payer) = opts.get_boolean_strict(global_object, "requestPayer")? {

@@ -46,6 +46,47 @@ static bool protectStackFrameCells(JSC::MarkedArgumentBuffer& protectedFrameCell
     return !protectedFrameCells.hasOverflowed();
 }
 
+// V8's ErrorUtils::ToString: [[Get]] "name"/"message" (prototype walk, getters, ToString
+// coercion). An undefined name defaults to "Error", an undefined message to the empty
+// string. A name/message getter that calls back into stack formatting re-enters here; the
+// inner call falls back to side-effect-free reads so the cycle terminates after one level.
+static void computeErrorHeader(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, WTF::String& name, WTF::String& message)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    name = "Error"_s;
+
+    if (globalObject && globalObject->isComputingErrorStackHeader) {
+        if (auto* instance = dynamicDowncast<ErrorInstance>(errorObject)) {
+            name = instance->sanitizedNameString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            message = instance->sanitizedMessageString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        return;
+    }
+
+    if (globalObject)
+        globalObject->isComputingErrorStackHeader = true;
+    auto clearFlag = WTF::makeScopeExit([&] {
+        if (globalObject)
+            globalObject->isComputingErrorStackHeader = false;
+    });
+
+    JSValue nameValue = errorObject->get(lexicalGlobalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!nameValue.isUndefined()) {
+        name = nameValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+
+    JSValue messageValue = errorObject->get(lexicalGlobalObject, vm.propertyNames->message);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!messageValue.isUndefined()) {
+        message = messageValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -55,21 +96,18 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
 
     WTF::StringBuilder sb;
 
-    auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
+    WTF::String name;
+    WTF::String message;
+    computeErrorHeader(vm, globalObject, lexicalGlobalObject, errorObject, name, message);
     RETURN_IF_EXCEPTION(scope, {});
-    if (errorMessage) {
-        auto* str = errorMessage.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (str->length() > 0) {
-            auto value = str->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            sb.append("Error: "_s);
-            sb.append(value.data);
-        } else {
-            sb.append("Error"_s);
+    if (!name.isEmpty()) {
+        sb.append(name);
+        if (!message.isEmpty()) {
+            sb.append(": "_s);
+            sb.append(message);
         }
-    } else {
-        sb.append("Error"_s);
+    } else if (!message.isEmpty()) {
+        sb.append(message);
     }
 
     for (size_t i = 0; i < framesCount; i++) {
@@ -422,6 +460,10 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     WTF::String name = "Error"_s;
     WTF::String message;
 
+    if (!globalObject) [[unlikely]] {
+        globalObject = defaultGlobalObject();
+    }
+
     if (errorInstance) {
         // The GC-finalizer path (computeErrorInfoWrapperToString) always passes a null
         // errorInstance, so this branch only runs from a mutator (lazy .stack getter,
@@ -429,28 +471,8 @@ static String computeErrorInfoWithoutPrepareStackTrace(
         if (!lexicalGlobalObject) {
             lexicalGlobalObject = errorInstance->globalObject();
         }
-
-        // V8's ErrorUtils::ToString: [[Get]] "name"/"message" (prototype walk, getters,
-        // ToString coercion). An undefined name defaults to "Error", an undefined message
-        // to the empty string. sanitizedNameString/sanitizedMessageString skip getters and
-        // cap the prototype walk at depth 2, which drops subclass names and messages.
-        JSValue nameValue = errorInstance->get(lexicalGlobalObject, vm.propertyNames->name);
+        computeErrorHeader(vm, globalObject, lexicalGlobalObject, errorInstance, name, message);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!nameValue.isUndefined()) {
-            name = nameValue.toWTFString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-
-        JSValue messageValue = errorInstance->get(lexicalGlobalObject, vm.propertyNames->message);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!messageValue.isUndefined()) {
-            message = messageValue.toWTFString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-
-    if (!globalObject) [[unlikely]] {
-        globalObject = defaultGlobalObject();
     }
 
     return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);

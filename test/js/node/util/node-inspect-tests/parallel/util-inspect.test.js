@@ -3301,6 +3301,42 @@ test("error stack header reads name/message via full [[Get]]", () => {
     }
     assert.throws(() => new T("m").stack, /name-boom/);
   }
+
+  // the Error.prepareStackTrace default string uses the same header
+  {
+    const saved = Error.prepareStackTrace;
+    try {
+      Error.prepareStackTrace = (e, s) => e.stack;
+      class Foo extends Error {
+        name = "Foo";
+      }
+      assert.strictEqual(header(new Foo("x")), "Foo: x");
+      assert.strictEqual(inspected(new Foo("x")), "Foo: x");
+    } finally {
+      Error.prepareStackTrace = saved;
+    }
+  }
+
+  // a name/message getter that calls Error.captureStackTrace(this) does not recurse unboundedly
+  {
+    let count = 0;
+    class M extends Error {
+      get message() {
+        count++;
+        Error.captureStackTrace(this);
+        return "m";
+      }
+    }
+    assert.strictEqual(header(new M()), "Error: m");
+    assert.strictEqual(count, 1);
+  }
+
+  // Error.captureStackTrace on a non-Error target uses its name and message
+  {
+    const target = { name: "X", message: "Y" };
+    Error.captureStackTrace(target);
+    assert.strictEqual(target.stack.split("\n")[0], "X: Y");
+  }
 });
 
 // Utility functions

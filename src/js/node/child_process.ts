@@ -5,6 +5,8 @@ const { kHandle } = require("internal/shared");
 const {
   validateBoolean,
   validateFunction,
+  validateInteger,
+  validateNumber,
   validateString,
   validateAbortSignal,
   validateArray,
@@ -35,7 +37,6 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 
 var ArrayBufferIsView = ArrayBuffer.isView;
 
-var NumberIsInteger = Number.isInteger;
 var StringPrototypeIncludes = String.prototype.includes;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
@@ -234,8 +235,8 @@ function execFile(file, args, options, callback) {
     killSignal: options.killSignal,
     uid: options.uid,
     gid: options.gid,
-    windowsHide: options.windowsHide,
-    windowsVerbatimArguments: options.windowsVerbatimArguments,
+    windowsHide: !!options.windowsHide,
+    windowsVerbatimArguments: !!options.windowsVerbatimArguments,
     shell: options.shell,
     signal: options.signal,
   });
@@ -1827,8 +1828,8 @@ class Control extends EventEmitter {
 //------------------------------------------------------------------------------
 
 function validateMaxBuffer(maxBuffer) {
-  if (maxBuffer != null && !(typeof maxBuffer === "number" && maxBuffer >= 0)) {
-    throw $ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
+  if (maxBuffer != null) {
+    validateNumber(maxBuffer, "options.maxBuffer", 0);
   }
 }
 
@@ -1845,8 +1846,8 @@ function validateArgumentsNullCheck(args, propName) {
 }
 
 function validateTimeout(timeout) {
-  if (timeout != null && !(NumberIsInteger(timeout) && timeout >= 0)) {
-    throw $ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
+  if (timeout != null) {
+    validateInteger(timeout, "timeout", 0);
   }
 }
 

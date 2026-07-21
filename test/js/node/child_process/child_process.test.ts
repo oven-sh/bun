@@ -920,3 +920,80 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
     expect(r.error?.code).toBe("ENOTSUP");
   });
 });
+
+describe("option validation error identity (Node.js compat)", () => {
+  const cmd = `"${bunExe()}" -e 0`;
+  const file = bunExe();
+  const args = ["-e", "0"];
+
+  describe("maxBuffer", () => {
+    it.each(["big", 2n, true, {}])("non-number %p throws ERR_INVALID_ARG_TYPE (TypeError)", v => {
+      // @ts-ignore
+      expect(() => execFile(file, args, { maxBuffer: v }, () => {})).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+      // @ts-ignore
+      expect(() => execFileSync(file, args, { maxBuffer: v })).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
+    it.each([-1, NaN])("out-of-range number %p throws ERR_OUT_OF_RANGE (RangeError)", v => {
+      expect(() => execFile(file, args, { maxBuffer: v }, () => {})).toThrow(
+        expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE" }),
+      );
+      expect(() => execFileSync(file, args, { maxBuffer: v })).toThrow(
+        expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE" }),
+      );
+    });
+  });
+
+  describe("timeout", () => {
+    it.each(["soon", 2n, true, {}])("non-number %p throws ERR_INVALID_ARG_TYPE (TypeError)", v => {
+      for (const f of [
+        // @ts-ignore
+        () => execFile(file, args, { timeout: v }, () => {}),
+        // @ts-ignore
+        () => spawn(file, args, { timeout: v }),
+        // @ts-ignore
+        () => execFileSync(file, args, { timeout: v }),
+      ]) {
+        expect(f).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
+      }
+    });
+
+    it.each([-1, 1.5, NaN])("out-of-range number %p throws ERR_OUT_OF_RANGE (RangeError)", v => {
+      for (const f of [
+        () => execFile(file, args, { timeout: v }, () => {}),
+        () => spawn(file, args, { timeout: v }),
+        () => execFileSync(file, args, { timeout: v }),
+      ]) {
+        expect(f).toThrow(expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE" }));
+      }
+    });
+  });
+
+  describe("windowsHide / windowsVerbatimArguments", () => {
+    it("exec/execFile coerce to boolean instead of validating", async () => {
+      // @ts-ignore
+      const c1 = exec(cmd, { windowsHide: "yes", windowsVerbatimArguments: 1 }, () => {});
+      // @ts-ignore
+      const c2 = execFile(file, args, { windowsHide: "yes", windowsVerbatimArguments: 1 }, () => {});
+      expect(c1.spawnargs.length).toBeGreaterThan(0);
+      expect(c2.spawnargs.length).toBeGreaterThan(0);
+      await Promise.all([once(c1, "close"), once(c2, "close")]);
+    });
+
+    it.each([{ windowsHide: "yes" }, { windowsVerbatimArguments: 1 }])(
+      "spawn/spawnSync still validate %p",
+      (opt: any) => {
+        expect(() => spawn(file, args, opt)).toThrow(
+          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+        );
+        expect(() => spawnSync(file, args, opt)).toThrow(
+          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+        );
+      },
+    );
+  });
+});

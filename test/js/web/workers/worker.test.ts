@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -240,60 +240,28 @@ describe("web worker", () => {
     });
   });
 
-  test("worker with event listeners doesn't close event loop", done => {
-    const x = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages.js"],
+  // The child creates a Worker, ping-pongs ~50 messages with it, prints "done", and must
+  // then exit on its own. Exiting early drops "done"; never exiting trips the test timeout.
+  async function expectWorkerKeepsEventLoopAlive(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), fixture],
       env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
+      stderr: "pipe",
     });
-
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: "done",
+      signalCode: null,
+      exitCode: 0,
     });
+  }
+
+  test("worker with event listeners doesn't close event loop", async () => {
+    await expectWorkerKeepsEventLoopAlive("worker-fixture-many-messages.js");
   });
 
-  test("worker with event listeners doesn't close event loop 2", done => {
-    const x = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages2.js"],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
-
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
+  test("worker with event listeners doesn't close event loop 2", async () => {
+    await expectWorkerKeepsEventLoopAlive("worker-fixture-many-messages2.js");
   });
 
   test("worker with process.exit", done => {
@@ -334,6 +302,66 @@ describe("web worker", () => {
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
     });
+  });
+
+  // Every Worker constructs a JSC VM, and JSC re-runs ICU host time-zone detection for
+  // each one: a content scan of /usr/share/zoneinfo when /etc/localtime is a regular
+  // file. The host zone must be detected once per process and reused by Workers.
+  // Linux-only: ICU's Windows host detection doesn't read the TZ variable this mutates.
+  test.skipIf(!isLinux)("Worker reuses the host time zone detected at startup", async () => {
+    using dir = tempDir("worker-host-tz", {
+      "main.js": `
+        import { dlopen } from "bun:ffi";
+
+        // The main thread's VM detected the host time zone at startup (TZ is unset).
+        const mainTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        // Inject a zone the host is not in, so a Worker that re-detects is distinguishable.
+        const injectedTz = mainTz === "Pacific/Kiritimati" ? "America/New_York" : "Pacific/Kiritimati";
+
+        // Change the C-level TZ environment variable, which ICU's host time-zone
+        // detection reads. Bun's process.env assignments never call setenv(), so
+        // this is only observable if a later VM re-runs the host detection.
+        const { symbols } = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+          setenv: { args: ["ptr", "ptr", "i32"], returns: "i32" },
+        });
+        const cstr = s => {
+          const buf = Buffer.alloc(Buffer.byteLength(s) + 1);
+          buf.write(s);
+          return buf;
+        };
+        if (symbols.setenv(cstr("TZ"), cstr(injectedTz), 1) !== 0) {
+          throw new Error("setenv failed");
+        }
+
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+        const workerTz = await new Promise((resolve, reject) => {
+          worker.onmessage = e => resolve(e.data);
+          worker.onerror = e => reject(new Error(e.message));
+        });
+        worker.terminate();
+        console.log(JSON.stringify({ injectedTz, mainTz, workerTz }));
+      `,
+      "worker.js": `postMessage(Intl.DateTimeFormat().resolvedOptions().timeZone);`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      // TZ must be absent so the main thread detects the host time zone.
+      env: { ...bunEnv, TZ: undefined },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Surface the child's stderr if it crashed, instead of an opaque JSON parse error.
+    expect(exitCode, stderr).toBe(0);
+    const { injectedTz, mainTz, workerTz } = JSON.parse(stdout) as {
+      injectedTz: string;
+      mainTz: string;
+      workerTz: string;
+    };
+    expect(mainTz).not.toBe(injectedTz);
+    expect(workerTz).toBe(mainTz);
   });
 });
 

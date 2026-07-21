@@ -460,6 +460,19 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
 
+    // JSC re-runs ICU host time-zone detection in every large-heap VM constructor with
+    // nothing caching it across VMs, so each `new Worker` rescans /usr/share/zoneinfo when
+    // /etc/localtime is a regular file. Pin the first VM's result as the WTF override.
+    if (!miniMode) {
+        static std::once_flag onceFlag;
+        std::call_once(onceFlag, [&vm] {
+            WTF::Vector<char16_t, 32> timeZoneID;
+            WTF::getTimeZoneOverride(timeZoneID);
+            if (timeZoneID.isEmpty())
+                WTF::setTimeZoneOverride(vm.dateCache.defaultTimeZone().toString());
+        });
+    }
+
     {
         const char* disable_stop_if_necessary_timer = getenv("BUN_DISABLE_STOP_IF_NECESSARY_TIMER");
         // Keep stopIfNecessaryTimer enabled by default when either:

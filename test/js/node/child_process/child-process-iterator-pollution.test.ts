@@ -1,14 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
-// Overriding Array.prototype[Symbol.iterator] must not let user code rewrite the
-// argv that node:child_process passes to the child, and must not break loading
-// of builtin modules that child_process depends on (node:path, node:events, ...).
-// Node.js is immune to this because it uses primordials.
-//
-// Each case runs in its own subprocess so the pollution cannot leak into the
-// test runner. Module loads go through process.getBuiltinModule so Bun's
-// transpiler cannot hoist them ahead of the pollution.
+// Overriding Array.prototype[Symbol.iterator] must not rewrite child argv or break
+// builtin-module loading. Each case runs in a fresh subprocess; builtin loads use
+// process.getBuiltinModule so the transpiler cannot hoist them ahead of the pollution.
 
 async function run(code: string) {
   await using proc = Bun.spawn({
@@ -121,4 +116,23 @@ describe.concurrent("node:child_process with Array.prototype[Symbol.iterator] ov
     expect(stdout).toBe("example.com");
     expect(exitCode).toBe(0);
   });
+});
+
+test("ChildProcess#spawn envPairs preserves '=' inside values", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+    const { ChildProcess } = require("node:child_process");
+    const cp = new ChildProcess();
+    cp.spawn({
+      file: process.execPath,
+      args: [process.execPath, "-e", "process.stdout.write(process.env.KEY)"],
+      envPairs: ["KEY=a=b=c", "BUN_DEBUG_QUIET_LOGS=1", "PATH=" + (process.env.PATH || "")],
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let out = "";
+    cp.stdout.on("data", d => out += d);
+    cp.on("close", () => process.stdout.write(out));
+  `);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("a=b=c");
+  expect(exitCode).toBe(0);
 });

@@ -183,11 +183,7 @@ describe("Atomics", () => {
         env: bunEnv,
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout).toBe("notify=5\nresolved:w0:ok,w1:ok,w2:ok,w3:ok,w4:ok\n");
       expect(exitCode).toBe(0);
@@ -206,11 +202,7 @@ describe("Atomics", () => {
         env: bunEnv,
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout).toBe("exit\n");
       expect(exitCode).toBe(0);

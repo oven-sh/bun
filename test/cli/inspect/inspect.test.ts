@@ -351,8 +351,10 @@ test("bun --inspect banner names the bound address when [::1]:port is held by an
       ws.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
     });
     ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-    const reply = await new Promise<any>(resolve => {
+    const reply = await new Promise<any>((resolve, reject) => {
       ws.addEventListener("message", ({ data }) => resolve(JSON.parse(String(data))));
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+      ws.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
     });
     expect(reply).toMatchObject({ id: 1, result: { result: { type: "number", value: 2 } } });
     ws.close();

@@ -26,6 +26,8 @@
 #include "JavaScriptCore/InitializeThreading.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/InternalFunction.h"
+#include "JavaScriptCore/IntlSegments.h"
+#include "JavaScriptCore/IntlSegmentsPrototype.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSCJSValue.h"
@@ -80,6 +82,7 @@
 #include "ErrorStackTrace.h"
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
+#include "IntlSegmentsContaining.h"
 #include "JS2Native.h"
 #include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
@@ -2223,6 +2226,16 @@ void GlobalObject::finishCreation(VM& vm)
             JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.vm, init.owner->nullPrototypeObjectStructure());
             moduleNamespacePrototype->putDirectCustomAccessor(init.vm, init.vm.propertyNames->__esModule, CustomGetterSetter::create(init.vm, moduleNamespacePrototypeGetESModuleMarker, moduleNamespacePrototypeSetESModuleMarker), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor | 0);
             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, moduleNamespacePrototype));
+        });
+
+    // Override %Segments.prototype%.containing to work around a JSC bug at
+    // surrogate-pair segment starts; see IntlSegmentsContaining.cpp.
+    m_segmentsStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            JSGlobalObject* globalObject = init.owner;
+            JSC::IntlSegmentsPrototype* segmentsPrototype = JSC::IntlSegmentsPrototype::create(init.vm, globalObject, JSC::IntlSegmentsPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
+            segmentsPrototype->putDirectNativeFunction(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "containing"_s), 1, Bun::intlSegmentsPrototypeFuncContainingFix, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+            init.set(JSC::IntlSegments::createStructure(init.vm, globalObject, segmentsPrototype));
         });
 
     m_vmModuleContextMap.initLater(

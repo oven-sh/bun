@@ -160,6 +160,51 @@ describe("Intl.Segmenter", () => {
       th: seg("th", "word", "สวัสดีครับ"),
     }).toMatchSnapshot();
   });
+
+  // JSC's containing() miscomputed startIndex when the index is the lead
+  // surrogate of a surrogate pair that begins a segment, merging it with the
+  // previous segment. Iteration was always correct, so for every code unit i,
+  // containing(i) must equal the segment from [...segments] that covers i.
+  describe("containing() at surrogate-pair segment starts", () => {
+    const cases: [string, Intl.SegmenterOptions["granularity"]][] = [
+      ["Hello, world! 👍🏽 x", "word"],
+      ["x👍🏽y", "grapheme"],
+      ["a🇯🇵b", "grapheme"],
+      ["👍🏽", "grapheme"],
+      ["a👨‍👩‍👧‍👦b", "grapheme"],
+      ["Hi. 👍 Bye.", "sentence"],
+      ["x\ud83d", "grapheme"], // unpaired lead surrogate
+      ["abc", "grapheme"], // 8-bit string, no surrogates
+    ];
+    const pick = ({ segment, index, isWordLike }: Intl.SegmentData) => ({ segment, index, isWordLike });
+
+    test.each(cases)("%j (%s)", (input, granularity) => {
+      const segments = new Intl.Segmenter("en", { granularity }).segment(input);
+      const iterated = [...segments].map(pick);
+      const via = Array.from({ length: input.length }, (_, i) => pick(segments.containing(i)));
+      const expected = Array.from({ length: input.length }, (_, i) => iterated.findLast(s => s.index <= i)!);
+      expect(via).toEqual(expected);
+    });
+
+    test("out of range returns undefined", () => {
+      const segments = new Intl.Segmenter("en").segment("x👍🏽y");
+      expect(segments.containing(-1)).toBeUndefined();
+      expect(segments.containing(6)).toBeUndefined();
+      expect(segments.containing(Infinity)).toBeUndefined();
+    });
+
+    test("observable ToIntegerOrInfinity called once", () => {
+      const segments = new Intl.Segmenter("en").segment("x👍🏽y");
+      let calls = 0;
+      const index = { valueOf: () => (calls++, 1) };
+      expect(pick(segments.containing(index as unknown as number))).toEqual({
+        segment: "👍🏽",
+        index: 1,
+        isWordLike: undefined,
+      });
+      expect(calls).toBe(1);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

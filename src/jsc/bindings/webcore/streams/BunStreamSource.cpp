@@ -735,6 +735,40 @@ JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefa
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
+JSPromise* cancelPendingNativeSource(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(stream->m_bunMode == BunStreamMode::NativePending);
+    ASSERT(stream->m_controllerKind == ControllerKind::None);
+    stream->m_bunMode = BunStreamMode::Default;
+    JSObject* handle = stream->nativeHandleDetached() ? nullptr : stream->m_nativePtr.get().getObject();
+    if (!handle)
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    JSValue thrown;
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer updateRefArgs;
+        updateRefArgs.append(jsBoolean(false));
+        ASSERT(!updateRefArgs.hasOverflowed());
+        invokeMethod(vm, globalObject, handle, builtinNames(vm).updateRefPublicName(), updateRefArgs);
+        if (!catchScope.exception()) {
+            MarkedArgumentBuffer cancelArgs;
+            cancelArgs.append(reason);
+            ASSERT(!cancelArgs.hasOverflowed());
+            invokeMethod(vm, globalObject, handle, builtinNames(vm).cancelPublicName(), cancelArgs);
+        }
+        if (catchScope.exception()) [[unlikely]] {
+            thrown = takeAbruptCompletion(globalObject, catchScope);
+            if (thrown.isEmpty())
+                return nullptr;
+        }
+    }
+    if (!thrown.isEmpty())
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+}
+
 // The [bound-convention] onDrain body: a dead consumer drops the chunk.
 static void nativeSourceOnDrain(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue chunk)
 {

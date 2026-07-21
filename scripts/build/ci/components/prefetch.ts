@@ -9,7 +9,6 @@
 // sub-step is best-effort: a fork branch missing on the upstream remote or a
 // network blip skips the cache instead of failing the bake.
 
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   enableService,
@@ -46,42 +45,43 @@ export const prefetch: Component = {
               warn(`clone of ref "${repoRef}" failed; baking without warm caches`);
               return;
             }
-            if (!existsSync(join(clone, "scripts/prefetch-deps.ts")) && !mode.dryRun) {
-              warn(`scripts/prefetch-deps.ts not present at ${repoRef}; skipping warm cache`);
-              return;
-            }
 
-            // Read-only download cache. resolveConfig() walks up from cwd to
+            // Read-only download cache — warmed only when the image declares
+            // one (null = warm none). resolveConfig() walks up from cwd to
             // find package.json, so run from inside the clone.
-            const prefetchDir = image.paths.prefetchDir;
-            await ensureDirectory(prefetchDir, { mode: "777" });
-            const prefetched = await run([bun, "scripts/prefetch-deps.ts", prefetchDir], {
-              cwd: clone,
-              allowFailure: true,
-            });
-            if (prefetched.exitCode !== 0) {
-              warn("prefetch-deps.ts failed; baking without warm download cache");
-              await removePaths(prefetchDir);
+            const prefetchDir = image.paths.caches.prefetch;
+            if (prefetchDir === null) {
+              log("no caches.prefetch on this image; not warming a prefetch cache");
             } else {
-              // Read-only: download.ts only ever copies FROM here, and a
-              // writable baked input is something a misbehaving job could
-              // corrupt for later jobs.
-              await setModeRecursive(prefetchDir, "a-w");
-              await ensureLines("/etc/environment", [`BUN_BUILD_PREFETCH_DIR=${prefetchDir}`]);
-              await appendToProfiles(ctx, [`export BUN_BUILD_PREFETCH_DIR="${prefetchDir}"`]);
+              await ensureDirectory(prefetchDir, { mode: "777" });
+              const prefetched = await run([bun, "scripts/prefetch-deps.ts", prefetchDir], {
+                cwd: clone,
+                allowFailure: true,
+              });
+              if (prefetched.exitCode !== 0) {
+                warn("prefetch-deps.ts failed; baking without warm download cache");
+                await removePaths(prefetchDir);
+              } else {
+                // Read-only: download.ts only ever copies FROM here, and a
+                // writable baked input is something a misbehaving job could
+                // corrupt for later jobs.
+                await setModeRecursive(prefetchDir, "a-w");
+                await ensureLines("/etc/environment", [`BUN_BUILD_PREFETCH_DIR=${prefetchDir}`]);
+                await appendToProfiles(ctx, [`export BUN_BUILD_PREFETCH_DIR="${prefetchDir}"`]);
+              }
             }
 
-            // Pre-pull test docker images (postgres, mysql, redis, minio, …).
-            // Runs as root: our user is in the docker group but that doesn't
-            // apply to the current shell.
-            const havePrepare = existsSync(join(clone, "test/docker/prepare-ci.ts")) || mode.dryRun;
+            // Pre-pull test docker images (postgres, mysql, redis, minio, …) on
+            // images that have docker (the build host does; runs as root
+            // since our user's docker-group membership doesn't apply to the
+            // current shell). prepare-ci.ts is checked into git on this ref.
             const haveDocker = which("docker") !== undefined || mode.dryRun;
-            if (havePrepare && haveDocker) {
+            if (haveDocker) {
               await enableService("docker", { start: true });
               const pulled = await sudo([bun, "test/docker/prepare-ci.ts"], { cwd: clone, allowFailure: true });
               if (pulled.exitCode !== 0) warn("prepare-ci.ts failed; test docker images not pre-pulled");
             } else {
-              log("skipping docker image pre-pull (no prepare-ci.ts or no docker)");
+              log("skipping docker image pre-pull (no docker on this image)");
             }
 
             // Shared `bun install` download cache: every test shard's `bun
@@ -89,10 +89,10 @@ export const prefetch: Component = {
             // and owned by the buildkite user: bun install extracts new
             // tarballs into the cache dir itself, so a read-only cache would
             // fail on the first unseen package. Warmed only when the image
-            // declares an installCacheDir (null = this image warms no cache).
-            const cacheDir = image.paths.installCacheDir;
+            // declares a caches.install path (null = this image warms none).
+            const cacheDir = image.paths.caches.install;
             if (cacheDir === null) {
-              log("no installCacheDir on this image; not warming a bun install cache");
+              log("no caches.install on this image; not warming a bun install cache");
             } else {
               await ensureDirectory(cacheDir, { mode: "777" });
               const ok = await warmInstallCache(bun, clone, cacheDir);
@@ -128,33 +128,33 @@ export const prefetch: Component = {
               warn(`clone of ref "${repoRef}" failed; baking without warm caches`);
               return;
             }
-            if (!existsSync(join(clone, "scripts", "prefetch-deps.ts")) && !mode.dryRun) {
-              warn(`scripts/prefetch-deps.ts not present at ${repoRef}; skipping warm cache`);
-              return;
-            }
-            const prefetchDir = image.paths.prefetchDir;
-            await win.ensureDirectory(prefetchDir);
-            // resolveConfig() walks up from cwd to find package.json — run
-            // from inside the clone.
-            const prefetched = await run(["bun", "scripts\\prefetch-deps.ts", prefetchDir], {
-              cwd: clone,
-              allowFailure: true,
-            });
-            if (prefetched.exitCode !== 0) {
-              warn("prefetch-deps.ts failed; baking without warm download cache");
-              await win.removePaths(prefetchDir);
+            const prefetchDir = image.paths.caches.prefetch;
+            if (prefetchDir === null) {
+              log("no caches.prefetch on this image; not warming a prefetch cache");
             } else {
-              // Read-only: download.ts only ever copies FROM here.
-              await win.makeReadOnlyRecursive(prefetchDir);
-              await win.setMachineEnv("BUN_BUILD_PREFETCH_DIR", prefetchDir);
+              await win.ensureDirectory(prefetchDir);
+              // resolveConfig() walks up from cwd to find package.json — run
+              // from inside the clone.
+              const prefetched = await run(["bun", "scripts\\prefetch-deps.ts", prefetchDir], {
+                cwd: clone,
+                allowFailure: true,
+              });
+              if (prefetched.exitCode !== 0) {
+                warn("prefetch-deps.ts failed; baking without warm download cache");
+                await win.removePaths(prefetchDir);
+              } else {
+                // Read-only: download.ts only ever copies FROM here.
+                await win.makeReadOnlyRecursive(prefetchDir);
+                await win.setMachineEnv("BUN_BUILD_PREFETCH_DIR", prefetchDir);
+              }
             }
             // Shared `bun install` download cache. Left writable: bun install
             // extracts new tarballs into the cache dir itself. The agent runs
             // as SYSTEM, which can write here. Warmed only when the image
-            // declares an installCacheDir (null = warm no cache).
-            const cacheDir = image.paths.installCacheDir;
+            // declares a caches.install path (null = warm none).
+            const cacheDir = image.paths.caches.install;
             if (cacheDir === null) {
-              log("no installCacheDir on this image; not warming a bun install cache");
+              log("no caches.install on this image; not warming a bun install cache");
             } else {
               await win.ensureDirectory(cacheDir);
               const ok = await warmInstallCache("bun", clone, cacheDir);

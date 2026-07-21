@@ -159,6 +159,7 @@ using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
+JSC_DECLARE_HOST_FUNCTION(Process_functioninitgroups);
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
@@ -3234,6 +3235,34 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     return JSValue::encode(jsNumber(result));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    
+    auto userValue = callFrame->argument(0);
+    auto groupValue = callFrame->argument(1);
+    
+    // initgroups() requires a string username, not a uid number
+    if (!userValue.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "user"_s, "string"_s, userValue);
+    }
+    auto userStr = userValue.getString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto userUtf8 = userStr.utf8();
+    
+    // Resolve group id (accepts string group name or numeric gid)
+    JSValue groupResolved = maybe_gid_by_name(scope, globalObject, groupValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    gid_t groupId = groupResolved.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    
+    auto result = callWithoutThreadSuspension([&] { return initgroups(userUtf8.data(), groupId); });
+    if (result != 0) throwSystemError(scope, globalObject, "initgroups"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -4635,6 +4664,8 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   setgid                           Process_functionsetgid                              Function 1
   setgroups                        Process_functionsetgroups                           Function 1
   setuid                           Process_functionsetuid                              Function 1
+
+  initgroups                       Process_functioninitgroups                          Function 2
 #endif
 @end
 */

@@ -9,8 +9,11 @@ use bun_sys::{self, Fd, FdExt};
 
 bun_core::declare_scope!(ArrayBuffer, visible);
 
-/// `void (*)(void* bytes, void* deallocatorContext)` called on the JS thread
-/// when a zero-copy ArrayBuffer/typed array backing store is collected.
+/// `void (*)(void* bytes, void* deallocatorContext)` called when a
+/// zero-copy ArrayBuffer/typed array backing store is collected. Not
+/// necessarily on the creating thread: a transferred buffer's contents are
+/// destroyed on the receiving Worker's thread (or wherever an undelivered
+/// message is dropped), so the callback must be thread-safe.
 pub type JSTypedArrayBytesDeallocator = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -432,28 +435,6 @@ impl ArrayBuffer {
         }
     }
 
-    /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it as an
-    /// `ArrayBuffer` without copying. The buffer is released via
-    /// [`MarkedArrayBuffer_deallocator`] when the resulting JS object is
-    /// collected (see [`ArrayBuffer::to_js`] / [`ArrayBuffer::to_js_unchecked`]).
-    ///
-    /// Prefer this over `Box::leak` + [`ArrayBuffer::from_bytes`] at call sites
-    /// so the ownership transfer is explicit.
-    pub fn from_owned_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> ArrayBuffer {
-        let len = bytes.len();
-        // Ownership transfers to JSC; `to_js` installs a deallocator that
-        // `mi_free`s the pointer on GC. `into_raw` (not `leak`) expresses that
-        // this is an FFI hand-off, not a leak.
-        let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
-        ArrayBuffer {
-            len: u32::try_from(len).expect("int cast") as usize,
-            byte_len: u32::try_from(len).expect("int cast") as usize,
-            typed_array_type,
-            ptr,
-            ..Default::default()
-        }
-    }
-
     pub fn to_js_unchecked(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
         // The reason for this is
         // JSC C API returns a detached arraybuffer
@@ -473,9 +454,9 @@ impl ArrayBuffer {
         }
 
         if self.typed_array_type == JSType::ArrayBuffer {
-            // SAFETY: this method's contract (see `from_owned_bytes`): the
-            // descriptor's `ptr` is the live backing allocation of `byte_len`
-            // bytes, mimalloc-owned and transferable; ownership moves to JSC,
+            // SAFETY: this method's contract: the descriptor's `ptr` is the
+            // live backing allocation of `byte_len` bytes, mimalloc-owned
+            // and transferable; ownership moves to JSC,
             // which frees it exactly once via `MarkedArrayBuffer_deallocator`
             // (`mi_free`; tolerates null).
             return unsafe {
@@ -1078,7 +1059,7 @@ pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 ///   lifetime: until the deallocator runs, or indefinitely when `deallocator`
 ///   is `None`. `ptr` may be null only when `len == 0`.
 /// - `deallocator`, if `Some`, must be sound to call exactly once with
-///   `(ptr, deallocator_context)` on the JS thread at GC time, and
+///   `(ptr, deallocator_context)` at GC time — possibly on another thread, and
 ///   `deallocator_context` must remain valid until then.
 pub unsafe fn make_array_buffer_with_bytes_no_copy(
     global: &JSGlobalObject,
@@ -1126,6 +1107,193 @@ pub unsafe fn make_typed_array_with_bytes_no_copy(
             )
         }
     })
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Safe no-copy constructors: the "pointer stays valid until the deallocator
+// runs" contract of the `make_*_with_bytes_no_copy` functions above,
+// expressed as ownership transfer. The owner is dropped exactly once when
+// the JS object is collected — possibly on another thread (a transferred
+// ArrayBuffer's contents are destroyed wherever the receiving Worker or an
+// undelivered message dies), hence the `Send` bounds.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Fresh empty typed array for the zero-length paths below: the no-copy
+/// constructor yields a *detached* view for `len == 0`, which JS code can
+/// observe (`.byteLength` throws). `DataView`/`TypeNone` have no copy
+/// factory (both C++ constructors assert on them) — no caller reaches here
+/// with those types; the arm mirrors the legacy fallthrough unchanged.
+fn empty_typed_array(global: &JSGlobalObject, ty: TypedArrayType) -> JsResult<JSValue> {
+    if ty == TypedArrayType::TypeDataView || ty == TypedArrayType::TypeNone {
+        // SAFETY: null ptr + len 0 + no deallocator — trivially valid.
+        return unsafe {
+            make_typed_array_with_bytes_no_copy(global, ty, ptr::null_mut(), 0, None, ptr::null_mut())
+        };
+    }
+    crate::host_fn::from_js_host_call(global, || {
+        // SAFETY: `global` is a live opaque ZST handle; null ptr is allowed
+        // for `byteLength == 0` (nothing is copied).
+        unsafe { Bun__createTypedArrayForCopy(global, ty, ptr::null(), 0) }
+    })
+}
+
+/// `deallocator` shim for [`typed_array_from_owned_slice`]: `ctx` carries
+/// the length, so the `Box<[u8]>` is rebuilt and freed by the allocator
+/// that created it — no extra allocation for the hand-off.
+unsafe extern "C" fn drop_boxed_slice(bytes: *mut c_void, len_ctx: *mut c_void) {
+    // SAFETY: `bytes`/`len_ctx` are the `Box::into_raw` pointer and length
+    // stored by `*_from_owned_slice`; this runs exactly once.
+    unsafe {
+        drop(Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+            bytes.cast::<u8>(),
+            len_ctx as usize,
+        )));
+    }
+}
+
+/// `deallocator` shim for [`typed_array_from_owner`]: `ctx` is the boxed
+/// owner; dropping it releases whatever the bytes borrowed from it.
+unsafe extern "C" fn drop_boxed_owner<O: Send + 'static>(_bytes: *mut c_void, owner: *mut c_void) {
+    // SAFETY: `owner` is the `Box::<O>::into_raw` pointer stored by
+    // `*_from_owner`; this runs exactly once.
+    unsafe { drop(Box::from_raw(owner.cast::<O>())) }
+}
+
+/// A `Uint8Array`-style typed array over `bytes` without copying; the
+/// allocation is freed when the JS object (or a transferred copy of it) is
+/// collected. Zero-length boxes take the empty-object path so JS never sees
+/// a detached buffer.
+pub fn typed_array_from_owned_slice(
+    global: &JSGlobalObject,
+    ty: TypedArrayType,
+    bytes: Box<[u8]>,
+) -> JsResult<JSValue> {
+    let len = bytes.len();
+    if len == 0 {
+        return empty_typed_array(global, ty);
+    }
+    // `Box::into_raw` (not `as_mut_ptr` + `forget`): moving the box after
+    // deriving the pointer would invalidate its provenance.
+    let ptr = Box::into_raw(bytes).cast::<u8>();
+    // SAFETY: `ptr..ptr+len` is the just-forgotten `Box<[u8]>` allocation;
+    // `drop_boxed_slice` rebuilds and frees it exactly once with `len`
+    // recovered from the ctx pointer.
+    unsafe {
+        make_typed_array_with_bytes_no_copy(
+            global,
+            ty,
+            ptr.cast::<c_void>(),
+            len,
+            Some(drop_boxed_slice),
+            len as *mut c_void,
+        )
+    }
+}
+
+/// [`typed_array_from_owned_slice`], but producing a plain `ArrayBuffer`.
+pub fn array_buffer_from_owned_slice(
+    global: &JSGlobalObject,
+    bytes: Box<[u8]>,
+) -> JsResult<JSValue> {
+    let len = bytes.len();
+    if len == 0 {
+        return ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, b"");
+    }
+    // `Box::into_raw` (not `as_mut_ptr` + `forget`): moving the box after
+    // deriving the pointer would invalidate its provenance.
+    let ptr = Box::into_raw(bytes).cast::<u8>();
+    // SAFETY: same as `typed_array_from_owned_slice`.
+    unsafe {
+        make_array_buffer_with_bytes_no_copy(
+            global,
+            ptr.cast::<c_void>(),
+            len,
+            Some(drop_boxed_slice),
+            len as *mut c_void,
+        )
+    }
+}
+
+/// Owned bytes → JS object of `typed_array_type` (`JSType::ArrayBuffer` or
+/// a typed-array `JSType`), no copy. Replaces the removed `from_owned_bytes`
+/// + `to_js_unchecked` pairing, whose ownership contract was an unwritten
+/// convention between two individually-"safe" functions.
+pub fn js_from_owned_slice(
+    global: &JSGlobalObject,
+    typed_array_type: JSType,
+    bytes: Box<[u8]>,
+) -> JsResult<JSValue> {
+    if typed_array_type == JSType::ArrayBuffer {
+        array_buffer_from_owned_slice(global, bytes)
+    } else {
+        typed_array_from_owned_slice(global, typed_array_type.to_typed_array_type(), bytes)
+    }
+}
+
+/// A typed array viewing bytes owned by an arbitrary `owner`, without
+/// copying. The owner is boxed (one small allocation) and dropped when the
+/// JS object is collected. `view` picks the exposed byte window out of the
+/// boxed owner (it runs once, up front — only the drop shim outlives this
+/// call); the returned borrow guarantees the window points into the
+/// owner's own heap-stable storage.
+pub fn typed_array_from_owner<O: Send + 'static>(
+    global: &JSGlobalObject,
+    ty: TypedArrayType,
+    owner: O,
+    view: impl for<'a> FnOnce(&'a mut O) -> &'a mut [u8],
+) -> JsResult<JSValue> {
+    // Raw the box before deriving the window so the pointer's provenance
+    // survives; a later by-value Box move would invalidate it.
+    let ctx = Box::into_raw(Box::new(owner));
+    // SAFETY: `ctx` is the live boxed owner; exclusive until handed to JSC.
+    let window = view(unsafe { &mut *ctx });
+    let (ptr, len) = (window.as_mut_ptr(), window.len());
+    if len == 0 {
+        // SAFETY: reclaim and drop the never-handed-off owner.
+        drop(unsafe { Box::from_raw(ctx) });
+        return empty_typed_array(global, ty);
+    }
+    // SAFETY: `ptr..ptr+len` borrows from the boxed owner, which stays at a
+    // stable address until `drop_boxed_owner::<O>` rebuilds and drops the
+    // Box exactly once.
+    unsafe {
+        make_typed_array_with_bytes_no_copy(
+            global,
+            ty,
+            ptr.cast::<c_void>(),
+            len,
+            Some(drop_boxed_owner::<O>),
+            ctx.cast::<c_void>(),
+        )
+    }
+}
+
+/// [`typed_array_from_owner`], but producing a plain `ArrayBuffer`.
+pub fn array_buffer_from_owner<O: Send + 'static>(
+    global: &JSGlobalObject,
+    owner: O,
+    view: impl for<'a> FnOnce(&'a mut O) -> &'a mut [u8],
+) -> JsResult<JSValue> {
+    // See `typed_array_from_owner` for the provenance ordering.
+    let ctx = Box::into_raw(Box::new(owner));
+    // SAFETY: `ctx` is the live boxed owner; exclusive until handed to JSC.
+    let window = view(unsafe { &mut *ctx });
+    let (ptr, len) = (window.as_mut_ptr(), window.len());
+    if len == 0 {
+        // SAFETY: reclaim and drop the never-handed-off owner.
+        drop(unsafe { Box::from_raw(ctx) });
+        return ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, b"");
+    }
+    // SAFETY: same as `typed_array_from_owner`.
+    unsafe {
+        make_array_buffer_with_bytes_no_copy(
+            global,
+            ptr.cast::<c_void>(),
+            len,
+            Some(drop_boxed_owner::<O>),
+            ctx.cast::<c_void>(),
+        )
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

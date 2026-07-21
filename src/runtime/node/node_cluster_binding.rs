@@ -64,7 +64,7 @@ pub(crate) fn send_helper_child<'s>(
     let callback = arguments.ptr[2];
 
     let global = scope.unscoped_global();
-    let vm = global.bun_vm().as_mut();
+    let vm = scope.bun_vm().as_mut();
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global; sole &mut on JS thread.
 
     if vm.ipc.is_none() {
@@ -74,18 +74,18 @@ pub(crate) fn send_helper_child<'s>(
         return Err(global.throw_missing_arguments_value(&["message"]));
     }
     if !handle.is_null() {
-        return Err(global.throw(format_args!("passing 'handle' not implemented yet")));
+        return Err(scope.throw(format_args!("passing 'handle' not implemented yet")));
     }
     if !message.is_object() {
-        return Err(global.throw_invalid_argument_type_value("message", "object", message.raw()));
+        return Err(scope.throw_invalid_argument_type_value("message", "object", message));
     }
     let singleton = child_singleton();
-    if callback.raw().is_function() {
+    if callback.is_function() {
         // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
         let _ = singleton.callbacks.put(
             singleton.seq,
-            StrongOptional::create(callback.raw(), global),
+            StrongOptional::create(callback.unscoped(), global),
         );
     }
 
@@ -101,7 +101,10 @@ pub(crate) fn send_helper_child<'s>(
         bun_output::scoped_log!(
             IPC,
             "child: {}",
-            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message.raw())
+            bun_jsc::console_object::formatter::ZigFormatter::new(
+                &mut formatter,
+                message.unscoped()
+            )
         );
     }
 
@@ -120,7 +123,7 @@ pub(crate) fn send_helper_child<'s>(
 
     let good = ipc_instance.data.serialize_and_send(
         global,
-        message.raw(),
+        message.unscoped(),
         IsInternal::Internal,
         JSValue::NULL,
         None,
@@ -133,7 +136,7 @@ pub(crate) fn send_helper_child<'s>(
         ex.put(scope, b"syscall", syscall);
         let fnvalue =
             bun_jsc::JSFunction::create(global, "", __jsc_host_impl_, 1, Default::default());
-        JSValue::call_next_tick_1(fnvalue, global, ex.raw())?;
+        JSValue::call_next_tick_1(fnvalue, global, ex.unscoped())?;
         return Ok(scope.local(JSValue::FALSE));
     }
 
@@ -154,8 +157,8 @@ pub(crate) fn on_internal_message_child<'s>(
     let global = scope.unscoped_global();
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    singleton.worker = StrongOptional::create(arguments.ptr[0].raw(), global);
-    singleton.cb = StrongOptional::create(arguments.ptr[1].raw(), global);
+    singleton.worker = StrongOptional::create(arguments.ptr[0].unscoped(), global);
+    singleton.cb = StrongOptional::create(arguments.ptr[1].unscoped(), global);
     singleton.flush(global)?;
     Ok(scope.undefined())
 }
@@ -199,7 +202,7 @@ pub(crate) fn send_helper_primary<'s>(
         return Err(global.throw_missing_arguments_value(&["message"]));
     }
     if !message.is_object() {
-        return Err(global.throw_invalid_argument_type_value("message", "object", message.raw()));
+        return Err(scope.throw_invalid_argument_type_value("message", "object", message));
     }
     // Only NODE_HANDLE envelopes (built by cluster/primary.ts's send()) carry
     // a descriptor: the non-reading UDP wrap of a cluster-shared dgram socket.
@@ -222,31 +225,34 @@ pub(crate) fn send_helper_primary<'s>(
         {
             // Sending descriptors over IPC is not implemented on Windows;
             // Node reports the same for cluster-shared dgram handles.
-            return Err(global.throw(format_args!(
+            return Err(scope.throw(format_args!(
                 "passing a dgram handle over IPC is not supported on Windows"
             )));
         }
         #[cfg(not(windows))]
         {
             let fd = match handle.get(scope, "fd")? {
-                Some(value) => value.raw().coerce_to_i32(global)?,
+                Some(value) => value.unscoped().coerce_to_i32(global)?,
                 None => -1,
             };
             if fd < 0 {
-                return Err(global
+                return Err(scope
                     .throw_invalid_arguments(format_args!("Expected handle to have a valid fd")));
             }
             (
-                Some(Handle::init(bun_sys::Fd::from_native(fd), handle.raw())),
+                Some(Handle::init(
+                    bun_sys::Fd::from_native(fd),
+                    handle.unscoped(),
+                )),
                 IsInternal::External,
             )
         }
     };
 
-    if callback.raw().is_function() {
+    if callback.is_function() {
         let _ = ipc_data.internal_msg_queue.callbacks.put(
             ipc_data.internal_msg_queue.seq,
-            StrongOptional::create(callback.raw(), global),
+            StrongOptional::create(callback.unscoped(), global),
         );
     }
 
@@ -262,13 +268,16 @@ pub(crate) fn send_helper_primary<'s>(
         bun_output::scoped_log!(
             IPC,
             "primary: {}",
-            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message.raw())
+            bun_jsc::console_object::formatter::ZigFormatter::new(
+                &mut formatter,
+                message.unscoped()
+            )
         );
     }
 
     let success = ipc_data.serialize_and_send(
         global,
-        message.raw(),
+        message.unscoped(),
         is_internal,
         JSValue::NULL,
         zig_handle,
@@ -297,8 +306,9 @@ pub(crate) fn on_internal_message_primary<'s>(
     };
     let global = scope.unscoped_global();
     // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.worker = StrongOptional::create(arguments.ptr[1].raw(), global);
-    ipc_data.internal_msg_queue.cb = StrongOptional::create(arguments.ptr[2].raw(), global);
+    ipc_data.internal_msg_queue.worker =
+        StrongOptional::create(arguments.ptr[1].unscoped(), global);
+    ipc_data.internal_msg_queue.cb = StrongOptional::create(arguments.ptr[2].unscoped(), global);
     Ok(scope.undefined())
 }
 
@@ -375,12 +385,12 @@ pub(crate) fn set_ref<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<
         return Err(global.throw_invalid_argument_type_value(
             "enabled",
             "boolean",
-            arguments.ptr[0].raw(),
+            arguments.ptr[0].unscoped(),
         ));
     }
 
     let enabled = arguments.ptr[0].to_boolean();
-    let vm = global.bun_vm().as_mut();
+    let vm = scope.bun_vm().as_mut();
     vm.channel_ref_overridden = true;
     if enabled {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
@@ -411,7 +421,7 @@ pub(crate) fn channel_ignore_one_disconnect_event_listener<'s>(
     scope: &mut Scope<'s>,
     _frame: &CallFrame,
 ) -> JsResult<Local<'s>> {
-    let vm = scope.unscoped_global().bun_vm().as_mut();
+    let vm = scope.bun_vm().as_mut();
     vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
     Ok(scope.local(JSValue::FALSE))
 }

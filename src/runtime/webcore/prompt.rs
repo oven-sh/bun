@@ -16,7 +16,7 @@ fn alert<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
     if has_message {
-        let message = arguments.ptr[0].raw().to_slice(scope.unscoped_global())?;
+        let message = arguments.ptr[0].to_slice(scope)?;
 
         if !message.slice().is_empty() {
             // 3. Set message to the result of normalizing newlines given message.
@@ -76,7 +76,7 @@ fn confirm<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> 
 
         // 3. Set message to the result of optionally truncating message.
         // *  Not necessary so we won't do it.
-        let message = arguments.ptr[0].raw().to_slice(scope.unscoped_global())?;
+        let message = arguments.ptr[0].to_slice(scope)?;
 
         if output.write_all(message.slice()).is_err() {
             // 1. If we cannot show simple dialogs for this, then return false.
@@ -249,7 +249,7 @@ pub mod prompt {
 
             // 3. Set message to the result of optionally truncating message.
             // *  Not necessary so we won't do it.
-            let message = arguments.ptr[0].raw().to_slice(scope.unscoped_global())?;
+            let message = arguments.ptr[0].to_slice(scope)?;
 
             if output.write_all(message.slice()).is_err() {
                 // 1. If we cannot show simple dialogs for this, then return null.
@@ -276,7 +276,7 @@ pub mod prompt {
         }
 
         if has_default {
-            let default_string = arguments.ptr[1].raw().to_slice(scope.unscoped_global())?;
+            let default_string = arguments.ptr[1].to_slice(scope)?;
 
             if output
                 .print(format_args!(

@@ -139,9 +139,8 @@ pub mod js_bindings {
         crash_handler::write_u64_as_two_vlqs(buf.writer(), bits.bits() as usize)
             // there is definitely enough space in the bounded array
             .expect("unreachable");
-        let mut str = BunString::clone_latin1(buf.slice());
-        let v = str.transfer_to_js(scope.unscoped_global())?;
-        Ok(scope.local(v))
+        let str = BunString::clone_latin1(buf.slice());
+        scope.transfer_string(str)
     }
 
     #[bun_jsc::host_fn(scoped)]

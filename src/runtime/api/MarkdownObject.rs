@@ -117,14 +117,13 @@ pub(crate) fn set_max_markdown_block_bytes_for_testing<'s>(
     scope: &mut Scope<'s>,
     callframe: &CallFrame,
 ) -> JsResult<Local<'s>> {
-    let global_this = scope.unscoped_global();
     let limit_value = callframe.scoped_argument(scope, 0);
     if !limit_value.is_number() {
-        return Err(global_this.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "setMaxMarkdownBlockBytesForTesting expects a number"
         )));
     }
-    let limit = usize::try_from(limit_value.raw().coerce_to_int64(global_this)?.max(0))
+    let limit = usize::try_from(limit_value.coerce::<i64>(scope)?.max(0))
         .expect("non-negative i64 fits usize");
     let prev = bun_md::parser::set_max_block_bytes_for_testing(limit);
     Ok(scope.number(prev as f64))
@@ -141,13 +140,15 @@ pub fn render_to_ansi<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsRes
     let (input_value, theme_value) = (args.ptr[0], args.ptr[1]);
 
     if input_value.is_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     }
 
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value.raw())? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value.unscoped())? else {
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     };
 
     let pinned = PinnedView::pin(global_this, &buffer)?;
@@ -166,22 +167,16 @@ pub fn render_to_ansi<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsRes
         image_base_dir: None,
     };
     if theme_value.is_object() {
-        if let Some(v) = theme_value.raw().get_boolean_loose(global_this, "colors")? {
+        if let Some(v) = theme_value.get_boolean_loose(scope, "colors")? {
             theme.colors = v;
         }
-        if let Some(v) = theme_value
-            .raw()
-            .get_boolean_loose(global_this, "hyperlinks")?
-        {
+        if let Some(v) = theme_value.get_boolean_loose(scope, "hyperlinks")? {
             theme.hyperlinks = v;
         }
-        if let Some(v) = theme_value
-            .raw()
-            .get_boolean_loose(global_this, "kittyGraphics")?
-        {
+        if let Some(v) = theme_value.get_boolean_loose(scope, "kittyGraphics")? {
             theme.kitty_graphics = v;
         }
-        if let Some(v) = theme_value.raw().get_boolean_loose(global_this, "light")? {
+        if let Some(v) = theme_value.get_boolean_loose(scope, "light")? {
             theme.light = v;
         }
         if let Some(cols) = theme_value.get(scope, "columns")? {
@@ -202,7 +197,7 @@ pub fn render_to_ansi<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsRes
             // The parser can only return null via JSError / JSTerminated
             // from a renderer callback; the ANSI renderer has none, so this
             // path is unreachable but handle it safely.
-            return Err(global_this.throw_out_of_memory());
+            return Err(scope.throw_out_of_memory());
         }
         Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
@@ -220,13 +215,15 @@ pub(crate) fn render_to_html<'s>(
     let (input_value, opts_value) = (args.ptr[0], args.ptr[1]);
 
     if input_value.is_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     }
 
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value.raw())? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value.unscoped())? else {
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     };
 
     let pinned = PinnedView::pin(global_this, &buffer)?;
@@ -235,7 +232,7 @@ pub(crate) fn render_to_html<'s>(
         None => buffer.slice(),
     };
 
-    let options = parse_options(global_this, opts_value.raw())?;
+    let options = parse_options(global_this, opts_value.unscoped())?;
 
     let result = match md::render_to_html_with_options(input, options) {
         Ok(r) => r,
@@ -325,13 +322,15 @@ pub(crate) fn render<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResu
     let (input_value, callbacks_value, opts_value) = (args.ptr[0], args.ptr[1], args.ptr[2]);
 
     if input_value.is_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     }
 
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value.raw())? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value.unscoped())? else {
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     };
 
     let pinned = PinnedView::pin(global_this, &buffer)?;
@@ -341,17 +340,17 @@ pub(crate) fn render<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResu
     };
 
     // Parse parser options from 3rd argument
-    let options = parse_options(global_this, opts_value.raw())?;
+    let options = parse_options(global_this, opts_value.unscoped())?;
 
     // Create JS callback renderer
     let mut js_renderer = match JsCallbackRenderer::init(global_this, input, options.heading_ids) {
         Ok(r) => r,
-        Err(_) => return Err(global_this.throw_out_of_memory()),
+        Err(_) => return Err(scope.throw_out_of_memory()),
     };
 
     // Extract callbacks from 2nd argument
     js_renderer.extract_callbacks(if callbacks_value.is_object() {
-        callbacks_value.raw()
+        callbacks_value.unscoped()
     } else {
         JSValue::UNDEFINED
     })?;

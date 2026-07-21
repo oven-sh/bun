@@ -1,5 +1,5 @@
 use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope};
 
 bun_output::declare_scope!(S3Stat, visible);
 
@@ -43,14 +43,12 @@ impl S3Stat {
 
     #[bun_jsc::host_fn(getter, scoped)]
     pub(crate) fn get_etag<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        let v = this.etag.to_js(scope.unscoped_global())?;
-        Ok(scope.local(v))
+        scope.string(&this.etag)
     }
 
     #[bun_jsc::host_fn(getter, scoped)]
     pub(crate) fn get_content_type<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        let v = this.content_type.to_js(scope.unscoped_global())?;
-        Ok(scope.local(v))
+        scope.string(&this.content_type)
     }
 
     #[bun_jsc::host_fn(getter, scoped)]

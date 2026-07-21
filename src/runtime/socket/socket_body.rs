@@ -737,7 +737,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `initialDelay` is documented in milliseconds; TCP_KEEPIDLE is seconds.
         let initial_delay_ms: u32 = if args.len > 1 {
             u32::try_from(scope.unscoped_global().validate_integer_range(
-                args.ptr[1].raw(),
+                args.ptr[1].unscoped(),
                 0i32,
                 bun_sql_jsc::jsc::IntegerRange {
                     min: 0,
@@ -794,11 +794,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                 return Err(scope.unscoped_global().throw_invalid_property_type_value(
                     b"tos",
                     b"integer",
-                    arg.raw(),
+                    arg.unscoped(),
                 ));
             }
             scope.unscoped_global().validate_integer_range(
-                arg.raw(),
+                arg.unscoped(),
                 0i32,
                 bun_sql_jsc::jsc::IntegerRange {
                     min: 0,
@@ -2195,15 +2195,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(scope.undefined());
         }
         if args.len == 0 {
-            return Err(scope
-                .unscoped_global()
-                .throw(format_args!("Expected 1 argument, got 0")));
+            return Err(scope.throw(format_args!("Expected 1 argument, got 0")));
         }
-        let t = args.ptr[0].raw().coerce::<i32>(scope.unscoped_global())?;
+        let t = args.ptr[0].coerce::<i32>(scope)?;
         if t < 0 {
-            return Err(scope
-                .unscoped_global()
-                .throw(format_args!("Timeout must be a positive integer")));
+            return Err(scope.throw(format_args!("Timeout must be a positive integer")));
         }
         log!("timeout({})", t);
 
@@ -2340,10 +2336,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        Ok(scope.local(jsc::bun_string_jsc::create_utf8_for_js(
-            scope.unscoped_global(),
-            text,
-        )?))
+        scope.string_utf8(text)
     }
 
     #[bun_jsc::host_fn(getter, scoped)]
@@ -2401,10 +2394,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        Ok(scope.local(jsc::bun_string_jsc::create_utf8_for_js(
-            scope.unscoped_global(),
-            text,
-        )?))
+        scope.string_utf8(text)
     }
 
     #[bun_jsc::host_fn(getter, scoped)]
@@ -3262,9 +3252,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let args = callframe.scoped_arguments::<1>(scope);
 
         if args.len < 1 {
-            return Err(scope
-                .unscoped_global()
-                .throw(format_args!("Expected 1 argument")));
+            return Err(scope.throw(format_args!("Expected 1 argument")));
         }
 
         if this.socket.get().is_detached() {
@@ -3272,22 +3260,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let opts = args.ptr[0];
-        if opts.raw().is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-            return Err(scope
-                .unscoped_global()
-                .throw(format_args!("Expected options object")));
+        if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
+            return Err(scope.throw(format_args!("Expected options object")));
         }
 
-        let socket_obj = opts.get(scope, "socket")?.ok_or_else(|| {
-            scope
-                .unscoped_global()
-                .throw(format_args!("Expected \"socket\" option"))
-        })?;
+        let socket_obj = opts
+            .get(scope, "socket")?
+            .ok_or_else(|| scope.throw(format_args!("Expected \"socket\" option")))?;
 
         let handlers = this.get_handlers();
         // Parse and validate first: the option getters run user JS that can
         // close this socket and repoint its `Handlers`.
-        let reloaded = Handlers::prepare_reload(scope.unscoped_global(), socket_obj.raw())?;
+        let reloaded = Handlers::prepare_reload(scope.unscoped_global(), socket_obj.unscoped())?;
         if !this.handlers_are(&handlers) {
             return Ok(scope.undefined());
         }
@@ -3331,11 +3315,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         let args = callframe.scoped_arguments::<1>(scope);
         if args.len < 1 {
-            return Err(scope
-                .unscoped_global()
-                .throw(format_args!("Expected 1 arguments")));
+            return Err(scope.throw(format_args!("Expected 1 arguments")));
         }
-        let v = Self::upgrade_tls_impl(this, scope.unscoped_global(), args.ptr[0].raw(), false)?;
+        let v =
+            Self::upgrade_tls_impl(this, scope.unscoped_global(), args.ptr[0].unscoped(), false)?;
         Ok(scope.local(v))
     }
 
@@ -4579,18 +4562,24 @@ pub fn js_upgrade_tls_deferred<'s>(
     let args = callframe.scoped_arguments::<2>(scope);
     let [socket, opts] = args.ptr;
     if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        let v =
-            NewSocket::<false>::upgrade_tls_impl(this, scope.unscoped_global(), opts.raw(), true)?;
+        let v = NewSocket::<false>::upgrade_tls_impl(
+            this,
+            scope.unscoped_global(),
+            opts.unscoped(),
+            true,
+        )?;
         return Ok(scope.local(v));
     }
     if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        let v =
-            NewSocket::<true>::upgrade_tls_impl(this, scope.unscoped_global(), opts.raw(), true)?;
+        let v = NewSocket::<true>::upgrade_tls_impl(
+            this,
+            scope.unscoped_global(),
+            opts.unscoped(),
+            true,
+        )?;
         return Ok(scope.local(v));
     }
-    Err(scope
-        .unscoped_global()
-        .throw(format_args!("Expected a socket instance")))
+    Err(scope.throw(format_args!("Expected a socket instance")))
 }
 
 #[bun_jsc::host_fn(scoped)]
@@ -4606,22 +4595,22 @@ pub fn js_upgrade_duplex_to_tls<'s>(
 
     let args = callframe.arguments_old::<2>();
     if args.len < 2 {
-        return Err(global.throw(format_args!("Expected 2 arguments")));
+        return Err(scope.throw(format_args!("Expected 2 arguments")));
     }
     let duplex = args.ptr[0];
     // TODO: do better type checking
     if duplex.is_empty_or_undefined_or_null() {
-        return Err(global.throw(format_args!("Expected a Duplex instance")));
+        return Err(scope.throw(format_args!("Expected a Duplex instance")));
     }
 
     let opts = args.ptr[1];
     if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-        return Err(global.throw(format_args!("Expected options object")));
+        return Err(scope.throw(format_args!("Expected options object")));
     }
 
     let socket_obj = opts
         .get(global, "socket")?
-        .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
+        .ok_or_else(|| scope.throw(format_args!("Expected \"socket\" option")))?;
 
     let mut is_server = false;
     if let Some(is_server_val) = opts.get_truthy(global, "isServer")? {
@@ -4687,7 +4676,7 @@ pub fn js_upgrade_duplex_to_tls<'s>(
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {
-        return Err(global.throw(format_args!("Expected \"tls\" option")));
+        return Err(scope.throw(format_args!("Expected \"tls\" option")));
     }
     let socket_config: Option<&SSLConfig> = ssl_opts.as_ref();
 
@@ -4882,11 +4871,7 @@ pub fn js_is_named_pipe_socket<'s>(
 
     let arguments = callframe.scoped_arguments::<3>(scope);
     if arguments.len < 1 {
-        return Err(scope.unscoped_global().throw_not_enough_arguments(
-            "isNamedPipeSocket",
-            1,
-            arguments.len,
-        ));
+        return Err(scope.throw_not_enough_arguments("isNamedPipeSocket", 1, arguments.len));
     }
     let socket = arguments.ptr[0];
     if let Some(this) = socket.as_class_ref::<TCPSocket>() {
@@ -4909,11 +4894,7 @@ pub fn js_get_buffered_amount<'s>(
 
     let arguments = callframe.scoped_arguments::<3>(scope);
     if arguments.len < 1 {
-        return Err(scope.unscoped_global().throw_not_enough_arguments(
-            "getBufferedAmount",
-            1,
-            arguments.len,
-        ));
+        return Err(scope.throw_not_enough_arguments("getBufferedAmount", 1, arguments.len));
     }
     let socket = arguments.ptr[0];
     if let Some(this) = socket.as_class_ref::<TCPSocket>() {
@@ -4930,15 +4911,15 @@ pub fn js_get_buffered_amount<'s>(
 #[allow(unreachable_pub)]
 pub fn js_create_socket_pair<'s>(scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
     jsc::mark_binding!();
-    let global = scope.unscoped_global();
 
     #[cfg(windows)]
     {
-        return Err(global.throw(format_args!("Not implemented on Windows")));
+        return Err(scope.throw(format_args!("Not implemented on Windows")));
     }
 
     #[cfg(not(windows))]
     {
+        let global = scope.unscoped_global();
         let mut fds_: [libc::c_int; 2] = [0, 0];
         // SAFETY: libc FFI.
         let rc =
@@ -4970,11 +4951,11 @@ pub fn js_set_socket_options<'s>(
     let arguments = callframe.arguments();
 
     if arguments.len() < 3 {
-        return Err(global.throw_not_enough_arguments("setSocketOptions", 3, arguments.len()));
+        return Err(scope.throw_not_enough_arguments("setSocketOptions", 3, arguments.len()));
     }
 
     let Some(socket) = arguments[0].as_class_ref::<TCPSocket>() else {
-        return Err(global.throw(format_args!("Expected a SocketTCP instance")));
+        return Err(scope.throw(format_args!("Expected a SocketTCP instance")));
     };
 
     let is_for_send_buffer = arguments[1].to_int32() == 1;
@@ -5045,15 +5026,13 @@ pub mod testing_apis {
         scope: &mut Scope<'s>,
         _frame: &CallFrame,
     ) -> JsResult<Local<'s>> {
-        let global = scope.unscoped_global();
         #[cfg(socket_fault_injection)]
         {
-            let _ = global;
             bun_uws_sys::fault_inject::us_fault_clear_all();
             Ok(scope.undefined())
         }
         #[cfg(not(socket_fault_injection))]
-        Err(global.throw(format_args!(
+        Err(scope.throw(format_args!(
             "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
         )))
     }
@@ -5064,17 +5043,18 @@ pub mod testing_apis {
         frame: &CallFrame,
     ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
-        let global = scope.unscoped_global();
         #[cfg(not(socket_fault_injection))]
         {
             let _ = frame;
-            return Err(global.throw(format_args!(
+            return Err(scope.throw(format_args!(
                 "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
             )));
         }
         #[cfg(socket_fault_injection)]
         {
             use bun_uws_sys::fault_inject as fi;
+
+            let global = scope.unscoped_global();
 
             let [opts] = frame.arguments_as_array::<1>();
             if !opts.is_object() {
@@ -5111,7 +5091,7 @@ pub mod testing_apis {
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer"
                 )));
             };
@@ -5136,7 +5116,7 @@ pub mod testing_apis {
             } else if action_str.eql_comptime(b"none") {
                 fi::ACTION_NONE
             } else {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "rule.action must be one of: errno, short, zero, none"
                 )));
             };
@@ -5144,7 +5124,7 @@ pub mod testing_apis {
             // "short" clamps a byte count, which only recv/send have; arming it
             // on any other syscall would silently never fire.
             if action == fi::ACTION_SHORT && syscall != fi::RECV && syscall != fi::SEND {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "rule.action \"short\" is only supported for syscall \"recv\" or \"send\""
                 )));
             }
@@ -5158,14 +5138,14 @@ pub mod testing_apis {
                     fi::RECV | fi::SEND | fi::WRITEV | fi::SENDMSG | fi::RECVMSG
                 )
             {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "rule.action \"zero\" is only supported for syscall \"recv\", \"send\", \"writev\", \"sendmsg\" or \"recvmsg\""
                 )));
             }
 
             let errno_value: c_int = match opts.get_truthy(global, "errno")? {
                 None if action == fi::ACTION_ERRNO => {
-                    return Err(global.throw(format_args!(
+                    return Err(scope.throw(format_args!(
                         "rule.errno is required when action is \"errno\""
                     )));
                 }
@@ -5174,7 +5154,7 @@ pub mod testing_apis {
                 Some(v) => {
                     let name = bun_core::OwnedString::new(v.to_bun_string(global)?);
                     parse_errno_name(&name).ok_or_else(|| {
-                        global.throw(format_args!(
+                        scope.throw(format_args!(
                             "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH, EPROTOTYPE)"
                         ))
                     })?
@@ -5192,7 +5172,7 @@ pub mod testing_apis {
             // A 0-byte clamp makes recv()/send() length-0 syscalls, which read
             // back as EOF/backpressure — silently aliasing action "zero".
             if action == fi::ACTION_SHORT && clamp_bytes <= 0 {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "rule.bytes must be > 0 when action is \"short\""
                 )));
             }
@@ -5202,7 +5182,7 @@ pub mod testing_apis {
             // silently never fire.
             let target_fd = get_i32("fd", -1)?;
             if syscall == fi::SSL_LOOP_BUFFER && target_fd != -1 {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "rule.fd is not supported for syscall \"ssl_loop_buffer\""
                 )));
             }

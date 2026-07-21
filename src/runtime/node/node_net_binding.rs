@@ -49,14 +49,10 @@ pub(crate) fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue
     fn setter<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
         let arguments = frame.scoped_arguments::<1>(scope);
         let Some(arg) = arguments.get(0) else {
-            return Err(scope
-                .unscoped_global()
-                .throw(format_args!("missing argument")));
+            return Err(scope.throw(format_args!("missing argument")));
         };
         if !arg.is_boolean() {
-            return Err(scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!("autoSelectFamilyDefault")));
+            return Err(scope.throw_invalid_arguments(format_args!("autoSelectFamilyDefault")));
         }
         let value = arg.to_boolean();
         AUTO_SELECT_FAMILY_DEFAULT.store(value, Ordering::Relaxed);
@@ -98,13 +94,11 @@ pub(crate) fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalOb
     fn setter<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
         let arguments = frame.scoped_arguments::<1>(scope);
         let Some(arg) = arguments.get(0) else {
-            return Err(scope
-                .unscoped_global()
-                .throw(format_args!("missing argument")));
+            return Err(scope.throw(format_args!("missing argument")));
         };
         let mut value = validators::validate_int32(
             scope.unscoped_global(),
-            arg.raw(),
+            arg.unscoped(),
             format_args!("value"),
             Some(1),
             None,
@@ -190,8 +184,13 @@ pub(crate) fn new_detached_socket<'s>(
 pub(crate) fn do_connect<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
     let prev = frame.scoped_argument(scope, 0);
     let opts = frame.scoped_argument(scope, 1);
-    let maybe_tcp = prev.raw().as_::<TCPSocket>();
-    let maybe_tls = prev.raw().as_::<TLSSocket>();
-    let v = Listener::connect_inner(scope.unscoped_global(), maybe_tcp, maybe_tls, opts.raw())?;
+    let maybe_tcp = prev.unscoped().as_::<TCPSocket>();
+    let maybe_tls = prev.unscoped().as_::<TLSSocket>();
+    let v = Listener::connect_inner(
+        scope.unscoped_global(),
+        maybe_tcp,
+        maybe_tls,
+        opts.unscoped(),
+    )?;
     Ok(scope.local(v))
 }

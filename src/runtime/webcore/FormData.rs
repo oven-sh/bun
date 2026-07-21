@@ -153,22 +153,22 @@ pub fn from_multipart_data<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsRe
 
     let mut encoding = Encoding::URLEncoded;
 
-    if input_value.raw().is_empty_or_undefined_or_null() {
-        return Err(global.throw_invalid_arguments(format_args!("input must not be empty")));
+    if input_value.is_empty_or_undefined_or_null() {
+        return Err(scope.throw_invalid_arguments(format_args!("input must not be empty")));
     }
 
-    if !boundary_value.raw().is_empty_or_undefined_or_null() {
+    if !boundary_value.is_empty_or_undefined_or_null() {
         if let Some(array_buffer) = boundary_value.array_buffer_bytes(scope) {
             if !array_buffer.is_empty() {
                 encoding = Encoding::Multipart(Box::from(&*array_buffer));
             }
         } else if boundary_value.is_string() {
-            boundary_slice = boundary_value.raw().to_slice_or_null(global)?;
+            boundary_slice = boundary_value.unscoped().to_slice_or_null(global)?;
             if !boundary_slice.slice().is_empty() {
                 encoding = Encoding::Multipart(Box::from(boundary_slice.slice()));
             }
         } else {
-            return Err(global.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "boundary must be a string or ArrayBufferView"
             )));
         }
@@ -182,12 +182,12 @@ pub fn from_multipart_data<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsRe
         input_array_buffer = array_buffer;
         input = &input_array_buffer;
     } else if input_value.is_string() {
-        input_slice = input_value.raw().to_slice_or_null(global)?;
+        input_slice = input_value.unscoped().to_slice_or_null(global)?;
         input = input_slice.slice();
     } else if let Some(blob) = input_value.as_class_ref::<Blob>() {
         input = blob.shared_view();
     } else {
-        return Err(global
+        return Err(scope
             .throw_invalid_arguments(format_args!("input must be a string or ArrayBufferView")));
     }
 

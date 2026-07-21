@@ -18,10 +18,17 @@
 //!    convention becomes a borrow-checker error.
 //!
 //! Not enforced (same status quo as raw `JSValue`): copying a `Local` into a
-//! within-scope heap container (`Vec<Local>`, `Box<Local>`) leaves it
-//! invisible to the conservative scanner. Accumulate through
-//! `MarkedArgumentBuffer` or `Strong` instead — that rooting cost is paid
-//! only where rooting is actually needed.
+//! within-scope heap container (`Vec<Local>`, `Box<Local>`, or an **async
+//! block/future** — the easiest accidental heap move, since a suspended
+//! future's captures live on the heap) leaves it invisible to the
+//! conservative scanner. Accumulate through `MarkedArgumentBuffer` or
+//! `Strong` instead — that rooting cost is paid only where rooting is
+//! actually needed.
+//!
+//! [`Local::to_js_string`]'s `&'s JSString` intentionally survives across
+//! `&mut Scope` re-entry, unlike [`Local::array_buffer_bytes`]: the
+//! reference points at the GC cell itself (stack-rooted, non-moving) and a
+//! string's contents cannot be detached, so there is no hazard to exclude.
 //!
 //! A `Local` cannot leave its scope:
 //!
@@ -54,16 +61,18 @@ use core::ops::Deref;
 
 use crate::js_value::PutKey;
 use crate::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSString, JSType, JSValue, JsClass, JsResult, Strong,
+    ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSString, JSType, JSValue, JsClass, JsError,
+    JsResult, Strong,
 };
 
 /// Capability token for one JS entry frame. A newtype over
-/// `&JSGlobalObject` — construction compiles to nothing.
+/// `&JSGlobalObject` — construction compiles to nothing in release builds.
 ///
-/// Holding `&Scope<'s>` proves the current thread is the JS thread and that
-/// stack-held `Local<'s>` values are conservatively scanned. The brand
-/// lifetime is invariant and issued fresh per [`Scope::with`], so locals from
-/// different scopes never unify.
+/// A `&Scope<'s>` is only meaningful on the JS thread that owns `global`'s
+/// VM (debug-asserted in [`Scope::with`]); there, stack-held `Local<'s>`
+/// values are conservatively scanned. The brand lifetime is invariant and
+/// issued fresh per [`Scope::with`], so locals from different scopes never
+/// unify.
 pub struct Scope<'s> {
     global: &'s JSGlobalObject,
     _brand: PhantomData<*mut &'s ()>,
@@ -74,6 +83,13 @@ impl<'s> Scope<'s> {
     /// `Local` created inside can escape through the return value.
     #[inline(always)]
     pub fn with<R>(global: &JSGlobalObject, f: impl for<'t> FnOnce(&mut Scope<'t>) -> R) -> R {
+        // One VM per thread, set thread-locally at VM init: a scope opened on
+        // a thread with no VM is a bug the conservative-scan contract can't
+        // survive.
+        debug_assert!(
+            crate::virtual_machine::VirtualMachine::get_or_null().is_some(),
+            "Scope::with on a thread with no VirtualMachine (not a JS thread)"
+        );
         f(&mut Scope {
             global,
             _brand: PhantomData,
@@ -128,6 +144,164 @@ impl<'s> Scope<'s> {
         self.local(JSValue::js_number_from_int32(n))
     }
 
+    // ── Errors & exceptions. Throwing formats Rust-side data and
+    // allocates the error object — it never runs user JS (stack capture is
+    // native; `Error.prepareStackTrace` fires lazily on `.stack` access),
+    // so these take `&self`. Variants that *inspect a user value* to build
+    // the message (`*_value`) reach `determineSpecificType`, which reads
+    // `.constructor` (a getter/Proxy trap) — those take `&mut self`. ──────
+
+    /// See [`JSGlobalObject::throw`].
+    #[inline(always)]
+    pub fn throw(&self, args: core::fmt::Arguments<'_>) -> JsError {
+        self.global.throw(args)
+    }
+
+    /// `ERR_INVALID_ARG_TYPE` from a format string.
+    #[inline(always)]
+    pub fn throw_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JsError {
+        self.global.throw_invalid_arguments(args)
+    }
+
+    /// "The `name.field` property must be of type `typename`."
+    #[inline(always)]
+    pub fn throw_invalid_argument_type(
+        &self,
+        name_: &'static str,
+        field: &'static str,
+        typename: &'static str,
+    ) -> JsError {
+        self.global
+            .throw_invalid_argument_type(name_, field, typename)
+    }
+
+    #[inline(always)]
+    pub fn throw_not_enough_arguments(
+        &self,
+        name_: &'static str,
+        expected: usize,
+        got: usize,
+    ) -> JsError {
+        self.global.throw_not_enough_arguments(name_, expected, got)
+    }
+
+    #[inline(always)]
+    pub fn throw_range_error<V: bun_core::fmt::OutOfRangeValue>(
+        &self,
+        value: V,
+        options: bun_core::fmt::OutOfRangeOptions<'_>,
+    ) -> JsError {
+        self.global.throw_range_error(value, options)
+    }
+
+    #[inline(always)]
+    pub fn throw_out_of_memory(&self) -> JsError {
+        self.global.throw_out_of_memory()
+    }
+
+    /// Throw `value` as-is.
+    #[inline(always)]
+    pub fn throw_value(&self, value: Local<'s>) -> JsError {
+        self.global.throw_value(value.raw)
+    }
+
+    /// Error builder for a specific `ErrorCode`; finish with `.throw()` or
+    /// `.to_js()`.
+    #[inline(always)]
+    pub fn err<'a>(
+        &'a self,
+        code: crate::ErrorCode,
+        args: core::fmt::Arguments<'a>,
+    ) -> crate::ErrorBuilder<'a, JSGlobalObject> {
+        self.global.err(code, args)
+    }
+
+    /// "The X argument must be of type Y. Received {inspected value}" —
+    /// inspecting the value reads `.constructor` (getter/Proxy trap), so
+    /// this is `&mut`.
+    #[inline(always)]
+    pub fn throw_invalid_argument_type_value(
+        &mut self,
+        argname: impl AsRef<[u8]>,
+        typename: impl AsRef<[u8]>,
+        value: Local<'s>,
+    ) -> JsError {
+        self.global
+            .throw_invalid_argument_type_value(argname, typename, value.raw)
+    }
+
+    #[inline(always)]
+    pub fn has_exception(&self) -> bool {
+        self.global.has_exception()
+    }
+
+    #[inline(always)]
+    pub fn clear_exception(&self) {
+        self.global.clear_exception()
+    }
+
+    /// The VM owning this scope's global.
+    #[inline(always)]
+    pub fn bun_vm(&self) -> &'static crate::virtual_machine::VirtualMachine {
+        self.global.bun_vm()
+    }
+
+    // ── Creation: pure allocation, no user JS. ───────────────────────────
+
+    /// JSString from a `bun_core::String` (clones/refs the underlying impl).
+    #[inline(always)]
+    pub fn string(&self, s: &bun_core::String) -> JsResult<Local<'s>> {
+        Ok(self.local(crate::bun_string_jsc::to_js(s, self.global)?))
+    }
+
+    /// JSString from UTF-8 bytes.
+    #[inline(always)]
+    pub fn string_utf8(&self, utf8: &[u8]) -> JsResult<Local<'s>> {
+        Ok(self.local(crate::bun_string_jsc::create_utf8_for_js(
+            self.global,
+            utf8,
+        )?))
+    }
+
+    /// JSString that takes ownership of `s`'s backing store (zero-copy for
+    /// WTF-backed strings).
+    #[inline(always)]
+    pub fn transfer_string(&self, mut s: bun_core::String) -> JsResult<Local<'s>> {
+        Ok(self.local(crate::bun_string_jsc::transfer_to_js(&mut s, self.global)?))
+    }
+
+    /// `{}` with `capacity` inline slots.
+    #[inline(always)]
+    pub fn new_object(&self, capacity: usize) -> Local<'s> {
+        self.local(JSValue::create_empty_object(self.global, capacity))
+    }
+
+    /// `[]` with `len` slots.
+    #[inline(always)]
+    pub fn new_array(&self, len: usize) -> JsResult<Local<'s>> {
+        Ok(self.local(JSValue::create_empty_array(self.global, len)?))
+    }
+
+    /// Already-fulfilled promise. Skips the resolve algorithm entirely (no
+    /// thenable `.then` lookup), so `&self` is sound — unlike
+    /// `JSPromise::resolve`.
+    #[inline(always)]
+    pub fn resolved_promise(&self, value: Local<'s>) -> Local<'s> {
+        self.local(JSPromise::resolved_promise_value(self.global, value.raw))
+    }
+
+    /// Already-rejected promise without the unhandled-rejection bookkeeping;
+    /// see the raw API's name for the caveat.
+    #[inline(always)]
+    pub fn rejected_promise_dangerously_without_notifying_vm(&self, value: Local<'s>) -> Local<'s> {
+        self.local(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                self.global,
+                value.raw,
+            ),
+        )
+    }
+
     /// The only way a value outlives its scope: an owning GC root.
     pub fn persist(&self, value: Local<'s>) -> Strong {
         Strong::create(value.raw, self.global)
@@ -153,9 +327,11 @@ pub struct Local<'s> {
 
 impl<'s> Local<'s> {
     /// Escape hatch to unmigrated APIs taking raw `JSValue`. The raw copy
-    /// re-opens the hazards this type exists to prevent.
+    /// re-opens the hazards this type exists to prevent; the per-file count
+    /// is pinned by `test/internal/scope-escapes.test.ts` alongside
+    /// [`Scope::unscoped_global`].
     #[inline(always)]
-    pub fn raw(self) -> JSValue {
+    pub fn unscoped(self) -> JSValue {
         self.raw
     }
 
@@ -216,9 +392,73 @@ impl<'s> Local<'s> {
         self.raw.is_undefined_or_null()
     }
 
+    /// Like [`Self::is_undefined_or_null`] but also true for the empty
+    /// value. A `Local` is never empty when the [`Scope::local`]
+    /// debug-assert holds; this exists so migrated guards keep their exact
+    /// release-build semantics.
+    #[inline(always)]
+    pub fn is_empty_or_undefined_or_null(self) -> bool {
+        self.raw.is_empty_or_undefined_or_null()
+    }
+
+    /// True for Int32 and for doubles that hold an exact `u32`.
+    #[inline(always)]
+    pub fn is_uint32_as_any_int(self) -> bool {
+        self.raw.is_uint32_as_any_int()
+    }
+
+    #[inline(always)]
+    pub fn is_symbol(self) -> bool {
+        self.raw.is_symbol()
+    }
+
+    #[inline(always)]
+    pub fn is_big_int(self) -> bool {
+        self.raw.is_big_int()
+    }
+
+    /// JSType-byte check (a callable Proxy is *not* a function here; see
+    /// [`Self::is_callable`]).
+    #[inline(always)]
+    pub fn is_function(self) -> bool {
+        self.raw.is_function()
+    }
+
+    /// JSType-byte check; does not look through Proxies (`Array.isArray`
+    /// semantics need the raw `is_array_slow` path).
+    #[inline(always)]
+    pub fn is_array(self) -> bool {
+        self.raw.is_array()
+    }
+
+    #[inline(always)]
+    pub fn is_date(self) -> bool {
+        self.raw.is_date()
+    }
+
+    /// Date's time value; caller must have checked [`Self::is_date`].
+    #[inline(always)]
+    pub fn get_unix_timestamp(self) -> f64 {
+        self.raw.get_unix_timestamp()
+    }
+
     #[inline(always)]
     pub fn js_type(self) -> JSType {
         self.raw.js_type()
+    }
+
+    /// [`Self::js_type`], but non-cell numbers map to `NumberObject` so a
+    /// single `match` covers both.
+    #[inline(always)]
+    pub fn js_type_loose(self) -> JSType {
+        self.raw.js_type_loose()
+    }
+
+    /// Keep-alive fence: prevents the optimizer from ending this value's
+    /// stack lifetime before this point.
+    #[inline(always)]
+    pub fn ensure_still_alive(self) {
+        self.raw.ensure_still_alive()
     }
 
     /// Non-coercing read; caller must have checked [`Self::is_boolean`].
@@ -245,10 +485,20 @@ impl<'s> Local<'s> {
         self.raw.to_boolean()
     }
 
-    /// Downcast to a `.classes.ts` payload. Pure FFI type check; the JS
-    /// wrapper roots the payload while this `Local` is live.
+    /// Downcast to a `.classes.ts` payload. Pure FFI type check. The borrow
+    /// is bounded by the scope: the payload is freed by the wrapper's GC
+    /// finalizer, so the raw API's `&'static` would be a use-after-free
+    /// waiting to be stashed — `'s` keeps it inside the frame that roots the
+    /// wrapper.
+    ///
+    /// ```compile_fail
+    /// use bun_jsc::{JSGlobalObject, JSValue, JsClass, Scope};
+    /// fn steal<T: JsClass + 'static>(global: &JSGlobalObject, v: JSValue) -> &'static T {
+    ///     Scope::with(global, |scope| scope.local(v).as_class_ref::<T>().unwrap())
+    /// }
+    /// ```
     #[inline(always)]
-    pub fn as_class_ref<T: JsClass>(self) -> Option<&'static T> {
+    pub fn as_class_ref<T: JsClass + 'static>(self) -> Option<&'s T> {
         self.raw.as_class_ref::<T>()
     }
 
@@ -262,23 +512,42 @@ impl<'s> Local<'s> {
         self.raw.to_number(scope.global)
     }
 
-    /// Truncating int conversion; falls through to `toInt32` (ToNumber →
-    /// `valueOf`) for non-number objects.
+    /// Non-coercing numeric read (NaN → 0, out-of-range saturates). Never
+    /// runs user JS and never throws — the C++ layer asserts (debug) or
+    /// reads garbage (release) on non-numeric cells, so check
+    /// [`Self::is_number`] first, or use [`Self::coerce`] for real ECMA
+    /// ToInt32 semantics.
     #[inline(always)]
-    pub fn to_int32(self, _scope: &mut Scope<'s>) -> i32 {
+    pub fn to_int32(self, _scope: &Scope<'s>) -> i32 {
+        debug_assert!(self.raw.is_number());
         self.raw.to_int32()
     }
 
-    /// See [`Self::to_int32`].
+    /// See [`Self::to_int32`] (numbers and BigInts only).
     #[inline(always)]
-    pub fn to_int64(self, _scope: &mut Scope<'s>) -> i64 {
+    pub fn to_int64(self, _scope: &Scope<'s>) -> i64 {
+        debug_assert!(self.raw.is_number() || self.raw.is_big_int());
         self.raw.to_int64()
     }
 
     /// See [`Self::to_int32`] — saturating `[0, u32::MAX]` clamp.
     #[inline(always)]
-    pub fn to_u32(self, _scope: &mut Scope<'s>) -> u32 {
+    pub fn to_u32(self, _scope: &Scope<'s>) -> u32 {
+        debug_assert!(self.raw.is_number());
         self.raw.to_u32()
+    }
+
+    /// Non-coercing `u64` read of an Int32/double/BigInt (no ToNumber).
+    #[inline(always)]
+    pub fn to_uint64_no_truncate(self) -> u64 {
+        self.raw.to_uint64_no_truncate()
+    }
+
+    /// ECMA coercion via [`crate::js_value::CoerceTo`]; may run
+    /// `valueOf`/`toString` on user objects.
+    #[inline(always)]
+    pub fn coerce<T: crate::js_value::CoerceTo>(self, scope: &mut Scope<'s>) -> JsResult<T> {
+        self.raw.coerce(scope.global)
     }
 
     /// Node `validatePort` semantics; may coerce via ToNumber.
@@ -303,6 +572,13 @@ impl<'s> Local<'s> {
     #[inline(always)]
     pub fn get_zig_string(self, scope: &mut Scope<'s>) -> JsResult<bun_core::ZigString> {
         self.raw.get_zig_string(scope.global)
+    }
+
+    /// String coercion into a UTF-8 slice; may run a String subclass's
+    /// `toString`.
+    #[inline(always)]
+    pub fn to_slice(self, scope: &mut Scope<'s>) -> JsResult<bun_core::ZigStringSlice> {
+        self.raw.to_slice(scope.global)
     }
 
     /// Property get; may run getters and Proxy traps.
@@ -331,9 +607,23 @@ impl<'s> Local<'s> {
             .map(|v| scope.local(v)))
     }
 
-    /// Property put; may run setters and Proxy traps.
+    /// [`Self::get`] + `ToBoolean` (missing/undefined → `None`); may run
+    /// getters and Proxy traps.
     #[inline(always)]
-    pub fn put<K: PutKey>(self, scope: &mut Scope<'s>, key: K, value: Local<'s>) {
+    pub fn get_boolean_loose(
+        self,
+        scope: &mut Scope<'s>,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<bool>> {
+        self.raw.get_boolean_loose(scope.global, property)
+    }
+
+    /// Direct property definition (`putDirect`): never runs setters or
+    /// Proxy traps, so it takes `&Scope`. The target must be an object —
+    /// the C++ layer dereferences it unchecked.
+    #[inline(always)]
+    pub fn put<K: PutKey>(self, scope: &Scope<'s>, key: K, value: Local<'s>) {
+        debug_assert!(self.raw.is_object(), "put target must be an object");
         self.raw.put(scope.global, key, value.raw);
     }
 
@@ -359,6 +649,12 @@ impl<'s> Local<'s> {
     /// conservatively rooted) and borrows the scope shared, so nothing that
     /// can run user JS — and detach or resize the buffer — can be called
     /// while it lives. Same cost as `as_array_buffer` + `byte_slice` today.
+    ///
+    /// Resizable buffers are safe under the same discipline: growing never
+    /// moves the data pointer (address space is pre-reserved), and shrinking
+    /// requires user JS, which the shared borrow excludes. The descriptor is
+    /// a snapshot, so bypassing the exclusion through an unscoped escape
+    /// hatch leaves a stale pointer/length pair — don't.
     #[inline(always)]
     pub fn array_buffer_bytes<'a>(self, scope: &'a Scope<'s>) -> Option<ArrayBufferBytes<'a, 's>> {
         let ab = self.raw.as_array_buffer(scope.global)?;
@@ -367,6 +663,7 @@ impl<'s> Local<'s> {
             _no_reentry: PhantomData,
         })
     }
+
 }
 
 /// Guard for [`Local::array_buffer_bytes`]. Holds the `ArrayBuffer`
@@ -385,6 +682,7 @@ impl Deref for ArrayBufferBytes<'_, '_> {
         self.ab.byte_slice()
     }
 }
+
 
 impl CallFrame {
     /// `this` (or `new.target` in constructors), branded.

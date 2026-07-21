@@ -308,6 +308,7 @@ fn expand_host_fn_scoped(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenS
                 ));
             }
             quote! {
+                #[inline]
                 #vis fn #name(
                     __global: &::bun_jsc::JSGlobalObject,
                     __frame: &::bun_jsc::CallFrame,
@@ -321,7 +322,22 @@ fn expand_host_fn_scoped(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenS
         HostFnKind::Method => {
             let this_ty = first_param_type(func)?;
             if n_inputs >= 4 {
+                // The 4th parameter receives the wrapper's `this` JSValue —
+                // require it to be named `this_value` so a mismatched intent
+                // fails loudly instead of silently binding the wrong value.
+                let ok = matches!(
+                    func.sig.inputs.iter().nth(3),
+                    Some(FnArg::Typed(pt))
+                        if matches!(&*pt.pat, syn::Pat::Ident(pi) if pi.ident == "this_value")
+                );
+                if !ok {
+                    return Err(syn::Error::new(
+                        func.sig.ident.span(),
+                        "#[host_fn(method, scoped)] with 4 parameters: the 4th must be `this_value: Local<'s>`",
+                    ));
+                }
                 quote! {
+                    #[inline]
                     #vis fn #name(
                         __this: #this_ty,
                         __global: &::bun_jsc::JSGlobalObject,
@@ -336,6 +352,7 @@ fn expand_host_fn_scoped(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenS
                 }
             } else {
                 quote! {
+                    #[inline]
                     #vis fn #name(
                         __this: #this_ty,
                         __global: &::bun_jsc::JSGlobalObject,
@@ -351,6 +368,7 @@ fn expand_host_fn_scoped(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenS
         HostFnKind::Getter => {
             let this_ty = first_param_type(func)?;
             quote! {
+                #[inline]
                 #vis fn #name(
                     __this: #this_ty,
                     __global: &::bun_jsc::JSGlobalObject,

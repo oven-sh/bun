@@ -439,7 +439,7 @@ pub(crate) fn create_memfd_for_testing<'s>(
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = arguments;
-        return Err(scope.unscoped_global().throw(format_args!(
+        return Err(scope.throw(format_args!(
             "memfd_create is not implemented on this platform"
         )));
     }

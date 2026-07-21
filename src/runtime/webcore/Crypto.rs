@@ -189,10 +189,10 @@ pub(crate) fn bun_random_uuid_v7<'s>(
             if !arguments.ptr[0].is_undefined() {
                 if arguments.ptr[0].is_string() {
                     encoding_value = arguments.ptr[0];
-                    break 'brk match Encoding::from_js(encoding_value.raw(), global)? {
+                    break 'brk match Encoding::from_js(encoding_value.unscoped(), global)? {
                         Some(e) => e,
                         None => {
-                            return Err(global
+                            return Err(scope
                                 .err(
                                     bun_jsc::ErrorCode::UNKNOWN_ENCODING,
                                     format_args!(
@@ -227,19 +227,19 @@ pub(crate) fn bun_random_uuid_v7<'s>(
                 field_name: b"timestamp",
                 ..Default::default()
             };
-            if timestamp_value.raw().is_date() {
-                let date = timestamp_value.raw().get_unix_timestamp();
+            if timestamp_value.is_date() {
+                let date = timestamp_value.get_unix_timestamp();
                 if !date.is_finite() || date < 0.0 || date > MAX_TIMESTAMP as f64 {
-                    return Err(global.throw_range_error(date, range_opts));
+                    return Err(scope.throw_range_error(date, range_opts));
                 }
                 break 'brk (date as u64, uuid::TimestampSource::Explicit);
             }
             if timestamp_value.is_number() && timestamp_value.as_number().is_nan() {
-                return Err(global.throw_range_error(f64::NAN, range_opts));
+                return Err(scope.throw_range_error(f64::NAN, range_opts));
             }
             break 'brk (
                 u64::try_from(global.validate_integer_range::<i64>(
-                    timestamp_value.raw(),
+                    timestamp_value.unscoped(),
                     0,
                     bun_jsc::IntegerRange {
                         min: 0,
@@ -260,7 +260,7 @@ pub(crate) fn bun_random_uuid_v7<'s>(
     };
 
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-    let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(10);
+    let entropy = scope.bun_vm().as_mut().rare_data().entropy_slice(10);
 
     let uuid = UUID7::init(
         timestamp,
@@ -292,7 +292,7 @@ pub(crate) fn bun_random_uuid_v5<'s>(
     let arguments = callframe.scoped_arguments::<3>(scope);
 
     if arguments.len == 0 || arguments.ptr[0].is_undefined_or_null() {
-        return Err(global
+        return Err(scope
             .err(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("The \"name\" argument must be specified"),
@@ -301,7 +301,7 @@ pub(crate) fn bun_random_uuid_v5<'s>(
     }
 
     if arguments.len < 2 || arguments.ptr[1].is_undefined_or_null() {
-        return Err(global
+        return Err(scope
             .err(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("The \"namespace\" argument must be specified"),
@@ -312,10 +312,10 @@ pub(crate) fn bun_random_uuid_v5<'s>(
     let encoding: Encoding = 'brk: {
         if arguments.len > 2 && !arguments.ptr[2].is_undefined() {
             if arguments.ptr[2].is_string() {
-                break 'brk match Encoding::from_js(arguments.ptr[2].raw(), global)? {
+                break 'brk match Encoding::from_js(arguments.ptr[2].unscoped(), global)? {
                     Some(e) => e,
                     None => {
-                        return Err(global
+                        return Err(scope
                             .err(
                                 bun_jsc::ErrorCode::UNKNOWN_ENCODING,
                                 format_args!(
@@ -341,11 +341,11 @@ pub(crate) fn bun_random_uuid_v5<'s>(
             let result = name_str.to_utf8();
 
             break 'brk result;
-        } else if let Some(array_buffer) = name_value.raw().as_array_buffer(global) {
+        } else if let Some(array_buffer) = name_value.unscoped().as_array_buffer(global) {
             let bytes: &[u8] = array_buffer.byte_slice();
             break 'brk bun_core::ZigStringSlice::from_utf8_never_free(bytes);
         } else {
-            return Err(global
+            return Err(scope
                 .err(
                     bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                     format_args!("The \"name\" argument must be of type string or BufferSource"),
@@ -365,7 +365,7 @@ pub(crate) fn bun_random_uuid_v5<'s>(
                     break 'brk *namespace;
                 }
 
-                return Err(global
+                return Err(scope
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!("Invalid UUID format for namespace"),
@@ -374,7 +374,7 @@ pub(crate) fn bun_random_uuid_v5<'s>(
             }
 
             let Ok(parsed_uuid) = UUID::parse(namespace_slice.slice()) else {
-                return Err(global
+                return Err(scope
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!("Invalid UUID format for namespace"),
@@ -382,10 +382,10 @@ pub(crate) fn bun_random_uuid_v5<'s>(
                     .throw());
             };
             break 'brk parsed_uuid.bytes;
-        } else if let Some(array_buffer) = namespace_value.raw().as_array_buffer(global) {
+        } else if let Some(array_buffer) = namespace_value.unscoped().as_array_buffer(global) {
             let slice: &[u8] = array_buffer.byte_slice();
             if slice.len() != 16 {
-                return Err(global
+                return Err(scope
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!("Namespace must be exactly 16 bytes"),
@@ -395,7 +395,7 @@ pub(crate) fn bun_random_uuid_v5<'s>(
             break 'brk <[u8; 16]>::try_from(&slice[0..16]).unwrap();
         }
 
-        return Err(global
+        return Err(scope
             .err(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("The \"namespace\" argument must be a string or buffer"),

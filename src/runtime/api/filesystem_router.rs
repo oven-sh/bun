@@ -30,7 +30,7 @@ use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, Local, LogJsc,
-    Scope, StringJsc,
+    Scope,
 };
 use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_ptr::BackRef;
@@ -478,7 +478,7 @@ impl FileSystemRouter {
         this.bust_dir_cache(global_this);
         // Note: `bust_dir_cache` re-derives the VM borrow internally; rebind here so
         // our `vm` borrow is fresh under Stacked Borrows.
-        let vm = global_this.bun_vm().as_mut();
+        let vm = scope.bun_vm().as_mut();
 
         // R-2: snapshot the config fields up front so the `JsCell::get()` borrow is
         // released before `JsCell::set()` below installs the new router.
@@ -494,7 +494,7 @@ impl FileSystemRouter {
         let root_dir_info = match vm.transpiler.resolver.read_dir_info(&cfg_dir) {
             Ok(Some(info)) => info,
             Ok(None) => {
-                return Err(global_this.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "Unable to find directory: {}",
                     bstr::BStr::new(&*cfg_dir)
                 )));
@@ -537,7 +537,7 @@ impl FileSystemRouter {
         this.router.set(router);
         this.arena.set(arena);
         // `js.routesSetCached` — wired via `codegen_cached_accessors!` above.
-        routes_set_cached(this_value.raw(), global_this, JSValue::ZERO);
+        routes_set_cached(this_value.unscoped(), global_this, JSValue::ZERO);
         Ok(this_value)
     }
 
@@ -550,23 +550,23 @@ impl FileSystemRouter {
         let global_this = scope.unscoped_global();
         let argument_ = callframe.scoped_arguments::<2>(scope);
         if argument_.len == 0 {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
+            return Err(
+                scope.throw_invalid_arguments(format_args!("Expected string, Request or Response"))
+            );
         }
 
         let argument = argument_.ptr[0];
-        if argument.raw().is_empty_or_undefined_or_null() || !argument.is_cell() {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
+        if argument.is_empty_or_undefined_or_null() || !argument.is_cell() {
+            return Err(
+                scope.throw_invalid_arguments(format_args!("Expected string, Request or Response"))
+            );
         }
 
         let mut path: ZigStringSlice = 'brk: {
             if argument.is_string() {
                 // Force ownership via into_vec: ZigStringSlice has no clone-if-borrowed
                 // helper, and `path` must outlive the JS string rope it came from.
-                break 'brk ZigStringSlice::init_owned(
-                    argument.raw().to_slice(global_this)?.into_vec(),
-                );
+                break 'brk ZigStringSlice::init_owned(argument.to_slice(scope)?.into_vec());
             }
 
             if argument.is_cell() {
@@ -583,8 +583,9 @@ impl FileSystemRouter {
                 }
             }
 
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
+            return Err(
+                scope.throw_invalid_arguments(format_args!("Expected string, Request or Response"))
+            );
         };
 
         if path.slice().is_empty() || (path.slice().len() == 1 && path.slice()[0] == b'/') {
@@ -598,7 +599,7 @@ impl FileSystemRouter {
             let prev_path = path;
             path = match ZigStringSlice::init_dupe(URL::parse(prev_path.slice()).pathname) {
                 Ok(p) => p,
-                Err(_) => return Err(global_this.throw_out_of_memory()),
+                Err(_) => return Err(scope.throw_out_of_memory()),
             };
         }
 
@@ -621,7 +622,7 @@ impl FileSystemRouter {
         let mut url_path = match URLPath::parse(path_bytes) {
             Ok(v) => v,
             Err(err) => {
-                return Err(global_this.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "{} parsing path: {}",
                     bun_url::Error::from(err).name(),
                     bstr::BStr::new(path.slice())
@@ -630,14 +631,14 @@ impl FileSystemRouter {
         };
         let mut params = route_param::List::default();
         // `defer params.deinit(allocator)` → Drop
-        // SAFETY: R-2 — short-lived `&mut Router` for the route lookup;
-        // `match_page_with_allocator` is pure (no JS re-entry), and the returned
+        // `match_page_with_allocator` is pure (no JS re-entry); the returned
         // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
-        // exclusive borrow ends at the `;`.
-        let Some(route) = unsafe { this.router.get_mut() }
-            .routes
-            .match_page_with_allocator(b"", &url_path, &mut params)
-        else {
+        // exclusive borrow ends with the closure.
+        let Some(route) = this.router.with_mut(|router| {
+            router
+                .routes
+                .match_page_with_allocator(b"", &url_path, &mut params)
+        }) else {
             return Ok(scope.null());
         };
 
@@ -706,8 +707,7 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(getter, scoped)]
     pub fn get_style<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        let v = bun_core::String::static_("nextjs").to_js(scope.unscoped_global())?;
-        Ok(scope.local(v))
+        scope.string(&bun_core::String::static_("nextjs"))
     }
 
     #[bun_jsc::host_fn(getter, scoped)]

@@ -292,7 +292,7 @@ impl CryptoHasher {
                     match StringOrBuffer::from_js_scoped(scope, arg)? {
                         Some(v) => Some(v),
                         None => {
-                            if arg.raw().is_undefined() {
+                            if arg.is_undefined() {
                                 None
                             } else {
                                 return Err(global.throw_invalid_arguments(format_args!(
@@ -340,8 +340,7 @@ impl CryptoHasher {
                 None => return Err(Self::throw_hmac_consumed(scope.unscoped_global())),
             },
         };
-        let v = bun_jsc::bun_string_jsc::create_utf8_for_js(scope.unscoped_global(), tag)?;
-        Ok(scope.local(v))
+        scope.string_utf8(tag)
     }
 
     // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
@@ -590,19 +589,19 @@ impl CryptoHasher {
         let input = arguments.ptr[0];
         if input.is_undefined_or_null() {
             return Err(
-                global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+                scope.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
             );
         }
         let encoding = arguments.ptr[1];
         let buffer = match BlobOrStringOrBuffer::from_js_with_encoding_value(
             global,
-            input.raw(),
-            encoding.raw(),
+            input.unscoped(),
+            encoding.unscoped(),
         )? {
             Some(b) => b,
             None => {
-                if !global.has_exception() {
-                    return Err(global
+                if !scope.has_exception() {
+                    return Err(scope
                         .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
                 }
                 return Err(JsError::Thrown);
@@ -610,7 +609,7 @@ impl CryptoHasher {
         };
         // `defer buffer.deinit()` — handled by Drop.
         if is_bun_file_blob(&buffer) {
-            return Err(global.throw(format_args!(
+            return Err(scope.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
         }
@@ -1280,7 +1279,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                     match StringOrBuffer::from_js_scoped(scope, arg)? {
                         Some(v) => Some(v),
                         None => {
-                            if arg.raw().is_undefined() {
+                            if arg.is_undefined() {
                                 None
                             } else {
                                 return Err(global.throw_invalid_arguments(format_args!(
@@ -1433,7 +1432,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     ) -> JsResult<Local<'s>> {
         let global = scope.unscoped_global();
         if this.digested.get() {
-            return Err(global
+            return Err(scope
                 .err(
                     ErrorCode::INVALID_STATE,
                     format_args!(
@@ -1445,17 +1444,17 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
         let this_value = callframe.scoped_this(scope);
         let input = callframe.scoped_argument(scope, 0);
-        let buffer = match BlobOrStringOrBuffer::from_js(global, input.raw())? {
+        let buffer = match BlobOrStringOrBuffer::from_js(global, input.unscoped())? {
             Some(b) => b,
             None => {
-                return Err(global
+                return Err(scope
                     .throw_invalid_arguments(format_args!("expected blob or string or buffer")));
             }
         };
         // `defer buffer.deinit()` — handled by Drop.
 
         if is_bun_file_blob(&buffer) {
-            return Err(global.throw(format_args!(
+            return Err(scope.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
         }

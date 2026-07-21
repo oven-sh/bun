@@ -797,7 +797,7 @@ function generateScopedFn(fn: CppFn, rustScoped: string[]): void {
       callArgs.push(ident);
     } else if (t === "crate::JSValue") {
       params.push(`${ident}: crate::scope::Local<'s>`);
-      callArgs.push(`${ident}.raw()`);
+      callArgs.push(`${ident}.unscoped()`);
     } else {
       if (p.type.type === "pointer" || p.type.type === "fn") needsUnsafe = true;
       params.push(`${ident}: ${t}`);

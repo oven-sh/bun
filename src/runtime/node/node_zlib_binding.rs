@@ -131,8 +131,7 @@ pub(crate) fn crc32<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
         let Some(buffer) = data.as_array_buffer(global_this) else {
             let ty_str = data.js_type_string(global_this).to_slice(global_this);
             // ty_str drops at end of scope
-            return Err(global_this
-                .err(
+            return Err(scope.err(
                     ErrorCode::INVALID_ARG_TYPE,
                     format_args!(
                         "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {}",
@@ -158,7 +157,7 @@ pub(crate) fn crc32<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
         let max: u32 = u32::MAX;
 
         if valuef.floor() != valuef {
-            return Err(global_this
+            return Err(scope
                 .err(
                     ErrorCode::OUT_OF_RANGE,
                     format_args!(
@@ -169,8 +168,7 @@ pub(crate) fn crc32<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
                 .throw());
         }
         if valuef < min as f64 || valuef > max as f64 {
-            return Err(global_this
-                .err(
+            return Err(scope.err(
                     ErrorCode::OUT_OF_RANGE,
                     format_args!(
                         "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",

@@ -1968,17 +1968,12 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(getter, scoped)]
     pub fn get_path<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        let v = jsc::bun_string_jsc::create_utf8_for_js(scope.unscoped_global(), &this.path)?;
-        Ok(scope.local(v))
+        scope.string_utf8(&this.path)
     }
 
     #[bun_jsc::host_fn(getter, scoped)]
     pub fn get_loader<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        let v = jsc::bun_string_jsc::create_utf8_for_js(
-            scope.unscoped_global(),
-            <&'static str>::from(this.loader).as_bytes(),
-        )?;
-        Ok(scope.local(v))
+        scope.string_utf8(<&'static str>::from(this.loader).as_bytes())
     }
 
     #[bun_jsc::host_fn(getter, scoped)]
@@ -1988,8 +1983,7 @@ impl BuildArtifact {
         let mut cursor = &mut buf[..];
         write!(cursor, "{}", bun_core::fmt::truncated_hash32(this.hash)).expect("Unexpected");
         let written = 512 - cursor.len();
-        let v = jsc::bun_string_jsc::create_utf8_for_js(scope.unscoped_global(), &buf[..written])?;
-        Ok(scope.local(v))
+        scope.string_utf8(&buf[..written])
     }
 
     #[bun_jsc::host_fn(getter, scoped)]
@@ -2006,11 +2000,7 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(getter, scoped)]
     pub fn get_output_kind<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        let v = jsc::bun_string_jsc::create_utf8_for_js(
-            scope.unscoped_global(),
-            <&'static str>::from(this.output_kind).as_bytes(),
-        )?;
-        Ok(scope.local(v))
+        scope.string_utf8(<&'static str>::from(this.output_kind).as_bytes())
     }
 
     #[bun_jsc::host_fn(getter, scoped)]

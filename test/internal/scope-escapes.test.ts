@@ -5,9 +5,9 @@
 // their scope unrooted. Two constructs opt out of those guarantees and are
 // pinned here per file, monotonically:
 //
-//   1. `Scope::unscoped_global(...)` — reaches legacy APIs that can run
-//      user JS without `&mut Scope`, bypassing the re-entry guarantee for
-//      surrounding scoped code.
+//   1. `Scope::unscoped_global()` / `Local::unscoped()` — reach legacy APIs
+//      that can run user JS without `&mut Scope`, bypassing the re-entry
+//      guarantee for surrounding scoped code.
 //   2. `#[bun_jsc::host_fn]` without the `scoped` flag — an entry point
 //      whose body handles raw `JSValue`s with no scope at all.
 //
@@ -27,7 +27,7 @@ import { realpathSync } from "fs";
 import path from "path";
 import { globAllSources } from "../../scripts/glob-sources.ts";
 
-const UNSCOPED_GLOBAL = /\bunscoped_global\s*\(\s*\)/g;
+const UNSCOPED_GLOBAL = /\bunscoped_global\s*\(\s*\)|\.unscoped\s*\(\s*\)/g;
 // `#[bun_jsc::host_fn]` / `#[bun_jsc::host_fn(method)]` etc. without the
 // `scoped` flag anywhere in the attribute args.
 const HOST_FN = /#\[\s*bun_jsc::host_fn\s*(?:\(([^)]*)\))?\s*\]/g;
@@ -85,7 +85,7 @@ describe("scope-layer escape hatches", () => {
     test(`${source} (${limit})`, () => {
       if (count > limit) {
         throw new Error(
-          `${source} has ${count} scope escape hatches (unscoped_global / unscoped #[bun_jsc::host_fn]), up from ${limit}.\n` +
+          `${source} has ${count} scope escape hatches (unscoped_global / .unscoped() / unscoped #[bun_jsc::host_fn]), up from ${limit}.\n` +
             `Route through the scoped API instead: a Local method, or a scoped wrapper generated from a\n` +
             `ZIG_EXPORT(..., reenters_js | no_user_js) annotation on the C++ declaration.\n` +
             `If the hatch is justified (target API not yet classified), update the inventory with\n` +

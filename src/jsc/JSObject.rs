@@ -162,13 +162,12 @@ impl JSObject {
     /// # Safety
     /// `owner` must be a cell-tagged `JSValue` (its payload is a live
     /// `JSCell*`) that remains valid for the duration of the call.
-    /// `names` must point to `length` initialized `ExternColumnIdentifier`s
-    /// valid for the duration of the call; C++ does not retain the pointer.
+    /// C++ reads `names` for the duration of the call only; it does not
+    /// retain the pointer.
     pub unsafe fn create_structure(
         global: &JSGlobalObject,
         owner: JSValue,
-        length: u32,
-        names: *mut ExternColumnIdentifier,
+        names: &mut [ExternColumnIdentifier],
     ) -> JSValue {
         crate::mark_binding!();
         debug_assert!(owner.is_cell());
@@ -180,7 +179,14 @@ impl JSObject {
         // `global.as_ptr()` yields the raw FFI handle — JSGlobalObject is an
         // opaque JSC cell with interior mutability on the C++ side; Rust holds
         // no `&`-derived view of any field C++ mutates.
-        unsafe { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
+        unsafe {
+            JSC__createStructure(
+                global.as_ptr(),
+                owner_cell,
+                names.len() as u32,
+                names.as_mut_ptr(),
+            )
+        }
     }
 
     pub fn create_with_initializer<Ctx: ObjectInitializer>(

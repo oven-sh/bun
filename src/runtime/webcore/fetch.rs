@@ -234,18 +234,18 @@ pub(crate) fn bun_fetch_preconnect<'s>(
     let arguments = callframe.scoped_arguments::<1>(scope);
 
     if arguments.len < 1 {
-        return Err(global_object.throw_not_enough_arguments("fetch.preconnect", 1, arguments.len));
+        return Err(scope.throw_not_enough_arguments("fetch.preconnect", 1, arguments.len));
     }
 
     // `href_from_js` returns a +1 (`Bun::toStringRef`). `bun_core::String` is
     // `Copy` with no `Drop`, so wrap in `OwnedString` for the scope-exit deref.
     let url_str = bun_core::OwnedString::new(jsc::URL::href_from_js(
-        arguments.ptr[0].raw(),
+        arguments.ptr[0].unscoped(),
         global_object,
     )?);
 
     if url_str.tag() == BunStringTag::Dead {
-        return Err(global_object
+        return Err(scope
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("Invalid URL"),
@@ -254,7 +254,7 @@ pub(crate) fn bun_fetch_preconnect<'s>(
     }
 
     if url_str.is_empty() {
-        return Err(global_object
+        return Err(scope
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("{}", FETCH_ERROR_BLANK_URL),
@@ -282,14 +282,12 @@ pub(crate) fn bun_fetch_preconnect<'s>(
 
     if !url.is_http() && !url.is_https() && !url.is_s3() {
         reclaim_href!();
-        return Err(
-            global_object.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS"))
-        );
+        return Err(scope.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS")));
     }
 
     if url.hostname.is_empty() {
         reclaim_href!();
-        return Err(global_object
+        return Err(scope
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("{}", FETCH_ERROR_BLANK_URL),
@@ -299,7 +297,7 @@ pub(crate) fn bun_fetch_preconnect<'s>(
 
     if !url.has_valid_port() {
         reclaim_href!();
-        return Err(global_object.throw_invalid_arguments(format_args!("Invalid port")));
+        return Err(scope.throw_invalid_arguments(format_args!("Invalid port")));
     }
 
     // `preconnect` is a free fn in `bun_http::async_http`. Ownership

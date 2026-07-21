@@ -6205,7 +6205,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) bool Bun__
 }
 #endif
 
-CPP_DECL [[ZIG_EXPORT(zero_is_throw, no_user_js)]] JSC::EncodedJSValue Bun__JSValue__bind(JSC::EncodedJSValue functionToBindEncoded, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue bindThisArgEncoded, const BunString* name, double length, JSC::EncodedJSValue* args, size_t args_len)
+// reenters_js: a callable Proxy passes the isCallable() check, and
+// JSBoundFunction::create's getBoundFunctionStructure calls getPrototype()
+// on non-JSFunction targets — the [[GetPrototypeOf]] trap is user JS.
+CPP_DECL [[ZIG_EXPORT(zero_is_throw, reenters_js)]] JSC::EncodedJSValue Bun__JSValue__bind(JSC::EncodedJSValue functionToBindEncoded, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue bindThisArgEncoded, const BunString* name, double length, JSC::EncodedJSValue* args, size_t args_len)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 

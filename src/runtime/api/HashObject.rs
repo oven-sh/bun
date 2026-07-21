@@ -262,7 +262,7 @@ fn hash_wrap<'s, H: HashAlgorithm>(
             // TODO: files
             input = blob.shared_view();
         } else {
-            match arg.raw().js_type_loose() {
+            match arg.js_type_loose() {
                 jsc::JSType::ArrayBuffer
                 | jsc::JSType::Int8Array
                 | jsc::JSType::Uint8Array
@@ -288,7 +288,7 @@ fn hash_wrap<'s, H: HashAlgorithm>(
                     input = &array_buffer;
                 }
                 _ => {
-                    input_slice = arg.raw().to_slice(global)?;
+                    input_slice = arg.to_slice(scope)?;
                     input = input_slice.slice();
                 }
             }
@@ -300,8 +300,8 @@ fn hash_wrap<'s, H: HashAlgorithm>(
     // optional seed and pass it.
     let mut seed: u64 = 0;
     if let Some(arg) = args.get(1) {
-        if arg.is_number() || arg.raw().is_big_int() {
-            seed = arg.raw().to_uint64_no_truncate();
+        if arg.is_number() || arg.is_big_int() {
+            seed = arg.to_uint64_no_truncate();
         }
     }
 

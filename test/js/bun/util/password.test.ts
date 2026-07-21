@@ -424,3 +424,20 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
   await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
 });
+
+test("verifySync does not read a password buffer detached by the hash argument's coercion", () => {
+  const passwordBuf = new TextEncoder().encode("hunter2");
+  const hashed = password.hashSync("hunter2", { algorithm: "bcrypt", cost: 4 });
+  class EvilHash extends String {
+    toString() {
+      passwordBuf.buffer.transfer();
+      return hashed;
+    }
+  }
+  // The password view is materialized after the hash argument's string
+  // coercion, so the detached buffer reads as empty → mismatch.
+  expect(password.verifySync(passwordBuf, new EvilHash(hashed) as any)).toBeFalse();
+  // Sanity: same call without the detach verifies fine.
+  const freshBuf = new TextEncoder().encode("hunter2");
+  expect(password.verifySync(freshBuf, hashed)).toBeTrue();
+});

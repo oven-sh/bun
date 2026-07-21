@@ -349,17 +349,17 @@ impl S3Client {
         let global = scope.unscoped_global();
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return Err(global
+                    return Err(scope
                         .err(ErrorCode::MISSING_ARGS, format_args!("Expected a path "))
                         .throw());
                 }
-                return Err(global.throw_invalid_arguments(format_args!("Expected a path")));
+                return Err(scope.throw_invalid_arguments(format_args!("Expected a path")));
             }
         };
         let options = args.next_eat();
@@ -395,13 +395,13 @@ impl S3Client {
         let global = scope.unscoped_global();
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return Err(global
+                    return Err(scope
                         .err(
                             ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to presign"),
@@ -409,7 +409,7 @@ impl S3Client {
                         .throw());
                 }
                 return Err(
-                    global.throw_invalid_arguments(format_args!("Expected a path to presign"))
+                    scope.throw_invalid_arguments(format_args!("Expected a path to presign"))
                 );
             }
         };
@@ -439,20 +439,20 @@ impl S3Client {
         let global = scope.unscoped_global();
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return Err(global
+                    return Err(scope
                         .err(
                             ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to check if it exists"),
                         )
                         .throw());
                 }
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected a path to check if it exists"
                 )));
             }
@@ -481,20 +481,20 @@ impl S3Client {
         let global = scope.unscoped_global();
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return Err(global
+                    return Err(scope
                         .err(
                             ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to check the size of"),
                         )
                         .throw());
                 }
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected a path to check the size of"
                 )));
             }
@@ -523,20 +523,20 @@ impl S3Client {
         let global = scope.unscoped_global();
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return Err(global
+                    return Err(scope
                         .err(
                             ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to check the stat of"),
                         )
                         .throw());
                 }
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected a path to check the stat of"
                 )));
             }
@@ -565,12 +565,12 @@ impl S3Client {
         let global = scope.unscoped_global();
         let arguments = callframe.arguments_old::<3>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
-                return Err(global
+                return Err(scope
                     .err(
                         ErrorCode::MISSING_ARGS,
                         format_args!("Expected a path to write to"),
@@ -579,7 +579,7 @@ impl S3Client {
             }
         };
         let Some(data) = args.next_eat() else {
-            return Err(global
+            return Err(scope
                 .err(
                     ErrorCode::MISSING_ARGS,
                     format_args!("Expected a Blob-y thing to write"),
@@ -655,12 +655,12 @@ impl S3Client {
         let global = scope.unscoped_global();
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
-                return Err(global
+                return Err(scope
                     .err(
                         ErrorCode::MISSING_ARGS,
                         format_args!("Expected a path to unlink"),

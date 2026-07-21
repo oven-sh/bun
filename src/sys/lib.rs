@@ -3378,16 +3378,63 @@ mod posix_impl {
         Ok(())
     }
 
+    /// An owned anonymous-or-file memory mapping; unmapped on drop.
+    /// `munmap` is thread-safe, so the handle may be dropped anywhere.
+    pub struct Mmap {
+        ptr: core::ptr::NonNull<u8>,
+        len: usize,
+    }
+
+    // SAFETY: the mapping is process-global memory; nothing is thread-bound.
+    unsafe impl Send for Mmap {}
+    // SAFETY: `&Mmap` exposes no interior mutability.
+    unsafe impl Sync for Mmap {}
+
+    impl Mmap {
+        /// Adopt a `(ptr, len)` pair returned by [`mmap`].
+        ///
+        /// # Safety
+        /// `ptr..ptr+len` must be a live mapping this handle now exclusively
+        /// owns; it is `munmap`ed exactly once on drop.
+        pub unsafe fn from_raw(ptr: core::ptr::NonNull<u8>, len: usize) -> Mmap {
+            Mmap { ptr, len }
+        }
+
+        pub fn len(&self) -> usize {
+            self.len
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.len == 0
+        }
+
+        pub fn as_slice(&self) -> &[u8] {
+            // SAFETY: the mapping is live for `self`'s lifetime.
+            unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        }
+
+        pub fn as_mut_slice(&mut self) -> &mut [u8] {
+            // SAFETY: the mapping is live and exclusively owned.
+            unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+        }
+    }
+
+    impl Drop for Mmap {
+        fn drop(&mut self) {
+            let _ = munmap(self.ptr.as_ptr(), self.len);
+        }
+    }
+
     /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
-    /// Returns `(map, delta)` where `map` is the full page-aligned mapping and
-    /// `delta = offset % page_size` is the byte offset into `map` at which the
-    /// requested `offset` begins. Caller is responsible for `munmap(map)`.
+    /// Returns `(map, delta)` where `map` owns the full page-aligned mapping
+    /// (unmapped on drop) and `delta = offset % page_size` is the byte offset
+    /// into `map` at which the requested `offset` begins.
     pub fn mmap_file(
         path: &ZStr,
         flags: libc::c_int,
         wanted_size: Option<usize>,
         offset: usize,
-    ) -> Maybe<(&'static mut [u8], usize)> {
+    ) -> Maybe<(Mmap, usize)> {
         let fd = open(path, O::RDWR, 0)?;
         // close fd regardless of mmap outcome (the mapping outlives the fd).
         let _close = CloseOnDrop::new(fd);
@@ -3421,9 +3468,10 @@ mod posix_impl {
             aligned_offset as i64,
         ) {
             Ok(ptr) => {
-                // SAFETY: mmap returned a valid mapping of `map_len` bytes.
+                // SAFETY: mmap returned a valid `map_len`-byte mapping the
+                // handle now exclusively owns.
                 Ok((
-                    unsafe { core::slice::from_raw_parts_mut(ptr, map_len) },
+                    unsafe { Mmap::from_raw(core::ptr::NonNull::new_unchecked(ptr), map_len) },
                     delta,
                 ))
             }

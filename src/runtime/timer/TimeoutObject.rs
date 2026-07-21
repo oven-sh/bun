@@ -51,7 +51,7 @@ impl TimeoutObject {
         let this_value = frame.scoped_this(scope);
         let v = this
             .internals
-            .do_refresh(scope.unscoped_global(), this_value.raw())?;
+            .do_refresh(scope.unscoped_global(), this_value.unscoped())?;
         Ok(scope.local(v))
     }
 

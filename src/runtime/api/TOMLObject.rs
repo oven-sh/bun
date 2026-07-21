@@ -62,21 +62,21 @@ pub(crate) fn stringify<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResul
     // TOML output is line-oriented and has no nesting indentation.
     let [value, replacer, _space] = frame.scoped_arguments::<3>(scope).ptr;
 
-    value.raw().ensure_still_alive();
+    value.ensure_still_alive();
 
-    if value.is_undefined() || value.raw().is_symbol() || value.raw().is_function() {
+    if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(scope.undefined());
     }
 
     if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
+        return Err(scope.throw(format_args!(
             "TOML.stringify does not support the replacer argument"
         )));
     }
 
-    let unwrapped = value.raw().unwrap_boxed_primitive(global)?;
+    let unwrapped = value.unscoped().unwrap_boxed_primitive(global)?;
     if !unwrapped.is_object() || unwrapped.is_array() || unwrapped.is_date() {
-        return Err(global.throw(format_args!(
+        return Err(scope.throw(format_args!(
             "TOML.stringify expects an object at the top level (a TOML document is a table)"
         )));
     }

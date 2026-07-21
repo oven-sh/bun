@@ -148,9 +148,14 @@ impl BlockList {
         let address = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
             sa._addr
         } else {
-            validators::validate_string(global, address_js.raw(), format_args!("address"))?;
-            validators::validate_string(global, family_js.raw(), format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, address_js.raw(), family_js.raw())?._addr
+            validators::validate_string(global, address_js.unscoped(), format_args!("address"))?;
+            validators::validate_string(global, family_js.unscoped(), format_args!("family"))?;
+            SocketAddress::init_from_addr_family(
+                global,
+                address_js.unscoped(),
+                family_js.unscoped(),
+            )?
+            ._addr
         };
 
         let _guard = this.mutex.lock_guard();
@@ -176,22 +181,24 @@ impl BlockList {
         let start = if let Some(sa) = start_js.as_class_ref::<SocketAddress>() {
             sa._addr
         } else {
-            validators::validate_string(global, start_js.raw(), format_args!("start"))?;
-            validators::validate_string(global, family_js.raw(), format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, start_js.raw(), family_js.raw())?._addr
+            validators::validate_string(global, start_js.unscoped(), format_args!("start"))?;
+            validators::validate_string(global, family_js.unscoped(), format_args!("family"))?;
+            SocketAddress::init_from_addr_family(global, start_js.unscoped(), family_js.unscoped())?
+                ._addr
         };
         let end = if let Some(sa) = end_js.as_class_ref::<SocketAddress>() {
             sa._addr
         } else {
-            validators::validate_string(global, end_js.raw(), format_args!("end"))?;
-            validators::validate_string(global, family_js.raw(), format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, end_js.raw(), family_js.raw())?._addr
+            validators::validate_string(global, end_js.unscoped(), format_args!("end"))?;
+            validators::validate_string(global, family_js.unscoped(), format_args!("family"))?;
+            SocketAddress::init_from_addr_family(global, end_js.unscoped(), family_js.unscoped())?
+                ._addr
         };
         if let Some(ord) = _compare(&start, &end) {
             if ord == Ordering::Greater {
                 return Err(global.throw_invalid_argument_value_custom(
                     b"start",
-                    start_js.raw(),
+                    start_js.unscoped(),
                     b"must come before end",
                 ));
             }
@@ -220,16 +227,21 @@ impl BlockList {
         let network = if let Some(sa) = network_js.as_class_ref::<SocketAddress>() {
             sa._addr
         } else {
-            validators::validate_string(global, network_js.raw(), format_args!("network"))?;
-            validators::validate_string(global, family_js.raw(), format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, network_js.raw(), family_js.raw())?._addr
+            validators::validate_string(global, network_js.unscoped(), format_args!("network"))?;
+            validators::validate_string(global, family_js.unscoped(), format_args!("family"))?;
+            SocketAddress::init_from_addr_family(
+                global,
+                network_js.unscoped(),
+                family_js.unscoped(),
+            )?
+            ._addr
         };
         let mut prefix: u8 = 0;
         let fam = network.family_raw();
         if fam == AF_INET as inet::sa_family_t {
             prefix = u8::try_from(validators::validate_int32(
                 global,
-                prefix_js.raw(),
+                prefix_js.unscoped(),
                 format_args!("prefix"),
                 Some(0),
                 Some(32),
@@ -238,7 +250,7 @@ impl BlockList {
         } else if fam == AF_INET6 as inet::sa_family_t {
             prefix = u8::try_from(validators::validate_int32(
                 global,
-                prefix_js.raw(),
+                prefix_js.unscoped(),
                 format_args!("prefix"),
                 Some(0),
                 Some(128),
@@ -266,16 +278,20 @@ impl BlockList {
         let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
             &sa._addr
         } else {
-            validators::validate_string(global, address_js.raw(), format_args!("address"))?;
-            validators::validate_string(global, family_js.raw(), format_args!("family"))?;
-            match SocketAddress::init_from_addr_family(global, address_js.raw(), family_js.raw()) {
+            validators::validate_string(global, address_js.unscoped(), format_args!("address"))?;
+            validators::validate_string(global, family_js.unscoped(), format_args!("family"))?;
+            match SocketAddress::init_from_addr_family(
+                global,
+                address_js.unscoped(),
+                family_js.unscoped(),
+            ) {
                 Ok(sa) => {
                     address_val = sa._addr;
                     &address_val
                 }
                 Err(err) => {
                     debug_assert!(err == bun_jsc::JsError::Thrown);
-                    global.clear_exception();
+                    scope.clear_exception();
                     return Ok(scope.local(JSValue::FALSE));
                 }
             }
@@ -368,7 +384,7 @@ impl BlockList {
         let _guard = this.mutex.lock_guard();
         let rules = this.da_rules.get();
         // GC must be able to visit
-        let array = scope.local(JSValue::create_empty_array(global, rules.len())?);
+        let array = scope.new_array(rules.len())?;
 
         for (i, rule) in rules.iter().enumerate() {
             let mut s = match rule {
@@ -401,7 +417,7 @@ impl BlockList {
                 }
             };
             array
-                .raw()
+                .unscoped()
                 .put_index(global, i as u32, s.transfer_to_js(global)?)?;
         }
         Ok(array)

@@ -23,8 +23,8 @@ use bun_core::zstr;
 use bun_core::{ZStr, strings};
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _,
-    JsRef, JsResult, Local, Scope, StringJsc as _, Strong, SysErrorJsc as _,
+    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _, JsRef,
+    JsResult, Local, Scope, StringJsc as _, Strong, SysErrorJsc as _,
 };
 use bun_sys as sys;
 
@@ -455,9 +455,9 @@ impl Image {
     ) -> JsResult<Local<'s>> {
         let args = callframe.scoped_arguments::<3>(scope);
         if args.len < 1 || !args.ptr[0].is_number() {
-            return Err(scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!("resize(width, height?, options?)")));
+            return Err(
+                scope.throw_invalid_arguments(format_args!("resize(width, height?, options?)"))
+            );
         }
         // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
         // keeps every downstream u32 product in range without a per-stage check.
@@ -476,12 +476,12 @@ impl Image {
             let opt = args.ptr[2];
             let global = scope.unscoped_global();
             if let Some(v) = opt
-                .raw()
+                .unscoped()
                 .get_optional_enum::<codecs::Filter>(global, "filter")?
             {
                 r.filter = v;
             }
-            if let Some(v) = opt.raw().get_optional_enum::<Fit>(global, "fit")? {
+            if let Some(v) = opt.unscoped().get_optional_enum::<Fit>(global, "fit")? {
                 r.fit = v;
             }
             if let Some(v) = opt.get(scope, "withoutEnlargement")? {
@@ -501,7 +501,6 @@ impl Image {
         let args = callframe.scoped_arguments::<1>(scope);
         if args.len < 1 || !args.ptr[0].is_number() {
             return Err(scope
-                .unscoped_global()
                 .throw_invalid_arguments(format_args!("rotate(degrees) expects 90, 180 or 270")));
         }
         // coerce_int for the same NaN/Inf/huge-finite reasons as everywhere else;
@@ -509,11 +508,9 @@ impl Image {
         let raw: i64 = coerce_int!(i64, args.ptr[0].as_number(), -1e15, 1e15);
         let deg: u32 = u32::try_from(raw.rem_euclid(360)).unwrap();
         if deg != 0 && deg != 90 && deg != 180 && deg != 270 {
-            return Err(scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!(
-                    "rotate: only multiples of 90 are supported"
-                )));
+            return Err(scope.throw_invalid_arguments(format_args!(
+                "rotate: only multiples of 90 are supported"
+            )));
         }
         this.update_pipeline(|p| p.rotate = u16::try_from(deg).expect("int cast"));
         Ok(callframe.scoped_this(scope))
@@ -1096,11 +1093,9 @@ impl Image {
         if args.len > 0 && !args.ptr[0].is_undefined_or_null() {
             let s = bun_core::OwnedString::new(args.ptr[0].to_bun_string(scope)?);
             if !s.eql_comptime(b"dataurl") {
-                return Err(scope
-                    .unscoped_global()
-                    .throw_invalid_arguments(format_args!(
-                        "Image.placeholder(): only \"dataurl\" is supported",
-                    )));
+                return Err(scope.throw_invalid_arguments(format_args!(
+                    "Image.placeholder(): only \"dataurl\" is supported",
+                )));
             }
         }
         let v = this.schedule(
@@ -1122,11 +1117,9 @@ impl Image {
     pub fn do_write<'s>(this: &Self, scope: &mut Scope<'s>, cf: &CallFrame) -> JsResult<Local<'s>> {
         let args = cf.scoped_arguments::<1>(scope);
         if args.len < 1 || args.ptr[0].is_undefined_or_null() {
-            return Err(scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!(
-                    "Image.write(dest): expected a path, Bun.file, Bun.s3 or fd",
-                )));
+            return Err(scope.throw_invalid_arguments(format_args!(
+                "Image.write(dest): expected a path, Bun.file, Bun.s3 or fd",
+            )));
         }
 
         let mut output = this.pipeline.get().output;
@@ -1838,43 +1831,45 @@ impl<'a> PipelineTask<'a> {
                     // The codec's own allocation is handed straight to JS with the
                     // codec's free as the finalizer — no dupe of the output.
                     Deliver::Uint8Array => {
-                        // SAFETY: see `out_slice` above; mutability is for the
-                        // `from_bytes` signature only — JS takes ownership.
-                        let mut_slice = unsafe {
-                            core::slice::from_raw_parts_mut(
-                                out.bytes.as_ptr().cast::<u8>(),
-                                out_slice.len(),
+                        // SAFETY: `out.bytes` is the live codec allocation and
+                        // `out.free` (a thread-safe C allocator free ignoring
+                        // the null ctx) releases it exactly once; the codec
+                        // `Drop` is suppressed above.
+                        let foreign = unsafe {
+                            jsc::js_value::ForeignBytes::new(
+                                out.bytes,
+                                core::ptr::null_mut(),
+                                out.free,
                             )
                         };
-                        // SAFETY: `out.bytes` is the codec-owned allocation
-                        // whose ownership transfers to JSC; `out.free` frees
-                        // it exactly once at GC and ignores the null ctx.
-                        let v = unsafe {
-                            ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
-                                .to_js_with_context(global, core::ptr::null_mut(), Some(out.free))
-                        };
+                        let v = jsc::array_buffer::typed_array_from_owner(
+                            global,
+                            jsc::TypedArrayType::TypeUint8,
+                            foreign,
+                            |foreign| foreign.as_mut_slice(),
+                        );
                         match v {
                             Ok(v) => promise.resolve(global, v)?,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                         }
                     }
-                    // createBufferWithCtx returns plain JSValue (its C++ side asserts
-                    // the no-throw contract), so the .uint8array catch is unmatched
-                    // here by construction, not omission.
-                    Deliver::Buffer => promise.resolve(
-                        global,
-                        // SAFETY: `out.bytes` is the codec-owned allocation whose
-                        // ownership transfers to JSC; `ctx` is null and `out.free`
-                        // ignores it.
-                        unsafe {
-                            JSValue::create_buffer_with_ctx(
-                                global,
+                    // create_buffer_from_foreign returns plain JSValue (its C++ side
+                    // asserts the no-throw contract), so the .uint8array catch is
+                    // unmatched here by construction, not omission.
+                    Deliver::Buffer => promise.resolve(global, {
+                        // SAFETY: `out.bytes` is the live codec allocation and
+                        // `out.free` (a thread-safe C allocator free ignoring
+                        // the null ctx) releases it exactly once; the codec
+                        // `Drop` is suppressed above.
+                        let foreign = unsafe {
+                            jsc::js_value::ForeignBytes::new(
                                 out.bytes,
                                 core::ptr::null_mut(),
                                 out.free,
                             )
-                        },
-                    )?,
+                        };
+                        JSValue::create_buffer_from_foreign(global, foreign)
+                    })?,
                     Deliver::Blob => {
                         // Blob.Store frees via an Allocator; dupe for that path.
                         let owned = out_slice.to_vec();
@@ -1932,17 +1927,18 @@ impl<'a> PipelineTask<'a> {
                     // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
                         let dest_js = dest.get();
-                        // SAFETY: `out.bytes` is the codec-owned allocation whose
-                        // ownership transfers to JSC; `ctx` is null and `out.free`
-                        // ignores it.
-                        let data = unsafe {
-                            JSValue::create_buffer_with_ctx(
-                                global,
+                        // SAFETY: `out.bytes` is the live codec allocation and
+                        // `out.free` (a thread-safe C allocator free ignoring
+                        // the null ctx) releases it exactly once; the codec
+                        // `Drop` is suppressed above.
+                        let foreign = unsafe {
+                            jsc::js_value::ForeignBytes::new(
                                 out.bytes,
                                 core::ptr::null_mut(),
                                 out.free,
                             )
                         };
+                        let data = JSValue::create_buffer_from_foreign(global, foreign);
                         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                         let args = [dest_js];

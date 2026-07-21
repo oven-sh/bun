@@ -737,14 +737,14 @@ pub(crate) fn js_password_object_hash<'s>(
     let arguments = callframe.scoped_arguments::<2>(scope);
 
     if arguments.len < 1 {
-        return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
+        return Err(scope.throw_not_enough_arguments("hash", 1, 0));
     }
 
     let mut algorithm = AlgorithmValue::DEFAULT;
 
     if let Some(arg) = arguments.get(1) {
         if !arg.is_undefined_or_null() {
-            algorithm = AlgorithmValue::from_js(global_object, arg.raw())?;
+            algorithm = AlgorithmValue::from_js(global_object, arg.unscoped())?;
         }
     }
 
@@ -754,13 +754,11 @@ pub(crate) fn js_password_object_hash<'s>(
     //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
     // }
     let password_to_hash =
-        StringOrBuffer::from_js_to_owned_slice(global_object, arguments.ptr[0].raw())?;
+        StringOrBuffer::from_js_to_owned_slice(global_object, arguments.ptr[0].unscoped())?;
     // errdefer bun.default_allocator.free(password_to_hash) — Box<[u8]> drops on `?`.
 
     if password_to_hash.is_empty() {
-        return Err(
-            global_object.throw_invalid_arguments(format_args!("password must not be empty"))
-        );
+        return Err(scope.throw_invalid_arguments(format_args!("password must not be empty")));
     }
 
     let promise = JSPasswordObject::hash::<false>(
@@ -781,30 +779,24 @@ pub(crate) fn js_password_object_hash_sync<'s>(
     let arguments = callframe.scoped_arguments::<2>(scope);
 
     if arguments.len < 1 {
-        return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
+        return Err(scope.throw_not_enough_arguments("hash", 1, 0));
     }
 
     let mut algorithm = AlgorithmValue::DEFAULT;
 
     if let Some(arg) = arguments.get(1) {
         if !arg.is_undefined_or_null() {
-            algorithm = AlgorithmValue::from_js(global_object, arg.raw())?;
+            algorithm = AlgorithmValue::from_js(global_object, arg.unscoped())?;
         }
     }
 
     let Some(string_or_buffer) = StringOrBuffer::from_js_scoped(scope, arguments.ptr[0])? else {
-        return Err(global_object.throw_invalid_argument_type(
-            "hash",
-            "password",
-            "string or TypedArray",
-        ));
+        return Err(scope.throw_invalid_argument_type("hash", "password", "string or TypedArray"));
     };
     // defer string_or_buffer.deinit() — Drop at scope exit.
 
     if string_or_buffer.slice().is_empty() {
-        return Err(
-            global_object.throw_invalid_arguments(format_args!("password must not be empty"))
-        );
+        return Err(scope.throw_invalid_arguments(format_args!("password must not be empty")));
     }
 
     // The sync path only needs `&[u8]`; copy into a Box to share the async
@@ -829,14 +821,14 @@ pub(crate) fn js_password_object_verify<'s>(
     let arguments = callframe.scoped_arguments::<3>(scope);
 
     if arguments.len < 2 {
-        return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
+        return Err(scope.throw_not_enough_arguments("verify", 2, 0));
     }
 
     let mut algorithm: Option<Algorithm> = None;
 
     if let Some(algorithm_value) = arguments.get(2).filter(|v| !v.is_undefined_or_null()) {
         if !algorithm_value.is_string() {
-            return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
+            return Err(scope.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
         let algorithm_string = algorithm_value.get_zig_string(scope)?;
@@ -844,8 +836,8 @@ pub(crate) fn js_password_object_verify<'s>(
         algorithm = match algorithm_from_zig_string(&algorithm_string) {
             Some(a) => Some(a),
             None => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_invalid_argument_type(
+                if !scope.has_exception() {
+                    return Err(scope.throw_invalid_argument_type(
                         "verify",
                         "algorithm",
                         UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
@@ -862,7 +854,7 @@ pub(crate) fn js_password_object_verify<'s>(
     //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
     // }
     let owned_password =
-        StringOrBuffer::from_js_to_owned_slice(global_object, arguments.ptr[0].raw())?;
+        StringOrBuffer::from_js_to_owned_slice(global_object, arguments.ptr[0].unscoped())?;
 
     // TODO: this most likely should error like `verifySync` instead of stringifying.
     //
@@ -870,7 +862,7 @@ pub(crate) fn js_password_object_verify<'s>(
     //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
     // }
     let owned_hash =
-        match StringOrBuffer::from_js_to_owned_slice(global_object, arguments.ptr[1].raw()) {
+        match StringOrBuffer::from_js_to_owned_slice(global_object, arguments.ptr[1].unscoped()) {
             Ok(h) => h,
             Err(err) => {
                 drop(owned_password);
@@ -913,14 +905,14 @@ pub(crate) fn js_password_object_verify_sync<'s>(
     let arguments = callframe.scoped_arguments::<3>(scope);
 
     if arguments.len < 2 {
-        return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
+        return Err(scope.throw_not_enough_arguments("verify", 2, 0));
     }
 
     let mut algorithm: Option<Algorithm> = None;
 
     if let Some(algorithm_value) = arguments.get(2).filter(|v| !v.is_undefined_or_null()) {
         if !algorithm_value.is_string() {
-            return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
+            return Err(scope.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
         let algorithm_string = algorithm_value.get_zig_string(scope)?;
@@ -928,8 +920,8 @@ pub(crate) fn js_password_object_verify_sync<'s>(
         algorithm = match algorithm_from_zig_string(&algorithm_string) {
             Some(a) => Some(a),
             None => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_invalid_argument_type(
+                if !scope.has_exception() {
+                    return Err(scope.throw_invalid_argument_type(
                         "verify",
                         "algorithm",
                         UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
@@ -942,24 +934,24 @@ pub(crate) fn js_password_object_verify_sync<'s>(
         };
     }
 
-    let Some(password) = StringOrBuffer::from_js_scoped(scope, arguments.ptr[0])? else {
-        return Err(global_object.throw_invalid_argument_type(
+    // Both arguments' string coercions run before either buffer view is
+    // materialized: a String-subclass `toString` on `hash` could otherwise
+    // detach `password`'s ArrayBuffer after its view was captured.
+    let Some(mut password) = StringOrBuffer::from_js_deferred(scope, arguments.ptr[0])? else {
+        return Err(scope.throw_invalid_argument_type(
             "verify",
             "password",
             "string or TypedArray",
         ));
     };
 
-    let Some(hash_) = StringOrBuffer::from_js_scoped(scope, arguments.ptr[1])? else {
+    let Some(mut hash_) = StringOrBuffer::from_js_deferred(scope, arguments.ptr[1])? else {
         drop(password);
-        return Err(global_object.throw_invalid_argument_type(
-            "verify",
-            "hash",
-            "string or TypedArray",
-        ));
+        return Err(scope.throw_invalid_argument_type("verify", "hash", "string or TypedArray"));
     };
 
-    // defer password.deinit() / hash_.deinit() — Drop at scope exit.
+    let password = password.materialize(scope);
+    let hash_ = hash_.materialize(scope);
 
     if hash_.slice().is_empty() {
         return Ok(scope.boolean(false));

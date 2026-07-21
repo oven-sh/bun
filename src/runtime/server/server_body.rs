@@ -1205,10 +1205,10 @@ pub(super) fn on_resolve_impl<'s>(
     ctx_log!("onResolve");
 
     let [plugins_result, plugins_js] = callframe.scoped_arguments::<2>(scope).ptr;
-    let plugins = plugins_js.raw().as_promise_ptr::<ServePlugins>();
+    let plugins = plugins_js.unscoped().as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); deref pairs with that ref
     let _guard = unsafe { ServePluginsRef::adopt(plugins) };
-    plugins_result.raw().ensure_still_alive();
+    plugins_result.ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_resolve();
@@ -1224,11 +1224,11 @@ pub(super) fn on_reject_impl<'s>(
     ctx_log!("onReject");
 
     let [error_js, plugin_js] = callframe.scoped_arguments::<2>(scope).ptr;
-    let plugins = plugin_js.raw().as_promise_ptr::<ServePlugins>();
+    let plugins = plugin_js.unscoped().as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); deref pairs with that ref
     let _guard = unsafe { ServePluginsRef::adopt(plugins) };
     // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *plugins }.handle_on_reject(scope.unscoped_global(), error_js.raw());
+    unsafe { &mut *plugins }.handle_on_reject(scope.unscoped_global(), error_js.unscoped());
 
     Ok(scope.undefined())
 }
@@ -1471,22 +1471,16 @@ where
     ) -> JsResult<Local<'s>> {
         let arguments = callframe.scoped_arguments::<1>(scope);
         if arguments.len < 1 {
-            return Err(scope.unscoped_global().throw_not_enough_arguments(
-                "subscriberCount",
-                1,
-                0,
-            ));
+            return Err(scope.throw_not_enough_arguments("subscriberCount", 1, 0));
         }
 
-        if arguments.ptr[0].raw().is_empty_or_undefined_or_null() {
-            return Err(scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!(
-                    "subscriberCount requires a topic name as a string"
-                )));
+        if arguments.ptr[0].is_empty_or_undefined_or_null() {
+            return Err(scope.throw_invalid_arguments(format_args!(
+                "subscriberCount requires a topic name as a string"
+            )));
         }
 
-        let topic = arguments.ptr[0].raw().to_slice(scope.unscoped_global())?;
+        let topic = arguments.ptr[0].to_slice(scope)?;
 
         if topic.slice().is_empty() {
             return Ok(scope.number(0.0));
@@ -1512,7 +1506,7 @@ where
         let args = callframe.scoped_arguments::<2>(scope);
         // ?jsc.JSValue
         let abruptly = args.get(0);
-        Ok(scope.local(this.stop_from_js(abruptly.map(Local::raw))))
+        Ok(scope.local(this.stop_from_js(abruptly.map(Local::unscoped))))
     }
 
     /// `pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false)`
@@ -1534,17 +1528,15 @@ where
     ) -> JsResult<Local<'s>> {
         let args = callframe.scoped_arguments::<4>(scope);
         // jsc.JSValue
-        let object = args.get(0).ok_or_else(|| {
-            scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!("Missing argument"))
-        })?;
+        let object = args
+            .get(0)
+            .ok_or_else(|| scope.throw_invalid_arguments(format_args!("Missing argument")))?;
         // ?jsc.JSValue
         let optional = args.get(1);
         this.on_upgrade(
             scope.unscoped_global(),
-            object.raw(),
-            optional.map(Local::raw),
+            object.unscoped(),
+            optional.map(Local::unscoped),
         )
         .map(|v| scope.local(v))
     }
@@ -1557,30 +1549,24 @@ where
         callframe: &CallFrame,
     ) -> JsResult<Local<'s>> {
         let args = callframe.scoped_arguments::<5>(scope);
-        let topic_value = args.get(0).ok_or_else(|| {
-            scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!("Missing argument"))
-        })?;
+        let topic_value = args
+            .get(0)
+            .ok_or_else(|| scope.throw_invalid_arguments(format_args!("Missing argument")))?;
         if topic_value.is_undefined_or_null() {
-            return Err(scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!("Expected string")));
+            return Err(scope.throw_invalid_arguments(format_args!("Expected string")));
         }
         let topic = topic_value.get_zig_string(scope)?;
         // jsc.JSValue
-        let message_value = args.get(1).ok_or_else(|| {
-            scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!("Missing argument"))
-        })?;
+        let message_value = args
+            .get(1)
+            .ok_or_else(|| scope.throw_invalid_arguments(format_args!("Missing argument")))?;
         // ?jsc.JSValue
         let compress_value = args.get(2);
         this.publish(
             scope.unscoped_global(),
             topic,
-            message_value.raw(),
-            compress_value.map(Local::raw),
+            message_value.unscoped(),
+            compress_value.map(Local::unscoped),
         )
         .map(|v| scope.local(v))
     }
@@ -1594,15 +1580,11 @@ where
     ) -> JsResult<Local<'s>> {
         let args = callframe.scoped_arguments::<2>(scope);
         // *jsc.WebCore.Request
-        let arg = args.get(0).ok_or_else(|| {
-            scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!("Missing Request object"))
-        })?;
+        let arg = args
+            .get(0)
+            .ok_or_else(|| scope.throw_invalid_arguments(format_args!("Missing Request object")))?;
         let request = arg.as_class_ref::<Request>().ok_or_else(|| {
-            scope
-                .unscoped_global()
-                .throw_invalid_arguments(format_args!("Expected Request object"))
+            scope.throw_invalid_arguments(format_args!("Expected Request object"))
         })?;
         this.request_ip(request).map(|v| scope.local(v))
     }
@@ -1659,12 +1641,8 @@ where
         callframe: &CallFrame,
     ) -> JsResult<Local<'s>> {
         let arguments = callframe.scoped_arguments::<2>(scope);
-        if arguments.len < 2 || arguments.ptr[0].raw().is_empty_or_undefined_or_null() {
-            return Err(scope.unscoped_global().throw_not_enough_arguments(
-                "timeout",
-                2,
-                arguments.len,
-            ));
+        if arguments.len < 2 || arguments.ptr[0].is_empty_or_undefined_or_null() {
+            return Err(scope.throw_not_enough_arguments("timeout", 2, arguments.len));
         }
 
         let seconds = arguments.ptr[1];
@@ -1680,11 +1658,11 @@ where
         }
         let value = seconds.to_u32(scope);
 
-        if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments.ptr[0].raw()) {
+        if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments.ptr[0].unscoped()) {
             // SAFETY: from_js returns a live *mut Request
             let _ = unsafe { &mut *request }.request_context.set_timeout(value);
         } else if let Some(response) =
-            <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments.ptr[0].raw())
+            <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments.ptr[0].unscoped())
         {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
             unsafe { &mut *response }.set_timeout((value % 255) as u8);
@@ -2362,11 +2340,11 @@ where
         let global = scope.unscoped_global();
         let arguments = callframe.arguments();
         if arguments.len() < 1 {
-            return Err(global.throw_not_enough_arguments("reload", 1, 0));
+            return Err(scope.throw_not_enough_arguments("reload", 1, 0));
         }
 
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
-        let mut args_slice = jsc::ArgumentsSlice::init(global.bun_vm(), arguments);
+        let mut args_slice = jsc::ArgumentsSlice::init(scope.bun_vm(), arguments);
 
         let mut new_config = ServerConfig::from_js(
             global,
@@ -2377,7 +2355,7 @@ where
                 has_user_routes: !this.user_routes.is_empty(),
             },
         )?;
-        if global.has_exception() {
+        if scope.has_exception() {
             drop(new_config);
             return Err(JsError::Thrown);
         }
@@ -2427,7 +2405,7 @@ where
         let mut headers: Option<HeadersRef> = None;
         let mut method = Method::GET;
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
-        let mut args = jsc::ArgumentsSlice::init(ctx.bun_vm(), arguments);
+        let mut args = jsc::ArgumentsSlice::init(scope.bun_vm(), arguments);
 
         let first_arg = args.next_eat().unwrap();
         let mut body = BodyValue::Null;
@@ -2640,8 +2618,7 @@ where
 
     #[bun_jsc::host_fn(getter, scoped)]
     pub fn get_id<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        let v = jsc::bun_string_jsc::create_utf8_for_js(scope.unscoped_global(), &this.config.id)?;
-        Ok(scope.local(v))
+        scope.string_utf8(&this.config.id)
     }
 
     #[bun_jsc::host_fn(getter, scoped)]
@@ -2717,7 +2694,7 @@ where
         let global = scope.unscoped_global();
         let mut url = this
             .get_url_as_string()
-            .map_err(|_| global.throw_out_of_memory())?;
+            .map_err(|_| scope.throw_out_of_memory())?;
         // `to_jsdomurl` may throw (invalid URL → JS TypeError); deref the
         // backing string on both Ok/Err paths, then propagate.
         let r = bun_string_jsc::to_jsdomurl(&mut url, global);
@@ -3639,9 +3616,7 @@ where
                 Ok(v) => v,
                 Err(_) => return, // TODO: properly propagate exception upwards
             };
-            // SAFETY: event_loop() returns a live raw pointer tied to the global.
-            let _scope =
-                unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+            let _scope = global.bun_vm().enter_event_loop_scope();
             if let Err(err) = callback.call(
                 &global,
                 JSValue::UNDEFINED,
@@ -3679,9 +3654,7 @@ where
         if node_socket.is_undefined_or_null() {
             return;
         }
-        // SAFETY: event_loop() returns a live raw pointer tied to the global.
-        let _scope =
-            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        let _scope = global.bun_vm().enter_event_loop_scope();
         if let Err(err) = callback.call(&global, JSValue::UNDEFINED, &[node_socket]) {
             global.report_active_exception_as_unhandled(err);
         }

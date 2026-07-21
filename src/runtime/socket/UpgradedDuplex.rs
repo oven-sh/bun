@@ -584,7 +584,7 @@ fn on_received_data<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Lo
         if args.len >= 1 {
             let data_arg = args.ptr[0];
             if !this.origin.is_empty() {
-                if data_arg.raw().is_empty_or_undefined_or_null() {
+                if data_arg.is_empty_or_undefined_or_null() {
                     return Ok(scope.undefined());
                 }
                 if let Some(array_buffer) = data_arg.array_buffer_bytes(scope) {
@@ -593,7 +593,6 @@ fn on_received_data<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Lo
                 } else {
                     // node.js errors in this case with the same error, lets keep it consistent
                     let error_value = scope
-                        .unscoped_global()
                         .err(
                             bun_jsc::ErrorCode::STREAM_WRAP,
                             format_args!("Stream has StringDecoder set or is in objectMode"),

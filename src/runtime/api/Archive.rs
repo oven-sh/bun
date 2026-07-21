@@ -433,23 +433,23 @@ pub fn write<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local
     let global = scope.unscoped_global();
     let args = callframe.scoped_arguments::<3>(scope);
     let (path_arg, data_arg, options_arg) = (args.ptr[0], args.ptr[1], args.ptr[2]);
-    if data_arg.raw().is_empty() {
-        return Err(global.throw_invalid_arguments(format_args!(
+    if data_arg.unscoped().is_empty() {
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Archive.write requires 2 arguments (path, data)"
         )));
     }
 
     // Get the path
     if !path_arg.is_string() {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Archive.write: first argument must be a string path"
         )));
     }
 
-    let path_slice = path_arg.raw().to_slice(global)?;
+    let path_slice = path_arg.to_slice(scope)?;
 
     // Parse options for compression override
-    let options_compress = parse_compression_options(global, options_arg.raw())?;
+    let options_compress = parse_compression_options(global, options_arg.unscoped())?;
 
     // For Archive instances, use options override or archive's compression settings
     if let Some(archive) = data_arg.as_class_ref::<Archive>() {
@@ -468,7 +468,7 @@ pub fn write<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local
     }
 
     // For Blobs, use store reference with options compression
-    if let Some(blob) = blob_from_js(data_arg.raw()) {
+    if let Some(blob) = blob_from_js(data_arg.unscoped()) {
         if let Some(store) = blob.store.get().as_ref() {
             let promise = start_write_task(
                 global,
@@ -481,7 +481,7 @@ pub fn write<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local
     }
 
     // For ArrayBuffer/TypedArray, copy the data with options compression
-    if let Some(array_buffer) = data_arg.raw().as_array_buffer(global) {
+    if let Some(array_buffer) = data_arg.unscoped().as_array_buffer(global) {
         let data = array_buffer.slice().to_vec();
         let promise = start_write_task(
             global,
@@ -494,7 +494,7 @@ pub fn write<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local
 
     // For plain objects, build a tarball with options compression
     if data_arg.is_object() {
-        let data = build_tarball_from_object(global, data_arg.raw())?;
+        let data = build_tarball_from_object(global, data_arg.unscoped())?;
         let promise = start_write_task(
             global,
             WriteData::Owned(data),
@@ -504,7 +504,7 @@ pub fn write<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local
         return Ok(scope.local(promise));
     }
 
-    Err(global.throw_invalid_arguments(format_args!(
+    Err(scope.throw_invalid_arguments(format_args!(
         "Expected an object, Blob, TypedArray, ArrayBuffer, or Archive"
     )))
 }

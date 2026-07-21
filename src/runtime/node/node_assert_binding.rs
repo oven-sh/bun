@@ -16,11 +16,7 @@ use super::node_assert;
 pub(crate) fn myers_diff<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
     let nargs = frame.arguments_count();
     if nargs < 2 {
-        return Err(scope.unscoped_global().throw_not_enough_arguments(
-            "printMyersDiff",
-            2,
-            nargs as usize,
-        ));
+        return Err(scope.throw_not_enough_arguments("printMyersDiff", 2, nargs as usize));
     }
 
     let actual_arg = frame.scoped_argument(scope, 0);
@@ -36,18 +32,10 @@ pub(crate) fn myers_diff<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResu
     };
 
     if !actual_arg.is_string() {
-        return Err(scope.unscoped_global().throw_invalid_argument_type_value(
-            "actual",
-            "string",
-            actual_arg.raw(),
-        ));
+        return Err(scope.throw_invalid_argument_type_value("actual", "string", actual_arg));
     }
     if !expected_arg.is_string() {
-        return Err(scope.unscoped_global().throw_invalid_argument_type_value(
-            "expected",
-            "string",
-            expected_arg.raw(),
-        ));
+        return Err(scope.throw_invalid_argument_type_value("expected", "string", expected_arg));
     }
 
     // `defer .deref()` — `bun_core::String` is `Copy` (no `Drop`), so wrap in

@@ -154,24 +154,24 @@ impl Listener {
             || (matches!(this.listener.get(), ListenerType::None)
                 && this.handlers.active_connections.get() == 0)
         {
-            return Err(global.throw(format_args!("Expected 1 argument")));
+            return Err(scope.throw(format_args!("Expected 1 argument")));
         }
 
         let opts = args.ptr[0];
-        if opts.raw().is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
+        if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
+            return Err(scope.throw_invalid_arguments(format_args!("Expected options object")));
         }
 
         let socket_obj = match opts.get(scope, "socket")? {
             Some(v) => v,
-            None => return Err(global.throw(format_args!("Expected \"socket\" object"))),
+            None => return Err(scope.throw(format_args!("Expected \"socket\" object"))),
         };
 
         // Validates like construction (the option getters run user JS), then
         // updates the callbacks of the existing cell in place, so the
         // listener and every live socket sharing it pick them up with no swap
         // of the `Handlers` itself.
-        let reloaded = Handlers::prepare_reload(global, socket_obj.raw())?;
+        let reloaded = Handlers::prepare_reload(global, socket_obj.unscoped())?;
         this.handlers.apply_reload(global, &reloaded);
 
         Ok(scope.undefined())
@@ -975,7 +975,7 @@ impl Listener {
         }
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         this.this_value
-            .with_mut(|r| r.set_strong(this_value.raw(), scope.unscoped_global()));
+            .with_mut(|r| r.set_strong(this_value.unscoped(), scope.unscoped_global()));
         Ok(scope.undefined())
     }
 
@@ -1410,7 +1410,7 @@ impl Listener {
 
         let out = frame.scoped_argument(scope, 0);
         if !out.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!("Expected object")));
+            return Err(scope.throw_invalid_arguments(format_args!("Expected object")));
         }
 
         let mut buf = [0u8; 64];
@@ -1616,19 +1616,19 @@ pub(crate) fn js_add_server_name<'s>(
     let global = scope.unscoped_global();
     let arguments = frame.scoped_arguments::<3>(scope);
     if arguments.len < 3 {
-        return Err(global.throw_not_enough_arguments("addServerName", 3, arguments.len));
+        return Err(scope.throw_not_enough_arguments("addServerName", 3, arguments.len));
     }
     let listener = arguments.ptr[0];
     if let Some(this) = listener.as_class_ref::<Listener>() {
         let v = Listener::add_server_name(
             this,
             global,
-            arguments.ptr[1].raw(),
-            arguments.ptr[2].raw(),
+            arguments.ptr[1].unscoped(),
+            arguments.ptr[2].unscoped(),
         )?;
         return Ok(scope.local(v));
     }
-    Err(global.throw(format_args!("Expected a Listener instance")))
+    Err(scope.throw(format_args!("Expected a Listener instance")))
 }
 
 #[cfg(windows)]

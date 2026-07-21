@@ -87,7 +87,6 @@ pub(crate) fn get_public_path<W: core::fmt::Write>(
     )
 }
 
-use core::ffi::c_void;
 use std::io::Write as _;
 
 use bun_core::Output;
@@ -459,12 +458,12 @@ pub(crate) fn shell_escape<'s>(
     let arguments = callframe.scoped_arguments::<1>(scope);
     let global_this = scope.unscoped_global();
     if arguments.len < 1 {
-        return Err(global_this.throw(format_args!("shell escape expected at least 1 argument")));
+        return Err(scope.throw(format_args!("shell escape expected at least 1 argument")));
     }
 
     let jsval = arguments.ptr[0];
     let bunstr = jsval.to_bun_string(scope)?;
-    if global_this.has_exception() {
+    if scope.has_exception() {
         return Err(jsc::JsError::Thrown);
     }
     let bunstr = scopeguard::guard(bunstr, |s| s.deref());
@@ -474,7 +473,7 @@ pub(crate) fn shell_escape<'s>(
     if bun_shell_parser::needs_escape_bunstr(*bunstr) {
         let result = bun_shell_parser::escape_bun_str::<true>(*bunstr, &mut outbuf)?;
         if !result {
-            return Err(global_this.throw(format_args!(
+            return Err(scope.throw(format_args!(
                 "String has invalid utf-16: {}",
                 bstr::BStr::new(bunstr.byte_slice()),
             )));
@@ -593,10 +592,10 @@ pub(crate) fn which<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
     let arguments_ = callframe.arguments_old::<2>();
     let mut path_buf = bun_paths::path_buffer_pool::get();
     // SAFETY: bun_vm() returns the live per-thread singleton VM for a Bun-owned global.
-    let vm = global_this.bun_vm();
+    let vm = scope.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, arguments_.slice());
     let Some(path_arg) = arguments.next_eat() else {
-        return Err(global_this.throw(format_args!("which: expected 1 argument, got 0")));
+        return Err(scope.throw(format_args!("which: expected 1 argument, got 0")));
     };
 
     if path_arg.is_empty_or_undefined_or_null() {
@@ -604,12 +603,12 @@ pub(crate) fn which<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
     }
 
     let bin_str = path_arg.to_slice(global_this)?;
-    if global_this.has_exception() {
+    if scope.has_exception() {
         return Err(jsc::JsError::Thrown);
     }
 
     if bin_str.slice().len() >= MAX_PATH_BYTES {
-        return Err(global_this.throw(format_args!("bin path is too long")));
+        return Err(scope.throw(format_args!("bin path is too long")));
     }
 
     if bin_str.slice().is_empty() {
@@ -709,8 +708,8 @@ pub(crate) fn inspect_table<'s>(
         table_printer.print_table::<false>(&mut array)
     };
     if print_result.is_err() {
-        if !global_this.has_exception() {
-            return Err(global_this.throw_out_of_memory());
+        if !scope.has_exception() {
+            return Err(scope.throw_out_of_memory());
         }
         return Err(jsc::JsError::Thrown);
     }
@@ -772,7 +771,7 @@ pub(crate) fn inspect<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsRes
         &mut array,
         format_options,
     )?;
-    if global_this.has_exception() {
+    if scope.has_exception() {
         return Err(jsc::JsError::Thrown);
     }
     // writer.flush(): Vec<u8> is unbuffered.
@@ -860,22 +859,21 @@ pub(crate) fn register_macro<'s>(
     callframe: &CallFrame,
 ) -> JsResult<Local<'s>> {
     let arguments = callframe.scoped_arguments::<2>(scope);
-    let global_object = scope.unscoped_global();
     if arguments.len != 2 || !arguments.ptr[0].is_number() {
-        return Err(global_object.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Internal error registering macros: invalid args"
         )));
     }
     let id = arguments.ptr[0].to_int32(scope);
     if id == -1 || id == 0 {
-        return Err(global_object.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Internal error registering macros: invalid id"
         )));
     }
 
     if !arguments.ptr[1].is_cell() || !arguments.ptr[1].is_callable() {
         // TODO: add "toTypeOf" helper
-        return Err(global_object.throw(format_args!("Macro must be a function")));
+        return Err(scope.throw(format_args!("Macro must be a function")));
     }
 
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
@@ -888,8 +886,8 @@ pub(crate) fn register_macro<'s>(
         get_or_put_result.value_ptr.unprotect();
     }
 
-    arguments.ptr[1].raw().protect();
-    *get_or_put_result.value_ptr = arguments.ptr[1].raw();
+    arguments.ptr[1].unscoped().protect();
+    *get_or_put_result.value_ptr = arguments.ptr[1].unscoped();
 
     Ok(scope.undefined())
 }
@@ -1033,7 +1031,7 @@ pub(crate) fn open_in_editor<'s>(
     let global_this = scope.unscoped_global();
     let args = callframe.arguments_old::<4>();
     // SAFETY: bun_vm() returns the live per-thread singleton.
-    let vm = global_this.bun_vm();
+    let vm = scope.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, args.slice());
     let mut path = ZigStringSlice::EMPTY;
     let mut editor_choice: Option<Editor> = None;
@@ -1073,7 +1071,7 @@ pub(crate) fn open_in_editor<'s>(
                             if editor_choice.is_none() {
                                 slot.name_storage = prev_storage;
                                 *edit = prev;
-                                return Err(global_this.throw(format_args!(
+                                return Err(scope.throw(format_args!(
                                     "Could not find editor \"{}\"",
                                     bstr::BStr::new(sliced.slice()),
                                 )));
@@ -1109,16 +1107,14 @@ pub(crate) fn open_in_editor<'s>(
                     match edit.editor {
                         Some(e) => e,
                         None => {
-                            return Err(
-                                global_this.throw(format_args!("Failed to auto-detect editor"))
-                            );
+                            return Err(scope.throw(format_args!("Failed to auto-detect editor")));
                         }
                     }
                 }
             };
 
             if path.slice().is_empty() {
-                return Err(global_this.throw(format_args!("No file path specified")));
+                return Err(scope.throw(format_args!("No file path specified")));
             }
 
             if let Err(err) = editor.open(
@@ -1127,9 +1123,7 @@ pub(crate) fn open_in_editor<'s>(
                 line.as_ref().map(|s| s.slice()),
                 column.as_ref().map(|s| s.slice()),
             ) {
-                return Err(
-                    global_this.throw(format_args!("Opening editor failed {}", err.name(),))
-                );
+                return Err(scope.throw(format_args!("Opening editor failed {}", err.name(),)));
             }
 
             Ok(JSValue::UNDEFINED)
@@ -1145,23 +1139,19 @@ pub(crate) fn sleep_sync<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> Js
     // Expect at least one argument.  We allow more than one but ignore them; this
     //  is useful for supporting things like `[1, 2].map(sleepSync)`
     if arguments.len < 1 {
-        return Err(global_object.throw_not_enough_arguments("sleepSync", 1, 0));
+        return Err(scope.throw_not_enough_arguments("sleepSync", 1, 0));
     }
     let arg = arguments.ptr[0];
 
     // The argument must be a number
     if !arg.is_number() {
-        return Err(global_object.throw_invalid_argument_type(
-            "sleepSync",
-            "milliseconds",
-            "number",
-        ));
+        return Err(scope.throw_invalid_argument_type("sleepSync", "milliseconds", "number"));
     }
 
     //NOTE: if argument is > max(i32) then it will be truncated
-    let milliseconds = arg.raw().coerce::<i32>(global_object)?;
+    let milliseconds = arg.unscoped().coerce::<i32>(global_object)?;
     if milliseconds < 0 {
-        return Err(global_object.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "argument to sleepSync must not be negative, got {milliseconds}"
         )));
     }
@@ -1528,19 +1518,32 @@ pub(crate) fn index_of_line<'s>(
         return Ok(scope.number_from_int32(-1));
     }
 
-    // Unscoped view on purpose: the `offset` coercion below can run user JS
-    // between the capture and `byte_slice()` (scoped form rejects this order).
-    let Some(buffer) = arguments.ptr[0].raw().as_array_buffer(global_this) else {
+    // Buffer-ness is checked before the offset coercion (a non-buffer first
+    // argument must not run the second's `valueOf`), but the view itself is
+    // captured after it — the coercion can run user JS that detaches the
+    // buffer, and the guard's shared scope borrow keeps it that way.
+    if arguments.ptr[0]
+        .unscoped()
+        .as_array_buffer(global_this)
+        .is_none()
+    {
         return Ok(scope.number_from_int32(-1));
-    };
+    }
 
     let mut offset: usize = 0;
     if arguments.len > 1 {
-        let offset_value = arguments.ptr[1].raw().coerce_to_int64(global_this)?;
-        offset = offset_value.max(0) as usize;
+        // `coerce_to_int64` (not `coerce::<i64>`): Rust-side coercion
+        // saturates out-of-range doubles where the C++ path wraps.
+        offset = arguments.ptr[1]
+            .unscoped()
+            .coerce_to_int64(global_this)?
+            .max(0) as usize;
     }
 
-    let bytes = buffer.byte_slice();
+    let Some(view) = arguments.ptr[0].array_buffer_bytes(scope) else {
+        return Ok(scope.number_from_int32(-1));
+    };
+    let bytes = &*view;
     let mut current_offset = offset;
     let end = bytes.len() as u32;
 
@@ -1571,13 +1574,7 @@ pub use crate::crypto as crypto_mod;
 #[bun_jsc::host_fn(scoped)]
 pub(crate) fn nanoseconds<'s>(scope: &mut Scope<'s>, _: &CallFrame) -> JsResult<Local<'s>> {
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let ns = scope
-        .unscoped_global()
-        .bun_vm()
-        .as_mut()
-        .origin_timer
-        .elapsed()
-        .as_nanos() as u64;
+    let ns = scope.bun_vm().as_mut().origin_timer.elapsed().as_nanos() as u64;
     Ok(scope.local(JSValue::js_number_from_uint64(ns)))
 }
 
@@ -1587,7 +1584,7 @@ pub(crate) fn serve<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
     let arguments = callframe.arguments_old::<2>();
     let arguments = arguments.slice();
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = global_object.bun_vm().as_mut();
+    let vm = scope.bun_vm().as_mut();
     let mut config: crate::server::ServerConfig = 'brk: {
         let mut args = ArgumentsSlice::init(vm, arguments);
 
@@ -1601,7 +1598,7 @@ pub(crate) fn serve<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
             },
         )?;
 
-        if global_object.has_exception() {
+        if scope.has_exception() {
             drop(config);
             return Err(jsc::JsError::Thrown);
         }
@@ -1623,7 +1620,7 @@ pub(crate) fn serve<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
         crate::server::protect_handler_shadows(&config);
 
     // SAFETY: same VM pointer; re-borrow after `args` is dropped.
-    let vm = global_object.bun_vm().as_mut();
+    let vm = scope.bun_vm().as_mut();
 
     // NOTE (layering): `HotMap` is a tagged union over the four
     // `NewServer` monomorphizations + sockets. `bun_jsc::rare_data::HotMapEntry`
@@ -1669,14 +1666,14 @@ pub(crate) fn serve<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
     macro_rules! serve_with {
         ($ServerType:ty, $tag:expr) => {{
             let server = <$ServerType>::init(&mut config, global_object)?;
-            if global_object.has_exception() {
+            if scope.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }
             // SAFETY: `init` returned a live heap-allocated server pointer.
             let server_ref: &mut $ServerType = unsafe { &mut *server };
             // SAFETY: `server` is the live heap-allocated server returned by `init`.
             let route_list_object = <$ServerType>::listen(server);
-            if global_object.has_exception() {
+            if scope.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }
             let obj = <$ServerType>::ptr_to_js(server, global_object);
@@ -1721,7 +1718,7 @@ pub(crate) fn serve<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
             drop(_handler_pins);
             server_ref.gc_hint_after_listen();
 
-            if global_object.bun_vm().test_isolation_enabled {
+            if scope.bun_vm().test_isolation_enabled {
                 if let Some(handles) = crate::jsc_hooks::isolation_handles() {
                     bun_core::handle_oom(handles.put(
                         crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
@@ -1739,7 +1736,7 @@ pub(crate) fn serve<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
             if server_ref.config.allow_hot {
                 // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
                 // borrow was released by the `hot_map()` arm above.
-                if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
+                if let Some(hot) = scope.bun_vm().as_mut().hot_map() {
                     hot.insert_raw(
                         &server_ref.config.id,
                         HotMapEntry {
@@ -1751,7 +1748,7 @@ pub(crate) fn serve<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
             }
 
             // SAFETY: bun_vm() returns the live thread-local VM.
-            if let Some(debugger) = global_object.bun_vm().as_mut().debugger.as_deref_mut() {
+            if let Some(debugger) = scope.bun_vm().as_mut().debugger.as_deref_mut() {
                 let any = AnyServer::from(server.cast_const());
                 crate::server::http_server_agent::notify_server_started(
                     &mut debugger.http_server_agent,
@@ -1787,12 +1784,12 @@ pub(crate) fn alloc_unsafe<'s>(
 ) -> JsResult<Local<'s>> {
     let size = callframe.scoped_argument(scope, 0);
     let global_this = scope.unscoped_global();
-    if !size.raw().is_uint32_as_any_int() {
-        return Err(global_this.throw_invalid_arguments(format_args!("Expected a positive number")));
+    if !size.is_uint32_as_any_int() {
+        return Err(scope.throw_invalid_arguments(format_args!("Expected a positive number")));
     }
     Ok(scope.local(JSValue::create_uninitialized_uint8_array(
         global_this,
-        size.raw().to_uint64_no_truncate() as usize,
+        size.to_uint64_no_truncate() as usize,
     )?))
 }
 
@@ -1809,7 +1806,7 @@ pub(crate) fn mmap_file<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsR
     {
         let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-        let vm = global_this.bun_vm();
+        let vm = scope.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments_.slice());
 
         let mut buf = PathBuffer::uninit();
@@ -1818,9 +1815,7 @@ pub(crate) fn mmap_file<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsR
                 if path.is_string() {
                     let path_str = path.to_slice(global_this)?;
                     if path_str.slice().len() > MAX_PATH_BYTES {
-                        return Err(
-                            global_this.throw_invalid_arguments(format_args!("Path too long"))
-                        );
+                        return Err(scope.throw_invalid_arguments(format_args!("Path too long")));
                     }
                     let paths = &[path_str.slice()];
                     break 'brk bun_paths::resolve_path::join_abs_string_buf::<
@@ -1832,7 +1827,7 @@ pub(crate) fn mmap_file<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsR
                     );
                 }
             }
-            return Err(global_this.throw_invalid_arguments(format_args!("Expected a path")));
+            return Err(scope.throw_invalid_arguments(format_args!("Expected a path")));
         };
 
         let path_len = path.len();
@@ -1870,7 +1865,7 @@ pub(crate) fn mmap_file<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsR
                 if let Some(value) = opts.get(global_this, "size")? {
                     let size_value = value.coerce_to_int64(global_this)?;
                     if size_value < 0 {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
+                        return Err(scope.throw_invalid_arguments(format_args!(
                             "size must be a non-negative integer",
                         )));
                     }
@@ -1880,15 +1875,16 @@ pub(crate) fn mmap_file<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsR
                 if let Some(value) = opts.get(global_this, "offset")? {
                     let offset_value = value.coerce_to_int64(global_this)?;
                     if offset_value < 0 {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
+                        return Err(scope.throw_invalid_arguments(format_args!(
                             "offset must be a non-negative integer",
                         )));
                     }
                     offset = usize::try_from(offset_value).expect("int cast");
                 }
             } else if !opts.is_undefined_or_null() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("Expected options to be an object")));
+                return Err(
+                    scope.throw_invalid_arguments(format_args!("Expected options to be an object"))
+                );
             }
         }
 
@@ -1900,34 +1896,14 @@ pub(crate) fn mmap_file<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsR
             }
         };
 
-        extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
-            // `ptr` is `map_base + delta` where `map_base` is page-aligned and
-            // `delta < page_size`, so rounding down recovers the mmap base.
-            let page = bun_sys::page_size();
-            let addr = ptr as usize;
-            let _ = sys::munmap((addr - addr % page) as *mut u8, size as usize);
-        }
-
-        let map_len = map.len();
-        // SAFETY: `mmap_file` guarantees `map_len == view_size + delta` with
-        // `view_size > 0`, so `delta < map_len` and the add stays in-bounds.
-        let view_ptr = unsafe { map.as_ptr().add(delta) };
-        let view_len = map_len - delta;
-
-        // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
-        // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
-        // unmaps it exactly once via `munmap_dealloc` with the full mapping
-        // length stuffed into the ctx pointer.
-        let v = unsafe {
-            jsc::array_buffer::make_typed_array_with_bytes_no_copy(
-                global_this,
-                jsc::TypedArrayType::TypeUint8,
-                view_ptr.cast_mut().cast::<c_void>(),
-                view_len,
-                Some(munmap_dealloc),
-                map_len as *mut c_void,
-            )
-        }?;
+        // The Uint8Array views `map[delta..]`; JSC drops the owning `Mmap`
+        // (which munmaps the full page-aligned mapping) when it is collected.
+        let v = jsc::array_buffer::typed_array_from_owner(
+            global_this,
+            jsc::TypedArrayType::TypeUint8,
+            map,
+            |map| &mut map.as_mut_slice()[delta..],
+        )?;
         Ok(scope.local(v))
     }
 }
@@ -2434,11 +2410,9 @@ pub mod JSZlib {
 
     // NOTE: no `reader_deallocator` / `compressor_deallocator` exports are
     // needed to free a heap-allocated reader/compressor from the ArrayBuffer
-    // finalizer. The reader stays on-stack
-    // borrowing a local `Vec<u8>`, then leaks only the Vec's allocation into
-    // the ArrayBuffer — so both zlib paths converge on `global_deallocator`
-    // and the per-type callbacks are gone. (`no_mangle` dropped: 0 C++ refs.)
-    pub use bun_alloc::c_thunks::mi_free_ctx as global_deallocator;
+    // finalizer. The reader stays on-stack borrowing a local `Vec<u8>`, and
+    // only the Vec's allocation moves into the ArrayBuffer (freed on GC by
+    // the safe owned-bytes constructors' own deallocators).
 
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
     #[strum(serialize_all = "lowercase")]
@@ -2456,35 +2430,14 @@ pub mod JSZlib {
     }
 
     /// Move `list`'s allocation into a `Uint8Array` backing store without
-    /// copying. After `shrink_to_fit`, an empty `Vec` owns no allocation (its
-    /// pointer is dangling), so no deallocator is registered for it.
-    fn leak_list_into_uint8array(
-        global_this: &JSGlobalObject,
-        mut list: Vec<u8>,
-    ) -> JsResult<JSValue> {
-        list.shrink_to_fit();
-        let is_empty = list.is_empty();
-        let leaked: &'static mut [u8] = list.leak();
-        let ptr = leaked.as_mut_ptr();
-        let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-        // SAFETY: non-empty: `ptr` is the just-leaked `Vec` allocation, freed
-        // exactly once at GC by `global_deallocator` (`mi_free_ctx`) via the ctx
-        // pointer. Empty: no callback, and the dangling `ptr` is never read.
-        unsafe {
-            array_buffer.to_js_with_context(
-                global_this,
-                if is_empty {
-                    core::ptr::null_mut()
-                } else {
-                    ptr.cast::<c_void>()
-                },
-                if is_empty {
-                    None
-                } else {
-                    Some(global_deallocator)
-                },
-            )
-        }
+    /// copying. `into_boxed_slice` shrinks to fit (as the old path did), so
+    /// no excess capacity is retained for the buffer's lifetime.
+    fn list_into_uint8array(global_this: &JSGlobalObject, list: Vec<u8>) -> JsResult<JSValue> {
+        jsc::array_buffer::typed_array_from_owned_slice(
+            global_this,
+            jsc::JSType::Uint8Array.to_typed_array_type(),
+            list.into_boxed_slice(),
+        )
     }
 
     #[bun_jsc::host_fn(scoped)]
@@ -2642,11 +2595,10 @@ pub mod JSZlib {
                         .throw_value(ZigString::init(msg).to_error_instance(global_this)));
                 }
                 // NOTE: the reader *borrows* `list_ptr`,
-                // so drop the reader to release the borrow, then leak the owned
-                // `list` directly into the ArrayBuffer (freed by
-                // `global_deallocator`).
+                // so drop the reader to release the borrow, then move the
+                // owned `list` directly into the ArrayBuffer.
                 drop(reader);
-                leak_list_into_uint8array(global_this, list)
+                list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
                 let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
@@ -2683,21 +2635,15 @@ pub mod JSZlib {
                     }
                 }
 
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                // Ownership of the `Vec` transfers to JSC; it is dropped once
+                // the ArrayBuffer is finalized. No shrink/re-box: the Vec may
+                // hold excess capacity, exactly as the old leak-based path.
+                jsc::array_buffer::typed_array_from_owner(
+                    global_this,
+                    jsc::JSType::Uint8Array.to_typed_array_type(),
+                    list,
+                    |v| v.as_mut_slice(),
+                )
             }
         }
     }
@@ -2787,9 +2733,9 @@ pub mod JSZlib {
                         .throw_value(ZigString::init(msg).to_error_instance(global_this)));
                 }
                 // NOTE: see gunzip path — reader borrows `list`, so drop
-                // it before leaking `list` into the ArrayBuffer.
+                // it before moving `list` into the ArrayBuffer.
                 drop(reader);
-                leak_list_into_uint8array(global_this, list)
+                list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
                 let level = level.unwrap_or(6);
@@ -2825,21 +2771,15 @@ pub mod JSZlib {
                     )));
                 }
 
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                // Ownership of the `Vec` transfers to JSC; it is dropped once
+                // the ArrayBuffer is finalized. No shrink/re-box: the Vec may
+                // hold excess capacity, exactly as the old leak-based path.
+                jsc::array_buffer::typed_array_from_owner(
+                    global_this,
+                    jsc::JSType::Uint8Array.to_typed_array_type(),
+                    list,
+                    |v| v.as_mut_slice(),
+                )
             }
         }
     }
@@ -2921,7 +2861,7 @@ pub mod JSZstd {
             bun_zstd::Result::Success(size) => size,
             bun_zstd::Result::Err(err) => {
                 drop(output);
-                return Err(global_this
+                return Err(scope
                     .err(jsc::ErrCode::ZSTD, format_args!("{}", bstr::BStr::new(err)))
                     .throw());
             }
@@ -2949,7 +2889,7 @@ pub mod JSZstd {
         let output = match bun_zstd::decompress_alloc(input) {
             Ok(v) => v,
             Err(err) => {
-                return Err(global_this
+                return Err(scope
                     .err(
                         jsc::ErrCode::ZSTD,
                         format_args!("Decompression failed: {}", err),

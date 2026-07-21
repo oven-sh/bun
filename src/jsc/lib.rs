@@ -875,6 +875,16 @@ pub mod __macro_support {
         }
     }
 
+    /// Scoped host-fn body adapter: opens a [`crate::scope::Scope`] for the
+    /// call and unbrands the returned [`crate::scope::Local`].
+    #[inline]
+    pub fn host_fn_scoped(
+        global: &JSGlobalObject,
+        f: impl for<'t> FnOnce(&mut crate::scope::Scope<'t>) -> JsResult<crate::scope::Local<'t>>,
+    ) -> JsResult<JSValue> {
+        crate::scope::Scope::with(global, |scope| f(scope).map(|v| v.unscoped()))
+    }
+
     /// Map a `JsResult<JSValue>` from a Rust host fn to the raw `JSValue` the
     /// JSC ABI expects (`.ZERO` when an exception is/was thrown).
     /// Installs an `ExceptionValidationScope`
@@ -885,16 +895,6 @@ pub mod __macro_support {
     /// `to_js_host_call`'s `catch_unwind` barrier — a `panic!` in the body
     /// becomes a JS exception instead of unwinding out of the `extern "C"`
     /// thunk (UB).
-    /// Scoped host-fn body adapter: opens a [`crate::scope::Scope`] for the
-    /// call and unbrands the returned [`crate::scope::Local`].
-    #[inline]
-    pub fn host_fn_scoped(
-        global: &JSGlobalObject,
-        f: impl for<'t> FnOnce(&mut crate::scope::Scope<'t>) -> JsResult<crate::scope::Local<'t>>,
-    ) -> JsResult<JSValue> {
-        crate::scope::Scope::with(global, |scope| f(scope).map(|v| v.raw()))
-    }
-
     #[inline]
     #[track_caller]
     pub fn host_fn_result<R: IntoHostFnResult>(
@@ -1903,6 +1903,8 @@ impl ZigStringJsc for bun_core::ZigString {
 
 /// Free-function form of `ZigString.toExternalU16` for callers that import
 /// `bun_core::ZigString`. Forwards to the canonical impl in [`zig_string`].
+/// Prefer the safe [`zig_string::external_string_from_utf16`] where the
+/// caller owns a `Box<[u16]>`.
 ///
 /// # Safety
 /// See [`zig_string::to_external_u16`].

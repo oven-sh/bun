@@ -834,17 +834,16 @@ pub(crate) fn bun_canonicalize_ip<'s>(
     callframe: &CallFrame,
 ) -> JsResult<Local<'s>> {
     bun_jsc::mark_binding!();
-    let global_this = scope.unscoped_global();
 
     let arguments = callframe.scoped_arguments::<1>(scope);
 
     let Some(addr_value) = arguments.get(0) else {
-        return Err(global_this.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "canonicalizeIP() expects a string but received no arguments."
         )));
     };
 
-    let addr_arg = addr_value.raw().to_slice(global_this)?;
+    let addr_arg = addr_value.to_slice(scope)?;
     let addr_str = addr_arg.slice();
 
     // CIDR not allowed
@@ -860,6 +859,5 @@ pub(crate) fn bun_canonicalize_ip<'s>(
         return Ok(addr_value);
     }
 
-    let v = bun_string_jsc::create_utf8_for_js(scope.unscoped_global(), slice)?;
-    Ok(scope.local(v))
+    scope.string_utf8(slice)
 }

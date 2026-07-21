@@ -214,12 +214,8 @@ impl SocketAddress {
         let Some(url_ptr) = URL::from_string(url_str.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // SAFETY: URL::from_string returns an owned C++ heap pointer; freed exactly once via destroy().
-        let _url_guard = scopeguard::guard(url_ptr, |p| unsafe { URL::destroy(p.as_ptr()) });
-        // `_url_guard` keeps the C++ allocation live for this scope, so the
-        // `BackRef` liveness invariant holds; `Deref` encapsulates the single
-        // `NonNull::as_ref` site.
-        let url = bun_ptr::BackRef::from(url_ptr);
+        // Owns the C++ URL; destroyed exactly once on drop (early returns included).
+        let url = bun_jsc::url::OwnedUrl::adopt(url_ptr);
         let host: BunString = url.host();
         let port_: u16 = {
             let port32 = url.port();

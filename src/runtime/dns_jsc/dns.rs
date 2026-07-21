@@ -4865,49 +4865,53 @@ impl Resolver {
 
             // Capture `self` as a raw backref for `UvDnsPoll::parent`.
             let this_ptr: *mut Self = self.as_ctx_ptr();
-            // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
-            // any re-entrant call (libuv `uv_poll_*` below do not call back into
-            // this resolver synchronously).
-            let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = bun_core::handle_oom(polls.get_or_put(fd));
-            let poll: *mut UvDnsPoll = if poll_entry.found_existing {
-                *poll_entry.value_ptr
-            } else {
-                let new_poll = UvDnsPoll::new(this_ptr, fd);
-                // Publish into the map first so the `GetOrPutResult` borrow can
-                // end (NLL) before we may need to `swap_remove` on init failure.
-                *poll_entry.value_ptr = new_poll;
-                // SAFETY: `Loop::get()` is the live per-thread uws loop;
-                // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
+            // libuv `uv_poll_*` below do not call back into this resolver
+            // synchronously, so the closure never reaches `polls` re-entrantly.
+            self.polls.with_mut(|polls| {
+                let poll_entry = bun_core::handle_oom(polls.get_or_put(fd));
+                let poll: *mut UvDnsPoll = if poll_entry.found_existing {
+                    *poll_entry.value_ptr
+                } else {
+                    let new_poll = UvDnsPoll::new(this_ptr, fd);
+                    // Publish into the map first so the `GetOrPutResult` borrow can
+                    // end (NLL) before we may need to `swap_remove` on init failure.
+                    *poll_entry.value_ptr = new_poll;
+                    // SAFETY: `Loop::get()` is the live per-thread uws loop;
+                    // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
+                    if unsafe {
+                        uv::uv_poll_init_socket(
+                            (*Loop::get()).uv_loop,
+                            &mut (*new_poll).poll,
+                            fd as _,
+                        )
+                    } < 0
+                    {
+                        UvDnsPoll::destroy(new_poll);
+                        let _ = polls.swap_remove(&fd);
+                        return;
+                    }
+                    new_poll
+                };
+
+                let uv_events = (if readable { uv::UV_READABLE } else { 0 })
+                    | (if writable { uv::UV_WRITABLE } else { 0 });
+                // SAFETY: `poll` is the live entry just inserted/looked up above.
                 if unsafe {
-                    uv::uv_poll_init_socket((*Loop::get()).uv_loop, &mut (*new_poll).poll, fd as _)
+                    uv::uv_poll_start(&mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv))
                 } < 0
                 {
-                    UvDnsPoll::destroy(new_poll);
                     let _ = polls.swap_remove(&fd);
-                    return;
+                    // SAFETY: handle was successfully `uv_poll_init_socket`-ed, so
+                    // `uv_close` is the required teardown path; `on_close_uv` frees
+                    // the `UvDnsPoll` box.
+                    unsafe {
+                        uv::uv_close(
+                            core::ptr::from_mut(&mut (*poll).poll).cast(),
+                            Some(Self::on_close_uv),
+                        )
+                    };
                 }
-                new_poll
-            };
-
-            let uv_events = (if readable { uv::UV_READABLE } else { 0 })
-                | (if writable { uv::UV_WRITABLE } else { 0 });
-            // SAFETY: `poll` is the live entry just inserted/looked up above.
-            if unsafe {
-                uv::uv_poll_start(&mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv))
-            } < 0
-            {
-                let _ = polls.swap_remove(&fd);
-                // SAFETY: handle was successfully `uv_poll_init_socket`-ed, so
-                // `uv_close` is the required teardown path; `on_close_uv` frees
-                // the `UvDnsPoll` box.
-                unsafe {
-                    uv::uv_close(
-                        core::ptr::from_mut(&mut (*poll).poll).cast(),
-                        Some(Self::on_close_uv),
-                    )
-                };
-            }
+            });
         }
         #[cfg(not(windows))]
         {
@@ -4930,19 +4934,20 @@ impl Resolver {
             );
             // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
             let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
-            // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
-            // any re-entrant call (`FilePoll::register` is a syscall wrapper).
-            let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = polls.get_or_put(fd).expect("unreachable");
+            // `FilePoll::init` is a syscall wrapper — the closure never
+            // reaches `polls` re-entrantly.
+            let poll_ptr = self.polls.with_mut(|polls| {
+                let poll_entry = polls.get_or_put(fd).expect("unreachable");
+                if !poll_entry.found_existing {
+                    *poll_entry.value_ptr =
+                        FilePoll::init(ctx, sys::Fd::from_native(fd), Default::default(), owner);
+                }
+                *poll_entry.value_ptr
+            });
 
-            if !poll_entry.found_existing {
-                *poll_entry.value_ptr =
-                    FilePoll::init(ctx, sys::Fd::from_native(fd), Default::default(), owner);
-            }
-
-            // SAFETY: `value_ptr` points at a slot just initialized above (or a
-            // previously-initialized live FilePoll hive slot); JS-thread exclusive.
-            let poll = unsafe { &mut **poll_entry.value_ptr };
+            // SAFETY: `poll_ptr` is the live FilePoll just initialized above (or a
+            // previously-initialized live hive slot); JS-thread exclusive.
+            let poll = unsafe { &mut *poll_ptr };
 
             // c-ares reports the full desired (readable, writable) set for this
             // fd; sync the poll's registration to match. FilePoll now supports

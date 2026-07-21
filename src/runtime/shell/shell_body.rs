@@ -1083,12 +1083,12 @@ pub mod testing_apis {
             let global = scope.unscoped_global();
             let arguments_ = callframe.arguments_old::<1>();
             // SAFETY: bun_vm() is non-null for a Bun-owned global.
-            let vm = global.bun_vm();
+            let vm = scope.bun_vm();
             let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
             let string: JSValue = match arguments.next_eat() {
                 Some(s) => s,
                 None => {
-                    return Err(global.throw(format_args!(
+                    return Err(scope.throw(format_args!(
                         "shellInternals.disabledOnPosix: expected 1 arguments, got 0"
                     )));
                 }

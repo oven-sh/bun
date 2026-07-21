@@ -332,21 +332,21 @@ pub mod random {
             }
 
             if !callback.is_undefined() {
-                let _ = validators::validate_function(global, "callback", callback.raw())?;
+                let _ = validators::validate_function(global, "callback", callback.unscoped())?;
             }
 
-            if !min_value.raw().is_safe_integer() {
+            if !min_value.unscoped().is_safe_integer() {
                 return Err(global.throw_invalid_argument_type_value2(
                     b"min",
                     b"a safe integer",
-                    min_value.raw(),
+                    min_value.unscoped(),
                 ));
             }
-            if !max_value.raw().is_safe_integer() {
+            if !max_value.unscoped().is_safe_integer() {
                 return Err(global.throw_invalid_argument_type_value2(
                     b"max",
                     b"a safe integer",
-                    max_value.raw(),
+                    max_value.unscoped(),
                 ));
             }
 
@@ -354,8 +354,7 @@ pub mod random {
             let max: i64 = max_value.as_number().trunc() as i64;
 
             if max <= min {
-                return Err(global
-                .err(
+                return Err(scope.err(
                     jsc::ErrorCode::OUT_OF_RANGE,
                     format_args!(
                         "The value of \"max\" is out of range. It must be greater than the value of \"min\" ({}). Received {}",
@@ -387,8 +386,7 @@ pub mod random {
                     out
                 };
                 if min_specified {
-                    return Err(global
-                    .err(
+                    return Err(scope.err(
                         jsc::ErrorCode::OUT_OF_RANGE,
                         format_args!(
                             "The value of \"max - min\" is out of range. It must be <= {}. Received {}",
@@ -397,7 +395,7 @@ pub mod random {
                     )
                     .throw());
                 }
-                return Err(global
+                return Err(scope
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
                         format_args!(
@@ -434,7 +432,7 @@ pub mod random {
             };
 
             if !callback.is_undefined() {
-                callback.raw().call_next_tick_2(
+                callback.unscoped().call_next_tick_2(
                     global,
                     JSValue::UNDEFINED,
                     JSValue::js_number(res as f64),
@@ -458,7 +456,7 @@ pub mod random {
                 if !options.is_undefined() {
                     validators::validate_object(
                         global,
-                        options.raw(),
+                        options.unscoped(),
                         format_args!("options"),
                         Default::default(),
                     )?;
@@ -467,7 +465,7 @@ pub mod random {
                     {
                         disable_entropy_cache = validators::validate_boolean(
                             global,
-                            disable_entropy_cache_value.raw(),
+                            disable_entropy_cache_value.unscoped(),
                             format_args!("options.disableEntropyCache"),
                         )?;
                     }
@@ -479,7 +477,7 @@ pub mod random {
             let uuid = if disable_entropy_cache {
                 UUID::init()
             } else {
-                global.bun_vm().as_mut().rare_data().next_uuid()
+                scope.bun_vm().as_mut().rare_data().next_uuid()
             };
 
             uuid.print(
@@ -503,7 +501,7 @@ pub mod random {
                 if !options.is_undefined() {
                     validators::validate_object(
                         global,
-                        options.raw(),
+                        options.unscoped(),
                         format_args!("options"),
                         Default::default(),
                     )?;
@@ -512,7 +510,7 @@ pub mod random {
                     {
                         disable_entropy_cache = validators::validate_boolean(
                             global,
-                            disable_entropy_cache_value.raw(),
+                            disable_entropy_cache_value.unscoped(),
                             format_args!("options.disableEntropyCache"),
                         )?;
                     }
@@ -527,7 +525,7 @@ pub mod random {
                 boringssl::rand_bytes(&mut entropy);
             } else {
                 entropy
-                    .copy_from_slice(&global.bun_vm().as_mut().rare_data().entropy_slice(10)[..10]);
+                    .copy_from_slice(&scope.bun_vm().as_mut().rare_data().entropy_slice(10)[..10]);
             }
             let uuid = UUID7::init(now_ms, entropy, bun_jsc::uuid::TimestampSource::Clock);
 
@@ -617,10 +615,10 @@ pub mod random {
             let [size_value, callback] = call_frame.scoped_arguments::<2>(scope).ptr;
             let global = scope.unscoped_global();
 
-            let size = assert_size(global, size_value.raw(), 1, 0, MAX_POSSIBLE_LENGTH + 1)?;
+            let size = assert_size(global, size_value.unscoped(), 1, 0, MAX_POSSIBLE_LENGTH + 1)?;
 
             if !callback.is_undefined() {
-                let _ = validators::validate_function(global, "callback", callback.raw())?;
+                let _ = validators::validate_function(global, "callback", callback.unscoped())?;
             }
 
             let (result, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, size)?;
@@ -639,14 +637,15 @@ pub mod random {
                 scratch: None,
                 result: (),
             };
-            crypto_job_init_and_schedule(global, callback.raw(), ctx)?;
+            crypto_job_init_and_schedule(global, callback.unscoped(), ctx)?;
 
             Ok(scope.undefined())
         }
 
-        // Unscoped view: `buf` is captured before `assert_offset`/`assert_size`
-        // run ToNumber (user JS) — scope-tying the view trips E0502 here. See
-        // the R-2 note; the ordering is preserved from the unscoped version.
+        // Holding the view across `assert_offset`/`assert_size` is safe:
+        // both are strict `is_number()` validators (Node semantics) — they
+        // never run ToNumber, so no user JS can detach the buffer between
+        // the capture and the write.
         #[bun_jsc::host_fn(scoped)]
         pub(crate) fn random_fill_sync<'s>(
             scope: &mut Scope<'s>,
@@ -695,7 +694,9 @@ pub mod random {
             Ok(scope.local(buf_value))
         }
 
-        // Unscoped view for the same reason as `random_fill_sync` above.
+        // Detach-safe without a guard: no byte view is held here — the fill
+        // happens into `scratch` off-thread and `run_from_js` re-validates
+        // bounds + copies on the JS thread.
         #[bun_jsc::host_fn(scoped)]
         pub(crate) fn random_fill<'s>(
             scope: &mut Scope<'s>,
@@ -754,7 +755,7 @@ pub mod random {
             // multi-GiB ArrayBuffer — surface that as a JS error instead.
             let mut scratch = Vec::new();
             if scratch.try_reserve_exact(size).is_err() {
-                return Err(global.throw_out_of_memory());
+                return Err(scope.throw_out_of_memory());
             }
             scratch.resize(size, 0);
 
@@ -1193,7 +1194,7 @@ mod _impl {
         let out_arraybuffer =
             JSValue::create_buffer_from_length(global_this, data.length as usize)?;
         let Some(mut output) = out_arraybuffer.as_array_buffer(global_this) else {
-            return Err(global_this.throw_out_of_memory());
+            return Err(scope.throw_out_of_memory());
         };
 
         if !data.run(output.slice_mut()) {
@@ -1211,11 +1212,9 @@ mod _impl {
         call_frame: &CallFrame,
     ) -> JsResult<Local<'s>> {
         let [l_value, r_value] = call_frame.scoped_arguments::<2>(scope).ptr;
-        let global = scope.unscoped_global();
 
         let Some(l) = l_value.array_buffer_bytes(scope) else {
-            return Err(global
-            .err(
+            return Err(scope.err(
                 ErrorCode::INVALID_ARG_TYPE,
                 format_args!(
                     "The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
@@ -1225,8 +1224,7 @@ mod _impl {
         };
 
         let Some(r) = r_value.array_buffer_bytes(scope) else {
-            return Err(global
-            .err(
+            return Err(scope.err(
                 ErrorCode::INVALID_ARG_TYPE,
                 format_args!(
                     "The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
@@ -1236,7 +1234,7 @@ mod _impl {
         };
 
         if l.len() != r.len() {
-            return Err(global
+            return Err(scope
                 .err(
                     ErrorCode::CRYPTO_TIMING_SAFE_EQUAL_LENGTH,
                     format_args!("Input buffers must have the same byte length"),
@@ -1268,7 +1266,6 @@ mod _impl {
     #[bun_jsc::host_fn(scoped)]
     pub(super) fn set_engine<'s>(scope: &mut Scope<'s>, _: &CallFrame) -> JsResult<Local<'s>> {
         Err(scope
-            .unscoped_global()
             .err(
                 ErrorCode::CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED,
                 format_args!("Custom engines not supported by BoringSSL"),
@@ -1307,12 +1304,12 @@ mod _impl {
             boringssl::c::EVP_MD_do_all_sorted(for_each_hash, (&raw mut hashes).cast::<c_void>());
         }
 
-        let array = scope.local(JSValue::create_empty_array(global, hashes.count())?);
+        let array = scope.new_array(hashes.count())?;
 
         for (i, hash) in hashes.keys().iter().enumerate() {
             let str = jsc::bun_string_jsc::create_utf8_for_js(global, hash)?;
             array
-                .raw()
+                .unscoped()
                 .put_index(global, u32::try_from(i).expect("int cast"), str)?;
         }
 
@@ -1335,7 +1332,7 @@ mod _impl {
         let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, ctx.keylen)?;
         ctx.run_task_impl(bytes);
         if ctx.err.is_some() {
-            return Err(global
+            return Err(scope
                 .err(
                     ErrorCode::CRYPTO_OPERATION_FAILED,
                     format_args!("Scrypt failed"),

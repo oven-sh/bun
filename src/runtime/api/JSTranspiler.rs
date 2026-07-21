@@ -1044,54 +1044,54 @@ impl JSTranspiler {
         // NOTE: `config` was built on the stack and moved into the Box, so
         // `transpiler.log` (a `*mut Log`) still points at the moved-from
         // stack slot. Re-point it at the heap-stable field now that the Box exists.
-        // SAFETY: `this: Box<_>` is exclusively owned (init-time, before the JS
-        // wrapper exists) so projecting `&mut`/`*mut` from the JsCells is trivially
-        // alias-free.
-        let config = unsafe { this.config.get_mut() };
-        // SAFETY: same exclusive-ownership invariant as the line above — `this: Box<_>`
-        // is uniquely owned at init time, so `&mut` projection is alias-free.
-        let transpiler = unsafe { this.transpiler.get_mut() };
-        transpiler.set_log(&raw mut config.log);
+        // Init-time: `this: Box<_>` is exclusively owned (no JS wrapper exists yet),
+        // so nothing inside the closures can reach these cells again.
+        this.config.with_mut(|config| {
+            this.transpiler.with_mut(|transpiler| -> JsResult<()> {
+                transpiler.set_log(&raw mut config.log);
 
-        transpiler.options.no_macros = config.no_macros;
-        transpiler.configure_linker_with_auto_jsx(false);
-        transpiler.options.env.behavior = options::EnvBehavior::disable;
-        if let Err(err) = transpiler.configure_defines() {
-            let log = &mut config.log;
-            if (log.warnings + log.errors) > 0 {
-                return Err(global.throw_value(log.to_js(global, "Failed to load define")?));
-            }
-            return Err(global.throw_error(err, "Failed to load define"));
-        }
+                transpiler.options.no_macros = config.no_macros;
+                transpiler.configure_linker_with_auto_jsx(false);
+                transpiler.options.env.behavior = options::EnvBehavior::disable;
+                if let Err(err) = transpiler.configure_defines() {
+                    let log = &mut config.log;
+                    if (log.warnings + log.errors) > 0 {
+                        return Err(global.throw_value(log.to_js(global, "Failed to load define")?));
+                    }
+                    return Err(global.throw_error(err, "Failed to load define"));
+                }
 
-        if config.macro_map.count() > 0 {
-            transpiler.options.macro_remap = clone_macro_map(&config.macro_map);
-        }
+                if config.macro_map.count() > 0 {
+                    transpiler.options.macro_remap = clone_macro_map(&config.macro_map);
+                }
 
-        // REPL mode disables DCE to preserve expressions like `42`
-        transpiler.options.dead_code_elimination =
-            config.dead_code_elimination && !config.repl_mode;
-        transpiler.options.minify_whitespace = config.minify_whitespace;
+                // REPL mode disables DCE to preserve expressions like `42`
+                transpiler.options.dead_code_elimination =
+                    config.dead_code_elimination && !config.repl_mode;
+                transpiler.options.minify_whitespace = config.minify_whitespace;
 
-        // Keep defaults for these
-        if config.minify_syntax {
-            transpiler.options.minify_syntax = true;
-        }
+                // Keep defaults for these
+                if config.minify_syntax {
+                    transpiler.options.minify_syntax = true;
+                }
 
-        if config.minify_identifiers {
-            transpiler.options.minify_identifiers = true;
-        }
+                if config.minify_identifiers {
+                    transpiler.options.minify_identifiers = true;
+                }
 
-        transpiler.options.transform_only = !transpiler.options.allow_runtime;
+                transpiler.options.transform_only = !transpiler.options.allow_runtime;
 
-        transpiler.options.tree_shaking = config.tree_shaking;
-        transpiler.options.trim_unused_imports = config.trim_unused_imports;
-        transpiler.options.allow_runtime = config.runtime.allow_runtime;
-        transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;
-        transpiler.options.inlining = config.runtime.inlining;
-        transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
-        transpiler.options.react_fast_refresh = false;
-        transpiler.options.repl_mode = config.repl_mode;
+                transpiler.options.tree_shaking = config.tree_shaking;
+                transpiler.options.trim_unused_imports = config.trim_unused_imports;
+                transpiler.options.allow_runtime = config.runtime.allow_runtime;
+                transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;
+                transpiler.options.inlining = config.runtime.inlining;
+                transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
+                transpiler.options.react_fast_refresh = false;
+                transpiler.options.repl_mode = config.repl_mode;
+                Ok(())
+            })
+        })?;
 
         Ok(bun_core::heap::into_raw(this))
     }
@@ -1774,15 +1774,17 @@ impl JSTranspiler {
         // no `scan` body; the real `scan` lives on `bun_bundler::cache::JavaScript`.
         // Both are stateless unit structs, so calling the bundler-crate one
         // directly is equivalent.
-        // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS.
-        let scan_result = bun_bundler::cache::JavaScript::init().scan(
-            &arena,
-            unsafe { self.scan_pass_result.get_mut() },
-            opts,
-            define,
-            &mut log,
-            &source,
-        );
+        // `scan()` does not re-enter JS, so the closure cannot reach this cell again.
+        let scan_result = self.scan_pass_result.with_mut(|scan_pass_result| {
+            bun_bundler::cache::JavaScript::init().scan(
+                &arena,
+                scan_pass_result,
+                opts,
+                define,
+                &mut log,
+                &source,
+            )
+        });
 
         // `scan_pass_result` must be reset on every exit past this point
         // (including the error paths). Compute the result, then reset

@@ -95,3 +95,36 @@ impl TextCodec {
         Some(unsafe { bun_core::ffi::slice(name.as_ptr(), len) })
     }
 }
+
+/// Owning handle to an FFI-created `TextCodec`; destroyed exactly once on
+/// drop. Replaces hand-paired `create`/`destroy` at decoder sites.
+pub struct OwnedTextCodec(NonNull<TextCodec>);
+
+impl OwnedTextCodec {
+    pub fn create(encoding: &[u8]) -> Option<OwnedTextCodec> {
+        TextCodec::create(encoding).map(OwnedTextCodec)
+    }
+}
+
+impl core::ops::Deref for OwnedTextCodec {
+    type Target = TextCodec;
+
+    fn deref(&self) -> &TextCodec {
+        // SAFETY: `self.0` is the live, exclusively-owned codec.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::ops::DerefMut for OwnedTextCodec {
+    fn deref_mut(&mut self) -> &mut TextCodec {
+        // SAFETY: exclusive ownership makes the unique borrow sound.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl Drop for OwnedTextCodec {
+    fn drop(&mut self) {
+        // SAFETY: exclusively owned; freed exactly once.
+        unsafe { TextCodec::destroy(self.0.as_ptr()) }
+    }
+}

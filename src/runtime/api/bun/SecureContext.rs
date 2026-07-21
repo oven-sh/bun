@@ -351,18 +351,17 @@ impl SecureContext {
         scope: &mut Scope<'s>,
         frame: &CallFrame,
     ) -> JsResult<Local<'s>> {
-        let global = scope.unscoped_global();
         let args = frame.scoped_arguments::<1>(scope);
         let Some(pem_arg) = args.get(0) else {
             return Err(
-                global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
+                scope.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
             );
         };
-        let pem = pem_arg.raw().to_slice(global)?;
+        let pem = pem_arg.to_slice(scope)?;
         let bytes = pem.slice();
         if bytes.is_empty() {
             return Err(
-                global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
+                scope.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
             );
         }
         // The C side wants a NUL-terminated PEM document.
@@ -374,7 +373,7 @@ impl SecureContext {
             c::us_ssl_ctx_add_ca_cert(this.ctx, owned.as_ptr().cast::<core::ffi::c_char>())
         };
         if ok == 0 {
-            return Err(global.throw(format_args!("Invalid CA certificate")));
+            return Err(scope.throw(format_args!("Invalid CA certificate")));
         }
         Ok(scope.undefined())
     }

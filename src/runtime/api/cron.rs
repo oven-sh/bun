@@ -687,27 +687,27 @@ pub fn cron_register<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<L
 
     // In-process callback cron: Bun.cron(schedule, handler)
     if args[1].is_callable() {
-        let v = CronJob::register(global, args[0].raw(), args[1].raw())?;
+        let v = CronJob::register(global, args[0].unscoped(), args[1].unscoped())?;
         return Ok(scope.local(v));
     }
     if args[0].is_string() && args[2].is_undefined() {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Bun.cron(schedule, handler) expects a function handler as the second argument"
         )));
     }
 
     if !args[0].is_string() {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Bun.cron() expects a string path as the first argument"
         )));
     }
     if !args[1].is_string() {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Bun.cron() expects a string schedule as the second argument"
         )));
     }
     if !args[2].is_string() {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Bun.cron() expects a string title as the third argument"
         )));
     }
@@ -722,7 +722,7 @@ pub fn cron_register<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<L
 
     // Validate title: only [a-zA-Z0-9_-]
     if !validate_title(title_slice.slice()) {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Cron title must contain only alphanumeric characters, hyphens, and underscores"
         )));
     }
@@ -731,7 +731,7 @@ pub fn cron_register<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<L
     let parsed = match CronExpression::parse(schedule_slice.slice()) {
         Ok(p) => p,
         Err(e) => {
-            return Err(global.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "{}",
                 bstr::BStr::new(CronExpression::error_message(e))
             )));
@@ -743,7 +743,7 @@ pub fn cron_register<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<L
     let abs_path = match resolve_path(global, frame, path_slice.slice()) {
         Ok(p) => p,
         Err(_) => {
-            return Err(global.throw_invalid_arguments(format_args!("Failed to resolve path")));
+            return Err(scope.throw_invalid_arguments(format_args!("Failed to resolve path")));
         }
     };
 
@@ -752,17 +752,17 @@ pub fn cron_register<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<L
     for &c in abs_path.as_bytes() {
         if c == b'\'' {
             return Err(
-                global.throw_invalid_arguments(format_args!("Path must not contain single quotes"))
+                scope.throw_invalid_arguments(format_args!("Path must not contain single quotes"))
             );
         }
         if c == b'%' {
-            return Err(global.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "Path must not contain percent signs (cron interprets % as newline)"
             )));
         }
         if c == b'\n' || c == b'\r' {
             return Err(
-                global.throw_invalid_arguments(format_args!("Path must not contain line breaks"))
+                scope.throw_invalid_arguments(format_args!("Path must not contain line breaks"))
             );
         }
     }
@@ -770,11 +770,11 @@ pub fn cron_register<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<L
     let bun_exe = match bun_core::self_exe_path() {
         Ok(p) => p,
         Err(_) => {
-            return Err(global.throw(format_args!("Failed to get bun executable path")));
+            return Err(scope.throw(format_args!("Failed to get bun executable path")));
         }
     };
     if bun_core::strings::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
                 "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
                 bstr::BStr::new(bun_exe.as_bytes())
             )));
@@ -1294,15 +1294,16 @@ pub fn cron_remove<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Loc
     let args = frame.scoped_arguments::<1>(scope).ptr;
     let global = scope.unscoped_global();
     if !args[0].is_string() {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Bun.cron.remove() expects a string title")));
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Bun.cron.remove() expects a string title"))
+        );
     }
 
     let title_str = bun_core::OwnedString::new(args[0].to_bun_string(scope)?);
     let title_slice = title_str.to_utf8();
 
     if !validate_title(title_slice.slice()) {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Cron title must contain only alphanumeric characters, hyphens, and underscores"
         )));
     }
@@ -2021,7 +2022,7 @@ pub fn cron_parse<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Loca
     let global = scope.unscoped_global();
 
     if !args[0].is_string() {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Bun.cron.parse() expects a string cron expression as the first argument"
         )));
     }
@@ -2032,21 +2033,21 @@ pub fn cron_parse<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Loca
     let parsed = match CronExpression::parse(expr_slice.slice()) {
         Ok(p) => p,
         Err(e) => {
-            return Err(global.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "{}",
                 bstr::BStr::new(CronExpression::error_message(e))
             )));
         }
     };
 
-    let from_ms: f64 = if !args[1].raw().is_empty()
+    let from_ms: f64 = if !args[1].unscoped().is_empty()
         && !args[1].is_undefined()
-        && args[1].raw() != JSValue::NULL
+        && args[1].unscoped() != JSValue::NULL
     {
         if args[1].is_number() || args[1].js_type() == jsc::JSType::JSDate {
             args[1].to_number(scope)?
         } else {
-            return Err(global.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "Bun.cron.parse() expects the second argument to be a Date or number (ms since epoch)"
             )));
         }
@@ -2057,7 +2058,7 @@ pub fn cron_parse<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Loca
     // Out-of-range ms hits UB in WTF::msToGregorianDateTime's int casts and
     // the resulting garbage components panic next()'s u32 conversions.
     if from_ms.is_nan() || from_ms.abs() > jsc::wtf::MAX_ECMASCRIPT_TIME {
-        return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
+        return Err(scope.throw_invalid_arguments(format_args!("Invalid date value")));
     }
 
     let Some(next_ms) = parsed.next(global, from_ms)? else {

@@ -32,7 +32,11 @@ impl ResourceUsage {
             rusage.stime_usec(),
             rusage.stime_sec(),
         )?);
-        let total = scope.local(JSValue::big_int_sum(global, usr_time.raw(), sys_time.raw()));
+        let total = scope.local(JSValue::big_int_sum(
+            global,
+            usr_time.unscoped(),
+            sys_time.unscoped(),
+        ));
 
         cpu.put(scope, b"user", usr_time);
         cpu.put(scope, b"system", sys_time);

@@ -34,7 +34,7 @@ impl TextEncoderStreamEncoder {
     ) -> JsResult<Local<'s>> {
         let arguments = frame.scoped_arguments::<1>(scope);
         if arguments.len == 0 {
-            return Err(scope.unscoped_global().throw_not_enough_arguments(
+            return Err(scope.throw_not_enough_arguments(
                 "TextEncoderStreamEncoder.encode",
                 1,
                 arguments.len,

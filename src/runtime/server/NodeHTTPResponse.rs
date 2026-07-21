@@ -1475,7 +1475,7 @@ pub(crate) fn node_http_request_on_resolve<'s>(
         had
     });
     // defer this.deref(); — moved to tail.
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1].raw());
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1].unscoped());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !flags.contains(Flags::SOCKET_CLOSED) {
@@ -1522,7 +1522,7 @@ pub(crate) fn node_http_request_on_reject<'s>(
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1].raw());
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1].unscoped());
 
     // defer this.deref(); — moved to tail.
 
@@ -1552,7 +1552,7 @@ pub(crate) fn node_http_request_on_reject<'s>(
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.raw(), true);
+    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.unscoped(), true);
     if had_promise {
         this.deref();
     }

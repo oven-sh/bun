@@ -449,14 +449,14 @@ impl JSValkeyClient {
 
         let args_array = frame.argument(1);
         if !args_array.is_object() || !args_array.is_array() {
-            return Err(global.throw(format_args!("Arguments must be an array")));
+            return Err(scope.throw(format_args!("Arguments must be an array")));
         }
         let mut iter = args_array.array_iterator(global)?;
         let mut args: Vec<JSArgument> = Vec::with_capacity(iter.len as usize);
 
         while let Some(arg_js) = iter.next()? {
             let Some(v) = from_js(global, arg_js)? else {
-                return Err(global.throw_invalid_argument_type(
+                return Err(scope.throw_invalid_argument_type(
                     "sendCommand",
                     "argument",
                     "string or buffer",
@@ -491,7 +491,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"get")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("get", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("get", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -515,7 +515,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"getBuffer")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("getBuffer", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("getBuffer", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -538,12 +538,12 @@ impl JSValkeyClient {
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("set", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("set", "key", "string or buffer"));
         };
         args.push(key);
 
         let Some(value) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "set",
                 "value",
                 "string or buffer or number",
@@ -557,7 +557,7 @@ impl JSValkeyClient {
                     break;
                 }
                 let Some(v) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
+                    return Err(scope.throw_invalid_argument_type(
                         "set",
                         "arguments",
                         "string or buffer",
@@ -585,7 +585,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"incr")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("incr", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("incr", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -605,7 +605,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"decr")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("decr", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("decr", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -629,7 +629,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"exists")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("exists", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("exists", "key", "string or buffer"));
         };
         // Send EXISTS command with special Exists type for boolean conversion
         send_cmd(
@@ -654,7 +654,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"expire")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("expire", "key", "string or buffer"));
         };
 
         let seconds = global.validate_integer_range::<i32>(
@@ -689,7 +689,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"ttl")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("ttl", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("ttl", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -711,13 +711,13 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw(format_args!("SREM requires at least a key and one member")));
+            return Err(scope.throw(format_args!("SREM requires at least a key and one member")));
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("srem", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("srem", "key", "string or buffer"));
         };
         args.push(key);
 
@@ -726,7 +726,7 @@ impl JSValkeyClient {
                 break;
             }
             let Some(value) = from_js(global, *arg)? else {
-                return Err(global.throw_invalid_argument_type(
+                return Err(scope.throw_invalid_argument_type(
                     "srem",
                     "member",
                     "string or buffer",
@@ -760,7 +760,7 @@ impl JSValkeyClient {
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "srandmember",
                 "key",
                 "string or buffer",
@@ -771,7 +771,7 @@ impl JSValkeyClient {
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
             let Some(count_arg) = from_js(global, frame.argument(1))? else {
-                return Err(global.throw_invalid_argument_type(
+                return Err(scope.throw_invalid_argument_type(
                     "srandmember",
                     "count",
                     "number or string",
@@ -802,7 +802,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"smembers")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("smembers", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("smembers", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -826,18 +826,14 @@ impl JSValkeyClient {
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("spop", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("spop", "key", "string or buffer"));
         };
         args.push(key);
 
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
             let Some(count_arg) = from_js(global, frame.argument(1))? else {
-                return Err(global.throw_invalid_argument_type(
-                    "spop",
-                    "count",
-                    "number or string",
-                ));
+                return Err(scope.throw_invalid_argument_type("spop", "count", "number or string"));
             };
             args.push(count_arg);
         }
@@ -861,13 +857,13 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw(format_args!("SADD requires at least a key and one member")));
+            return Err(scope.throw(format_args!("SADD requires at least a key and one member")));
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("sadd", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("sadd", "key", "string or buffer"));
         };
         args.push(key);
 
@@ -876,7 +872,7 @@ impl JSValkeyClient {
                 break;
             }
             let Some(value) = from_js(global, *arg)? else {
-                return Err(global.throw_invalid_argument_type(
+                return Err(scope.throw_invalid_argument_type(
                     "sadd",
                     "member",
                     "string or buffer",
@@ -907,10 +903,10 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"sismember")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("sismember", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("sismember", "key", "string or buffer"));
         };
         let Some(value) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "sismember",
                 "value",
                 "string or buffer",
@@ -936,13 +932,13 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw(format_args!("HMGET requires at least a key and one field")));
+            return Err(scope.throw(format_args!("HMGET requires at least a key and one field")));
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("hmget", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hmget", "key", "string or buffer"));
         };
         args.push(key);
 
@@ -950,13 +946,13 @@ impl JSValkeyClient {
         if second_arg.is_array() {
             let array_len = second_arg.get_length(global)?;
             if array_len == 0 {
-                return Err(global.throw(format_args!("HMGET requires at least one field")));
+                return Err(scope.throw(format_args!("HMGET requires at least one field")));
             }
 
             let mut array_iter = second_arg.array_iterator(global)?;
             while let Some(element) = array_iter.next()? {
                 let Some(field) = from_js(global, element)? else {
-                    return Err(global.throw_invalid_argument_type(
+                    return Err(scope.throw_invalid_argument_type(
                         "hmget",
                         "field",
                         "string or buffer",
@@ -970,7 +966,7 @@ impl JSValkeyClient {
                     break;
                 }
                 let Some(field) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
+                    return Err(scope.throw_invalid_argument_type(
                         "hmget",
                         "field",
                         "string or buffer",
@@ -1209,13 +1205,13 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"hsetnx")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("hsetnx", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hsetnx", "key", "string or buffer"));
         };
         let Some(field) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type("hsetnx", "field", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hsetnx", "field", "string or buffer"));
         };
         let Some(value) = from_js(global, frame.argument(2))? else {
-            return Err(global.throw_invalid_argument_type("hsetnx", "value", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hsetnx", "value", "string or buffer"));
         };
         send_cmd(
             this,
@@ -1239,11 +1235,11 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"hexists")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("hexists", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hexists", "key", "string or buffer"));
         };
 
         let Some(field) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type("hexists", "field", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hexists", "field", "string or buffer"));
         };
         send_cmd(
             this,
@@ -1264,8 +1260,8 @@ impl JSValkeyClient {
         let arg0 = frame.scoped_argument(scope, 0);
         let message: Option<JSArgument> = if !arg0.is_undefined_or_null() {
             // Only use the first argument if provided, ignore any additional arguments
-            let Some(m) = from_js(global, arg0.raw())? else {
-                return Err(global.throw_invalid_argument_type(
+            let Some(m) = from_js(global, arg0.unscoped())? else {
+                return Err(scope.throw_invalid_argument_type(
                     "ping",
                     "message",
                     "string or buffer",
@@ -1599,17 +1595,17 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"smove")?;
 
         let Some(source) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("smove", "source", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("smove", "source", "string or buffer"));
         };
         let Some(destination) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "smove",
                 "destination",
                 "string or buffer",
             ));
         };
         let Some(member) = from_js(global, frame.argument(2))? else {
-            return Err(global.throw_invalid_argument_type("smove", "member", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("smove", "member", "string or buffer"));
         };
         send_cmd(
             this,
@@ -1701,17 +1697,17 @@ impl JSValkeyClient {
 
         let arg0 = frame.scoped_argument(scope, 0);
         if !arg0.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "channel", "string"));
+            return Err(scope.throw_invalid_argument_type("publish", "channel", "string"));
         }
-        let channel = from_js(global, arg0.raw())?.expect("unreachable");
+        let channel = from_js(global, arg0.unscoped())?.expect("unreachable");
 
         args.push(channel);
 
         let arg1 = frame.scoped_argument(scope, 1);
         if !arg1.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "message", "string"));
+            return Err(scope.throw_invalid_argument_type("publish", "message", "string"));
         }
-        let message = from_js(global, arg1.raw())?.expect("unreachable");
+        let message = from_js(global, arg1.unscoped())?.expect("unreachable");
         args.push(message);
         send_cmd(
             this,
@@ -1742,23 +1738,23 @@ impl JSValkeyClient {
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
-            return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
+            return Err(scope.throw_invalid_argument_type("subscribe", "listener", "function"));
         }
 
         // The first argument given is the channel or may be an array of channels.
-        if channel_or_many.raw().is_array() {
-            if channel_or_many.raw().get_length(global)? == 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
+        if channel_or_many.is_array() {
+            if channel_or_many.unscoped().get_length(global)? == 0 {
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "subscribe requires at least one channel"
                 )));
             }
             redis_channels
-                .ensure_total_capacity(channel_or_many.raw().get_length(global)? as usize);
+                .ensure_total_capacity(channel_or_many.unscoped().get_length(global)? as usize);
 
-            let mut array_iter = channel_or_many.raw().array_iterator(global)?;
+            let mut array_iter = channel_or_many.unscoped().array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
                 let Some(channel) = from_js(global, channel_arg)? else {
-                    return Err(global.throw_invalid_argument_type(
+                    return Err(scope.throw_invalid_argument_type(
                         "subscribe",
                         "channel",
                         "string",
@@ -1775,23 +1771,23 @@ impl JSValkeyClient {
                 this._subscription_ctx.get().upsert_receive_handler(
                     global,
                     channel_arg,
-                    handler_callback.raw(),
+                    handler_callback.unscoped(),
                 )?;
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
-            let Some(channel) = from_js(global, channel_or_many.raw())? else {
-                return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
+            let Some(channel) = from_js(global, channel_or_many.unscoped())? else {
+                return Err(scope.throw_invalid_argument_type("subscribe", "channel", "string"));
             };
             redis_channels.push(channel);
 
             this._subscription_ctx.get().upsert_receive_handler(
                 global,
-                channel_or_many.raw(),
-                handler_callback.raw(),
+                channel_or_many.unscoped(),
+                handler_callback.unscoped(),
             )?;
         } else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "subscribe",
                 "channel",
                 "string or array",
@@ -1886,14 +1882,14 @@ impl JSValkeyClient {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
             if !channel_or_many.is_string() {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
+                return Err(scope.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             }
 
             let channel = channel_or_many;
             let listener_cb = frame.argument(1);
 
             if !listener_cb.is_callable() {
-                return Err(global.throw_invalid_argument_type(
+                return Err(scope.throw_invalid_argument_type(
                     "unsubscribe",
                     "listener",
                     "function",
@@ -1905,7 +1901,7 @@ impl JSValkeyClient {
             // the UNSUBSCRIBE command to redis. Without this, we would end up
             // unsubscribing from all channels.
             let Some(ch) = from_js(global, channel)? else {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
+                return Err(scope.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
             redis_channels.push(ch);
 
@@ -1947,7 +1943,7 @@ impl JSValkeyClient {
 
         if channel_or_many.is_array() {
             if channel_or_many.get_length(global)? == 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "unsubscribe requires at least one channel"
                 )));
             }
@@ -1959,7 +1955,7 @@ impl JSValkeyClient {
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
                 let Some(channel) = from_js(global, channel_arg)? else {
-                    return Err(global.throw_invalid_argument_type(
+                    return Err(scope.throw_invalid_argument_type(
                         "unsubscribe",
                         "channel",
                         "string",
@@ -1974,7 +1970,7 @@ impl JSValkeyClient {
         } else if channel_or_many.is_string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
+                return Err(scope.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
             redis_channels.push(channel);
             // Clear the handlers for this channel
@@ -1982,7 +1978,7 @@ impl JSValkeyClient {
                 .get()
                 .clear_receive_handlers(global, channel_or_many)?;
         } else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "unsubscribe",
                 "channel",
                 "string or array",

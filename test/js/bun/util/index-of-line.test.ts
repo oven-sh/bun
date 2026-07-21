@@ -97,3 +97,18 @@ test("indexOfLine skips multi-byte sequences correctly", () => {
   expect(indexOfLine(buf3, 3)).toBe(6);
   expect(indexOfLine(buf3, 7)).toBe(11);
 });
+
+test("indexOfLine does not read a buffer detached by the offset coercion", () => {
+  const ab = new ArrayBuffer(6);
+  const buf = new Uint8Array(ab);
+  buf.set(new TextEncoder().encode("hello\n"));
+  const evilOffset = {
+    valueOf() {
+      ab.transfer();
+      return 0;
+    },
+  };
+  // The view is re-derived after the coercion, so the detached buffer
+  // reads as empty instead of scanning freed memory.
+  expect(indexOfLine(buf, evilOffset as any)).toBe(-1);
+});

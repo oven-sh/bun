@@ -5,11 +5,10 @@ use crate::webcore::jsc::{
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use jsc::StringJsc as _;
 use jsc::ZigStringJsc as _;
-use jsc::text_codec::TextCodec;
+use jsc::text_codec::OwnedTextCodec;
 use jsc::zig_string::ZigString;
 
 use strings::{u16_is_lead, u16_is_trail};
@@ -50,8 +49,8 @@ pub struct TextDecoder {
     // WebKit `PAL::TextCodec` for every other encoding. The codec owns the
     // streaming state (lead byte, ISO-2022-JP mode, GB18030 first/second/third),
     // so it must live across `{stream: true}` chunks. Created lazily on first
-    // decode, dropped when a flushing decode ends the stream and in `Drop`.
-    codec: Cell<Option<NonNull<TextCodec>>>,
+    // decode, dropped when a flushing decode ends the stream or the decoder drops.
+    codec: Cell<Option<OwnedTextCodec>>,
 
     // Read-only after construction (set in `constructor` before the JS wrapper
     // exists) — left bare.
@@ -72,16 +71,6 @@ impl Default for TextDecoder {
             ignore_bom: false,
             fatal: false,
             encoding: EncodingLabel::Utf8,
-        }
-    }
-}
-
-impl Drop for TextDecoder {
-    fn drop(&mut self) {
-        if let Some(codec) = self.codec.get_mut().take() {
-            // SAFETY: `codec` was returned by `TextCodec::create` and has not
-            // been freed (the field is cleared whenever we destroy it).
-            unsafe { TextCodec::destroy(codec.as_ptr()) }
         }
     }
 }
@@ -314,16 +303,10 @@ impl TextDecoder {
                 let mut bytes = vec![0u16; out_length].into_boxed_slice();
 
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
-                // The boxed slice is a tight allocation (no excess capacity).
-                // SAFETY: `bytes` was allocated by the global allocator; `into_raw`
-                // transfers ownership of the buffer to JSC's external-string finalizer.
-                Ok(unsafe {
-                    jsc::zig_string::to_external_u16(
-                        bun_core::heap::into_raw(bytes).cast::<u16>(),
-                        out.written as usize,
-                        global_this,
-                    )
-                })
+                // CP1252 maps every byte to exactly one code unit, so the
+                // tight boxed slice is fully written.
+                debug_assert_eq!(out.written as usize, bytes.len());
+                jsc::zig_string::external_string_from_utf16(global_this, bytes)
             }
             EncodingLabel::Utf8 => {
                 // Prepend the partial UTF-8 sequence carried over from the
@@ -408,23 +391,9 @@ impl TextDecoder {
                             });
                         }
                     }
-                    let len = decoded.len();
-                    // `to_external_u16` returns `jsEmptyString` and never
-                    // calls `free_global_string` for `len == 0`, so a
-                    // zero-length decode (e.g. a buffered partial sequence
-                    // with `stream: true`, or all-replaced bytes when
-                    // `fatal: false`) would strand the `Vec`'s reserved
-                    // backing store. Drop it here and return the canonical
-                    // empty string instead.
-                    if len == 0 {
-                        drop(decoded);
-                        return Ok(ZigString::EMPTY.to_js(global_this));
-                    }
-                    // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
-                    let ptr = decoded.leak().as_mut_ptr();
-                    // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                    // ownership transfers to JSC's external-string finalizer.
-                    return Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) });
+                    // `_vec`: no shrink-realloc for excess decode capacity —
+                    // the finalizer frees the whole allocation by pointer.
+                    return jsc::zig_string::external_string_from_utf16_vec(global_this, decoded);
                 }
 
                 // All-ASCII input needed no conversion. `ZigString::init(..).to_js`
@@ -491,14 +460,10 @@ impl TextDecoder {
                     return Ok(ZigString::EMPTY.to_js(global_this));
                 }
 
-                // Transfer ownership of the backing allocation to JSC; freed via
-                // free_global_string -> mi_free when the string is collected.
-                let len = decoded.len();
-                // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
-                let ptr = decoded.leak().as_mut_ptr();
-                // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                // ownership transfers to JSC's external-string finalizer.
-                Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) })
+                // Transfer ownership of the backing allocation to JSC; freed
+                // when the external string is collected. `_vec`: no
+                // shrink-realloc for excess capacity.
+                jsc::zig_string::external_string_from_utf16_vec(global_this, decoded)
             }
 
             // Handle all other encodings using WebKit's TextCodec
@@ -508,27 +473,22 @@ impl TextDecoder {
                 // The codec carries streaming state (lead bytes, escape mode),
                 // so reuse the one from the previous `{stream: true}` chunk.
                 // Create it lazily on first use — matches WebKit's
-                // `if (!m_codec) m_codec = newTextCodec(...)`.
-                let codec_ptr = match self.codec.get() {
-                    Some(ptr) => ptr,
+                // `if (!m_codec) m_codec = newTextCodec(...)`. Taken out of the
+                // `Cell` for the call; the C++ `decode()` does not call back
+                // into JS, so no re-entrancy.
+                let mut codec = match self.codec.take() {
+                    Some(codec) => codec,
                     None => {
-                        let Some(ptr) = TextCodec::create(encoding_name) else {
+                        let Some(mut codec) = OwnedTextCodec::create(encoding_name) else {
                             // Fallback to empty string if codec creation fails
                             return Ok(ZigString::init(b"").to_js(global_this));
                         };
                         if !self.ignore_bom {
-                            // `TextCodec` is an opaque ZST FFI handle (S008);
-                            // `ptr` is live — safe via `opaque_deref_mut`.
-                            bun_opaque::opaque_deref_mut(ptr.as_ptr()).strip_bom();
+                            codec.strip_bom();
                         }
-                        self.codec.set(Some(ptr));
-                        ptr
+                        codec
                     }
                 };
-                // `TextCodec` is an opaque ZST FFI handle (S008); `codec_ptr`
-                // is live for this call — safe via `opaque_deref_mut`. The
-                // C++ `decode()` does not call back into JS, so no re-entrancy.
-                let codec = bun_opaque::opaque_deref_mut(codec_ptr.as_ptr());
 
                 // Decode the data
                 let result = codec.decode(buffer_slice, FLUSH, self.fatal);
@@ -538,15 +498,12 @@ impl TextDecoder {
                 let result_str = OwnedString::new(result.result);
 
                 // A flushing decode ends the stream. Per WHATWG Encoding the
-                // next `decode()` starts with a fresh decoder, so drop this
-                // codec now — otherwise mode state that the C++ codec does not
+                // next `decode()` starts with a fresh decoder, so let this
+                // codec drop — otherwise mode state that the C++ codec does not
                 // reset on flush (e.g. `m_iso2022JPDecoderState`) would leak
                 // into the next stream.
-                if FLUSH {
-                    self.codec.set(None);
-                    // SAFETY: `codec_ptr` came from `TextCodec::create` above
-                    // (or on an earlier chunk) and is freed exactly once here.
-                    unsafe { TextCodec::destroy(codec_ptr.as_ptr()) };
+                if !FLUSH {
+                    self.codec.set(Some(codec));
                 }
 
                 // Check for errors if fatal mode is enabled

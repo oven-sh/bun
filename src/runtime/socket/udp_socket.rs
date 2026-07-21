@@ -838,7 +838,7 @@ impl UDPSocket {
 
         let arguments = callframe.scoped_arguments::<1>(scope);
         let Some(arg) = arguments.get(0) else {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "Expected 1 argument, got {}",
                 arguments.len
             )));
@@ -883,7 +883,7 @@ impl UDPSocket {
 
         let arguments = callframe.scoped_arguments::<1>(scope);
         let Some(arg) = arguments.get(0) else {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "Expected 1 argument, got {}",
                 arguments.len
             )));
@@ -1151,7 +1151,7 @@ impl UDPSocket {
 
         let arguments = callframe.scoped_arguments::<1>(scope);
         let Some(arg) = arguments.get(0) else {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "Expected 1 argument, got {}",
                 arguments.len
             )));
@@ -1166,12 +1166,17 @@ impl UDPSocket {
         // address-family-specific fields `parse_addr` populated).
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
 
-        if !this.parse_addr(global_this, JSValue::js_number(0.0), arg.raw(), &mut addr)? {
+        if !this.parse_addr(
+            global_this,
+            JSValue::js_number(0.0),
+            arg.unscoped(),
+            &mut addr,
+        )? {
             return Ok(scope.boolean(false));
         }
 
         let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
+            return Err(scope.throw(format_args!("Socket is closed")));
         };
 
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
@@ -1476,7 +1481,7 @@ impl UDPSocket {
     ) -> JsResult<Local<'s>> {
         let global_this = scope.unscoped_global();
         if this.closed.get() {
-            return Err(global_this.throw(format_args!("Socket is closed")));
+            return Err(scope.throw(format_args!("Socket is closed")));
         }
         let arguments = callframe.arguments_old::<3>();
         let dst: Option<Destination> = 'brk: {
@@ -1485,17 +1490,17 @@ impl UDPSocket {
                     break 'brk None;
                 }
                 if arguments.len == 3 {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
+                    return Err(scope.throw_invalid_arguments(format_args!(
                         "Cannot specify destination on connected socket"
                     )));
                 }
-                return Err(global_this.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected 1 argument, got {}",
                     arguments.len
                 )));
             } else {
                 if arguments.len != 3 {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
+                    return Err(scope.throw_invalid_arguments(format_args!(
                         "Expected 3 arguments, got {}",
                         arguments.len
                     )));
@@ -1518,9 +1523,7 @@ impl UDPSocket {
         let addr_ptr: *const c_void = 'brk: {
             if let Some(dest) = dst {
                 if !this.parse_addr(global_this, dest.port, dest.address, &mut addr)? {
-                    return Err(
-                        global_this.throw_invalid_arguments(format_args!("Invalid address"))
-                    );
+                    return Err(scope.throw_invalid_arguments(format_args!("Invalid address")));
                 }
                 break 'brk (&raw const addr).cast::<c_void>();
             } else {
@@ -1549,14 +1552,14 @@ impl UDPSocket {
                 payload_str = payload_arg.to_js_string(global_this)?.to_slice(global_this);
                 break 'brk payload_str.slice();
             } else {
-                return Err(global_this.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected ArrayBufferView or string as first argument"
                 )));
             }
         };
 
         let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
+            return Err(scope.throw(format_args!("Socket is closed")));
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         let res = uws::udp::Socket::opaque_mut(socket).send(
@@ -1750,13 +1753,13 @@ impl UDPSocket {
         let args = callframe.scoped_arguments::<1>(scope);
 
         let Some(options) = args.get(0) else {
-            return Err(global_this.throw_invalid_arguments(format_args!("Expected 1 argument")));
+            return Err(scope.throw_invalid_arguments(format_args!("Expected 1 argument")));
         };
 
         let Some(this_value) = this.this_value.get().try_get() else {
             return Ok(scope.undefined());
         };
-        let config = UDPSocketConfig::from_js(global_this, options.raw(), this_value)?;
+        let config = UDPSocketConfig::from_js(global_this, options.unscoped(), this_value)?;
 
         let _ = this.config.replace(config);
 

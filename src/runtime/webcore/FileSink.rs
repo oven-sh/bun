@@ -502,8 +502,8 @@ impl FileSink {
         bun_core::scoped_log!(FileSink, "onClose()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
-            if (*this).readable_stream.get_mut().has() {
+            // `Strong::has`/`get` are read-only on the GC root.
+            if (*this).readable_stream.with_mut(|rs| rs.has()) {
                 if let Some(global) = (*this).js_global() {
                     if let Some(stream) = (*this).readable_stream.get().get(global) {
                         stream.done(global);
@@ -563,8 +563,10 @@ impl FileSink {
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: `this` was just allocated above and is the sole reference.
         unsafe {
-            (*this).writer.get_mut().set_pipe(pipe);
-            (*this).writer.get_mut().set_parent(this);
+            (*this).writer.with_mut(|w| {
+                w.set_pipe(pipe);
+                w.set_parent(this);
+            });
         }
         this
     }
@@ -583,14 +585,14 @@ impl FileSink {
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: `this` was just allocated above and is the sole reference.
         unsafe {
-            (*this).writer.get_mut().set_parent(this);
+            (*this).writer.with_mut(|w| w.set_parent(this));
         }
         this
     }
 
     pub fn setup(&self, options: &Options) -> sys::Result<()> {
-        // SAFETY: JsCell — `Strong::has` is a read-only GC-root probe; no JS re-entry.
-        if unsafe { self.readable_stream.get_mut() }.has() {
+        // `Strong::has` is a read-only GC-root probe; no JS re-entry.
+        if self.readable_stream.with_mut(|rs| rs.has()) {
             // Already started.
             return sys::Result::Ok(());
         }
@@ -961,7 +963,7 @@ impl FileSink {
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: `this` was just allocated above and is the sole reference.
         unsafe {
-            (*this).writer.get_mut().set_parent(this);
+            (*this).writer.with_mut(|w| w.set_parent(this));
         }
         this
     }
@@ -1139,9 +1141,9 @@ impl FileSink {
                     p.result = streams::Writable::Owned(p.consumed);
                 });
 
-                // SAFETY: JsCell — `WritablePending::promise` allocates a JSPromise
-                // (may GC) but does not invoke any FileSink host-fn synchronously.
-                let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
+                // `WritablePending::promise` allocates a JSPromise (may GC) but
+                // does not invoke any FileSink host-fn synchronously.
+                let promise_result = self.pending.with_mut(|p| p.promise(global_this));
 
                 // SAFETY: `WritablePending::promise()` never returns null.
                 sys::Result::Ok(unsafe { (*promise_result).to_js() })

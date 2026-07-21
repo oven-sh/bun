@@ -633,7 +633,7 @@ impl Subprocess<'_> {
 
         let this_jsvalue = callframe.scoped_this(scope);
 
-        let _keep = jsc::EnsureStillAlive(this_jsvalue.raw());
+        let _keep = jsc::EnsureStillAlive(this_jsvalue.unscoped());
 
         // unref streams so that this disposed process will not prevent
         // the process from exiting causing a hang
@@ -650,7 +650,7 @@ impl Subprocess<'_> {
             }
         }
 
-        let v = this.get_exited(this_jsvalue.raw(), global);
+        let v = this.get_exited(this_jsvalue.unscoped(), global);
         Ok(scope.local(v))
     }
 
@@ -1095,16 +1095,14 @@ impl Subprocess<'_> {
 
         let mut did_update_has_pending_activity = false;
 
-        // Kept as raw `*mut` so the enter guard and the body can both call
-        // `&mut`-taking methods without tripping borrowck.
+        // Kept as raw `*mut` so `run_callback` below can take `&mut` without
+        // tripping borrowck.
         let event_loop = (*jsc_vm).event_loop();
 
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
-                    // SAFETY: event_loop points into the live VM and outlives this scope.
-                    let _exit_guard =
-                        unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+                    let _exit_guard = jsc_vm.enter_event_loop_scope();
 
                     if !did_update_has_pending_activity {
                         self.update_has_pending_activity();
@@ -1561,10 +1559,8 @@ pub mod testing_apis {
     ) -> JsResult<Local<'s>> {
         let arguments = callframe.scoped_arguments::<2>(scope);
         let (subprocess_value, kind_value) = (arguments.ptr[0], arguments.ptr[1]);
-        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value.raw()) else {
-            return Err(scope
-                .unscoped_global()
-                .throw(format_args!("first argument must be a Subprocess")));
+        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value.unscoped()) else {
+            return Err(scope.throw(format_args!("first argument must be a Subprocess")));
         };
         // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
         // R-2: deref as shared (`&*const`) — fields are interior-mutable.
@@ -1576,9 +1572,7 @@ pub mod testing_apis {
         } else if kind_str.eql_comptime(b"stderr") {
             &subprocess.stderr
         } else {
-            return Err(scope
-                .unscoped_global()
-                .throw(format_args!("second argument must be 'stdout' or 'stderr'")));
+            return Err(scope.throw(format_args!("second argument must be 'stdout' or 'stderr'")));
         };
 
         let Readable::Pipe(pipe) = out.get() else {

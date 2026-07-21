@@ -39,7 +39,7 @@ fn emit_process_error_event<'s>(
     callframe: &CallFrame,
 ) -> JsResult<Local<'s>> {
     let [ex] = callframe.scoped_arguments::<1>(scope).ptr;
-    Process__emitErrorEvent(scope.unscoped_global(), ex.raw());
+    Process__emitErrorEvent(scope.unscoped_global(), ex.unscoped());
     Ok(scope.undefined())
 }
 
@@ -202,8 +202,8 @@ pub fn emit_handle_ipc_message<'s>(
                     if cmd_str.eql_comptime(b"NODE_CLUSTER") {
                         crate::node::node_cluster_binding::handle_internal_message_child(
                             scope.unscoped_global(),
-                            message.raw(),
-                            handle.raw(),
+                            message.unscoped(),
+                            handle.unscoped(),
                         )?;
                         return Ok(scope.undefined());
                     }
@@ -211,23 +211,31 @@ pub fn emit_handle_ipc_message<'s>(
             }
         }
         // mutable); `get_ipc_instance` writes `self.ipc` on first call.
-        let vm = scope.unscoped_global().bun_vm().as_mut();
+        let vm = scope.bun_vm().as_mut();
         let Some(ipc) = vm.get_ipc_instance() else {
             return Ok(scope.undefined());
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
-        unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message.raw()), handle.raw()) };
+        unsafe {
+            (*ipc).handle_ipc_message(
+                &DecodedIPCMessage::Data(message.unscoped()),
+                handle.unscoped(),
+            )
+        };
     } else {
         if !target.is_cell() {
             return Ok(scope.undefined());
         }
-        let Some(subprocess) = Subprocess::from_js_direct(target.raw()) else {
+        let Some(subprocess) = Subprocess::from_js_direct(target.unscoped()) else {
             return Ok(scope.undefined());
         };
         // SAFETY: `from_js_direct` returned a non-null `*mut Subprocess`; the JS
         // wrapper holds it alive for the call.
         unsafe {
-            (*subprocess).handle_ipc_message(&DecodedIPCMessage::Data(message.raw()), handle.raw())
+            (*subprocess).handle_ipc_message(
+                &DecodedIPCMessage::Data(message.unscoped()),
+                handle.unscoped(),
+            )
         };
     }
     Ok(scope.undefined())
@@ -248,7 +256,7 @@ pub(crate) fn Bun__Process__send<'s>(
     bun_jsc::mark_binding!();
     let global = scope.unscoped_global();
     // mutable); `get_ipc_instance` writes `self.ipc` on first call.
-    let vm = global.bun_vm().as_mut();
+    let vm = scope.bun_vm().as_mut();
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
     // alias `vm` (the instance is heap-allocated, not embedded in `vm`).

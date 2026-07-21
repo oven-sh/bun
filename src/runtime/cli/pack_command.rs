@@ -4081,7 +4081,7 @@ pub mod bindings {
         let global = scope.unscoped_global();
         let arguments = call_frame.scoped_arguments::<1>(scope);
         let Some(path_arg) = arguments.get(0).filter(|a| a.is_string()) else {
-            return Err(global.throw(format_args!("expected tarball path string argument")));
+            return Err(scope.throw(format_args!("expected tarball path string argument")));
         };
 
         let tarball_path_str = bun_core::OwnedString::new(path_arg.to_bun_string(scope)?);
@@ -4091,7 +4091,7 @@ pub mod bindings {
         let tarball_file = match bun_sys::open_file(tarball_path.slice(), Default::default()) {
             Ok(f) => f,
             Err(err) => {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "failed to open tarball file \"{}\": {}",
                     bstr::BStr::new(tarball_path.slice()),
                     crate::Error::from(err).name(),
@@ -4103,7 +4103,7 @@ pub mod bindings {
             Ok(b) => b,
             Err(err) => {
                 let _ = tarball_file.close();
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "failed to read tarball contents \"{}\": {}",
                     bstr::BStr::new(tarball_path.slice()),
                     crate::Error::from(err).name(),
@@ -4141,7 +4141,7 @@ pub mod bindings {
 
         match archive.read_support_format_tar() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "failed to support tar: {}",
                     bstr::BStr::new(archive.error_string())
                 )));
@@ -4150,7 +4150,7 @@ pub mod bindings {
         }
         match archive.read_support_format_gnutar() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "failed to support gnutar: {}",
                     bstr::BStr::new(archive.error_string())
                 )));
@@ -4159,7 +4159,7 @@ pub mod bindings {
         }
         match archive.read_support_filter_gzip() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "failed to support gzip compression: {}",
                     bstr::BStr::new(archive.error_string())
                 )));
@@ -4169,7 +4169,7 @@ pub mod bindings {
 
         match archive.read_set_options(c"read_concatenated_archives") {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "failed to set read_concatenated_archives option: {}",
                     bstr::BStr::new(archive.error_string())
                 )));
@@ -4179,7 +4179,7 @@ pub mod bindings {
 
         match archive.read_open_memory(&tarball) {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "failed to open archive in memory: {}",
                     bstr::BStr::new(archive.error_string())
                 )));
@@ -4200,7 +4200,7 @@ pub mod bindings {
                     continue;
                 }
                 ArchiveResult::Failed | ArchiveResult::Fatal => {
-                    return Err(global.throw(format_args!(
+                    return Err(scope.throw(format_args!(
                         "failed to read archive header: {}",
                         bstr::BStr::new(archive.error_string()),
                     )));
@@ -4238,7 +4238,7 @@ pub mod bindings {
                         let read = archive.read_data(&mut read_buf);
                         if read < 0 {
                             let pathname_utf8 = entry_info.pathname.to_utf8();
-                            return Err(global.throw(format_args!(
+                            return Err(scope.throw(format_args!(
                                 "failed to read archive entry \"{}\": {}",
                                 bstr::BStr::new(pathname_utf8.slice()),
                                 bstr::BStr::new(archive.error_string()),
@@ -4257,7 +4257,7 @@ pub mod bindings {
 
         match archive.read_close() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "failed to close read archive: {}",
                     bstr::BStr::new(archive.error_string())
                 )));
@@ -4266,7 +4266,7 @@ pub mod bindings {
         }
         match archive.read_free() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return Err(global.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "failed to close read archive: {}",
                     bstr::BStr::new(archive.error_string())
                 )));

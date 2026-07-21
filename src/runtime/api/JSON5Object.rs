@@ -22,21 +22,21 @@ pub(crate) fn stringify<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResul
     let global = scope.unscoped_global();
     let [value, replacer, space_value] = frame.scoped_arguments::<3>(scope).ptr;
 
-    value.raw().ensure_still_alive();
+    value.ensure_still_alive();
 
-    if value.is_undefined() || value.raw().is_symbol() || value.raw().is_function() {
+    if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(scope.undefined());
     }
 
     if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
+        return Err(scope.throw(format_args!(
             "JSON5.stringify does not support the replacer argument"
         )));
     }
 
-    let mut stringifier = Stringifier::init(global, space_value.raw())?;
+    let mut stringifier = Stringifier::init(global, space_value.unscoped())?;
 
-    if let Err(err) = stringifier.stringify_value(global, value.raw()) {
+    if let Err(err) = stringifier.stringify_value(global, value.unscoped()) {
         return match err {
             StringifyError::Js(js_err) => Err(js_err),
             StringifyError::StackOverflow => Err(global.throw_stack_overflow()),

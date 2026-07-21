@@ -113,11 +113,12 @@ pub(crate) fn bun_create_object_url<'s>(
     let global_object = scope.unscoped_global();
     let arguments = callframe.scoped_arguments::<1>(scope);
     if arguments.len < 1 {
-        return Err(global_object.throw_not_enough_arguments("createObjectURL", 1, arguments.len));
+        return Err(scope.throw_not_enough_arguments("createObjectURL", 1, arguments.len));
     }
     let Some(blob) = arguments.ptr[0].as_class_ref::<Blob>() else {
-        return Err(global_object
-            .throw_invalid_arguments(format_args!("createObjectURL expects a Blob object")));
+        return Err(
+            scope.throw_invalid_arguments(format_args!("createObjectURL expects a Blob object"))
+        );
     };
     let registry = ObjectURLRegistry::singleton();
     // SAFETY: `bun_vm_ptr()` returns the live VM pointer for `global_object`.
@@ -134,16 +135,10 @@ pub(crate) fn bun_revoke_object_url<'s>(
 ) -> JsResult<Local<'s>> {
     let arguments = callframe.scoped_arguments::<1>(scope);
     if arguments.len < 1 {
-        return Err(scope.unscoped_global().throw_not_enough_arguments(
-            "revokeObjectURL",
-            1,
-            arguments.len,
-        ));
+        return Err(scope.throw_not_enough_arguments("revokeObjectURL", 1, arguments.len));
     }
     if !arguments.ptr[0].is_string() {
-        return Err(scope
-            .unscoped_global()
-            .throw_invalid_arguments(format_args!("revokeObjectURL expects a string")));
+        return Err(scope.throw_invalid_arguments(format_args!("revokeObjectURL expects a string")));
     }
     // `to_bun_string` returns a +1 ref; `bun_core::String` is `Copy` (no Drop),
     // so wrap in `OwnedString` for scope-exit `deref()`.
@@ -181,7 +176,7 @@ pub(crate) fn js_function_resolve_object_url<'s>(
     // path (exception, non-blob prefix, success) releases it.
     let str = bun_core::OwnedString::new(arguments.ptr[0].to_bun_string(scope)?);
 
-    if scope.unscoped_global().has_exception() {
+    if scope.has_exception() {
         // Was `Ok(JSValue::ZERO)` with the exception pending — same ABI result.
         return Err(JsError::Thrown);
     }

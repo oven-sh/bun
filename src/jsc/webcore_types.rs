@@ -1007,8 +1007,9 @@ pub mod store {
                 return;
             };
             // SAFETY: caller passes a `*Store` (originally leaked via
-            // `heap::alloc`) as the opaque pointer.
-            unsafe { Store::deref(this) };
+            // `StoreRef::into_raw`, one outstanding ref) as the opaque
+            // pointer; adopting it releases exactly that ref on drop.
+            drop(unsafe { StoreRef::adopt(this) });
         }
     }
 

@@ -26,21 +26,23 @@ pub(crate) fn stringify<'s>(scope: &mut Scope<'s>, call_frame: &CallFrame) -> Js
     let global = scope.unscoped_global();
     let [value, replacer, space_value] = call_frame.scoped_arguments::<3>(scope).ptr;
 
-    value.raw().ensure_still_alive();
+    value.ensure_still_alive();
 
-    if value.is_undefined() || value.raw().is_symbol() || value.raw().is_function() {
+    if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(scope.undefined());
     }
 
     if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
+        return Err(scope.throw(format_args!(
             "YAML.stringify does not support the replacer argument"
         )));
     }
 
-    let mut stringifier = Stringifier::init(global, space_value.raw())?;
+    let mut stringifier = Stringifier::init(global, space_value.unscoped())?;
 
-    if let Err(err) = stringifier.find_anchors_and_aliases(global, value.raw(), ValueOrigin::Root) {
+    if let Err(err) =
+        stringifier.find_anchors_and_aliases(global, value.unscoped(), ValueOrigin::Root)
+    {
         return match err {
             StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
             StringifyError::JsError => Err(JsError::Thrown),
@@ -49,7 +51,7 @@ pub(crate) fn stringify<'s>(scope: &mut Scope<'s>, call_frame: &CallFrame) -> Js
         };
     }
 
-    if let Err(err) = stringifier.stringify(global, value.raw()) {
+    if let Err(err) = stringifier.stringify(global, value.unscoped()) {
         return match err {
             StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
             StringifyError::JsError => Err(JsError::Thrown),

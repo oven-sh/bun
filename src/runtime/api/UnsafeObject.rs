@@ -22,15 +22,14 @@ pub(crate) fn gc_aggression_level<'s>(
     scope: &mut Scope<'s>,
     frame: &CallFrame,
 ) -> JsResult<Local<'s>> {
-    let global = scope.unscoped_global();
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;
     // we hold no other Rust borrow of the VM across these accesses.
-    let vm = global.bun_vm().as_mut();
+    let vm = scope.bun_vm().as_mut();
     let ret = scope.number(vm.aggressive_garbage_collection as i32 as f64);
     let value = frame.scoped_argument(scope, 0);
 
     if !value.is_undefined_or_null() {
-        match value.raw().coerce::<i32>(global)? {
+        match value.coerce::<i32>(scope)? {
             1 => vm.aggressive_garbage_collection = GCLevel::Mild,
             2 => vm.aggressive_garbage_collection = GCLevel::Aggressive,
             0 => vm.aggressive_garbage_collection = GCLevel::None,
@@ -48,13 +47,13 @@ pub(crate) fn array_buffer_to_string<'s>(
     let global = scope.unscoped_global();
     let args = frame.scoped_arguments::<2>(scope);
     let Some(arg) = args.get(0) else {
-        return Err(global.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));
+        return Err(scope.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));
     };
     if !arg.is_cell() || !arg.js_type().is_typed_array_or_array_buffer() {
-        return Err(global.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));
+        return Err(scope.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));
     }
 
-    let array_buffer = jsc::ArrayBuffer::from_typed_array(global, arg.raw());
+    let array_buffer = jsc::ArrayBuffer::from_typed_array(global, arg.unscoped());
     match array_buffer.typed_array_type {
         JSType::Uint16Array | JSType::Int16Array => {
             // Uint16Array/Int16Array storage is u16-aligned with even byte length;

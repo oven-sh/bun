@@ -75,16 +75,18 @@ pub fn log_unhandled_exception(exception: JSValue) {
 /// # Safety
 /// `frames` must point to a live array of `frames_count` `ZigStackFrame`s.
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
-// Forwards `frames` to the C++-side remapper without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+// C ABI shim: the deref happens through `ffi::slice_mut` under the caller
+// contract above, so the clippy lint is acknowledged rather than a bug.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn remap_stack_frame_positions(
     vm: &mut VirtualMachine,
     frames: *mut ZigStackFrame,
     frames_count: usize,
 ) {
-    // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
-    // the raw ptr because it forwards to the C++-side remapper.
-    unsafe { vm.remap_stack_frame_positions(frames, frames_count) };
+    // SAFETY: C++ passes a live, exclusively-owned array of `frames_count`
+    // `ZigStackFrame`s (null only when `frames_count == 0`).
+    let frames = unsafe { bun_core::ffi::slice_mut(frames, frames_count) };
+    vm.remap_stack_frame_positions(frames);
 }
 
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm, is_patched)`

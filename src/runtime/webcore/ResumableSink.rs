@@ -262,7 +262,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let args = callframe.scoped_arguments::<2>(scope);
 
         if args.len < 2 {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "ResumableSink.setHandlers requires at least 2 arguments"
             )));
         }
@@ -271,10 +271,10 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let oncancel = args.ptr[1];
 
         if ondrain.is_callable() {
-            Self::set_drain(this_value.raw(), global_this, ondrain.raw());
+            Self::set_drain(this_value.unscoped(), global_this, ondrain.unscoped());
         }
         if oncancel.is_callable() {
-            Self::set_cancel(this_value.raw(), global_this, oncancel.raw());
+            Self::set_cancel(this_value.unscoped(), global_this, oncancel.unscoped());
         }
         Ok(scope.undefined())
     }
@@ -290,7 +290,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let args = callframe.scoped_arguments::<1>(scope);
         if args.len > 0 && args.ptr[0].is_object() {
             if let Some(high_water_mark) = args.ptr[0]
-                .raw()
+                .unscoped()
                 .get_optional_int::<i64>(global_this, "highWaterMark")?
             {
                 this.high_water_mark = high_water_mark;
@@ -307,7 +307,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         callframe: &CallFrame,
     ) -> JsResult<Local<'s>> {
         bun_jsc::mark_binding!();
-        let global_this = scope.unscoped_global();
         let args = callframe.scoped_arguments::<1>(scope);
         // ignore any call if detached
         if this.is_detached() {
@@ -315,14 +314,14 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         }
 
         if args.len < 1 {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "ResumableSink.write requires at least 1 argument"
             )));
         }
 
         let buffer = args.ptr[0];
         let Some(sb) = StringOrBuffer::from_js_scoped(scope, buffer)? else {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "ResumableSink.write requires a string or buffer"
             )));
         };

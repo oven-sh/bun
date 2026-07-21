@@ -295,10 +295,12 @@ pub fn my_fn<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local
   borrow `&Scope`, so holding a view across a coercion that could detach
   the buffer is rejected by the borrow checker — do all coercions first,
   take the view last.
-- `scope.unscoped_global()` and `local.raw()` are migration escape hatches
-  to unwrapped legacy APIs. `test/internal/scope-escapes.test.ts` pins the
-  per-file hatch counts monotonically: prefer a `Local` method or a
-  classified wrapper over adding a hatch.
+- `scope.unscoped_global()` and `local.unscoped()` are migration escape
+  hatches to unwrapped legacy APIs. `test/internal/scope-escapes.test.ts`
+  pins the per-file hatch counts monotonically: prefer a `Local` method or
+  a classified wrapper over adding a hatch. (Ambient routes like
+  `VirtualMachine::get().global()` bypass the layer too — don't reach for
+  them from scoped code.)
 - New throwing `ZIG_EXPORT` externs must carry an effect marker:
   `reenters_js` (can reach user JS → generated wrapper takes `&mut Scope`)
   or `no_user_js` (→ `&Scope`). Unclassified functions get no scoped

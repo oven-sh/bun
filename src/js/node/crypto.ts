@@ -164,18 +164,27 @@ crypto_exports.hash = function hash(algorithm, input, options) {
   }
 
   outputEncoding ??= "hex";
-  if (outputEncoding !== "hex") {
+  let normalized = outputEncoding;
+  if (normalized !== "hex") {
     validateString(outputEncoding, "outputEncoding");
+    normalized = normalizeEncoding(outputEncoding);
+    if (normalized === undefined) {
+      if (outputEncoding.toLowerCase() === "buffer") {
+        normalized = "buffer";
+      } else {
+        throw $ERR_INVALID_ARG_VALUE("outputEncoding", outputEncoding);
+      }
+    }
   }
 
   if (outputLength !== undefined) {
     validateUint32(outputLength, "outputLength");
     const h = new _Hash(algorithm, { outputLength });
     h.update(h, input);
-    return h.digest(outputEncoding);
+    return h.digest(normalized);
   }
 
-  return CryptoHasher.hash(algorithm, input, outputEncoding);
+  return CryptoHasher.hash(algorithm, input, normalized);
 };
 
 // TODO: move this to zig

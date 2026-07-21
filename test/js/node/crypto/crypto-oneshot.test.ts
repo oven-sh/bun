@@ -72,6 +72,10 @@ describe("crypto.hash", () => {
 
     expect(crypto.hash("shake128", "abc", { outputLength: 0 })).toBe("");
 
+    expect(() => crypto.hash("shake128", "abc", { outputLength: 8, outputEncoding: "not an encoding" })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+
     expect(crypto.hash("sha256", "abc", { outputLength: 32 })).toBe(
       crypto.createHash("sha256").update("abc").digest("hex"),
     );

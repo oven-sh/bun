@@ -45,9 +45,11 @@ describe("crypto.hash", () => {
     expect(crypto.hash("sha256", "abc", { outputEncoding: "hex" })).toBe(expectedHex);
     expect(crypto.hash("sha256", "abc", { outputEncoding: "base64" })).toBe(expectedBase64);
 
-    const buf = crypto.hash("sha256", "abc", { outputEncoding: "buffer" });
-    expect(Buffer.isBuffer(buf)).toBe(true);
-    expect(buf.toString("hex")).toBe(expectedHex);
+    for (const enc of ["buffer", "Buffer", "BUFFER"]) {
+      const buf = crypto.hash("sha256", "abc", { outputEncoding: enc });
+      expect(Buffer.isBuffer(buf)).toBe(true);
+      expect(buf.toString("hex")).toBe(expectedHex);
+    }
 
     expect(() => crypto.hash("sha256", "abc", { outputEncoding: 42 })).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),

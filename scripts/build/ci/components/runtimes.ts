@@ -124,7 +124,9 @@ export const buildkiteAgent: Component = {
           skip: !ctx.ci && "not a CI image",
           run: async () => {
             const tarball = await download(artifact(ctx.artifacts, "buildkiteAgent"));
-            await extractArchive({ file: tarball, into: scratchDir, members: ["buildkite-agent"] });
+            // The archive roots its members at "./" (see tar -t), and tar
+            // member matching is literal — request it exactly as archived.
+            await extractArchive({ file: tarball, into: scratchDir, members: ["./buildkite-agent"] });
             const dest = linuxBin(image, "buildkite-agent");
             await installFile({ from: join(scratchDir, "buildkite-agent"), to: dest, mode: "755" });
             await verify("buildkite-agent --version runs", () => run([dest, "--version"]).then(() => undefined));

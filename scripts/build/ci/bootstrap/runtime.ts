@@ -226,22 +226,41 @@ export function run(command: string[], options: RunOptions = {}): Promise<RunRes
  * The PATH children see. On Windows the bake installs tools (Scoop shims,
  * git, 7z, ...) by writing the Machine PATH in the registry; this node
  * process's own PATH was captured at bake start and never sees them. So
- * every child gets a PATH freshly assembled from the registry — the
- * equivalent of the old bootstrap's Refresh-Path after each install.
- * Elsewhere the inherited PATH is authoritative.
+ * children get a PATH assembled from the registry — the equivalent of the
+ * old bootstrap's Refresh-Path after each install. Elsewhere the inherited
+ * PATH is authoritative.
+ *
+ * Cached: the registry read costs a powershell round-trip, and the value
+ * only changes when an op writes the Machine PATH. Those ops call
+ * invalidateChildPath(), so a read happens once per PATH change instead of
+ * on every command.
  */
+let childPathCache: string | undefined;
+let childPathStale = true;
+
 export function childPath(): string | undefined {
   if (process.platform !== "win32") return undefined;
-  const query = (scope: "Machine" | "User"): string => {
+  if (childPathStale) {
     const result = spawnSync(
       "powershell",
-      ["-NoProfile", "-Command", `[Environment]::GetEnvironmentVariable('Path','${scope}')`],
+      [
+        "-NoProfile",
+        "-Command",
+        "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')",
+      ],
       { encoding: "utf8" },
     );
-    return result.status === 0 ? result.stdout.trim() : "";
-  };
-  const parts = [query("Machine"), query("User"), process.env.Path ?? process.env.PATH ?? ""];
-  return parts.filter(Boolean).join(";");
+    const registry = result.status === 0 ? result.stdout.trim() : "";
+    childPathCache = [registry, process.env.Path ?? process.env.PATH ?? ""].filter(Boolean).join(";");
+    childPathStale = false;
+  }
+  return childPathCache;
+}
+
+/** Mark the cached child PATH stale. Called by every op that writes the
+ * Windows Machine PATH or installs onto it (addToMachinePath, Scoop). */
+export function invalidateChildPath(): void {
+  childPathStale = true;
 }
 
 /** Execute for real (shared by run() and the always-run probes). */

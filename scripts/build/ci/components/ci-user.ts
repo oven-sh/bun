@@ -2,7 +2,7 @@
 // Sequenced BEFORE nodejs's gyp-cache step and prefetch, which write into
 // this user's home.
 
-import { addUserToGroup, ensureDirectory, ensureSystemUser, setOwnerRecursive } from "../bootstrap/ops-posix.ts";
+import { ensureDirectory, ensureSystemUser, setOwnerRecursive } from "../bootstrap/ops-posix.ts";
 import { writeText } from "../bootstrap/runtime.ts";
 import type { Component } from "./component.ts";
 import { agentHome } from "./paths.ts";
@@ -26,7 +26,9 @@ export const ciUser: Component = {
               shell: "/bin/sh",
               flavor: image.distro === "alpine" ? "busybox" : "shadow",
             });
-            await addUserToGroup(user, "docker");
+            // Docker group membership is granted by the docker component,
+            // which runs AFTER this and creates the group; adding here would
+            // no-op against a group that doesn't exist yet.
             for (const dir of [home, ...image.paths.buildkiteDirs]) {
               await ensureDirectory(dir, { owner: `${user}:${user}` });
             }

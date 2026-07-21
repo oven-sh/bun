@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import * as win from "../bootstrap/ops-windows.ts";
-import { download, log, mode, scratchDir } from "../bootstrap/runtime.ts";
+import { download, invalidateChildPath, log, mode, scratchDir } from "../bootstrap/runtime.ts";
 import type { Component } from "./component.ts";
 import { artifact } from "./component.ts";
 import { windowsSystem32 } from "./paths.ts";
@@ -63,6 +63,8 @@ $prev = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'
 scoop install ${pkg.name} *>&1 | ForEach-Object { "$_" } | Write-Host
 $ErrorActionPreference = $prev`,
               });
+              // scoop writes shims onto the Machine PATH; children re-read it.
+              invalidateChildPath();
             }
             // Git for Windows ships Unix tools (cat, head, tail, ...) in usr\bin;
             // Cygwin binaries live at <scoop>\apps\cygwin\current\root\bin.

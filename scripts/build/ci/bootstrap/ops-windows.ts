@@ -13,7 +13,7 @@
 // visible in the code and the log.
 
 import type { RunOptions, RunResult } from "./runtime.ts";
-import { log, mode, run, runOutput, verify } from "./runtime.ts";
+import { invalidateChildPath, log, mode, run, runOutput, verify } from "./runtime.ts";
 
 // ---------------------------------------------------------------------------
 // PowerShell plumbing
@@ -24,9 +24,20 @@ export function psq(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-/** Run a PowerShell fragment (echoed in full, output streamed). */
+/**
+ * Run a PowerShell fragment (echoed in full, output streamed).
+ *
+ * Every fragment runs under $ErrorActionPreference = 'Stop', the semantics
+ * bootstrap.ps1 had globally: a non-terminating cmdlet error mid-fragment
+ * ABORTS the fragment (non-zero exit → the step fails) instead of printing
+ * and letting a trailing statement exit 0. Without this, "install failed"
+ * followed by Write-Output "done" would ship a broken image as a success.
+ * Fragments that legitimately tolerate errors set their own preference or
+ * -ErrorAction per statement.
+ */
 function ps(script: string, options: RunOptions = {}): Promise<RunResult> {
-  return run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], options);
+  const strict = `$ErrorActionPreference = 'Stop'\n${script}`;
+  return run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", strict], options);
 }
 
 // ---------------------------------------------------------------------------
@@ -52,7 +63,9 @@ export async function removeTreeRobustly(path: string): Promise<void> {
   log(`removing tree ${path} (rmdir /s /q)`);
   // Best-effort cleanup: a locked leftover in a scratch clone must not
   // fail the bake; sysprep wipes the temp tree regardless.
-  await run(["cmd", "/c", `rmdir /s /q "${path}"`], { allowFailure: true });
+  // Path is its own argv element: node quotes it correctly for cmd. An
+  // embedded \"path\" would be backslash-escaped by libuv and rejected.
+  await run(["cmd", "/c", "rmdir", "/s", "/q", path], { allowFailure: true });
 }
 
 /** Merge the CONTENTS of `from` into `into`. */
@@ -186,6 +199,8 @@ export async function setMachineEnv(name: string, value: string): Promise<void> 
 /** Append a directory to the machine PATH if it isn't already there. */
 export async function addToMachinePath(dir: string): Promise<void> {
   log(`machine PATH += ${dir} (if absent)`);
+  // The registry PATH is about to change: children must re-read it.
+  invalidateChildPath();
   await ps(
     `$p = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if (($p -split ';') -notcontains ${psq(dir)}) {

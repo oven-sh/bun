@@ -14,7 +14,7 @@
 //     re-bake automatically.
 //
 // An image's spec entry lists its components IN INSTALL ORDER, so ordering
-// is data. The sequencers (bootstrap/linux.ts, bootstrap/windows.ts) just
+// is data. bootstrap.ts assembles the plan via components/registry.ts, which
 // walk that list; resolveArtifacts() walks the same list to build the
 // hashed download bundle. Bake and hash therefore share one input by
 // construction.

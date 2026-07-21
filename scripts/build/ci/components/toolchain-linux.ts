@@ -218,7 +218,10 @@ export const docker: Component = {
               await sudo(["sh", script]);
               await enableService("docker", { start: false });
             }
-            await addUserToGroup(host.user, "docker");
+            // The account that RUNS jobs needs the socket: buildkite-agent
+            // on a CI image (created earlier by ci-user), the invoking user
+            // when provisioning a plain machine.
+            await addUserToGroup(ctx.ci ? image.paths.buildkiteUser : host.user, "docker");
             await verify("docker --version runs", () => run(["docker", "--version"]).then(() => undefined));
           },
         },

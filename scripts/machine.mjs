@@ -469,7 +469,9 @@ const aws = {
 
     const [instance] = await aws.runInstances({
       ["image-id"]: ImageId,
-      ["instance-type"]: instanceType || (arch === "aarch64" ? "t4g.large" : "t3.large"),
+      // Explicit --instance-type wins; otherwise the bake shape is a spec
+      // fact (image.bake.instanceType) — not re-declared here.
+      ["instance-type"]: instanceType || options.imageEntry.bake.instanceType,
       ["user-data"]: userData,
       ["block-device-mappings"]: JSON.stringify(blockDeviceMappings),
       ["metadata-options"]: JSON.stringify({
@@ -1215,7 +1217,9 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
         osState: "Generalized",
         hyperVGeneration: "V2",
         architecture: arch === "aarch64" ? "Arm64" : "x64",
-        identifier: { publisher: "bun", offer: `windows-${arch}-ci`, sku: key },
+        // (publisher, offer, sku) must be unique per gallery; the content-
+        // addressed definition name is unique by construction, so it is the sku.
+        identifier: { publisher: "bun", offer: `windows-${arch}-ci`, sku: imageName },
         features: [
           { name: "DiskControllerTypes", value: "SCSI, NVMe" },
           { name: "SecurityType", value: "TrustedLaunch" },

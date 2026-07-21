@@ -24,7 +24,9 @@ number to bump anywhere. Merging *is* publishing.
 | `artifacts.ts` | Turns spec values into concrete `{url, sha256}` downloads. `resolveArtifacts(entry)` is THE enumeration of everything an image bake fetches. Code, not data — but its *output* is hashed. |
 | `naming.ts` | The hash and the name. `imageHash(entry)` = `sha256({epoch, image, artifacts})`. |
 | `bootstrap.ts` | Entry point run **on the bake VM** under a bare `node` (type stripping). `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`. `--dry-run` prints the complete plan for any image from any host. |
-| `bootstrap/linux.ts`, `bootstrap/windows.ts` | The steps, written as recipes over the ops vocabularies. |
+| `components/*.ts` | One file per baked thing (nodejs, ccache, the sysroots, ...): each owns HOW its thing installs on each platform it supports and enumerates its own downloads, reading every fact from the spec entry. |
+| `components/registry.ts` | name → component; derives BOTH the ordered install steps and the hashed download bundle from an image\'s `components` list, so what is baked and what is hashed share one input. |
+| `components/paths.ts` | Derived locations composed from the spec\'s root paths; no path is written twice. |
 | `bootstrap/ops-posix.ts`, `bootstrap/ops-windows.ts` | The vocabulary: `ensureDirectory`, `installFile`, `extractArchive`, `ensureSystemUser`, `msiInstall`, `setMachineEnv`, … Each op logs its intent then the exact command. |
 | `bootstrap/runtime.ts` | Logging, `run`/`sudo`, `download` (checksum-verified), dry-run, and the failure report. |
 | `packer.ts` | Renders the Windows Packer template as JSON from a `WindowsImage` entry (no checked-in `.pkr.hcl`). |

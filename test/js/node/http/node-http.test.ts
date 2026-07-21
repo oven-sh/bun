@@ -1886,6 +1886,69 @@ describe("HTTP Server Security Tests - Advanced", () => {
     });
   });
 
+  describe("server.maxHeadersCount", () => {
+    // Node clamps req.headers to maxHeadersCount but only clamps req.rawHeaders
+    // once the request carries at least 32 header fields (the llhttp binding's
+    // flush batch size). Expected values below verified against Node.js v26.3.0.
+    test.each([
+      { sent: 12, max: 6, headerKeys: 6, rawLen: 24 },
+      { sent: 31, max: 6, headerKeys: 6, rawLen: 62 },
+      { sent: 32, max: 6, headerKeys: 6, rawLen: 12 },
+      { sent: 40, max: 6, headerKeys: 6, rawLen: 12 },
+      { sent: 32, max: 40, headerKeys: 32, rawLen: 64 },
+      { sent: 50, max: 40, headerKeys: 40, rawLen: 80 },
+      { sent: 66, max: 50, headerKeys: 50, rawLen: 100 },
+    ])(
+      "sent=$sent max=$max -> headers=$headerKeys rawHeaders.length=$rawLen",
+      async ({ sent, max, headerKeys, rawLen }) => {
+        server.maxHeadersCount = max;
+        const { promise, resolve, reject } = Promise.withResolvers();
+        server.on("request", (req, res) => {
+          try {
+            resolve({
+              headerKeys: Object.keys(req.headers).length,
+              rawLen: req.rawHeaders.length,
+              distinctKeys: Object.keys(req.headersDistinct).length,
+            });
+            res.end("ok");
+          } catch (err) {
+            reject(err);
+          }
+        });
+
+        const extra = Array.from({ length: sent - 2 }, (_, i) => `X-H${i}: ${i}`);
+        const msg = ["GET / HTTP/1.1", "Host: h", "Connection: close", ...extra, "", ""].join("\r\n");
+        const response = await sendRequest(msg);
+        expect(response).toInclude("200");
+        expect(await promise).toEqual({ headerKeys, rawLen, distinctKeys: headerKeys });
+      },
+    );
+
+    test("rawHeaders retains fields past the clamp when access order is headers-first", async () => {
+      server.maxHeadersCount = 3;
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("request", (req, res) => {
+        try {
+          // Touch req.headers first so the rawHeaders materialization happens
+          // inside the headers getter; rawHeaders must still be complete.
+          const headerKeys = Object.keys(req.headers).length;
+          resolve({ headerKeys, rawHeaders: req.rawHeaders });
+          res.end("ok");
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      const msg = ["GET / HTTP/1.1", "Host: h", "Connection: close", "X-A: 1", "X-B: 2", "X-C: 3", "", ""].join("\r\n");
+      const response = await sendRequest(msg);
+      expect(response).toInclude("200");
+      expect(await promise).toEqual({
+        headerKeys: 3,
+        rawHeaders: ["Host", "h", "Connection", "close", "X-A", "1", "X-B", "2", "X-C", "3"],
+      });
+    });
+  });
+
   describe("HTTP Protocol Violations", () => {
     test("rejects requests with invalid HTTP version", async () => {
       const mockHandler = createMockHandler();

@@ -218,15 +218,25 @@ ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
       const source = this[kHeaderSource];
       let built = source != null ? source.takeRawHeaders() : undefined;
       if (built === undefined) built = [];
-      // Node.js's parser keeps at most server.maxHeadersCount header pairs
-      // (parser.maxHeaderPairs); the native parser does not enforce it, so
-      // truncate here.
+      // Node clamps the count fed to _addHeaderLines to parser.maxHeaderPairs
+      // (= server.maxHeadersCount << 1); rawHeaders itself is the parser's
+      // raw list, which Node's llhttp binding flushes through parserOnHeaders
+      // in 32-pair batches. Fewer than 32 pairs arrive in a single
+      // parserOnHeadersComplete call and bypass parserOnHeaders entirely, so
+      // rawHeaders is the full list and only req.headers is clamped. The
+      // native server delivers everything in one shot; reproduce the split
+      // here so proxies/loggers see the same rawHeaders Node would.
+      let count = built.length;
       const maxHeadersCount = this[fakeSocketSymbol]?.server?.maxHeadersCount;
-      if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && built.length > maxHeadersCount * 2) {
-        built = ArrayPrototypeSlice.$call(built, 0, maxHeadersCount * 2);
+      if (typeof maxHeadersCount === "number" && maxHeadersCount > 0) {
+        const maxHeaderPairs = maxHeadersCount * 2;
+        if (count > maxHeaderPairs) {
+          if (count >= 64) built = ArrayPrototypeSlice.$call(built, 0, maxHeaderPairs);
+          count = maxHeaderPairs;
+        }
       }
       raw = this[kRawHeaders] = built;
-      this[kHeadersCount] = built.length;
+      this[kHeadersCount] = count;
     }
     return raw;
   },

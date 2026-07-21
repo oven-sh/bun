@@ -29,20 +29,47 @@ impl Export {
             if s.is_empty() {
                 continue;
             }
-            let (name, value) = match s.iter().position(|&b| b == b'=') {
-                Some(eq) => (&s[..eq], &s[eq + 1..]),
-                None => (s, &b""[..]),
+            let eq = s.iter().position(|&b| b == b'=');
+            let name = match eq {
+                Some(eq) => &s[..eq],
+                None => s,
             };
             // The argv backing is freed when the Cmd retires,
             // so the key/value MUST be duplicated into ref-counted storage —
             // `init_slice` here would leave dangling EnvStr in `export_env`.
             let label = EnvStr::dupe_ref_counted(name);
-            let val = EnvStr::dupe_ref_counted(value);
             let shell = interp.as_cmd(cmd).base.shell;
             // SAFETY: shell env outlives the Cmd node.
-            unsafe { (*shell).export_env.insert(label, val) };
+            unsafe {
+                match eq {
+                    Some(eq) => {
+                        let val = EnvStr::dupe_ref_counted(&s[eq + 1..]);
+                        // A `NAME=value` shell-local entry must not shadow the
+                        // exported binding: `$VAR` expansion checks `shell_env`
+                        // before `export_env`.
+                        (*shell).shell_env.remove(label);
+                        (*shell).export_env.insert(label, val);
+                        val.deref();
+                    }
+                    // `export NAME` gives NAME the export attribute while keeping
+                    // its current value: promote a shell-local value rather than
+                    // blanking it, and leave an already-exported value untouched.
+                    None => {
+                        if let Some(existing) = (*shell).shell_env.get(label) {
+                            (*shell).shell_env.remove(label);
+                            (*shell).export_env.insert(label, existing);
+                            existing.deref();
+                        } else if let Some(existing) = (*shell).export_env.get(label) {
+                            existing.deref();
+                        } else {
+                            let val = EnvStr::dupe_ref_counted(b"");
+                            (*shell).export_env.insert(label, val);
+                            val.deref();
+                        }
+                    }
+                }
+            }
             label.deref();
-            val.deref();
         }
         Builtin::done(interp, cmd, 0)
     }

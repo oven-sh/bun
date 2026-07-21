@@ -1032,6 +1032,56 @@ booga"
 
       expect(procEnv).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
     });
+
+    // POSIX: a plain assignment to a name that already carries the export
+    // attribute keeps it exported, so the new value must reach child processes,
+    // not just the shell's own `$VAR` view.
+    test.concurrent("reassigning an exported var updates both the shell and the child", async () => {
+      const env = { ...bunEnv, OUTER: "fromenv" };
+      const code = "process.stdout.write('child=' + (process.env.OUTER ?? '<unset>'))";
+      const { stdout } = await $`OUTER=changed; echo shell=$OUTER; ${BUN} -e ${code}`.env(env);
+      expect(stdout.toString()).toBe("shell=changed\nchild=changed");
+    });
+
+    test.concurrent("append idiom on an exported var reaches the child", async () => {
+      const env = { ...bunEnv, OUTER: "fromenv" };
+      const code = "process.stdout.write(process.env.OUTER ?? '<unset>')";
+      const { stdout } = await $`OUTER="$OUTER+more"; ${BUN} -e ${code}`.env(env);
+      expect(stdout.toString()).toBe("fromenv+more");
+    });
+
+    test.concurrent("bare assignment to a non-exported name stays shell-local", async () => {
+      const code = "process.stdout.write(process.env.NEWV ?? '<unset>')";
+      const { stdout } = await $`NEWV=nv; echo shell=$NEWV; ${BUN} -e ${code}`.env(bunEnv);
+      expect(stdout.toString()).toBe("shell=nv\n<unset>");
+    });
+
+    // A shell-local var that is later exported and then reassigned must not keep
+    // a stale shell-local entry shadowing the exported value: `$VAR` expansion
+    // checks shell_env before export_env.
+    test.concurrent("bare reassignment after export clears the shell-local shadow", async () => {
+      const code = "process.stdout.write('child=' + (process.env.FOO ?? '<unset>'))";
+      const { stdout } = await $`FOO=a; export FOO=b; FOO=c; echo shell=$FOO; ${BUN} -e ${code}`.env(bunEnv);
+      expect(stdout.toString()).toBe("shell=c\nchild=c");
+    });
+
+    test.concurrent("export NAME=value overrides a prior shell-local value", async () => {
+      const code = "process.stdout.write('child=' + (process.env.FOO ?? '<unset>'))";
+      const { stdout } = await $`FOO=a; export FOO=b; echo shell=$FOO; ${BUN} -e ${code}`.env(bunEnv);
+      expect(stdout.toString()).toBe("shell=b\nchild=b");
+    });
+
+    test.concurrent("export NAME promotes an existing shell-local value", async () => {
+      const code = "process.stdout.write('child=' + (process.env.FOO ?? '<unset>'))";
+      const { stdout } = await $`FOO=a; export FOO; echo shell=$FOO; ${BUN} -e ${code}`.env(bunEnv);
+      expect(stdout.toString()).toBe("shell=a\nchild=a");
+    });
+
+    test.concurrent("export NAME leaves an already-exported value intact", async () => {
+      const code = "process.stdout.write('child=' + (process.env.FOO ?? '<unset>'))";
+      const { stdout } = await $`export FOO=b; export FOO; echo shell=$FOO; ${BUN} -e ${code}`.env(bunEnv);
+      expect(stdout.toString()).toBe("shell=b\nchild=b");
+    });
   });
 
   describe("cd & pwd", () => {

@@ -391,7 +391,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: "keys=default,n typeof default=object\nunwrap {\"n\":7}",
+      stdout: 'keys=default,n typeof default=object\nunwrap {"n":7}',
     },
   });
   itBundled("cjs2esm/ImportStarCommonJSNamespaceHasDefaultNodeTarget", {

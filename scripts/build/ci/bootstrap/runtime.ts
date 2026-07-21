@@ -364,11 +364,6 @@ export function sudo(command: string[], options: RunOptions = {}): Promise<RunRe
   return run(asRoot(command, options.env ?? {}), options);
 }
 
-/** Run a shell script as root. */
-export function sudoSh(script: string, options: RunOptions = {}): Promise<RunResult> {
-  return run(asRoot(["sh", "-c", script]), options);
-}
-
 // ---------------------------------------------------------------------------
 // Probes (read-only; run for real even in dry-run)
 // ---------------------------------------------------------------------------
@@ -382,24 +377,11 @@ export function which(name: string): string | undefined {
   return first || undefined;
 }
 
-/** Like which(), but a hard failure naming what's missing. In dry-run
- * the command may be one a previous (unexecuted) step installs, so the
- * requirement is logged and the bare name returned for the plan. */
-export function requireCommand(name: string): string {
-  const path = which(name);
-  if (path) return path;
-  if (mode.dryRun) {
-    log(`[dry-run] would require "${name}" on PATH (not on this host; a previous step installs it)`);
-    return name;
-  }
-  throw new Error(`Required command "${name}" is not installed (PATH=${process.env.PATH ?? ""})`);
-}
-
 // ---------------------------------------------------------------------------
 // Files
 // ---------------------------------------------------------------------------
 
-export function readTextIfExists(path: string): string | undefined {
+function readTextIfExists(path: string): string | undefined {
   try {
     return readFileSync(path, "utf8");
   } catch {
@@ -531,16 +513,4 @@ export class ChecksumError extends Error {
 
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-export function fileSize(path: string): number {
-  try {
-    return statSync(path).size;
-  } catch {
-    return 0;
-  }
-}
-
-export function pathExists(path: string): boolean {
-  return existsSync(path);
 }

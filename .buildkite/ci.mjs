@@ -6,7 +6,7 @@
  */
 
 import { join } from "node:path";
-import { imageKey, imageName } from "../scripts/build/ci/naming.ts";
+import { imageEntry, imageKey, imageName } from "../scripts/build/ci/naming.ts";
 import { alpineRelease } from "../scripts/build/ci/spec.ts";
 import {
   getBuildkiteEmoji,
@@ -339,7 +339,7 @@ function getEc2Agent(platform, options, ec2Options) {
     release,
     robobun: true,
     robobun2: true,
-    "image-name": getImageName(platform, options),
+    "image-name": getImageName(platform),
     "instance-type": instanceType,
     "cpu-count": cpuCount,
     "threads-per-core": threadsPerCore,
@@ -622,9 +622,14 @@ const PINNED_QEMU = {
 function getEmulatorBinary(platform) {
   const { os, arch } = platform;
   // Intel SDE is baked into the Windows image by scripts/build/ci
-  // (Install-IntelSde): downloadmirror.intel.com sits behind a bot challenge
-  // that blocks non-browser clients, so it cannot be downloaded at job time.
-  if (os === "windows") return "C:\\intel-sde\\sde.exe";
+  // (intel-sde component): downloadmirror.intel.com sits behind a bot
+  // challenge that blocks non-browser clients, so it can't be fetched at job
+  // time. Its install dir is a spec fact on the x64 windows entry — read it,
+  // don't restate it, so a moved SDE bakes and runs from the same path.
+  if (os === "windows") {
+    const entry = imageEntry("windows-x64-2019");
+    return `${entry.intelSde.installDir}\\sde.exe`;
+  }
   // Fetched into the checkout root by the setup command below (see PINNED_QEMU).
   return `./${PINNED_QEMU[arch].binary}`;
 }

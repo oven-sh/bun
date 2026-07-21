@@ -221,14 +221,6 @@ if ($c) { $c.Path }`,
 // Services, registry, tasks, firewall
 // ---------------------------------------------------------------------------
 
-/** Set a service's startup type; a service that doesn't exist is a no-op. */
-export async function setServiceStartup(name: string, startup: "Automatic" | "Disabled" | "Manual"): Promise<void> {
-  log(`service ${name} startup → ${startup}`);
-  await ps(
-    `$s = Get-Service -Name ${psq(name)} -ErrorAction SilentlyContinue
-if ($s) { Set-Service -Name ${psq(name)} -StartupType ${startup}; Write-Output "${name} → ${startup}" } else { Write-Output "service ${name} not present" }`,
-  );
-}
 
 /** Stop a service now and disable it (missing service = no-op). */
 export async function stopAndDisableService(name: string): Promise<void> {
@@ -259,17 +251,6 @@ export async function serviceExists(name: string): Promise<boolean> {
   return output.length > 0;
 }
 
-/** Write a registry value (creating the property if absent). */
-export async function setRegistryValue(spec: {
-  path: string;
-  name: string;
-  value: string;
-  type: "String" | "DWORD";
-}): Promise<void> {
-  log(`registry ${spec.path}\\${spec.name} = ${spec.value} (${spec.type})`);
-  const value = spec.type === "DWORD" ? spec.value : psq(spec.value);
-  await ps(`New-ItemProperty -Path ${psq(spec.path)} -Name ${psq(spec.name)} -Value ${value} -PropertyType ${spec.type} -Force | Out-Null`);
-}
 
 /** Register a script to run as SYSTEM at every boot. */
 export async function registerStartupTask(spec: { name: string; scriptPath: string }): Promise<void> {

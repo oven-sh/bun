@@ -927,7 +927,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
             Ok(r) => r,
-            Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
+            Err(
+                picohttp::ParseResponseError::MalformedHttpResponse
+                | picohttp::ParseResponseError::TooManyHeaders,
+            ) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
                 return;
@@ -986,7 +989,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Parse the response to find the end of headers
         let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
             Ok(r) => r,
-            Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
+            Err(
+                picohttp::ParseResponseError::MalformedHttpResponse
+                | picohttp::ParseResponseError::TooManyHeaders,
+            ) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
                 return;
@@ -1227,7 +1233,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
             Ok(r) => r,
-            Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
+            Err(
+                picohttp::ParseResponseError::MalformedHttpResponse
+                | picohttp::ParseResponseError::TooManyHeaders,
+            ) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
                 return;

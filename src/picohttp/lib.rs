@@ -518,6 +518,11 @@ impl fmt::Display for StatusCodeFormatter {
 pub enum ParseResponseError {
     #[strum(serialize = "Malformed_HTTP_Response")]
     MalformedHttpResponse,
+    /// picohttpparser filled every slot in the caller's `[Header]` scratch
+    /// before finding the terminating CRLF. The response may be valid; the
+    /// caller can retry with a larger buffer.
+    #[strum(serialize = "Response_Headers_Too_Large")]
+    TooManyHeaders,
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseResponseError);
@@ -618,6 +623,14 @@ impl<'a> Response<'a> {
 
         match rc {
             -1 => {
+                // picohttpparser returns -1 both for genuinely invalid input
+                // and when `num_headers` reaches `max_headers` before the
+                // terminating CRLF. In the overflow case `num_headers` is
+                // written back equal to the input capacity; every other -1
+                // path leaves it strictly below.
+                if !src.is_empty() && num_headers == src.len() {
+                    return Err(ParseResponseError::TooManyHeaders);
+                }
                 bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
                 Err(ParseResponseError::MalformedHttpResponse)
             }

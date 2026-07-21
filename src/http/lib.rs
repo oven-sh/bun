@@ -1048,8 +1048,16 @@ static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_REQ
     bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
 
 // this doesn't need to be stack memory because it is immediately cloned after use
-static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> =
-    bun_core::RacyCell::new([picohttp::Header::ZERO; 256]);
+const MAX_RESPONSE_HEADERS_INLINE: usize = 256;
+static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<
+    [picohttp::Header; MAX_RESPONSE_HEADERS_INLINE],
+> = bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_RESPONSE_HEADERS_INLINE]);
+
+// Spillover for responses with more than MAX_RESPONSE_HEADERS_INLINE header
+// fields. Sized on demand to the line count of the response buffer, so the
+// 1 MB byte cap (MAX_RESPONSE_HEADER_BUFFER) bounds the allocation.
+static SHARED_RESPONSE_HEADERS_OVERFLOW: bun_core::RacyCell<Vec<picohttp::Header>> =
+    bun_core::RacyCell::new(Vec::new());
 
 // the first packet for Transfer-Encoding: chunked
 // is usually pretty small or sometimes even just a length
@@ -1072,9 +1080,15 @@ mod scratch {
         unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() }
     }
     #[inline]
-    pub(super) fn response_headers() -> &'static mut [picohttp::Header; 256] {
+    pub(super) fn response_headers() -> &'static mut [picohttp::Header; MAX_RESPONSE_HEADERS_INLINE]
+    {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *SHARED_RESPONSE_HEADERS_BUF.get() }
+    }
+    #[inline]
+    pub(super) fn response_headers_overflow() -> &'static mut Vec<picohttp::Header> {
+        // SAFETY: see module-level INVARIANT.
+        unsafe { &mut *SHARED_RESPONSE_HEADERS_OVERFLOW.get() }
     }
     #[inline]
     pub(super) fn single_packet_small_buffer() -> &'static mut [u8; 16 * 1024] {
@@ -3729,12 +3743,29 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
 
-            let shared_resp = scratch::response_headers();
-            let response = match picohttp::Response::parse_parts(
+            let mut parse_result = picohttp::Response::parse_parts(
                 to_read!(),
-                shared_resp,
+                scratch::response_headers(),
                 Some(&mut amount_read),
+            );
+            if matches!(
+                parse_result,
+                Err(picohttp::ParseResponseError::TooManyHeaders)
             ) {
+                // More than MAX_RESPONSE_HEADERS_INLINE fields. Size the
+                // overflow scratch to the line count (a strict upper bound on
+                // the field count) and reparse. The 1 MB byte cap below
+                // remains the only hard limit on the response header block.
+                let overflow = scratch::response_headers_overflow();
+                let needed = bun_core::strings::count_char(to_read!(), b'\n');
+                overflow.resize(needed, picohttp::Header::ZERO);
+                parse_result = picohttp::Response::parse_parts(
+                    to_read!(),
+                    overflow.as_mut_slice(),
+                    Some(&mut amount_read),
+                );
+            }
+            let response = match parse_result {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
                     // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/

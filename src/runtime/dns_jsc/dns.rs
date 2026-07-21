@@ -3432,7 +3432,7 @@ impl_cares_record_type!(
     super::cares_jsc::soa_reply_to_js_response
 );
 impl_cares_record_type!(
-    c_ares::struct_ares_txt_reply,
+    c_ares::struct_ares_txt_ext,
     "txt",
     "queryTxt",
     PendingTxtCacheCares,
@@ -3642,7 +3642,7 @@ type SrvPendingCache =
 type SoaPendingCache =
     HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_soa_reply>, 32>;
 type TxtPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_txt_reply>, 32>;
+    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_txt_ext>, 32>;
 type NaptrPendingCache =
     HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_naptr_reply>, 32>;
 type MxPendingCache =
@@ -5071,7 +5071,7 @@ impl Resolver {
                 self.do_resolve_cares::<c_ares::struct_ares_srv_reply>(name.slice(), global_this)
             }
             RecordType::TXT => {
-                self.do_resolve_cares::<c_ares::struct_ares_txt_reply>(name.slice(), global_this)
+                self.do_resolve_cares::<c_ares::struct_ares_txt_ext>(name.slice(), global_this)
             }
         }
     }
@@ -5386,7 +5386,7 @@ impl Resolver {
         global_resolve_txt,
         resolve_txt,
         "resolveTxt",
-        c_ares::struct_ares_txt_reply,
+        c_ares::struct_ares_txt_ext,
         false
     );
     resolve_record_fn!(

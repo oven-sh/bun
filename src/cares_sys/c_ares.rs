@@ -582,7 +582,9 @@ impl struct_nameinfo {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
-            this.on_nameinfo(Error::get(status), timeouts, None);
+            // `ares_getnameinfo` backs `lookupService()`; report like node's
+            // uv_getnameinfo path, not like a `resolve*()` query.
+            this.on_nameinfo(Error::get_for_lookup(status), timeouts, None);
             return;
         }
         this.on_nameinfo(None, timeouts, Some(struct_nameinfo { node, service }));
@@ -659,7 +661,9 @@ impl AddrInfo {
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
-        this.on_addr_info(Error::get(status), timeouts, addr_info);
+        // `ares_getaddrinfo` backs the c-ares `lookup()` backend; report like
+        // node's uv_getaddrinfo path, not like a `resolve*()` query.
+        this.on_addr_info(Error::get_for_lookup(status), timeouts, addr_info);
     }
 
     /// FFI destroy — frees a c-ares-allocated addrinfo chain.
@@ -1355,33 +1359,24 @@ pub struct struct_ares_txt_reply {
     pub length: usize,
 }
 
-impl AresReply for struct_ares_txt_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_txt_reply(abuf, alen, out) }
-    }
-}
-
-impl struct_ares_txt_reply {
-    /// Safe view of the c-ares-owned TXT record bytes.
-    #[inline]
-    pub fn txt_bytes(&self) -> &[u8] {
-        if self.txt.is_null() {
-            &[]
-        } else {
-            // SAFETY: c-ares allocates `txt` as `length` bytes that live until
-            // `ares_free_data` on the list head; `&self` is the shorter borrow.
-            unsafe { core::slice::from_raw_parts(self.txt, self.length) }
-        }
-    }
-}
-
 #[repr(C)]
 pub struct struct_ares_txt_ext {
     pub next: *mut struct_ares_txt_ext,
     pub txt: *mut u8,
     pub length: usize,
+    /// 1 on the first character-string of a TXT resource record, 0 on the
+    /// rest. A single TXT RR may carry several character-strings; this is the
+    /// only way to recover the record boundaries from the flat list.
     pub record_start: u8,
+}
+
+// The `_ext` parser is the one that preserves RR boundaries (`record_start`);
+// `ares_parse_txt_reply` flattens every character-string into one list.
+impl AresReply for struct_ares_txt_ext {
+    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
+        unsafe { ares_parse_txt_reply_ext(abuf, alen, out) }
+    }
 }
 
 impl struct_ares_txt_ext {
@@ -1448,7 +1443,7 @@ pub struct struct_any_reply {
     pub aaaa_reply: Option<Box<hostent_with_ttls>>,
     pub mx_reply: *mut struct_ares_mx_reply,
     pub ns_reply: *mut struct_hostent,
-    pub txt_reply: *mut struct_ares_txt_reply,
+    pub txt_reply: *mut struct_ares_txt_ext,
     pub srv_reply: *mut struct_ares_srv_reply,
     pub ptr_reply: *mut struct_hostent,
     pub naptr_reply: *mut struct_ares_naptr_reply,
@@ -1552,7 +1547,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: see `ares_parse_mx_reply` call above.
-        result = unsafe { ares_parse_txt_reply(abuf, alen, &raw mut reply.txt_reply) };
+        result = unsafe { ares_parse_txt_reply_ext(abuf, alen, &raw mut reply.txt_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -2001,12 +1996,10 @@ impl Error {
         }
     }
 
+    /// Faithful `ARES_*` status -> [`Error`] mapping, used by the `resolve*()`
+    /// query paths, which (like node's `cares_wrap.cc`) report the c-ares
+    /// status verbatim. The lookup family goes through [`Error::get_for_lookup`].
     pub fn get(rc: i32) -> Option<Error> {
-        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-        if rc == ARES_ENODATA || rc == ARES_ENONAME {
-            return Self::get(ARES_ENOTFOUND);
-        }
-
         if rc == 0 {
             return None;
         }
@@ -2020,6 +2013,16 @@ impl Error {
         // SAFETY: `n` is in `1..=ARES_ENOSERVER`; `Error` is `#[repr(i32)]` with
         // contiguous discriminants `1..=ARES_ENOSERVER`.
         Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
+    }
+
+    /// [`Error::get`] plus node's `lookup()`/`lookupService()` folding: NODATA and
+    /// NONAME become the fabricated ENOTFOUND, as on node's getaddrinfo/getnameinfo path.
+    /// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+    pub fn get_for_lookup(rc: i32) -> Option<Error> {
+        match Self::get(rc) {
+            Some(Error::ENODATA | Error::ENONAME) => Some(Error::ENOTFOUND),
+            other => other,
+        }
     }
 }
 

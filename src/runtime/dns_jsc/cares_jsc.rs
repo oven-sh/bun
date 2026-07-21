@@ -245,7 +245,7 @@ impl_cares_linked!(
     c_ares::struct_ares_caa_reply,
     c_ares::struct_ares_srv_reply,
     c_ares::struct_ares_mx_reply,
-    c_ares::struct_ares_txt_reply,
+    c_ares::struct_ares_txt_ext,
     c_ares::struct_ares_naptr_reply,
 );
 
@@ -366,35 +366,68 @@ pub(crate) fn mx_reply_to_js(
     Ok(obj)
 }
 
-// ── struct_ares_txt_reply ──────────────────────────────────────────────────
+// ── struct_ares_txt_ext ────────────────────────────────────────────────────
+// c-ares returns one node per TXT character-string; `record_start` tags each
+// record's first string. Node groups per record (cares_wrap.cc ParseTxtReply).
+
 pub(crate) fn txt_reply_to_js_response(
-    this: &mut c_ares::struct_ares_txt_reply,
+    this: &mut c_ares::struct_ares_txt_ext,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    cares_list_to_js_array(this, global_this, txt_reply_to_js)
-}
-
-pub(crate) fn txt_reply_to_js(
-    this: &mut c_ares::struct_ares_txt_reply,
-    global_this: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    let array = JSValue::create_empty_array(global_this, 1)?;
-    let value = this.txt_bytes();
-    array.put_index(global_this, 0, utf8_to_js(global_this, value)?)?;
-    Ok(array)
+    // resolveTxt: one inner array of character-strings per TXT record.
+    txt_records_to_js(this, global_this, |record, _| Ok(record))
 }
 
 pub(crate) fn txt_reply_to_js_for_any(
-    this: &mut c_ares::struct_ares_txt_reply,
+    this: &mut c_ares::struct_ares_txt_ext,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    let array =
-        cares_list_to_js_array(this, global_this, |node, g| utf8_to_js(g, node.txt_bytes()))?;
-    let obj = JSValue::create_empty_object(global_this, 1);
-    obj.put(global_this, b"entries", array);
-    Ok(obj)
+    // resolveAny: one `{ entries: [...] }` object per TXT record. The caller
+    // (`any_reply_append_all`) appends the `type` field to each.
+    txt_records_to_js(this, global_this, |record, g| {
+        let obj = JSValue::create_empty_object(g, 1);
+        obj.put(g, b"entries", record);
+        Ok(obj)
+    })
+}
+
+/// Walk the TXT list grouping character-strings into one array per resource
+/// record; `wrap` turns each per-record array into the value pushed onto the
+/// result.
+fn txt_records_to_js(
+    head: &mut c_ares::struct_ares_txt_ext,
+    global_this: &JSGlobalObject,
+    wrap: impl Fn(JSValue, &JSGlobalObject) -> JsResult<JSValue>,
+) -> JsResult<JSValue> {
+    let records = JSValue::create_empty_array(global_this, 0)?;
+    let mut record_count: u32 = 0;
+    let mut record = JSValue::create_empty_array(global_this, 0)?;
+    let mut strings_in_record: u32 = 0;
+
+    let mut p: *mut c_ares::struct_ares_txt_ext = head;
+    while !p.is_null() {
+        // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
+        let node = unsafe { &mut *p };
+        // The head node is always tagged; `strings_in_record > 0` stops it
+        // from flushing an empty leading record.
+        if node.record_start != 0 && strings_in_record > 0 {
+            records.put_index(global_this, record_count, wrap(record, global_this)?)?;
+            record_count += 1;
+            record = JSValue::create_empty_array(global_this, 0)?;
+            strings_in_record = 0;
+        }
+        record.put_index(
+            global_this,
+            strings_in_record,
+            utf8_to_js(global_this, node.txt_bytes())?,
+        )?;
+        strings_in_record += 1;
+        p = node.next();
+    }
+    records.put_index(global_this, record_count, wrap(record, global_this)?)?;
+    Ok(records)
 }
 
 // ── struct_ares_naptr_reply ────────────────────────────────────────────────
@@ -598,8 +631,8 @@ pub(crate) fn any_reply_to_js(
     }
     if !this.txt_reply.is_null() {
         // SAFETY: non-null c-ares-owned linked list head.
-        // txt is the only reply type with the `to_js_for_any` shape (an `entries`
-        // wrapper object) instead of the plain `to_js_response` shape.
+        // txt is the only reply type with the `to_js_for_any` shape (an array of
+        // per-record `entries` objects) instead of the plain `to_js_response` shape.
         let response =
             txt_reply_to_js_for_any(unsafe { &mut *this.txt_reply }, global_this, b"txt")?;
         any_reply_append_all(global_this, array, &mut i, response, b"txt")?;

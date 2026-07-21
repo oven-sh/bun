@@ -6090,12 +6090,12 @@ impl NodeFS {
         let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();
         // Node rejects an empty prefix with EINVAL. Without this, the bare
-        // "XXXXXX" template creates a random-named directory in cwd.
+        // six-X template would create a random-named directory in cwd.
         if prefix_slice.is_empty() {
             return Err(sys::Error {
                 errno: SystemErrno::EINVAL as _,
                 syscall: sys::Tag::mkdtemp,
-                path: b"XXXXXX"[..].into(),
+                path: [b'X'; 6].into(),
                 ..Default::default()
             });
         }

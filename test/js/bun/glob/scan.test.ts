@@ -619,6 +619,97 @@ describe("literal fast path", async () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/32596
+describe("brace patterns containing path separators", async () => {
+  let cwd = "";
+  beforeAll(() => {
+    cwd = tempDirWithFiles("glob-scan-brace-sep", {
+      "svc": { "src": { "env.ts": "" }, "env.ts": "" },
+      "src": { "helpers": { "paths.ts": "" }, "cli.ts": "" },
+      "pkg": { "a": { "deep": { "x.ts": "" } }, "b.ts": "" },
+    });
+  });
+
+  const sep = (p: string) => p.split("/").join(path.sep);
+  const cases: Array<[string, string[]]> = [
+    // The alternatives span different directory depths.
+    ["svc/{src/env.ts,env.ts}", ["svc/src/env.ts", "svc/env.ts"]],
+    ["src/{helpers/paths.ts,cli.ts}", ["src/helpers/paths.ts", "src/cli.ts"]],
+    // A globstar inside a brace alternative still works.
+    ["pkg/{a/**/*.ts,b.ts}", ["pkg/a/deep/x.ts", "pkg/b.ts"]],
+    // Overlapping alternatives are deduplicated.
+    ["svc/{src/env.ts,src/env.ts}", ["svc/src/env.ts"]],
+    // A single-alternative group still expands.
+    ["svc/{src/env.ts}", ["svc/src/env.ts"]],
+    // A single-alternative group wrapping a wildcard that spans a separator,
+    // the shape of `{*/*}` from https://github.com/oven-sh/bun/issues/24000.
+    ["{src/*.ts}", ["src/cli.ts"]],
+    ["pkg/{a/*/*.ts}", ["pkg/a/deep/x.ts"]],
+    // The empty branch of a trailing `{,x}` must be kept: the `{,x}` expands to
+    // "" and "x", and the "" branch yields the bare files (the "x" branch adds
+    // a suffix that matches nothing here).
+    ["{svc/env.ts,src/cli.ts}{,x}", ["svc/env.ts", "src/cli.ts"]],
+  ];
+
+  for (const [pattern, expected] of cases) {
+    const want = expected.map(sep).sort();
+
+    test(`scan ${pattern}`, async () => {
+      const entries = await Array.fromAsync(new Glob(pattern).scan({ cwd, dot: true }));
+      expect(entries.sort()).toEqual(want);
+    });
+
+    test(`scanSync ${pattern}`, () => {
+      const entries = Array.from(new Glob(pattern).scanSync({ cwd, dot: true }));
+      expect(entries.sort()).toEqual(want);
+    });
+  }
+
+  // scan() and match() must agree on the same pattern.
+  test("scan agrees with match", async () => {
+    const pattern = "svc/{src/env.ts,env.ts}";
+    const glob = new Glob(pattern);
+    const entries = await Array.fromAsync(glob.scan({ cwd, dot: true }));
+    for (const entry of entries) {
+      expect(glob.match(entry.split(path.sep).join("/"))).toBe(true);
+    }
+    expect(entries.length).toBe(2);
+  });
+
+  // Brace alternatives are an unordered set, so an alternative whose root
+  // directory is missing must yield nothing for that alternative rather than
+  // abort the whole scan. POSIX-only: the pattern is built with "/" so the
+  // absolute expansions have unambiguous separators.
+  test.skipIf(isWindows)("alternative with a missing root yields the others", async () => {
+    const want = [`${cwd}/svc/env.ts`];
+    // Missing root listed first.
+    const a = await Array.fromAsync(new Glob(`{${cwd}/nope/*.ts,${cwd}/svc/*.ts}`).scan({ dot: true }));
+    expect(a).toEqual(want);
+    // Missing root listed last (order independence).
+    const b = await Array.fromAsync(new Glob(`{${cwd}/svc/*.ts,${cwd}/nope/*.ts}`).scan({ dot: true }));
+    expect(b).toEqual(want);
+  });
+
+  // The missing-root tolerance is only for an absolute alternative's own
+  // prefix. A non-existent cwd is the shared root for every relative
+  // alternative, so it must still surface its error instead of silently
+  // returning no matches.
+  test("missing cwd still throws for a relative brace pattern", () => {
+    const missing = path.join(cwd, "definitely-missing-32596");
+    expect(() => [...new Glob("{a/b,c/d}").scanSync({ cwd: missing })]).toThrow();
+  });
+
+  // A single-alternative group is transparent to its bare pattern, including
+  // error handling: a missing absolute root throws the same way either form
+  // does, rather than the 1-element expansion being treated as "one of several
+  // alternatives" whose missing root is tolerated. POSIX-only (absolute paths).
+  test.skipIf(isWindows)("single-alternative group matches the bare pattern on a missing root", () => {
+    const bare = `${cwd}/nope/sub/*.ts`;
+    expect(() => [...new Glob(bare).scanSync({ dot: true })]).toThrow();
+    expect(() => [...new Glob(`{${bare}}`).scanSync({ dot: true })]).toThrow();
+  });
+});
+
 describe("trailing directory separator", async () => {
   test("matches directories absolute", async () => {
     const tmpdir = tmpdirSync();

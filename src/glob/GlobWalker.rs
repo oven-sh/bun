@@ -262,6 +262,18 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub basename_excluding_special_syntax_component_idx: u32,
 
     pub pattern_components: Vec<Component>,
+
+    /// Brace-free patterns produced by expanding brace groups that contain a
+    /// path separator (e.g. `svc/{src/env.ts,env.ts}` -> `svc/src/env.ts`,
+    /// `svc/env.ts`). Empty when the pattern needs no expansion, in which case
+    /// `pattern` / `pattern_components` describe the single pattern directly.
+    /// When non-empty, the walker walks each entry in turn (see `walk` and
+    /// `Iterator::try_advance_to_next_expansion`), rebuilding `pattern_components`
+    /// per entry and deduping results via `matched_paths`.
+    pub brace_expansions: Vec<Box<[u8]>>,
+    /// Index into `brace_expansions` of the pattern currently being walked.
+    expansion_cursor: usize,
+
     pub matched_paths: MatchedMap,
     pub i: u32,
 
@@ -402,6 +414,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
     }
 
     pub fn init(&mut self) -> Result<Maybe<()>, Error> {
+        // For brace-expanded patterns, build the components for the expansion
+        // currently selected by `expansion_cursor`. This runs on the first call
+        // (cursor 0) and on every `try_advance_to_next_expansion` re-init.
+        if !self.walker.brace_expansions.is_empty() {
+            self.walker.rebuild_components_for_current_expansion()?;
+        }
         log!(
             "Iterator init pattern={}",
             bstr::BStr::new(&self.walker.pattern)
@@ -515,6 +533,22 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let root_path_z = unsafe { ZStr::from_raw(path_buf_ptr, root_path_len) };
         let cwd_fd = match A::open(root_path_z)? {
             Err(err) => {
+                // Brace expansions are walked as independent patterns, each with
+                // its own root. Alternatives are an unordered set, so a missing
+                // or non-directory absolute root for one (e.g.
+                // `{/missing/*.ts,ok/*.ts}`) must yield no matches for that
+                // alternative rather than abort the whole scan. Gated on
+                // `was_absolute` so this only covers an expansion's own literal
+                // prefix: a missing `cwd` (the root for relative alternatives,
+                // shared by all of them) still surfaces its error, as do single
+                // patterns.
+                if was_absolute
+                    && !self.walker.brace_expansions.is_empty()
+                    && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR)
+                {
+                    self.iter_state = IterState::GetNext;
+                    return Ok(Ok(()));
+                }
                 return Ok(Err(self.walker.handle_sys_err_with_path(
                     &err,
                     // SAFETY: NUL at index `root_path_len` written above.
@@ -579,6 +613,29 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 // If this is over 2 then this means that there is a bug in the iterator code
                 debug_assert!(self.fds_open <= 2);
             }
+        }
+    }
+
+    /// After a pattern's walk is exhausted, move to the next brace expansion
+    /// (if any), rebuild its components, and re-run `init` for it. Returns
+    /// `Ok(true)` when a further expansion was set up, `Ok(false)` when there
+    /// are no more. Results are deduped against earlier expansions via
+    /// `matched_paths`.
+    fn try_advance_to_next_expansion(&mut self) -> Result<Maybe<bool>, Error> {
+        let next = self.walker.expansion_cursor + 1;
+        if next >= self.walker.brace_expansions.len() {
+            return Ok(Ok(false));
+        }
+        self.walker.expansion_cursor = next;
+
+        // Tear down the current root fd before `init` opens a fresh one.
+        self.close_cwd_fd();
+        self.cwd_fd = A::Handle::EMPTY;
+        self.iter_state = IterState::GetNext;
+
+        match self.init()? {
+            Err(err) => Ok(Err(err)),
+            Ok(()) => Ok(Ok(true)),
         }
     }
 
@@ -828,9 +885,15 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     return Ok(Ok(Some(path)));
                 }
                 IterState::GetNext => {
-                    // Done
+                    // Done with the current pattern. If this pattern came from a
+                    // brace expansion, advance to the next expansion and keep
+                    // going; only stop once every expansion is exhausted.
                     if self.walker.workbuf.is_empty() {
-                        return Ok(Ok(None));
+                        match self.try_advance_to_next_expansion()? {
+                            Err(err) => return Ok(Err(err)),
+                            Ok(true) => continue 'outer,
+                            Ok(false) => return Ok(Ok(None)),
+                        }
                     }
                     let mut work_item = self.walker.workbuf.pop().unwrap();
                     // The workbuf is LIFO, so `followed_links_len` restores the
@@ -1493,6 +1556,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             end_byte_of_basename_excluding_special_syntax: 0,
             has_relative_components: false,
             pattern_components: Vec::new(),
+            brace_expansions: Vec::new(),
+            expansion_cursor: 0,
             matched_paths: MatchedMap::default(),
             i: 0,
             path_buf: Box::new(PathBuffer::uninit()),
@@ -1502,18 +1567,42 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             _accessor: core::marker::PhantomData,
         };
 
-        Self::build_pattern_components(
-            &mut this.pattern_components,
-            &this.pattern,
-            &mut this.has_relative_components,
-            &mut this.end_byte_of_basename_excluding_special_syntax,
-            &mut this.basename_excluding_special_syntax_component_idx,
-        )?;
+        // A brace group containing a path separator (e.g.
+        // `svc/{src/env.ts,env.ts}`) spans multiple directory levels, which the
+        // one-component-per-level walker can't represent in a single pass.
+        // Expand such patterns into separate brace-free patterns, mirroring how
+        // `match` evaluates braces. `pattern_components` for each is built lazily
+        // in `Iterator::init` so every entry point (scan, scanSync, shell,
+        // workspaces) shares one code path.
+        if brace_group_spans_separator(&this.pattern) {
+            if let Some(mut expansions) = expand_braces(&this.pattern) {
+                match expansions.len() {
+                    0 => {}
+                    // A single expansion is equivalent to a brace-free pattern, so
+                    // walk it directly: it shares the single-pattern fast path,
+                    // `onlyFiles` filtering, and error handling (a missing root
+                    // throws, as it does without the braces). Only genuine
+                    // multi-alternative groups use the per-expansion machinery.
+                    1 => this.pattern = expansions.pop().unwrap(),
+                    _ => this.brace_expansions = expansions,
+                }
+            }
+        }
 
-        // copy arena after all allocations are successful
+        if this.brace_expansions.is_empty() {
+            Self::build_pattern_components(
+                &mut this.pattern_components,
+                &this.pattern,
+                &mut this.has_relative_components,
+                &mut this.end_byte_of_basename_excluding_special_syntax,
+                &mut this.basename_excluding_special_syntax_component_idx,
+            )?;
 
-        if cfg!(debug_assertions) {
-            this.debug_pattern_components();
+            // copy arena after all allocations are successful
+
+            if cfg!(debug_assertions) {
+                this.debug_pattern_components();
+            }
         }
 
         Ok(Ok(this))
@@ -1538,7 +1627,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 
     pub fn walk(&mut self) -> Result<Maybe<()>, Error> {
-        if self.pattern_components.is_empty() {
+        // When `brace_expansions` is non-empty the components are built lazily
+        // per expansion in `Iterator::init`, so `pattern_components` being empty
+        // here is expected.
+        if self.pattern_components.is_empty() && self.brace_expansions.is_empty() {
             return Ok(Ok(()));
         }
 
@@ -2307,6 +2399,28 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
         Ok(())
     }
+
+    /// Point `pattern` / `pattern_components` at the brace expansion currently
+    /// selected by `expansion_cursor` and rebuild the components for it. Only
+    /// called when `brace_expansions` is non-empty.
+    fn rebuild_components_for_current_expansion(&mut self) -> Result<(), Error> {
+        self.pattern = self.brace_expansions[self.expansion_cursor].clone();
+        self.pattern_components.clear();
+        self.has_relative_components = false;
+        self.end_byte_of_basename_excluding_special_syntax = 0;
+        self.basename_excluding_special_syntax_component_idx = 0;
+        Self::build_pattern_components(
+            &mut self.pattern_components,
+            &self.pattern,
+            &mut self.has_relative_components,
+            &mut self.end_byte_of_basename_excluding_special_syntax,
+            &mut self.basename_excluding_special_syntax_component_idx,
+        )?;
+        if cfg!(debug_assertions) {
+            self.debug_pattern_components();
+        }
+        Ok(())
+    }
 }
 
 // Drop frees Vec/Box fields automatically.
@@ -2339,6 +2453,203 @@ pub fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
 
 pub fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
     literal == path
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Brace expansion
+//
+// The walker models a pattern as one component per directory level. A brace
+// group whose alternatives contain a path separator (e.g.
+// `svc/{src/env.ts,env.ts}`) spans multiple levels and different alternatives
+// can have different depths, so it does not fit that model. Rather than teach
+// the NFA about variable-length branches, we expand such patterns into separate
+// brace-free patterns (the same set of strings `match` evaluates the braces
+// against) and walk each, deduping via `matched_paths`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Upper bound on the number of patterns a brace expansion may produce. Mirrors
+/// the matcher's `BRACE_BRANCH_BUDGET`: sequential groups multiply, so an
+/// adversarial pattern could otherwise blow up. Over budget, the caller falls
+/// back to the unexpanded pattern.
+const BRACE_EXPANSION_LIMIT: usize = 10_000;
+
+/// Bound on brace nesting / chaining depth during expansion. Guards against
+/// stack overflow on adversarial input; far beyond any realistic pattern.
+const BRACE_EXPANSION_MAX_DEPTH: u32 = 32;
+
+/// Bytes to advance past a non-Windows backslash escape at index `i`. Returns 1
+/// when the next byte is a native separator so the caller still sees it on the
+/// following iteration: `build_pattern_components` splits on a separator even
+/// when backslash-escaped, so the detector/parser must not hide it. Any other
+/// escaped byte is skipped entirely (returns 2).
+fn escape_advance(pattern: &[u8], i: usize) -> usize {
+    if pattern
+        .get(i + 1)
+        .is_some_and(|&n| bun_core::path_sep::is_sep_native(n))
+    {
+        1
+    } else {
+        2
+    }
+}
+
+/// Returns true if `pattern` contains a brace group (`{...}`) with a path
+/// separator inside it. `[...]` bracket classes are honored for brace depth
+/// (commas/braces inside a class are not structural), but a separator inside a
+/// class still counts, because `build_pattern_components` splits on separators
+/// regardless of bracket state. On non-Windows a backslash escapes the next
+/// byte, except a following separator still counts (the splitter cuts on it
+/// regardless); on Windows a backslash is itself a native path separator
+/// (matching `is_sep_native` / `build_pattern_components`), not an escape, so a
+/// `\` inside a brace group triggers expansion there too.
+fn brace_group_spans_separator(pattern: &[u8]) -> bool {
+    let mut depth: u32 = 0;
+    let mut in_brackets = false;
+    let mut i = 0usize;
+    while i < pattern.len() {
+        let c = pattern[i];
+        match c {
+            b'\\' if !cfg!(windows) => {
+                i += escape_advance(pattern, i);
+                continue;
+            }
+            b'[' if !in_brackets => in_brackets = true,
+            b']' if in_brackets => in_brackets = false,
+            b'{' if !in_brackets => depth += 1,
+            b'}' if !in_brackets && depth > 0 => depth -= 1,
+            // Not gated on `!in_brackets`: `build_pattern_components` splits on a
+            // separator regardless of bracket state, so a `/` inside a `[...]`
+            // class within a brace group would still be cut there. Counting it
+            // here keeps the detector faithful to the splitter and lets the
+            // group's other alternatives be expanded instead of mis-split.
+            _ if depth > 0 && bun_core::path_sep::is_sep_native(c) => {
+                return true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Locate the first top-level brace group and split it into its alternatives.
+/// Returns `(open_idx, close_idx, alternatives)` where `alternatives` borrow
+/// `pattern`, or `None` when there is no (well-formed) top-level brace group.
+fn find_first_brace_group(pattern: &[u8]) -> Option<(usize, usize, Vec<&[u8]>)> {
+    let mut in_brackets = false;
+    let mut open = None;
+    let mut i = 0usize;
+    while i < pattern.len() {
+        match pattern[i] {
+            b'\\' if !cfg!(windows) => {
+                i += escape_advance(pattern, i);
+                continue;
+            }
+            b'[' if !in_brackets => in_brackets = true,
+            b']' if in_brackets => in_brackets = false,
+            b'{' if !in_brackets => {
+                open = Some(i);
+                break;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let open = open?;
+
+    let mut depth: u32 = 0;
+    let mut in_brackets = false;
+    let mut alts: Vec<&[u8]> = Vec::new();
+    let mut alt_start = open + 1;
+    let mut j = open;
+    while j < pattern.len() {
+        match pattern[j] {
+            b'\\' if !cfg!(windows) => {
+                j += escape_advance(pattern, j);
+                continue;
+            }
+            b'[' if !in_brackets => in_brackets = true,
+            b']' if in_brackets => in_brackets = false,
+            b'{' if !in_brackets => depth += 1,
+            b'}' if !in_brackets => {
+                depth -= 1;
+                if depth == 0 {
+                    alts.push(&pattern[alt_start..j]);
+                    return Some((open, j, alts));
+                }
+            }
+            b',' if !in_brackets && depth == 1 => {
+                alts.push(&pattern[alt_start..j]);
+                alt_start = j + 1;
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+
+    // No matching close brace: treat the `{` as a literal (no expansion).
+    None
+}
+
+/// Expand every brace group in `pattern` into concrete brace-free patterns.
+/// Returns `None` if the expansion would exceed [`BRACE_EXPANSION_LIMIT`] or
+/// [`BRACE_EXPANSION_MAX_DEPTH`] (caller falls back to the unexpanded pattern).
+fn expand_braces(pattern: &[u8]) -> Option<Vec<Box<[u8]>>> {
+    let mut out: Vec<Box<[u8]>> = Vec::new();
+    expand_braces_into(pattern, 0, &mut out)?;
+    // Empty pieces are kept through the recursion so an empty alternative's
+    // branch survives when an outer prefix/suffix would make the whole pattern
+    // non-empty (e.g. `{a/b,c}{d,}` must keep `a/b` and `c`). Patterns that
+    // still collapse to empty after expansion match nothing, so drop them once
+    // here rather than at every level.
+    out.retain(|p| !p.is_empty());
+    Some(out)
+}
+
+fn expand_braces_into(pattern: &[u8], depth: u32, out: &mut Vec<Box<[u8]>>) -> Option<()> {
+    if depth > BRACE_EXPANSION_MAX_DEPTH {
+        return None;
+    }
+
+    let Some((open, close, alts)) = find_first_brace_group(pattern) else {
+        // No brace group left: this is a concrete pattern. Keep it even when
+        // empty so an empty brace branch is not lost mid-recursion; the
+        // top-level filter in `expand_braces` drops any that stay empty.
+        if out.len() >= BRACE_EXPANSION_LIMIT {
+            return None;
+        }
+        out.push(Box::from(pattern));
+        return Some(());
+    };
+
+    let prefix = &pattern[..open];
+    let suffix = &pattern[close + 1..];
+
+    // Expand the shared suffix once. A successful expansion always yields at
+    // least one entry (an empty input yields one empty string), so the inner
+    // loops below always run.
+    let mut suffix_expansions: Vec<Box<[u8]>> = Vec::new();
+    expand_braces_into(suffix, depth + 1, &mut suffix_expansions)?;
+
+    for alt in &alts {
+        // An alternative may itself contain nested braces.
+        let mut alt_expansions: Vec<Box<[u8]>> = Vec::new();
+        expand_braces_into(alt, depth + 1, &mut alt_expansions)?;
+        for ae in &alt_expansions {
+            for se in &suffix_expansions {
+                if out.len() >= BRACE_EXPANSION_LIMIT {
+                    return None;
+                }
+                let mut combined = Vec::with_capacity(prefix.len() + ae.len() + se.len());
+                combined.extend_from_slice(prefix);
+                combined.extend_from_slice(ae);
+                combined.extend_from_slice(se);
+                out.push(combined.into_boxed_slice());
+            }
+        }
+    }
+
+    Some(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2425,5 +2736,125 @@ impl AccessorDirEntry for DirIterator::IteratorResult {
     }
     fn kind(&self) -> bun_sys::FileKind {
         self.kind
+    }
+}
+
+#[cfg(test)]
+mod brace_expansion_tests {
+    use super::{brace_group_spans_separator, expand_braces};
+
+    fn expand(pattern: &str) -> Vec<String> {
+        let mut v: Vec<String> = expand_braces(pattern.as_bytes())
+            .expect("expansion within budget")
+            .into_iter()
+            .map(|b| String::from_utf8(b.to_vec()).unwrap())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn detects_separator_inside_braces() {
+        assert!(brace_group_spans_separator(b"svc/{src/env.ts,env.ts}"));
+        assert!(brace_group_spans_separator(
+            b"src/{helpers/paths.ts,cli.ts}"
+        ));
+        assert!(brace_group_spans_separator(b"**/{a/b,c}"));
+        assert!(brace_group_spans_separator(b"{a,{b/c,d}}"));
+    }
+
+    #[test]
+    fn ignores_braces_without_separator() {
+        assert!(!brace_group_spans_separator(b"{src,tests}/**/*.ts"));
+        assert!(!brace_group_spans_separator(b"src/helpers/{paths,log}.ts"));
+        assert!(!brace_group_spans_separator(b"src/{a,b}.ts"));
+        assert!(!brace_group_spans_separator(b"plain/path/no/braces.ts"));
+    }
+
+    #[test]
+    fn separator_in_bracket_class_is_not_a_brace() {
+        // `[` opens a class; a `/` there is not "inside a brace group".
+        assert!(!brace_group_spans_separator(b"file[/]name"));
+    }
+
+    #[test]
+    fn separator_in_bracket_class_inside_braces_is_counted() {
+        // `build_pattern_components` splits on the `/` regardless of the class,
+        // so the detector must expand to rescue the other alternatives.
+        assert!(brace_group_spans_separator(b"{x,a[/]b}"));
+        assert_eq!(expand("{x,a[/]b}"), vec!["a[/]b", "x"]);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn escaped_separator_inside_braces_is_counted() {
+        // `build_pattern_components` splits on a `/` even when backslash-escaped,
+        // so the detector counts it and the group expands. (Windows treats `\`
+        // as a separator, a different path, so this is POSIX-only.)
+        assert!(brace_group_spans_separator(b"svc/{src\\/env.ts,env.ts}"));
+        assert_eq!(
+            expand("svc/{src\\/env.ts,env.ts}"),
+            vec!["svc/env.ts", "svc/src\\/env.ts"]
+        );
+    }
+
+    #[test]
+    fn expands_separator_alternatives() {
+        assert_eq!(
+            expand("svc/{src/env.ts,env.ts}"),
+            vec!["svc/env.ts", "svc/src/env.ts"]
+        );
+        assert_eq!(
+            expand("src/{helpers/paths.ts,cli.ts}"),
+            vec!["src/cli.ts", "src/helpers/paths.ts"]
+        );
+    }
+
+    #[test]
+    fn expands_cartesian_product() {
+        assert_eq!(
+            expand("{a,b}/{c/d,e}"),
+            vec!["a/c/d", "a/e", "b/c/d", "b/e"]
+        );
+    }
+
+    #[test]
+    fn expands_nested_braces() {
+        assert_eq!(expand("{a,{b/c,d}}"), vec!["a", "b/c", "d"]);
+    }
+
+    #[test]
+    fn single_alternative_group_unwraps() {
+        assert_eq!(expand("svc/{src/env.ts}"), vec!["svc/src/env.ts"]);
+        // A whole-pattern single-alternative group with a wildcard: `{*/*}` -> `*/*`.
+        assert!(brace_group_spans_separator(b"{*/*}"));
+        assert_eq!(expand("{*/*}"), vec!["*/*"]);
+    }
+
+    #[test]
+    fn preserves_other_glob_syntax() {
+        assert_eq!(expand("**/{a/b,c}"), vec!["**/a/b", "**/c"]);
+        assert_eq!(expand("{a/*.ts,b}"), vec!["a/*.ts", "b"]);
+    }
+
+    #[test]
+    fn comma_in_bracket_class_is_not_a_branch() {
+        // `{x,[a,b]/y}` -> branches `x` and `[a,b]/y` (comma in class is literal).
+        assert_eq!(expand("{x,[a,b]/y}"), vec!["[a,b]/y", "x"]);
+    }
+
+    #[test]
+    fn empty_alternative_is_dropped_when_pattern_collapses() {
+        // `{a/b,}` -> `a/b` and empty; the empty pattern matches nothing and is dropped.
+        assert_eq!(expand("{a/b,}"), vec!["a/b"]);
+    }
+
+    #[test]
+    fn empty_alternative_survives_outer_prefix_and_suffix() {
+        // The empty branch of a trailing `{d,}` must be kept because the outer
+        // group makes it non-empty: `{a/b,c}{d,}` -> a/bd, a/b, cd, c.
+        assert_eq!(expand("{a/b,c}{d,}"), vec!["a/b", "a/bd", "c", "cd"]);
+        // Same for an empty branch in a nested alternative: `x{a/b,{c,}}` keeps x.
+        assert_eq!(expand("x{a/b,{c,}}"), vec!["x", "xa/b", "xc"]);
     }
 }

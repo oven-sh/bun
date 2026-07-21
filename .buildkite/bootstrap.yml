@@ -9,8 +9,13 @@ steps:
     prompt: "Did you review the PR?"
     blocked_state: "running"
 
+  # Reference copy: the LIVE definition of this step is in the Buildkite UI
+  # (link above). It runs on queue=build-image — the queue that bakes images
+  # and therefore holds the AWS/Azure credentials — because ci.mjs checks
+  # image existence there before emitting bake steps (scripts/build/ci).
+  # Keep this in step with the UI if the UI ever changes.
   - label: ":pipeline:"
     agents:
-      queue: "build-darwin"
+      queue: "build-image"
     command:
       - "node .buildkite/ci.mjs"

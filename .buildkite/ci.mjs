@@ -6,6 +6,7 @@
  */
 
 import { join } from "node:path";
+import { checkImages } from "../scripts/build/ci/existence.ts";
 import { imageEntry, imageKey, imageName } from "../scripts/build/ci/naming.ts";
 import { alpineRelease } from "../scripts/build/ci/spec.ts";
 import {
@@ -813,10 +814,12 @@ function getTestBunStep(platform, options, testOptions = {}) {
  * Build/test agents boot from pre-baked cloud images (AWS AMIs for Linux,
  * Azure gallery images for Windows). Every image is content-addressed:
  * it is named `${key}-${hash}`, where the hash covers the image's entry
- * in scripts/build/ci/spec.ts plus its resolved downloads. Each run
- * emits one "ensure image" step per needed image; `machine.mjs
- * create-image` is idempotent by exact name — it bakes only when that
- * name doesn't exist yet and returns immediately when it does.
+ * in scripts/build/ci/spec.ts plus its resolved downloads. getPipeline()
+ * checks each name against its cloud FIRST (see existence.ts) and emits
+ * this bake step only for the images that don't exist yet, so the
+ * pipeline shows exactly what a push builds and existing images cost
+ * nothing. machine.mjs re-checks by name before launching, as the guard
+ * against two builds racing on the same new hash.
  *
  * To change what's installed on a CI machine: edit the fact in spec.ts
  * (or the URL construction in scripts/build/ci/artifacts.ts). The hash
@@ -1358,23 +1361,63 @@ async function getPipeline(options = {}) {
   // Every build lane runs on buildHostPlatform (see getCppAgent/getLinkBunAgent),
   // so the image set is exactly {buildHostPlatform} ∪ testPlatforms' native
   // images — buildPlatforms entries encode TARGET os/arch/abi, not a host image.
-  // The set is unconditional: every run ensures its (content-addressed) images
-  // exist, and the ensure step is a no-op when the name is already there.
-  const imagePlatforms = new Map(
+  const allImagePlatforms = new Map(
     [buildHostPlatform, ...testPlatforms]
       // darwin: no cloud images (bare-metal test fleet only).
       .filter(({ os }) => os !== "darwin")
       .map(platform => [getImageKey(platform), platform]),
   );
 
+  // Content-addressed images: ask each image's cloud whether the exact
+  // `${key}-${hash}` name already exists (we run on queue=build-image, which
+  // holds the AWS/Azure credentials). Only the MISSING ones get a bake step, so
+  // the pipeline itself shows what this push builds and existing images cost
+  // nothing. The table lands at the top of this job's log.
+  // If the cloud credentials aren't resolvable here (a fork PR, or ci.mjs
+  // run by hand), fail SAFE: treat every image as needing a bake. Over-
+  // emitting is harmless — machine.mjs re-checks each name up front and
+  // returns in seconds when it exists — whereas under-emitting (a false
+  // "exists") is the real danger. A genuine cloud error WITH credentials
+  // present still throws; only "no credentials" degrades.
+  let existence;
+  try {
+    existence = await checkImages(
+      [...allImagePlatforms.values()].map(platform => imageEntry(getImageKey(platform))),
+      { get: name => getSecret(name) },
+    );
+  } catch (error) {
+    if (!/Environment variable is missing|Secret not found/.test(String(error))) {
+      throw error;
+    }
+    console.warn(`\nImage existence check unavailable (${String(error.message ?? error).split("\n")[0]}).`);
+    console.warn("Emitting bake steps for ALL images; machine.mjs will no-op the ones that exist.");
+    existence = [...allImagePlatforms.values()].map(platform => {
+      const image = imageEntry(getImageKey(platform));
+      return { image, name: imageName(image), exists: false, detail: "unverified (no credentials)" };
+    });
+  }
+  console.log("\nCI machine images (content-addressed):");
+  for (const { image, name, exists, detail } of existence) {
+    console.log(`  ${exists ? "exists " : "BAKE   "} ${name}  (${detail})`);
+  }
+  const missing = new Set(existence.filter(({ exists }) => !exists).map(({ image }) => image.key));
+  console.log(missing.size ? `\n${missing.size} image(s) to bake: ${[...missing].join(", ")}` : "\nAll images exist; no bake steps needed.");
+
+  // imagePlatforms = the images this build must BAKE. Downstream depends_on
+  // keys off membership here, so a job waits on a bake only when one is
+  // actually happening.
+  const imagePlatforms = new Map([...allImagePlatforms].filter(([key]) => missing.has(key)));
+
   /** @type {Step[]} */
   const steps = [];
 
-  steps.push({
-    key: "ensure-images",
-    group: getBuildkiteEmoji("aws"),
-    steps: [...imagePlatforms.values()].map(platform => getEnsureImageStep(platform)),
-  });
+  if (imagePlatforms.size) {
+    steps.push({
+      key: "ensure-images",
+      group: getBuildkiteEmoji("aws"),
+      steps: [...imagePlatforms.values()].map(platform => getEnsureImageStep(platform)),
+    });
+  }
 
   let { skipBuilds, forceBuilds } = options;
 

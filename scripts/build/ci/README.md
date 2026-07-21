@@ -66,13 +66,16 @@ the first one that can't. `node scripts/build/ci/check.ts`.
 
 ## How a bake happens
 
-1. `.buildkite/ci.mjs` computes `imageName(key)` for each of the 8 images
-   and emits one **`ensure image`** step per image on every run, plus
-   `image-name=<name>` on every agent block.
-2. `scripts/machine.mjs create-image --image-name=<name>` is **idempotent
-   by exact name**: if `<name>` already exists (AWS `create-image`
-   collision, or a Succeeded Azure gallery version), it returns immediately
-   — same name means same recipe, so nothing to do. Otherwise it bakes.
+1. `.buildkite/ci.mjs` (running on `queue=build-image`, which holds the
+   cloud credentials) computes `imageName(key)` for all 8 images, asks each
+   image's cloud whether that exact name exists (`existence.ts`), prints the
+   table into the `:pipeline:` job log, and emits a **`ensure image`** step
+   **only for the missing ones**, plus `image-name=<name>` on every agent
+   block. A push that changes nothing emits no bake steps at all.
+2. `scripts/machine.mjs create-image --image=<key>` re-checks the exact
+   name before launching anything (the guard against two simultaneous
+   builds of one new hash) and returns immediately if it exists — same
+   name means same recipe. Otherwise it bakes.
 3. Linux: launch the base AMI (spec `base.nameGlob`), upload
    `scripts/build/ci/`, run the shim from `delivery.ts` (curl the pinned
    node, `node bootstrap.ts …`), snapshot as `<name>`.

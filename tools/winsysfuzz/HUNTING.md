@@ -20,6 +20,46 @@ Every command below takes `--bun <path>`: point it at the binary you want
 to hunt on — `build\debug\bun-debug.exe`, a release build, or the shipped
 `bun.exe`. The interceptor works on the unmodified binary.
 
+## Fastest path: hunt over bun's own test suite
+
+One command, one file to read. The test suite is the corpus - thousands of
+realistic programs already exercising every subsystem, each with its own
+assertions and timeouts as the oracle:
+
+```powershell
+bun driver\hunt.ts --bun <bun.exe> --tests C:\bun\test\js\node\fs --limit 20 --parallel 3
+```
+Every `*.test.*` file becomes a `bun test <file>` target. Each is swept
+(baseline -> enumerate -> inject -> auto-verify), sweeps run `--parallel`
+at a time, and everything rolls into `C:\wsfhunt\<stamp>\hunt-findings.md`
+- per-target outcome tallies, then finding cards, `confirmed` first. bun
+children the tests spawn are traced and faulted too (recursive injection),
+so subprocess-heavy tests are covered. Also works on the workload suite
+(default) or explicit programs (`--programs a.js,b.js`).
+
+Throughput: a small test file sweeps in ~20s; heavy ones a few minutes.
+Sweeps are independent, so raise `--parallel` (and lower per-sweep
+`--jobs`) to use the box. More load means more `load-dependent` verdicts;
+that's exactly what the verify gate exists to sort out, and it does.
+
+## Writing target scripts (the contract)
+
+When no test covers what you want faulted, write a target. Rules an agent
+can follow mechanically:
+
+- **cwd-relative paths only** (`fs.writeFileSync("a.txt")`, `port: 0`) so
+  parallel sweep workers, each in its own directory, cannot collide.
+- **`console.log("STAGE: <name>")` before each step** - a hang or slow run
+  then reports the last stage reached, localizing the failure for free.
+- **Fast and deterministic** - well under 2s, no wall-clock output, no counts
+  of transient directory contents (those show up as spurious `diverged`), no
+  external network, no fixed ports.
+- **Self-verifying output** on the last line (`console.log("net ok tcp=... udp=...")`)
+  so a diverged run's stdout tells you what changed.
+- **One subsystem per file.** To generate one: read that subsystem's tests
+  under `test/js/...`, lift the API calls, wrap them in stages. See
+  `workloads/*.js` for the shape.
+
 ## The hunting loop
 
 **1. Check your target scenario is healthy under interception.**
@@ -111,6 +151,14 @@ Callsites are `bun+0xRVA`; resolve any of them by hand with
 
 These fell out of proving the tool. They are starting points for you to
 confirm or dismiss — the instrument reported them, nobody triaged them:
+
+- **Thread-creation failure -> hang (recurring, strongest lead).**
+  `NtCreateThreadEx` -> `STATUS_INSUFFICIENT_RESOURCES` hangs bun, reproduced
+  independently from the fs-async workload (during `await writeFile`) AND the
+  real `test/js/node/fs/fs-birthtime-linux.test.ts` (confirmed 3/3). The
+  fs threadpool worker is never created, the queued work never runs, the
+  promise never settles, and the event loop waits (`uv_run` in the IOCP
+  wait). An error path for threadpool init failure appears to be missing.
 
 - Socket poll setup: fault `NtCreateFile` at libuv's `uv__msafd_poll` (the
   AFD-device open for fast-poll) during `http-serve-and-fetch`, or

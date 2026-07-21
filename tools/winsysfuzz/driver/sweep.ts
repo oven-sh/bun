@@ -354,8 +354,16 @@ if (findings.length) {
     const bad = outcomes.filter(o => o === "CRASH" || o === "HANG").length;
     const slow = outcomes.filter(o => o === "slow").length;
     const fired = outcomes.filter(o => o !== "no-fire").length;
+    // "crawls twice, hangs once" is bad EVERY time (borderline on the
+    // watchdog), so slow counts toward confirmation once any replay hangs.
     const verdict: Verdict =
-      bad >= 2 ? "confirmed" : bad === 0 && slow >= 2 ? "slow" : bad === 0 && fired > 0 ? "load-dependent" : "not-reproduced";
+      bad >= 2 || (bad >= 1 && bad + slow >= 2)
+        ? "confirmed"
+        : bad === 0 && slow >= 2
+          ? "slow"
+          : bad === 0 && fired > 0
+            ? "load-dependent"
+            : "not-reproduced";
     verdicts.set(f, { verdict, outcomes, stage, stacks });
     console.log(
       `  ${verdict.padEnd(15)} ${f.outcome} ${f.job.coord.sysName} @${f.job.coord.rva} ` +

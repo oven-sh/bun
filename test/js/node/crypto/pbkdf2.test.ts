@@ -164,10 +164,8 @@ describe("invalid inputs", () => {
   });
 });
 
-// pbkdf2Sync captures the salt slice before converting the password. A
-// String-object password's toString() can detach the captured salt buffer and
-// recycle its backing, so the key ends up derived from freed memory. The sync
-// Buffer arm now pins the backing so transfer() copies instead of freeing.
+// The password's toString() runs after the salt slice is captured; detaching
+// the salt there must not let the KDF read freed memory.
 test("pbkdf2Sync derives from the salt bytes at call time when a String-object password detaches them", () => {
   const keep = [];
   const size = 1 << 16;

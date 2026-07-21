@@ -392,10 +392,8 @@ for (let algorithmValue of algorithms) {
   });
 }
 
-// verifySync captures the password slice before converting the hash. A
-// String-object hash's toString() can detach the password buffer and recycle
-// its backing, so the comparison runs over freed memory. The sync Buffer arm
-// now pins the backing so transfer() copies instead of freeing.
+// The hash's toString() runs after the password slice is captured; detaching
+// the password there must not let verify compare against freed memory.
 test("verifySync reads the password bytes at call time when a String-object hash detaches them", () => {
   const keep: Uint8Array[] = [];
   const size = 1 << 16;

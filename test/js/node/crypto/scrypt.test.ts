@@ -2,11 +2,8 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import crypto from "node:crypto";
 
-// scryptSync captures the password/salt slice before reading the options bag.
-// A hostile getter on `N`/`r`/`p`/`maxmem` can detach the captured buffer and
-// recycle its backing, so the key ends up derived from freed memory instead of
-// the caller's bytes. The sync Buffer arm now pins the backing so transfer()
-// copies instead of freeing while the borrow is live.
+// An options getter runs after the password/salt slice is captured; detaching
+// the backing there must not let the KDF read freed memory.
 test("scryptSync derives from the password bytes at call time when an options getter detaches the buffer", () => {
   const keep: Uint8Array[] = [];
   const size = 1 << 16;

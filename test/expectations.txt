@@ -110,6 +110,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # Tests timed out due to ASAN
 [ ASAN ] test/js/bun/spawn/spawn.test.ts [ TIMEOUT ]
 [ ASAN ] test/cli/inspect/inspect.test.ts [ TIMEOUT ]
+[ ASAN ] test/cli/inspect/inspect-binary-frame.test.ts [ TIMEOUT ] # inspector WS server connection closes 1006 under release+ASAN; same as inspect.test.ts above
 [ ASAN ] test/js/bun/typescript/type-export.test.ts [ TIMEOUT ] # bun build --compile is slow under ASAN
 
 # Tests failed due to memory leaks

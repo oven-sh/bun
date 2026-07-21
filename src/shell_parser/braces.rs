@@ -1219,7 +1219,12 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         // - If unclosed or encounter bad token:
         //   - Start at beginning of brace, replacing special tokens back with
         //     chars, skipping over actual closed braces
-        let mut brace_stack: SmallVec<[u32; MAX_NESTED_BRACES]> = SmallVec::new();
+        #[derive(Copy, Clone)]
+        struct OpenBrace {
+            tok_idx: u32,
+            has_comma: bool,
+        }
+        let mut brace_stack: SmallVec<[OpenBrace; MAX_NESTED_BRACES]> = SmallVec::new();
 
         loop {
             let Some(input) = self.eat() else { break };
@@ -1230,19 +1235,30 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                 // `char` is u32 (CodepointType unified across encodings).
                 match char {
                     c if c == u32::from(b'{') => {
-                        brace_stack.push(u32::try_from(self.tokens.len()).expect("int cast"));
+                        brace_stack.push(OpenBrace {
+                            tok_idx: u32::try_from(self.tokens.len()).expect("int cast"),
+                            has_comma: false,
+                        });
                         self.tokens.push(Token::Open(ExpansionVariants::default()));
                         continue;
                     }
                     c if c == u32::from(b'}') => {
-                        if brace_stack.len() > 0 {
-                            let _ = brace_stack.pop();
-                            self.tokens.push(Token::Close);
+                        if let Some(top) = brace_stack.pop() {
+                            if top.has_comma {
+                                self.tokens.push(Token::Close);
+                            } else {
+                                // A `{...}` group with no top-level comma is not a
+                                // brace expansion (bash semantics): demote the Open
+                                // back to a literal `{` and emit this `}` as text.
+                                self.replace_token_with_string(top.tok_idx);
+                                self.tokens.push(Token::Text(SmolStr::from_char(b'}')));
+                            }
                             continue;
                         }
                     }
                     c if c == u32::from(b',') => {
-                        if brace_stack.len() > 0 {
+                        if let Some(top) = brace_stack.last_mut() {
+                            top.has_comma = true;
                             self.tokens.push(Token::Comma);
                             continue;
                         }
@@ -1258,9 +1274,8 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         }
 
         // Unclosed braces
-        while brace_stack.len() > 0 {
-            let top_idx = brace_stack.pop().unwrap();
-            self.rollback_braces(top_idx);
+        while let Some(top) = brace_stack.pop() {
+            self.rollback_braces(top.tok_idx);
         }
 
         self.flatten_tokens()?;
@@ -1270,44 +1285,34 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
     }
 
     fn flatten_tokens(&mut self) -> Result<(), AllocError> {
-        if self.tokens.is_empty() {
-            return Ok(());
-        }
-        let mut brace_count: u32 = if matches!(self.tokens[0], Token::Open(_)) {
-            1
-        } else {
-            0
-        };
-        let mut i: u32 = 0;
-        let mut j: u32 = 1;
-        while (i as usize) < self.tokens.len() && (j as usize) < self.tokens.len() {
-            // reshaped for borrowck — branch on tags first, then borrow once.
-            let itok_is_text = matches!(self.tokens[i as usize], Token::Text(_));
-            let jtok_is_text = matches!(self.tokens[j as usize], Token::Text(_));
-
-            if itok_is_text && jtok_is_text {
-                let jtok_text = self.tokens[j as usize].to_text();
-                if let Token::Text(itxt) = &mut self.tokens[i as usize] {
-                    itxt.append_slice(jtok_text.slice())?;
+        let mut brace_count: u32 = 0;
+        let mut write = 0usize;
+        for read in 0..self.tokens.len() {
+            match &self.tokens[read] {
+                Token::Open(_) => {
+                    brace_count += 1;
+                    if brace_count > 1 {
+                        self.contains_nested = true;
+                    }
                 }
-                let _ = self.tokens.remove(j as usize);
+                Token::Close => brace_count -= 1,
+                _ => {}
+            }
+            if write > 0
+                && matches!(self.tokens[write - 1], Token::Text(_))
+                && matches!(self.tokens[read], Token::Text(_))
+            {
+                let taken = core::mem::replace(&mut self.tokens[read], Token::Eof);
+                if let (Token::Text(prev), Token::Text(cur)) = (&mut self.tokens[write - 1], taken)
+                {
+                    prev.append_slice(cur.slice())?;
+                }
             } else {
-                match &self.tokens[j as usize] {
-                    Token::Close => {
-                        brace_count -= 1;
-                    }
-                    Token::Open(_) => {
-                        brace_count += 1;
-                        if brace_count > 1 {
-                            self.contains_nested = true;
-                        }
-                    }
-                    _ => {}
-                }
-                i += 1;
-                j += 1;
+                self.tokens.swap(write, read);
+                write += 1;
             }
         }
+        self.tokens.truncate(write);
         Ok(())
     }
 
@@ -1401,19 +1406,26 @@ mod tests {
     fn lexer() {
         struct TestCase(&'static [u8], Vec<Token>);
         let test_cases: Vec<TestCase> = vec![
+            // No comma: the whole group is literal text.
             TestCase(
                 b"{}",
-                vec![
-                    Token::Open(ExpansionVariants::default()),
-                    Token::Close,
-                    Token::Eof,
-                ],
+                vec![Token::Text(SmolStr::from_slice(b"{}").unwrap()), Token::Eof],
             ),
             TestCase(
                 b"{foo}",
                 vec![
+                    Token::Text(SmolStr::from_slice(b"{foo}").unwrap()),
+                    Token::Eof,
+                ],
+            ),
+            // With a comma: a real brace group.
+            TestCase(
+                b"{a,b}",
+                vec![
                     Token::Open(ExpansionVariants::default()),
-                    Token::Text(SmolStr::from_slice(b"foo").unwrap()),
+                    Token::Text(SmolStr::from_slice(b"a").unwrap()),
+                    Token::Comma,
+                    Token::Text(SmolStr::from_slice(b"b").unwrap()),
                     Token::Close,
                     Token::Eof,
                 ],

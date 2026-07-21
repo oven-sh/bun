@@ -564,35 +564,14 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
     // splitting" if any bitcode module in the link disagrees with the others.
-    // The Rust value must match whatever the C++ side produces, and that
-    // differs per platform:
-    //
-    //   - darwin (ThinLTO): the C/C++ side passes -fno-split-lto-unit
-    //     everywhere (index-based WPD, no hybrid split mode) and Apple
-    //     targets default to 0 anyway, so every C/C++ module is 0. rustc's
-    //     default is also 0 — pass nothing. Adding -Zsplit-lto-unit here
-    //     would make the Rust modules the inconsistent ones and abort the
-    //     link.
-    //   - windows cross (ThinLTO): same as darwin — clang-cl never gets
-    //     -fwhole-program-vtables (COFF associative-COMDAT abort) and
-    //     -fno-split-lto-unit is passed explicitly, so every C/C++ module is
-    //     0 and rustc's default 0 matches — pass nothing.
-    //   - linux (full LTO): the regular-LTO summary clang writes on ELF
-    //     always says EnableSplitLTOUnit=1, so every C++ module (ours and
-    //     the WebKit -lto prebuilts) carries 1. The Rust modules'
-    //     EnableSplitLTOUnit module flag must say 1 to match →
-    //     -Zsplit-lto-unit. (The flag is stamped per-CGU at module
-    //     creation, survives rustc's fat-LTO pre-merge, and is what the
-    //     rust_lto_fix step's `opt --module-summary` copies into the
-    //     regular-LTO summary it bolts onto the merged module — see
-    //     rust-lto-fix-cli.ts.)
-    //
-    // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
-    // it doubles as making rustc's bitcode link go through the LTO-aware
-    // linker our final link uses, not BFD `/usr/bin/ld`.)
+    // Every LTO platform now links ThinLTO with the C/C++ side passing
+    // -fno-split-lto-unit (index-based WPD, no hybrid split), so every C/C++
+    // module (ours and the WebKit -lto prebuilts) says 0. rustc's default is
+    // also 0, so pass nothing. (`-Clink-arg=-fuse-ld=lld` is pushed
+    // unconditionally above — under LTO it doubles as making rustc's bitcode
+    // link go through the LTO-aware linker our final link uses, not BFD
+    // `/usr/bin/ld`.)
     if (!cfg.darwin && !cfg.windows) {
-      rustflags.push("-Zsplit-lto-unit");
-
       // Rust functions default to carrying the `uwtable(async)` attribute.
       // When the LTO inliner inlines such a callee into one of our C++
       // callers (compiled without unwind tables), the caller inherits the

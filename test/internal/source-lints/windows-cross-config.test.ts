@@ -176,7 +176,9 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(plain.url).toContain("bun-webkit-windows-amd64.tar.gz");
     expect(plain.destDir).not.toEndWith("-lto");
 
-    // x64 defaults to baseline now: the default config fetches the -baseline prebuilt.
+    // Default windows x64 cross config (lto=true, baseline=true): windows has
+    // no -baseline WebKit variant (prebuiltSuffix gates -baseline on cfg.linux),
+    // so it fetches the plain -lto tarball.
     const def = webkit.source(resolveWindowsCross());
     if (def.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${def.kind}`);
     expect(def.url).toContain("bun-webkit-windows-amd64-lto.tar.gz");
@@ -192,7 +194,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(rustTarget(resolveWindowsCross({ arch: "aarch64" }))).toBe("aarch64-pc-windows-msvc");
   });
 
-  test("linux LTO config is unaffected", () => {
+  test("linux LTO config uses ThinLTO with WPD and no-split-lto-unit", () => {
     const linux = resolveConfig(
       { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", ci: true, buildkite: false, linuxSysroot: "/fake" },
       mockToolchain({ cc: "/fake/llvm/bin/clang", cxx: "/fake/llvm/bin/clang++", ld: "/fake/llvm/bin/ld.lld" }),
@@ -201,6 +203,9 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     const linuxFlags = computeFlags(linux);
     expect(linuxFlags.cxxflags).toContain("-flto=thin");
     expect(linuxFlags.cxxflags).toContain("-fwhole-program-vtables");
-    expect(linuxFlags.cxxflags).not.toContain("-fno-split-lto-unit");
+    // rustc bitcode says EnableSplitLTOUnit=0; clang must match so lld doesn't
+    // reject with "inconsistent LTO Unit splitting". WPD falls back to
+    // index-only mode (still devirtualizes, just without the hybrid split).
+    expect(linuxFlags.cxxflags).toContain("-fno-split-lto-unit");
   });
 });

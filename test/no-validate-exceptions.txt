@@ -11,7 +11,6 @@ test/js/bun/util/BunObject.test.ts
 test/js/bun/util/fuzzy-wuzzy.test.ts
 test/js/node/module/module-resolve-filename-paths.test.js
 test/js/node/module/node-module-module.test.js
-test/js/node/test/parallel/test-http2-reset-flood.js
 test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 test/js/third_party/astro/astro-post.test.js
 test/js/web/websocket/websocket.test.js

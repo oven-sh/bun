@@ -507,6 +507,9 @@ pub fn host_fn_getter_shared<T, R: IntoHostFnReturn>(
     host_fn_result(global, || f(this, global))
 }
 
+/// Prototype getter (this: true): `fn(&mut self, JSValue, &JSGlobalObject) -> R`.
+#[track_caller]
+#[inline]
 pub fn host_fn_getter_this<T, R: IntoHostFnReturn>(
     this: &mut T,
     this_value: JSValue,
@@ -541,6 +544,9 @@ pub fn host_fn_setter_shared<T, R: IntoHostSetterReturn>(
     host_setter_result(global, || f(this, global, value))
 }
 
+/// Prototype setter (this: true): `fn(&mut self, JSValue, &JSGlobalObject, JSValue) -> R`.
+#[track_caller]
+#[inline]
 pub fn host_fn_setter_this<T, R: IntoHostSetterReturn>(
     this: &mut T,
     this_value: JSValue,

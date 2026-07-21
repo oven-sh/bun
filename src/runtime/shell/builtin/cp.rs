@@ -824,16 +824,16 @@ impl FlagParser for Opts {
             b'p' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
             b'R' => {
                 self.recursive = true;
-                Some(ParseFlagResult::ContinueParsing)
+                None
             }
             b'v' => {
                 self.verbose = true;
-                Some(ParseFlagResult::ContinueParsing)
+                None
             }
             b'n' => {
                 self.overwrite_existing_file = false;
                 self.remove_and_create_new_file_if_not_found = false;
-                Some(ParseFlagResult::ContinueParsing)
+                None
             }
             _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
         }

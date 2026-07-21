@@ -114,6 +114,21 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini()
       .runAsTest("-R -n skips existing files inside the tree");
 
+    TestBuilder.command`echo NEW > src; echo OLD > dst; cp -vn src dst`
+      .ensureTempDir()
+      .exitCode(0)
+      .stdout("")
+      .fileEquals("dst", "OLD\n")
+      .testMini()
+      .runAsTest("grouped -vn applies -n");
+
+    TestBuilder.command`mkdir -p srcdir dstdir/srcdir; echo NEW > srcdir/a; echo OLD > dstdir/srcdir/a; cp -Rn srcdir dstdir`
+      .ensureTempDir()
+      .exitCode(0)
+      .fileEquals("dstdir/srcdir/a", "OLD\n")
+      .testMini()
+      .runAsTest("grouped -Rn applies -n");
+
     TestBuilder.command`touch dst; cp -n nosuch dst`
       .ensureTempDir()
       .exitCode(c => expect(c).not.toBe(0))
@@ -244,7 +259,11 @@ describe("bunshell cp -n (builtin forced on)", () => {
 
   async function runCp(dir: string, script: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `await Bun.$\`${script}\`.cwd(${JSON.stringify(dir)})`],
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = await Bun.$\`${script}\`.cwd(${JSON.stringify(dir)}).nothrow(); process.exitCode = r.exitCode;`,
+      ],
       env,
       stderr: "pipe",
       stdout: "pipe",
@@ -277,15 +296,27 @@ describe("bunshell cp -n (builtin forced on)", () => {
 
   test.concurrent("skips existing but copies the rest into a directory", async () => {
     using dir = tempDir("cp-n-multi", { a: "NEW\n", b: "B\n", "d/a": "OLD\n" });
-    const { exitCode } = await runCp(String(dir), "cp -n a b d/");
+    const { stdout, exitCode } = await runCp(String(dir), "cp -nv a b d/");
     expect(await Bun.file(join(String(dir), "d", "a")).text()).toBe("OLD\n");
     expect(await Bun.file(join(String(dir), "d", "b")).text()).toBe("B\n");
+    // -v should report the copied file (b) and stay quiet for the skipped one (a).
+    const lines = stdout.split("\n").filter(Boolean);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(join(String(dir), "d", "b"));
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("-v stays quiet when the destination already exists", async () => {
     using dir = tempDir("cp-n-verbose", { src: "NEW\n", dst: "OLD\n" });
     const { stdout, exitCode } = await runCp(String(dir), "cp -n -v src dst");
+    expect(stdout).toBe("");
+    expect(await Bun.file(join(String(dir), "dst")).text()).toBe("OLD\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("grouped -vn applies -n", async () => {
+    using dir = tempDir("cp-vn", { src: "NEW\n", dst: "OLD\n" });
+    const { stdout, exitCode } = await runCp(String(dir), "cp -vn src dst");
     expect(stdout).toBe("");
     expect(await Bun.file(join(String(dir), "dst")).text()).toBe("OLD\n");
     expect(exitCode).toBe(0);
@@ -306,7 +337,7 @@ describe("bunshell cp -n (builtin forced on)", () => {
   test.concurrent("still reports a missing source when destination exists", async () => {
     using dir = tempDir("cp-n-missing", { dst: "OLD\n" });
     const { stderr, exitCode } = await runCp(String(dir), "cp -n nosuch dst");
-    expect(stderr).toContain("nosuch");
+    expect(stderr).toMatch(/^cp: .*nosuch/m);
     expect(await Bun.file(join(String(dir), "dst")).text()).toBe("OLD\n");
     expect(exitCode).not.toBe(0);
   });

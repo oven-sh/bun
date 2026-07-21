@@ -23,6 +23,38 @@ describe("IOWriter file output redirection", () => {
       .runAsTest("zero-length write should trigger onIOWriterChunk callback");
   });
 
+  describe("redirection between arguments", () => {
+    // POSIX allows a redirection anywhere among a simple command's words; words
+    // after the redirect target belong to the same command, not a new one.
+    TestBuilder.command`echo x > log rm cache`
+      .ensureTempDir()
+      .file("cache", "precious")
+      .exitCode(0)
+      .fileEquals("log", "x rm cache\n")
+      .fileEquals("cache", "precious")
+      .runAsTest("words after > file stay as arguments (do not run as a command)");
+
+    TestBuilder.command`printf '[%s]' A > o B`
+      .ensureTempDir()
+      .exitCode(0)
+      .stderr("")
+      .fileEquals("o", "[A][B]")
+      .runAsTest("printf argument after > file is passed to printf");
+
+    TestBuilder.command`cat < f0 f1`
+      .ensureTempDir()
+      .file("f0", "a0\na1\n")
+      .file("f1", "b0\n")
+      .exitCode(0)
+      .stdout("b0\n")
+      .stderr("")
+      .runAsTest("word after < file is a file operand, not a new command");
+
+    TestBuilder.command`echo a > f1 b > f2`
+      .error("Multiple redirects are not supported yet. Please open a GitHub issue.")
+      .runAsTest("second redirect after intervening words is rejected at parse time");
+  });
+
   describe("drainBufferedData edge cases", () => {
     TestBuilder.command`echo -n ${"x".repeat(1024 * 10)} > large.txt`
       .exitCode(0)

@@ -1571,10 +1571,26 @@ impl<'bump> Parser<'bump> {
 
         let mut name_and_args = bun_alloc::ArenaVec::new_in(self.alloc);
         name_and_args.push(name);
-        while let Some(arg) = self.parse_atom()? {
-            name_and_args.push(arg);
+        let mut parsed_redirect = ParsedRedirect::default();
+        let mut has_redirect = false;
+        loop {
+            if let Some(arg) = self.parse_atom()? {
+                name_and_args.push(arg);
+                continue;
+            }
+            if self.check(TokenTag::Redirect) {
+                if has_redirect {
+                    self.add_error(format_args!(
+                        "Multiple redirects are not supported yet. Please open a GitHub issue."
+                    ))?;
+                    return Err(ParseError::Unsupported.into());
+                }
+                parsed_redirect = self.parse_redirect()?;
+                has_redirect = true;
+                continue;
+            }
+            break;
         }
-        let parsed_redirect = self.parse_redirect()?;
 
         Ok(ast::CmdOrAssigns::Cmd(ast::Cmd {
             assigns: assigns.into_bump_slice(),

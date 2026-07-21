@@ -33,6 +33,15 @@ it; a real deadlock we hit.) Symbolize it against bun's PDB and a
 fault reads as "`STATUS_SHARING_VIOLATION` injected at `NtCreateFile` from
 `uv__fs_open`". That RVA is also the schedule's callsite key.
 
+**Known blind spot:** the loader maps every static import (the
+`NtProtectVirtualMemory` storm, DLL search-path probing, apiset registry
+reads) *before* any in-process `DllMain` runs, so process-init syscalls
+preceding our attach are invisible by construction. Validated against
+NtTrace (a debugger-based tracer that sees from the first instruction): all
+of bun's own post-attach syscalls match its counts exactly; the only deltas
+are that pre-attach loader phase and timing-driven waits/spins. The blind
+phase is OS init, not bun code, so it is not a fuzz target.
+
 ## The syscall table comes from NtTrace
 
 `NtTrace.cfg` (rogerorr/NtTrace, MIT — vendored here with its header intact)

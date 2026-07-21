@@ -4,11 +4,11 @@ use std::io::Write as _;
 use bun_ast as js_ast;
 use bun_ast::{E, Expr, G};
 use bun_core::strings;
-use bun_semver as semver;
 
 use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{Dependency, INVALID_PACKAGE_ID, resolution};
+use bun_install::lockfile_real::format_updated_version_literal;
+use bun_install::{INVALID_PACKAGE_ID, resolution};
 use bun_install_types::DependencyGroup;
 
 use super::package_manager_options::{Do, Enable};
@@ -333,6 +333,8 @@ pub(crate) fn edit_update_no_args(
                             is_alias: alias_at_index.is_some(),
                             original_version_string_buf: Box::default(),
                             original_version: None,
+                            group_behavior: group.behavior,
+                            updated_version_literal: None,
                         };
 
                         if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
@@ -358,20 +360,6 @@ pub(crate) fn edit_update_no_args(
                         }
                     }
                 } else {
-                    let lockfile = &*manager.lockfile;
-                    let string_buf = lockfile.buffers.string_bytes.as_slice();
-                    let workspace_package_id =
-                        lockfile.get_workspace_package_id(manager.workspace_name_hash);
-                    let packages = lockfile.packages.slice();
-                    let resolutions = packages.items_resolution();
-                    let deps = packages.items_dependencies()[workspace_package_id as usize];
-                    let resolution_ids =
-                        packages.items_resolutions()[workspace_package_id as usize];
-                    let workspace_deps: &[Dependency] =
-                        deps.get(lockfile.buffers.dependencies.as_slice());
-                    let workspace_resolution_ids =
-                        resolution_ids.get(lockfile.buffers.resolutions.as_slice());
-
                     for dep in root
                         .expr
                         .data
@@ -393,133 +381,22 @@ pub(crate) fn edit_update_no_args(
                             .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
 
-                        'updated: {
-                            // fetchSwapRemove because we want to update the first dependency with a matching
-                            // name, or none at all
-                            if let Some(entry) =
-                                manager.updating_packages.fetch_swap_remove(key_str)
-                            {
-                                let is_alias = entry.value.is_alias;
-                                let dep_name = &*entry.key;
-                                debug_assert_eq!(
-                                    workspace_deps.len(),
-                                    workspace_resolution_ids.len()
-                                );
-                                for (workspace_dep, &package_id) in
-                                    workspace_deps.iter().zip(workspace_resolution_ids)
-                                {
-                                    if package_id == INVALID_PACKAGE_ID {
-                                        continue;
-                                    }
+                        // fetchSwapRemove because we want to update the first dependency with a matching
+                        // name, or none at all
+                        let Some(entry) = manager.updating_packages.fetch_swap_remove(key_str)
+                        else {
+                            continue;
+                        };
 
-                                    let resolution = &resolutions[package_id as usize];
-                                    if resolution.tag != resolution::Tag::Npm {
-                                        continue;
-                                    }
-
-                                    let workspace_dep_name = workspace_dep.name.slice(string_buf);
-                                    if !strings::eql_long(workspace_dep_name, dep_name, true) {
-                                        continue;
-                                    }
-
-                                    let resolved_version = lockfile
-                                        .resolve_catalog_dependency(workspace_dep)
-                                        .unwrap_or_else(|| workspace_dep.version.clone());
-                                    if let Some(npm_version) = resolved_version.try_npm() {
-                                        // It's possible we inserted a dependency that won't update (version is an exact version).
-                                        // If we find one, skip to keep the original version literal.
-                                        if !manager.options.do_.contains(Do::UPDATE_TO_LATEST)
-                                            && npm_version.version.is_exact()
-                                        {
-                                            break 'updated;
-                                        }
-                                    }
-
-                                    let new_version: Vec<u8> = 'new_version: {
-                                        // `resolution.tag == Npm` checked above.
-                                        let version_fmt = resolution.npm().version.fmt(string_buf);
-                                        if options.exact_versions {
-                                            let mut v = Vec::new();
-                                            write!(&mut v, "{}", version_fmt)
-                                                .expect("infallible: in-memory write");
-                                            break 'new_version v;
-                                        }
-
-                                        let version_literal: &[u8] = 'version_literal: {
-                                            if !is_alias {
-                                                break 'version_literal &entry
-                                                    .value
-                                                    .original_version_literal;
-                                            }
-                                            if let Some(at_index) = strings::last_index_of_char(
-                                                &entry.value.original_version_literal,
-                                                b'@',
-                                            ) {
-                                                break 'version_literal &entry
-                                                    .value
-                                                    .original_version_literal[at_index + 1..];
-                                            }
-                                            &entry.value.original_version_literal
-                                        };
-
-                                        let pinned_version =
-                                            semver::Version::which_version_is_pinned(
-                                                version_literal,
-                                            );
-                                        let mut v = Vec::new();
-                                        match pinned_version {
-                                            semver::PinnedVersion::Patch => {
-                                                write!(&mut v, "{}", version_fmt)
-                                                    .expect("infallible: in-memory write")
-                                            }
-                                            semver::PinnedVersion::Minor => {
-                                                write!(&mut v, "~{}", version_fmt)
-                                                    .expect("infallible: in-memory write")
-                                            }
-                                            semver::PinnedVersion::Major => {
-                                                write!(&mut v, "^{}", version_fmt)
-                                                    .expect("infallible: in-memory write")
-                                            }
-                                        }
-                                        v
-                                    };
-
-                                    if is_alias {
-                                        let dep_literal =
-                                            workspace_dep.version.literal.slice(string_buf);
-
-                                        // negative because the real package might have a scope
-                                        // e.g. "dep": "npm:@foo/bar@1.2.3"
-                                        if let Some(at_index) =
-                                            strings::last_index_of_char(dep_literal, b'@')
-                                        {
-                                            let mut v = Vec::new();
-                                            write!(
-                                                &mut v,
-                                                "{}@{}",
-                                                bstr::BStr::new(&dep_literal[0..at_index]),
-                                                bstr::BStr::new(&new_version)
-                                            )
-                                            .unwrap();
-                                            dep.value = Some(Expr::allocate(
-                                                arena,
-                                                E::EString::init(arena_str(arena, &v)),
-                                                bun_ast::Loc::EMPTY,
-                                            ));
-                                            break 'updated;
-                                        }
-
-                                        // fallthrough and replace entire version.
-                                    }
-
-                                    dep.value = Some(Expr::allocate(
-                                        arena,
-                                        E::EString::init(arena_str(arena, &new_version)),
-                                        bun_ast::Loc::EMPTY,
-                                    ));
-                                    break 'updated;
-                                }
-                            }
+                        // `Lockfile::preprocess_updating_packages` resolved this literal
+                        // together with the lockfile's root dependency, so package.json
+                        // and bun.lock always agree. `None` keeps the user's literal.
+                        if let Some(new_version) = &entry.value.updated_version_literal {
+                            dep.value = Some(Expr::allocate(
+                                arena,
+                                E::EString::init(arena_str(arena, new_version)),
+                                bun_ast::Loc::EMPTY,
+                            ));
                         }
                     }
                 }
@@ -586,7 +463,8 @@ pub(crate) fn edit(
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
                 // order-insensitive scan: `FOUR` is fine here
-                'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
+                'dependency_group: for group in DependencyGroup::FOUR {
+                    let list = group.prop;
                     if let Some(query) = current_package_json.as_property(list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
                             let name = request.get_name();
@@ -663,6 +541,8 @@ pub(crate) fn edit(
                                                     is_alias,
                                                     original_version_string_buf: Box::default(),
                                                     original_version: None,
+                                                    group_behavior: group.behavior,
+                                                    updated_version_literal: None,
                                                 };
                                             }
                                         }
@@ -1131,74 +1011,15 @@ pub(crate) fn edit(
                             if let Some(entry) =
                                 manager.updating_packages.fetch_swap_remove(request.name)
                             {
-                                let new_version: Vec<u8> = 'new_version: {
-                                    let version_fmt = resolutions[request.package_id as usize]
-                                        .npm()
-                                        .version
-                                        .fmt(manager.lockfile.buffers.string_bytes.as_slice());
-                                    if options.exact_versions {
-                                        let mut v = Vec::new();
-                                        write!(&mut v, "{}", version_fmt)
-                                            .expect("infallible: in-memory write");
-                                        break 'new_version v;
-                                    }
-
-                                    let version_literal: &[u8] = 'version_literal: {
-                                        if !entry.value.is_alias {
-                                            break 'version_literal &entry
-                                                .value
-                                                .original_version_literal;
-                                        }
-                                        if let Some(at_index) = strings::last_index_of_char(
-                                            &entry.value.original_version_literal,
-                                            b'@',
-                                        ) {
-                                            break 'version_literal &entry
-                                                .value
-                                                .original_version_literal[at_index + 1..];
-                                        }
-
-                                        &entry.value.original_version_literal
-                                    };
-
-                                    let pinned_version =
-                                        semver::Version::which_version_is_pinned(version_literal);
-                                    let mut v = Vec::new();
-                                    match pinned_version {
-                                        semver::PinnedVersion::Patch => {
-                                            write!(&mut v, "{}", version_fmt)
-                                                .expect("infallible: in-memory write")
-                                        }
-                                        semver::PinnedVersion::Minor => {
-                                            write!(&mut v, "~{}", version_fmt)
-                                                .expect("infallible: in-memory write")
-                                        }
-                                        semver::PinnedVersion::Major => {
-                                            write!(&mut v, "^{}", version_fmt)
-                                                .expect("infallible: in-memory write")
-                                        }
-                                    }
-                                    v
-                                };
-
-                                if entry.value.is_alias {
-                                    let dep_literal = &entry.value.original_version_literal;
-
-                                    if let Some(at_index) =
-                                        strings::last_index_of_char(dep_literal, b'@')
-                                    {
-                                        let mut v = Vec::new();
-                                        write!(
-                                            &mut v,
-                                            "{}@{}",
-                                            bstr::BStr::new(&dep_literal[0..at_index]),
-                                            bstr::BStr::new(&new_version)
-                                        )
-                                        .unwrap();
-                                        break 'npm arena_str(arena, &v);
-                                    }
-                                }
-
+                                // For the root dependencies it rewrites,
+                                // `Lockfile::preprocess_update_requests` wrote the
+                                // same literal via `positional_update_literal`.
+                                let new_version = format_updated_version_literal(
+                                    &resolutions[request.package_id as usize].npm().version,
+                                    manager.lockfile.buffers.string_bytes.as_slice(),
+                                    &entry.value,
+                                    options.exact_versions,
+                                );
                                 break 'npm arena_str(arena, &new_version);
                             }
                         }

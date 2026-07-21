@@ -215,7 +215,7 @@ use crate::package_manager_task as Task;
 use crate::resolvers::folder_resolver::{Entry as FolderResolutionEntry, FolderResolution};
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
-    Dependency, DependencyID, Features, NetworkTask, PackageID, PackageManifestMap,
+    Behavior, Dependency, DependencyID, Features, NetworkTask, PackageID, PackageManifestMap,
     PackageNameAndVersionHash, PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext,
     initialize_store,
 };
@@ -622,6 +622,14 @@ pub struct PackageUpdateInfo {
     pub is_alias: bool,
     pub original_version_string_buf: Box<[u8]>,
     pub original_version: Option<Semver::Version>,
+    /// The package.json dependency group this entry was registered from, so
+    /// the lockfile's root `Dependency` for the same name can be matched when
+    /// it appears in more than one group.
+    pub group_behavior: Behavior,
+    /// The literal a no-argument `bun update` resolved, computed once in
+    /// `Lockfile::preprocess_updating_packages` and applied to both the
+    /// lockfile and package.json. `None` keeps the literal the user had.
+    pub updated_version_literal: Option<Box<[u8]>>,
 }
 
 #[derive(Default)]

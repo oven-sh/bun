@@ -359,6 +359,11 @@ pub struct JSValkeyClient {
 
     pub timer: RefCountedTimer,
     pub reconnect_timer: RefCountedTimer,
+    /// Keep-alive refs handed to open sockets by [`connect`](Self::connect).
+    /// Released by [`take_socket_ref`](Self::take_socket_ref). A counter (not
+    /// a bool) because the reconnect path can have more than one in-flight
+    /// `us_socket_t` with this client in its ext slot.
+    socket_refs: Cell<u32>,
     pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
 }
 
@@ -466,6 +471,22 @@ impl bun_ptr::RefCounted for JSValkeyClient {
         unsafe { &raw mut (*this).ref_count }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: last ref dropped; `this` is live until `deinit` reclaims it.
+        let this_ref = unsafe { &*this };
+        if !this_ref.client.get().flags.finalized && this_ref.this_value.get().is_not_empty() {
+            // Reaching 0 while the JS wrapper is still attached means a ref
+            // was released that was not owned (the wrapper's `+1` is only
+            // ever consumed by `finalize()`). Freeing here would make the
+            // later `finalize()` a heap-use-after-free, so donate the stolen
+            // ref back and leave the allocation live; `finalize()` then frees
+            // normally. Assertion builds panic so the over-release is caught.
+            debug_assert!(
+                false,
+                "JSValkeyClient refcount reached 0 before the JS wrapper was finalized",
+            );
+            this_ref.ref_();
+            return;
+        }
         // SAFETY: last ref dropped; sole owner.
         unsafe { JSValkeyClient::deinit(this) };
     }
@@ -500,6 +521,25 @@ impl JSValkeyClient {
     pub fn ref_scope(&self) -> ScopedRef<Self> {
         // SAFETY: `self` is live; the guard's own ref keeps it alive past Drop.
         unsafe { ScopedRef::new(self.as_ctx_ptr()) }
+    }
+    /// Adopt a socket keep-alive ref recorded by [`connect`](Self::connect)
+    /// into the calling scope. Returns `None` when no ref is outstanding, so a
+    /// close/reconnect dispatch that arrives without a live socket ref cannot
+    /// release one it does not own.
+    #[inline]
+    fn take_socket_ref(&self) -> Option<ScopedRef<Self>> {
+        let n = self.socket_refs.get();
+        if n == 0 {
+            debug_assert!(
+                false,
+                "on_valkey_close/on_valkey_reconnect without a live socket ref",
+            );
+            return None;
+        }
+        self.socket_refs.set(n - 1);
+        // SAFETY: `connect()` took this `+1` via `socket_ref.forget()` and
+        // recorded it in `socket_refs`; this scope consumes it.
+        Some(unsafe { ScopedRef::adopt(self.as_ctx_ptr()) })
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
@@ -818,6 +858,7 @@ impl JSValkeyClient {
             _secure: Cell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
+            socket_refs: Cell::new(0),
         }))
     }
 
@@ -938,6 +979,7 @@ impl JSValkeyClient {
             _secure: Cell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
+            socket_refs: Cell::new(0),
         }))
     }
 
@@ -1379,11 +1421,7 @@ impl JSValkeyClient {
 
     // Callback for when Valkey client needs to reconnect
     pub fn on_valkey_reconnect(&self) {
-        // SAFETY: adopts connect()'s socket keep-alive ref for the just-closed
-        // socket. Reached only from `ValkeyClient::on_close()`'s reconnect
-        // branch, which never calls `on_valkey_close()`, so this scope is the
-        // sole releaser. The caller holds its own scoped ref, so count > 0.
-        let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
+        let _socket_ref = self.take_socket_ref();
 
         self.reconnect_timer
             .arm(self, self.client.get().get_reconnect_delay());
@@ -1393,9 +1431,7 @@ impl JSValkeyClient {
     pub fn on_valkey_close(&self) -> JsTerminatedResult<()> {
         let global_object = self.global_object;
 
-        // SAFETY: adopts connect()'s socket keep-alive ref; the caller holds
-        // its own scoped ref so count stays > 0 until this drops.
-        let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
+        let _socket_ref = self.take_socket_ref();
         let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
@@ -1596,6 +1632,7 @@ impl JSValkeyClient {
             // `on_valkey_close()` consumes the socket ref; hand it over so it
             // isn't released twice.
             socket_ref.forget();
+            self.socket_refs.set(self.socket_refs.get() + 1);
             self.client_mut().on_valkey_close()?;
             self.client_mut().status = valkey::Status::Disconnected;
             return Ok(());
@@ -1637,6 +1674,7 @@ impl JSValkeyClient {
         // Disarm on success: the socket now owns the keep-alive ref.
         scopeguard::ScopeGuard::into_inner(errdefer_status);
         socket_ref.forget();
+        self.socket_refs.set(self.socket_refs.get() + 1);
         Ok(())
     }
 
@@ -1709,6 +1747,7 @@ impl JSValkeyClient {
             debug_assert!(this_ref.client.get().socket.is_closed());
             debug_assert!(!this_ref.timer.ref_held.get());
             debug_assert!(!this_ref.reconnect_timer.ref_held.get());
+            debug_assert_eq!(this_ref.socket_refs.get(), 0);
             if let Some(s) = this_ref._secure.get() {
                 // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
                 unsafe { boringssl::c::SSL_CTX_free(s) };

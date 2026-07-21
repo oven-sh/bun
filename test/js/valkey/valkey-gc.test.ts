@@ -181,6 +181,82 @@ test.concurrent("RedisClient survives subscribe() + close() against a server tha
   expect(exitCode).toBe(0);
 });
 
+// Same fault class as above, with the yield point moved so the server-side
+// close is processed before `close()`: on_close takes the auto-reconnect
+// branch, and the still-armed connection-timeout timer then fires against a
+// Disconnected client. on_valkey_close/on_valkey_reconnect previously adopted
+// the socket keep-alive ref unconditionally; when the close/fail path re-enters
+// under the fired timer that adopt could spend the JS wrapper's own +1, so the
+// guards at the end of on_connection_timeout dropped the count to 0 and freed
+// the Box while the wrapper was live. GC finalize -> stop_timers then read the
+// freed allocation.
+test.concurrent(
+  "RedisClient survives on_connection_timeout firing after an auto-reconnect close",
+  async () => {
+    const src = `
+    const CRLF = "\\r\\n";
+    const blk = s => "$" + s.length + CRLF + s + CRLF;
+    const sockets = [];
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) { s.data = { buf: "" }; sockets.push(s); },
+        data(s, d) {
+          s.data.buf += d.toString("latin1");
+          if (s.data.buf.includes("HELLO")) s.write("%1" + CRLF + blk("proto") + ":3" + CRLF);
+          else if (s.data.buf.includes(CRLF)) s.write("+OK" + CRLF);
+          s.data.buf = "";
+        },
+        close() {},
+      },
+    });
+    const url = "redis://127.0.0.1:" + server.port;
+    const clients = [];
+    for (let round = 0; round < ${isASAN ? 80 : 200}; round++) {
+      const c = new Bun.RedisClient(url, { autoReconnect: true, connectionTimeout: 2000 });
+      c.onconnect = () => {}; c.onclose = () => {};
+      try { await c.connect(); } catch {}
+      const s = sockets.pop();
+      try { s?.terminate?.(); s?.end?.(); } catch {}
+      // Let the close reach the client so on_close takes the reconnect branch
+      // (is_manually_closed is still false at that point).
+      await new Promise(r => setImmediate(r));
+      await new Promise(r => setImmediate(r));
+      try { c.subscribe("ch" + round, () => {}).catch(() => {}); } catch {}
+      try { c.close(); } catch {}
+      clients.push(c);
+      if (round % 8 === 0) Bun.gc(false);
+      await new Promise(r => setTimeout(r, 1));
+    }
+    // Drive GC so finalize() runs and would touch any freed allocation.
+    Bun.gc(true);
+    await new Promise(r => setTimeout(r, 50));
+    Bun.gc(true);
+    for (const c of clients) {
+      if (typeof c.connected !== "boolean") throw new Error("expected boolean");
+    }
+    while (sockets.length) try { sockets.pop()?.terminate?.(); } catch {}
+    server.stop(true);
+    console.log("OK");
+    process.exit(0);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("OK");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  },
+);
+
 // Fuzzer found a flaky SIGILL when a RedisClient is constructed, a command
 // throws during argument validation (before any connection attempt), and the
 // client is then garbage collected. `updatePollRef` could be reached after

@@ -20,6 +20,12 @@ public:
     void install();
     void uninstall();
     void signalReceived();
+#if !OS(WINDOWS)
+    /** While armed we own the SIGINT disposition, so anything that wants to change
+     * it (`process.on("SIGINT")` and its removal) hands us the action to apply when
+     * we disarm. Returns false if we are not armed: install it yourself. */
+    bool deferSigintDisposition(const struct sigaction& action);
+#endif
     void registerGlobalObject(JSC::JSGlobalObject* globalObject);
     void unregisterGlobalObject(JSC::JSGlobalObject* globalObject);
     void registerReceiver(SigintReceiver* module);
@@ -106,6 +112,11 @@ private:
     WTF::Vector<JSC::JSGlobalObject*> m_globalObjects;
     WTF::Vector<SigintReceiver*> m_receivers;
     uint32_t m_refCount = 0;
+#if !OS(WINDOWS)
+    // What uninstall() puts back: the disposition install() displaced, unless
+    // deferSigintDisposition() has since replaced it. Guarded by m_refCountMutex.
+    struct sigaction m_previousAction {};
+#endif
 
     bool signalAll();
 };

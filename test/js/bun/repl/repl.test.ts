@@ -51,27 +51,30 @@ async function withTerminalRepl(
   let cursor = 0;
   let resolveWaiter: (() => void) | null = null;
 
-  await using terminal = new Bun.Terminal({
-    cols: 120,
-    rows: 40,
-    data(_term, data) {
-      const str = Buffer.from(data).toString();
-      received.push(str);
-      if (resolveWaiter) {
-        resolveWaiter();
-        resolveWaiter = null;
-      }
-    },
-  });
-
+  // The inline `terminal` option is what makes the child a session leader with
+  // the pty as its controlling terminal, so Ctrl+C reaches it as SIGINT.
+  // Handing `Bun.spawn` an already-created `Bun.Terminal` skips that setup.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
-    terminal,
     env: {
       ...bunEnv,
       TERM: "xterm-256color",
     },
+    terminal: {
+      cols: 120,
+      rows: 40,
+      data(_term, data) {
+        const str = Buffer.from(data).toString();
+        received.push(str);
+        if (resolveWaiter) {
+          resolveWaiter();
+          resolveWaiter = null;
+        }
+      },
+    },
   });
+  const terminal = proc.terminal!;
+  using closeTerminal = { [Symbol.dispose]: () => terminal.close() };
 
   const send = (text: string) => terminal.write(text);
 
@@ -91,11 +94,14 @@ async function withTerminalRepl(
           `Timed out waiting for pattern: ${pattern}\nReceived so far:\n${stripAnsi(received.join("").slice(cursor))}`,
         );
       }
-      // Wait for the next chunk of terminal data (or time out).
-
-      await new Promise<void>(resolve => {
-        resolveWaiter = resolve;
-      });
+      // Wait for the next chunk of terminal data, or for the deadline: without
+      // the race this sleeps forever when the child goes quiet.
+      await Promise.race([
+        new Promise<void>(resolve => {
+          resolveWaiter = resolve;
+        }),
+        Bun.sleep(remaining),
+      ]);
       resolveWaiter = null;
     }
   };
@@ -990,6 +996,146 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       terminal.write("\x04"); // Ctrl+D
       const exitCode = await Promise.race([proc.exited, Bun.sleep(3000).then(() => -1)]);
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // Arming the SIGINT watcher around every evaluation must put the previous
+  // disposition back, or an external SIGINT is swallowed from then on and the
+  // startup handler that restores the terminal never runs.
+  test("an external SIGINT at the prompt still terminates the REPL", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      send("1 + 1\n");
+      await waitFor(/\n\s*2\b/);
+
+      proc.kill("SIGINT");
+      const exited = await Promise.race([
+        proc.exited.then(() => "exited"),
+        Bun.sleep(4000).then(() => "still running"),
+      ]);
+      expect(exited).toBe("exited");
+    });
+  });
+
+  // The disarm must not clobber a handler installed while the watcher was armed:
+  // BunProcess registers its SIGINT handler exactly once, so discarding it would
+  // strand the listener for the rest of the session.
+  test("a SIGINT listener registered in the REPL survives the evaluation", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      // Split the literal so the echoed input line can't satisfy the wait.
+      send("process.on('SIGINT', () => console.log('CAUGHT_' + 'SIGINT')); 1 + 1\n");
+      await waitFor(/\n\s*2\b/);
+
+      proc.kill("SIGINT");
+      // The loop only runs during an evaluation, so the queued signal is handed
+      // to the listener on the next one. The signal is already pending when the
+      // keystrokes are written, and a handler runs before the read they satisfy
+      // returns to userspace, so the marker can't be missed.
+      send("3 + 4\n");
+      // Getting the marker at all proves the process survived and the listener,
+      // rather than the watcher's handler, is what the disposition points at.
+      await waitFor("CAUGHT_SIGINT");
+    });
+  });
+
+  // And the mirror: dropping the last listener has to put the default action back.
+  // BunProcess reinstates the watcher's own handler rather than uninstalling it,
+  // so the disarm used to see its handler intact and restore the stale snapshot.
+  test("removing the last SIGINT listener restores the default disposition", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      send("globalThis.h = () => {}; process.on('SIGINT', globalThis.h); 1 + 1\n");
+      await waitFor(/\n\s*2\b/);
+
+      send("process.removeListener('SIGINT', globalThis.h); 3 + 4\n");
+      await waitFor(/\n\s*7\b/);
+
+      proc.kill("SIGINT");
+      const outcome = await Promise.race([
+        proc.exited.then(() => "exited"),
+        Bun.sleep(4000).then(() => "still running"),
+      ]);
+      expect(outcome).toBe("exited");
+    });
+  });
+
+  // Adding a listener used to install over the watcher's handler, downgrading
+  // Ctrl+C to a JS event that the loop it is meant to break out of never drains.
+  test("Ctrl+C interrupts a loop that installed a SIGINT listener first", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(`process.on("SIGINT", () => {}); process.stdout.write("LOOP" + "ING\\n"); while (true) {}\n`);
+      await waitFor("LOOPING");
+      send("\x03"); // Ctrl+C
+      const output = await waitFor(/interrupted/);
+      expect(stripAnsi(output)).toContain("Script execution was interrupted by `SIGINT`");
+
+      send("111 + 222\n");
+      await waitFor(/\n\s*333\b/);
+    });
+  });
+
+  // The REPL used to stay in raw mode while evaluating, so Ctrl+C was delivered
+  // as a byte nobody read and a synchronous loop could only be escaped by
+  // killing the process (which left the terminal in raw mode).
+  test("Ctrl+C interrupts a synchronous infinite loop", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // Print from inside the evaluation so the interrupt is sent only once the
+      // loop is actually running. Split the literal so the echoed input line
+      // can't satisfy the wait.
+      send(`process.stdout.write("RUN" + "NING\\n"); while (true) {}\n`);
+      await waitFor("RUNNING");
+      send("\x03"); // Ctrl+C
+      const output = await waitFor(/interrupted/);
+      expect(stripAnsi(output)).toContain("Script execution was interrupted by `SIGINT`");
+
+      // And the session keeps working.
+      send("111 + 222\n");
+      await waitFor(/\n\s*333\b/);
+    });
+  });
+
+  test("Ctrl+C during a never-settling await leaves the REPL usable", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // The executor runs synchronously, so printing from it marks the point where
+      // the REPL starts waiting. The short interval keeps the loop alive, so the
+      // wait parks in the poller but wakes often enough to notice the interrupt.
+      send(`await new Promise(() => { process.stdout.write("WAIT" + "ING\\n"); setInterval(() => {}, 10); })\n`);
+      await waitFor("WAITING");
+      send("\x03"); // Ctrl+C
+      await waitFor(/interrupted/);
+
+      // Interrupting used to leave the VM permanently execution-forbidden,
+      // which silently dropped every microtask from then on.
+      send("await Promise.resolve(1234 * 1000)\n");
+      await waitFor(/\n\s*1234000\b/);
+    });
+  });
+
+  // The inner script's termination reached `checkForTermination` with neither a
+  // SIGINT flag of its own nor a timeout, which used to abort the process.
+  test("Ctrl+C during a nested vm.runInThisContext does not abort", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // No `\n` escape inside the nested string: the REPL mishandles one there
+      // (pre-existing, reproduces on release bun), and the marker doesn't need it.
+      send(`require('vm').runInThisContext('process.stdout.write("IN"+"NER"); while (true) {}')\n`);
+      await waitFor("INNER");
+      send("\x03"); // Ctrl+C
+      await waitFor(/interrupted/);
+
+      // Reaching a result at all proves the process survived the interrupt.
+      send("111 + 222\n");
+      await waitFor(/\n\s*333\b/);
+    });
+  });
+
+  // The inner `breakOnSigint` holder used to unregister the REPL's own global on
+  // the way out, leaving the rest of the evaluation uninterruptible.
+  test("Ctrl+C still interrupts after a nested breakOnSigint script", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(
+        `require('vm').runInThisContext('1', { breakOnSigint: true }); process.stdout.write("AFT"+"ER\\n"); while (true) {}\n`,
+      );
+      await waitFor("AFTER");
+      send("\x03"); // Ctrl+C
+      await waitFor(/interrupted/);
     });
   });
 

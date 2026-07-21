@@ -86,6 +86,30 @@ describe("vm", () => {
       });
       expect(result).toBe(2);
     });
+
+    // An outer watchdog firing while a nested no-options script is on the stack
+    // used to abort the process, and then to report it as a SIGINT. Only the
+    // scope that armed the termination can classify it. Spawned, so a regression
+    // back to the abort is an attributable failure rather than a dead runner.
+    test("an outer timeout reports ERR_SCRIPT_EXECUTION_TIMEOUT through a nested script", async () => {
+      const fixture = `
+        const vm = require("node:vm");
+        globalThis.__nestedSpin = () => vm.runInThisContext("while (true) {}");
+        try {
+          vm.runInThisContext("__nestedSpin()", { timeout: 100 });
+          console.log("NO_THROW");
+        } catch (e) {
+          console.log(e.code + " " + e.message);
+        }
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      capture(stderr);
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({
+        stdout: "ERR_SCRIPT_EXECUTION_TIMEOUT Script execution timed out after 100ms",
+        exitCode: 0,
+      });
+    });
   });
 
   describe("compileFunction()", () => {
@@ -939,6 +963,110 @@ test("Loader is not defined in vm context", () => {
   expect(runInContext("Object.hasOwn(globalThis, 'Loader');", customContext)).toBe(true);
   // Ensure internal JSC Loader properties are not leaking through
   expect(runInContext("typeof Loader.registry;", customContext)).toBe("undefined");
+});
+
+// `drainMicrotasksForGlobalObject` *clears* rather than drains, so a terminated
+// module must only clear its own context's global. Passing the caller's global
+// discarded the main thread's pending microtasks and wedged the process.
+test("a terminated context-less module does not discard the main microtask queue", async () => {
+  const fixture = `
+    const vm = require("node:vm");
+    const m = new vm.SourceTextModule("while (true) {}");
+    await m.link(() => {});
+
+    const { promise, resolve } = Promise.withResolvers();
+    const chain = promise.then(() => "survived");
+    resolve(); // the continuation is now parked in the main microtask queue
+
+    m.evaluate({ timeout: 100 }).then(() => console.log("NO_THROW"), e => console.log("threw=" + e.code));
+    // Clearing the queue drops the continuation, so this never prints and the
+    // process exits with nothing left to do.
+    chain.then(v => console.log("chain=" + v));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  capture(stderr);
+  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    stdout: ["threw=ERR_SCRIPT_EXECUTION_TIMEOUT", "chain=survived"],
+    exitCode: 0,
+  });
+});
+
+// Same clear, reached from the script side. `runInThisContext` evaluates in the
+// caller's global, so there is no context queue to clear and the caller's one is
+// not ours to discard. Node keeps the continuation here too.
+test("a timed-out runInThisContext does not discard the main microtask queue", async () => {
+  const fixture = `
+    const vm = require("node:vm");
+
+    const { promise, resolve } = Promise.withResolvers();
+    const chain = promise.then(() => "survived");
+    resolve(); // the continuation is now parked in the main microtask queue
+
+    try {
+      vm.runInThisContext("while (true) {}", { timeout: 100 });
+      console.log("NO_THROW");
+    } catch (e) {
+      console.log("threw=" + e.code);
+    }
+    // Clearing the queue drops the continuation, so this never prints and the
+    // process exits with nothing left to do.
+    chain.then(v => console.log("chain=" + v));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  capture(stderr);
+  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    stdout: ["threw=ERR_SCRIPT_EXECUTION_TIMEOUT", "chain=survived"],
+    exitCode: 0,
+  });
+});
+
+// Re-raising an enclosing scope's termination must not hand the VM's singleton
+// TerminationException to the module: storing it and re-throwing it once the
+// request is cleared trips `VM::setException`'s
+// `!isTerminationException(e) || hasTerminationRequest()` assertion.
+test("a module terminated by an enclosing scope ends up errored without aborting", async () => {
+  const fixture = `
+    const vm = require("node:vm");
+    const m = new vm.SourceTextModule("while (true) {}");
+    await m.link(() => {});
+    globalThis.__run = () => {
+      const p = m.evaluate();
+      p.catch(() => {});
+      return p;
+    };
+    try {
+      vm.runInThisContext("__run()", { timeout: 100 });
+      console.log("outer=NO_THROW");
+    } catch (e) {
+      console.log("outer=" + e.code);
+    }
+    console.log("status=" + m.status);
+    try {
+      m.error;
+      console.log("error=readable");
+    } catch (e) {
+      console.log("error=threw:" + e.code);
+    }
+    // Re-evaluating an errored module re-throws the error it stored. That is
+    // where a stored TerminationException trips the assertion.
+    try {
+      const again = m.evaluate();
+      again.catch(() => {});
+      console.log("reeval=ok");
+    } catch (e) {
+      console.log("reeval=threw:" + (e.code ?? e.name));
+    }
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Before the assertion: a native abort makes stderr the useful diagnostic.
+  capture(stderr);
+  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    stdout: ["outer=ERR_SCRIPT_EXECUTION_TIMEOUT", "status=errored", "error=readable", "reeval=ok"],
+    exitCode: 0,
+  });
 });
 
 test("node:vm native Module prototype methods reject non-module receivers", async () => {

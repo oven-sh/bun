@@ -319,7 +319,6 @@ CPP_DECL void JSC__VM__notifyNeedWatchdogCheck(JSC::VM* arg0);
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC::VM* arg0);
 CPP_DECL size_t JSC__VM__runGC(JSC::VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* arg0, bool arg1);
-CPP_DECL void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC::VM* arg0, double arg1);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC::VM* arg0);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);

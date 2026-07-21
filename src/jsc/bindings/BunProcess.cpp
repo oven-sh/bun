@@ -59,6 +59,7 @@
 #include "NodeValidator.h"
 #include "NodeModuleModule.h"
 #include "JSX509Certificate.h"
+#include "vm/SigintWatcher.h"
 
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
@@ -1570,7 +1571,12 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         sigaddset(&action.sa_mask, signalNumber);
                         action.sa_flags = SA_RESTART;
 
-                        sigaction(signalNumber, &action, nullptr);
+                        // The SIGINT watcher (`node:vm` breakOnSigint, the REPL) holds the
+                        // disposition while the code doing this runs, so hand it the action
+                        // rather than installing over its handler and disarming it.
+                        if (signalNumber != SIGINT || !Bun::SigintWatcher::get().deferSigintDisposition(action)) {
+                            sigaction(signalNumber, &action, nullptr);
+                        }
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),
@@ -1587,9 +1593,19 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && eventEmitter.listenerCount(eventName) == 0) {
 
 #if !OS(WINDOWS)
-                        if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
-                            // Don't uninstall the old handler if it's not the one we installed.
-                            signal(signalNumber, oldHandler);
+                        struct sigaction action;
+                        memset(&action, 0, sizeof(struct sigaction));
+                        action.sa_handler = SIG_DFL;
+                        sigemptyset(&action.sa_mask);
+
+                        // Same as above: while the watcher is armed, the default we want
+                        // back takes effect when it disarms, not now. Without this its
+                        // handler is what `signal()` below would find and reinstate.
+                        if (signalNumber != SIGINT || !Bun::SigintWatcher::get().deferSigintDisposition(action)) {
+                            if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+                                // Don't uninstall the old handler if it's not the one we installed.
+                                signal(signalNumber, oldHandler);
+                            }
                         }
 #else
                         SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);

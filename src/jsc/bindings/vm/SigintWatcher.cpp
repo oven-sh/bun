@@ -20,6 +20,11 @@ static BOOL WindowsCtrlHandler(DWORD signal)
 
     return false;
 }
+#else
+static void sigintWatcherHandler(int)
+{
+    SigintWatcher::get().signalReceived();
+}
 #endif
 
 SigintWatcher::SigintWatcher()
@@ -43,15 +48,15 @@ void SigintWatcher::install()
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
 
-    action.sa_handler = [](int signalNumber) {
-        get().signalReceived();
-    };
+    action.sa_handler = sigintWatcherHandler;
 
     sigemptyset(&action.sa_mask);
     sigaddset(&action.sa_mask, SIGINT);
     action.sa_flags = 0;
 
-    sigaction(SIGINT, &action, nullptr);
+    // Save what we displace. `ref()` only reaches install() on the 0 -> 1
+    // transition, so this cannot capture our own handler.
+    sigaction(SIGINT, &action, &m_previousAction);
 #endif
 
     if (m_installed.exchange(true)) {
@@ -83,26 +88,59 @@ void SigintWatcher::install()
 
 void SigintWatcher::uninstall()
 {
-    if (m_installed.exchange(false)) {
-        WTF::Thread* currentThread = WTF::Thread::currentMayBeNull();
-        ASSERT(!currentThread || m_thread->uid() != currentThread->uid());
+    if (!m_installed.load()) {
+        return;
+    }
 
+    WTF::Thread* currentThread = WTF::Thread::currentMayBeNull();
+    ASSERT(!currentThread || m_thread->uid() != currentThread->uid());
+
+    // Hand the disposition back while still armed. Clearing m_installed first
+    // leaves a window where our handler is live but the watcher thread bails out
+    // of `signalAll`, so a signal landing in it reaches nobody at all.
 #if OS(WINDOWS)
-        SetConsoleCtrlHandler(WindowsCtrlHandler, false);
+    SetConsoleCtrlHandler(WindowsCtrlHandler, false);
 #else
-        struct sigaction action;
-        memset(&action, 0, sizeof(struct sigaction));
-        action.sa_handler = Bun__onPosixSignal;
-        sigemptyset(&action.sa_mask);
-        sigaddset(&action.sa_mask, SIGINT);
-        action.sa_flags = SA_RESTART;
-        sigaction(SIGINT, &action, nullptr);
+    // Undo only our own handler: a native addon may have installed its own
+    // while we were armed, and clobbering it would strand that handler.
+    // `process.on("SIGINT")` instead routes through deferSigintDisposition.
+    struct sigaction current;
+    if (sigaction(SIGINT, nullptr, &current) == 0
+        && !(current.sa_flags & SA_SIGINFO)
+        && current.sa_handler == sigintWatcherHandler) {
+        sigaction(SIGINT, &m_previousAction, nullptr);
+    }
 #endif
 
-        m_semaphore.signal();
-        m_thread->waitForCompletion();
+    // The restore above is idempotent, so a second caller that lost this race
+    // (only the destructor can, `deref` holds m_refCountMutex) stops here.
+    if (!m_installed.exchange(false)) {
+        return;
     }
+
+    m_semaphore.signal();
+    m_thread->waitForCompletion();
 }
+
+#if !OS(WINDOWS)
+bool SigintWatcher::deferSigintDisposition(const struct sigaction& action)
+{
+    WTF::Locker locker { m_refCountMutex };
+    if (!m_installed.load()) {
+        return false;
+    }
+
+    struct sigaction current;
+    if (sigaction(SIGINT, nullptr, &current) != 0
+        || (current.sa_flags & SA_SIGINFO)
+        || current.sa_handler != sigintWatcherHandler) {
+        return false;
+    }
+
+    m_previousAction = action;
+    return true;
+}
+#endif
 
 void SigintWatcher::signalReceived()
 {
@@ -119,7 +157,10 @@ void SigintWatcher::registerGlobalObject(JSGlobalObject* globalObject)
     }
 
     WTF::Locker lock(m_globalObjectsMutex);
-    m_globalObjects.appendIfNotContains(globalObject);
+    // Append unconditionally so a nested holder unregisters only its own entry.
+    // `signalAll` tolerates duplicates: `notifyNeedTermination` just re-sets an
+    // already-set trap bit.
+    m_globalObjects.append(globalObject);
 }
 
 void SigintWatcher::unregisterGlobalObject(JSGlobalObject* globalObject)
@@ -146,7 +187,10 @@ void SigintWatcher::registerReceiver(SigintReceiver* module)
     }
 
     WTF::Locker lock(m_receiversMutex);
-    m_receivers.appendIfNotContains(module);
+    // Append unconditionally, for the same reason as registerGlobalObject:
+    // `unregisterReceiver` removes one entry. `setSigintReceived` is an
+    // idempotent atomic store, so duplicates are harmless to `signalAll`.
+    m_receivers.append(module);
 }
 
 void SigintWatcher::unregisterReceiver(SigintReceiver* module)

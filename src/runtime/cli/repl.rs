@@ -11,8 +11,7 @@
 //!
 //! This replaces the TypeScript-based REPL for faster startup and better integration.
 
-#[cfg(unix)]
-use core::ffi::c_int;
+use core::ffi::c_void;
 use core::fmt::Arguments;
 use std::io::Write as _;
 
@@ -54,6 +53,34 @@ unsafe extern "C" {
         prefixPtr: *const u8,
         prefixLen: usize,
     ) -> JSValue;
+
+    /// Arms the SIGINT watcher; the returned scope must be passed to
+    /// `Bun__REPL__disarmSigint` exactly once.
+    fn Bun__REPL__armSigint(globalObject: *const JSGlobalObject) -> *mut c_void;
+    fn Bun__REPL__disarmSigint(globalObject: *const JSGlobalObject, scope: *mut c_void);
+    fn Bun__REPL__sigintRequested(scope: *mut c_void) -> bool;
+    /// Clears the VM's SIGINT termination state and hands back the error to
+    /// report, or an empty `JSValue` when no interrupt is pending.
+    fn Bun__REPL__takeSigintError(
+        globalObject: *const JSGlobalObject,
+        scope: *mut c_void,
+    ) -> JSValue;
+}
+
+/// Ctrl+C interruption armed for the duration of one evaluation.
+struct SigintScope {
+    scope: *mut c_void,
+}
+
+/// What one REPL evaluation produced.
+enum EvalOutcome {
+    /// The value of the input, already unwrapped from the `{ value: ... }`
+    /// wrapper the REPL transform adds.
+    Value(JSValue),
+    /// A thrown exception, a rejected promise, or a Ctrl+C interrupt.
+    Error(JSValue),
+    /// A top-level await that never settled. Nothing to print.
+    Pending,
 }
 
 // ============================================================================
@@ -967,51 +994,68 @@ impl<'a> Repl<'a> {
         }
     }
 
-    /// Temporarily enable SIGINT delivery during blocking promise waits
-    fn enable_signals_during_wait(&mut self) {
-        if let Some(vm) = self.vm {
-            // Cleared in disable_signals_during_wait; Release pairs with the
-            // Acquire load in `sigint_handler`.
-            SIGINT_VM.store(vm.jsc_vm, core::sync::atomic::Ordering::Release);
+    /// Make Ctrl+C interrupt the evaluation that is about to run.
+    ///
+    /// Like node's REPL, hand the terminal back to the line discipline so Ctrl+C
+    /// arrives as SIGINT rather than a byte nobody reads, and arm the watcher so
+    /// the signal raises a JSC termination trap, which unwinds `while (true) {}`.
+    /// `None` when not attached to a terminal: SIGINT keeps killing the process.
+    fn begin_interruptible_eval(&mut self) -> Option<SigintScope> {
+        let global = self.global?;
+        if !self.is_tty {
+            return None;
         }
+
+        // Arm before handing the terminal back, so the window where Ctrl+C still
+        // means "kill the process" stays closed.
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; the scope is
+        // released exactly once in `end_interruptible_eval`.
+        let scope = unsafe { Bun__REPL__armSigint(global) };
 
         #[cfg(unix)]
-        {
-            // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
-            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
+        let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
+        // On Windows, ENABLE_PROCESSED_INPUT is already set, so Ctrl+C already
+        // arrives as a console control event.
 
-            // Install SIGINT handler
-            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
-            // sa_sigaction/sa_flags below. `act` is valid for the duration of the call.
-            unsafe {
-                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = sigint_handler as *const () as usize;
-                act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
-            }
-        }
-        // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
+        Some(SigintScope { scope })
     }
 
-    /// Restore raw terminal mode after promise wait
-    fn disable_signals_during_wait(&mut self) {
-        SIGINT_VM.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
+    fn end_interruptible_eval(&mut self, scope: Option<SigintScope>) {
+        let Some(scope) = scope else {
+            return;
+        };
 
+        // Before anything fallible: leaving the prompt in cooked mode is worse
+        // than any error we could hit below.
         #[cfg(unix)]
-        {
-            // Back to raw mode
-            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
+        let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
 
-            // Restore default SIGINT handling
-            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
-            // restores the default disposition. `act` is valid for the duration of the call.
-            unsafe {
-                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = libc::SIG_DFL;
-                act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
-            }
-        }
+        // A scope is only handed out once `begin_interruptible_eval` has seen a
+        // global, and `self.global` is set once per session.
+        let global = self.global.expect("sigint scope armed without a global");
+        // SAFETY: `scope.scope` came from `Bun__REPL__armSigint` and is consumed
+        // once; `global` is a live opaque `JSGlobalObject` handle.
+        unsafe { Bun__REPL__disarmSigint(global, scope.scope) };
+    }
+
+    /// Whether a Ctrl+C has asked the VM to stop running JavaScript.
+    fn sigint_requested(scope: Option<&SigintScope>) -> bool {
+        let Some(scope) = scope else {
+            return false;
+        };
+        // SAFETY: `scope.scope` is live until `end_interruptible_eval`.
+        unsafe { Bun__REPL__sigintRequested(scope.scope) }
+    }
+
+    /// Clear the VM's termination state and take the error to report, if the
+    /// evaluation was interrupted by Ctrl+C.
+    fn take_interrupt_error(&self, scope: Option<&SigintScope>) -> Option<JSValue> {
+        let global = self.global?;
+        let scope = scope?;
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle and
+        // `scope.scope` is live until `end_interruptible_eval`.
+        let error = unsafe { Bun__REPL__takeSigintError(global, scope.scope) };
+        (!error.is_empty()).then_some(error)
     }
 
     fn write(&self, data: &[u8]) {
@@ -1261,6 +1305,107 @@ impl<'a> Repl<'a> {
     // JavaScript Evaluation
     // ========================================================================
 
+    /// Evaluate already-transformed REPL input, resolving the async IIFE the
+    /// transform emits for top-level `await`. Ctrl+C interrupts both the
+    /// synchronous evaluation and the wait for the promise.
+    fn evaluate_transformed(&mut self, code: &[u8]) -> EvalOutcome {
+        let Some(global) = self.global else {
+            return EvalOutcome::Pending;
+        };
+        let Some(vm) = self.vm else {
+            return EvalOutcome::Pending;
+        };
+
+        let sigint = self.begin_interruptible_eval();
+
+        let mut exception: JSValue = JSValue::UNDEFINED;
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
+        // are valid for the duration of the call; `exception` is a stack local.
+        let result = unsafe {
+            Bun__REPL__evaluate(
+                global,
+                code.as_ptr(),
+                code.len(),
+                b"[repl]".as_ptr(),
+                b"[repl]".len(),
+                &raw mut exception,
+            )
+        };
+
+        let mut outcome = if !exception.is_undefined() && !exception.is_null() {
+            EvalOutcome::Error(exception)
+        } else if let Some(promise) = result.as_promise() {
+            // The wait ticks the VM, which can collect; keep the promise rooted.
+            let _rooted = result.protected();
+            // Mark as handled BEFORE waiting to prevent unhandled rejection output
+            jsc::JSPromise::opaque_mut(promise).set_handled();
+            self.wait_for_promise_interruptible(promise, sigint.as_ref());
+            // SAFETY: `vm.jsc_vm` is the live JSC VM handle for this thread.
+            let jsc_vm_ref = vm.jsc_vm();
+            match jsc::JSPromise::opaque_mut(promise).status() {
+                PromiseStatus::Fulfilled => {
+                    EvalOutcome::Value(jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref))
+                }
+                PromiseStatus::Rejected => {
+                    EvalOutcome::Error(jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref))
+                }
+                PromiseStatus::Pending => EvalOutcome::Pending,
+            }
+        } else {
+            EvalOutcome::Value(result)
+        };
+
+        // A Ctrl+C supersedes whatever the evaluation left behind, and the VM
+        // has to come out of its terminated state before it runs JS again.
+        if let Some(error) = self.take_interrupt_error(sigint.as_ref()) {
+            outcome = EvalOutcome::Error(error);
+        }
+        self.end_interruptible_eval(sigint);
+
+        // Unwrap the `{ value: expr }` wrapper the REPL transform adds. It is a
+        // REPL-built `{ __proto__: null, value: ... }` so getOwn shouldn't throw,
+        // but if it does, propagate as a REPL error.
+        if let EvalOutcome::Value(value) = outcome {
+            if value.is_object() {
+                outcome = match value.get_own(global, &bun_core::String::static_("value")) {
+                    Ok(Some(inner)) => EvalOutcome::Value(inner),
+                    Ok(None) => EvalOutcome::Value(value),
+                    Err(err) => EvalOutcome::Error(global.take_exception(err)),
+                };
+            }
+        }
+        outcome
+    }
+
+    /// Wait for `promise` to settle while running the event loop, returning
+    /// early when Ctrl+C asks the VM to stop.
+    fn wait_for_promise_interruptible(
+        &mut self,
+        promise: *mut jsc::JSPromise,
+        sigint: Option<&SigintScope>,
+    ) {
+        let Some(vm) = self.vm else {
+            return;
+        };
+        let pending =
+            |promise| jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending;
+        while pending(promise) && !Self::sigint_requested(sigint) {
+            vm.as_mut().tick();
+            if !pending(promise) || Self::sigint_requested(sigint) {
+                return;
+            }
+            // With no live handles `auto_tick` never blocks, so nothing can settle
+            // the promise and looping would just burn a core.
+            if !vm.is_event_loop_alive() {
+                return;
+            }
+            // Parks in the poller. Every path in `us_loop_run_bun_tick` re-enters
+            // it on EINTR, so a Ctrl+C landing after the park is only seen once
+            // something else wakes the loop.
+            vm.as_mut().auto_tick();
+        }
+    }
+
     fn evaluate_and_print(&mut self, code: &[u8]) {
         let Some(global) = self.global else {
             return;
@@ -1276,119 +1421,29 @@ impl<'a> Repl<'a> {
             return;
         };
 
-        // Evaluate the transformed code
-        let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-        // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
-            Bun__REPL__evaluate(
-                global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
-                b"[repl]".as_ptr(),
-                b"[repl]".len(),
-                &raw mut exception,
-            )
-        };
-
-        // Check for exception
-        if !exception.is_undefined() && !exception.is_null() {
-            self.set_last_error(exception);
-            self.print_js_error(exception);
-            return;
-        }
-
-        // Handle async IIFE results - wait for promise to resolve
-        let mut resolved_result = result;
-        if let Some(promise) = result.as_promise() {
-            // Mark as handled BEFORE waiting to prevent unhandled rejection output
-            jsc::JSPromise::opaque_mut(promise).set_handled();
-
-            // Temporarily re-enable signal delivery so Ctrl+C can interrupt
-            // the blocking waitForPromise call
-            self.enable_signals_during_wait();
-            // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
-
-            // Wait for the promise to settle
-            vm.as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
-
-            // If execution was forbidden by SIGINT, clear it and report
-            if vm.jsc_vm().execution_forbidden() {
-                vm.jsc_vm().set_execution_forbidden(false);
-                global.clear_termination_exception();
-                self.print(format_args!("\n"));
-                self.disable_signals_during_wait();
-                return;
+        match self.evaluate_transformed(&transformed_code) {
+            EvalOutcome::Error(error) => {
+                self.set_last_error(error);
+                let global_this = global.to_js_value();
+                global_this.put(global, b"_error", error);
+                self.print_js_error(error);
             }
-
-            // SAFETY: `vm.jsc_vm` is the live JSC VM handle for this thread.
-            let jsc_vm_ref = vm.jsc_vm();
-            // Check promise status after waiting
-            match jsc::JSPromise::opaque_mut(promise).status() {
-                PromiseStatus::Fulfilled => {
-                    resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
-                }
-                PromiseStatus::Rejected => {
-                    let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
-                    self.set_last_error(rejection);
-                    // Set _error on the global object
-                    let global_this = global.to_js_value();
-                    global_this.put(global, b"_error", rejection);
-                    self.print_js_error(rejection);
-                    self.disable_signals_during_wait();
-                    return;
-                }
-                PromiseStatus::Pending => {
-                    // Interrupted by signal or timed out
-                    self.print(format_args!("\n"));
-                    self.disable_signals_during_wait();
-                    return;
-                }
-            }
-            self.disable_signals_during_wait();
-        }
-
-        // Extract the value from the result wrapper { value: expr }
-        // The REPL transform wraps the last expression in { value: expr }
-        let mut actual_result = resolved_result;
-        if resolved_result.is_object() {
-            // Wrapper is REPL-built { __proto__: null, value: ... } so getOwn shouldn't throw,
-            // but if it does, propagate as a REPL error.
-            let maybe_value =
-                match resolved_result.get_own(global, &bun_core::String::static_("value")) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        let exc = global.take_exception(err);
-                        self.set_last_error(exc);
-                        self.print_js_error(exc);
-                        vm.as_mut().tick();
-                        return;
+            EvalOutcome::Pending => self.print(format_args!("\n")),
+            EvalOutcome::Value(value) => {
+                self.set_last_result(value);
+                if value.is_undefined() {
+                    if self.use_colors {
+                        self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
+                    } else {
+                        self.print(format_args!("undefined\n"));
                     }
-                };
-            if let Some(value) = maybe_value {
-                actual_result = value;
+                } else {
+                    // Set `_` to the last result (only if not undefined)
+                    let global_this = global.to_js_value();
+                    global_this.put(global, b"_", value);
+                    self.print_formatted_value(value);
+                }
             }
-        }
-
-        // Store and print result
-        self.set_last_result(actual_result);
-
-        // Set _ to the last result (only if not undefined)
-        // Use the global object as JSValue and put the property on it
-        if !actual_result.is_undefined() {
-            let global_this = global.to_js_value();
-            global_this.put(global, b"_", actual_result);
-        }
-
-        if actual_result.is_undefined() {
-            if self.use_colors {
-                self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
-            } else {
-                self.print(format_args!("undefined\n"));
-            }
-        } else {
-            self.print_formatted_value(actual_result);
         }
 
         // Tick the event loop to handle any pending work
@@ -1584,90 +1639,26 @@ impl<'a> Repl<'a> {
             return;
         };
 
-        let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-        // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
-            Bun__REPL__evaluate(
-                global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
-                b"[repl]".as_ptr(),
-                b"[repl]".len(),
-                &raw mut exception,
-            )
-        };
-
-        if !exception.is_undefined() && !exception.is_null() {
-            self.set_last_error(exception);
-            self.print_js_error(exception);
-            return;
-        }
-
-        let mut resolved_result = result;
-        if let Some(promise) = result.as_promise() {
-            // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
-            // owning JSC VM handle for this thread.
-            jsc::JSPromise::opaque_mut(promise).set_handled();
-            self.enable_signals_during_wait();
-            // Note: reshaped for borrowck — disable_signals_during_wait called on each path
-            vm.as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
-            if vm.jsc_vm().execution_forbidden() {
-                vm.jsc_vm().set_execution_forbidden(false);
-                global.clear_termination_exception();
-                self.print(format_args!("\n"));
-                self.disable_signals_during_wait();
-                return;
+        match self.evaluate_transformed(&transformed_code) {
+            EvalOutcome::Error(error) => {
+                self.set_last_error(error);
+                global.to_js_value().put(global, b"_error", error);
+                self.print_js_error(error);
             }
-            let jsc_vm_ref = vm.jsc_vm();
-            match jsc::JSPromise::opaque_mut(promise).status() {
-                PromiseStatus::Fulfilled => {
-                    resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref)
+            EvalOutcome::Pending => {}
+            EvalOutcome::Value(value) => {
+                self.set_last_result(value);
+                if !value.is_undefined() {
+                    let global_this = global.to_js_value();
+                    global_this.put(global, b"_", value);
                 }
-                PromiseStatus::Rejected => {
-                    let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
-                    self.set_last_error(rejection);
-                    self.print_js_error(rejection);
-                    self.disable_signals_during_wait();
-                    return;
-                }
-                PromiseStatus::Pending => {
-                    self.disable_signals_during_wait();
-                    return;
+                if let Err(err) = self.copy_value_to_clipboard(value) {
+                    let exc = global.take_exception(err);
+                    self.set_last_error(exc);
+                    global.to_js_value().put(global, b"_error", exc);
+                    self.print_js_error(exc);
                 }
             }
-            self.disable_signals_during_wait();
-        }
-
-        let mut actual_result = resolved_result;
-        if resolved_result.is_object() {
-            let maybe_value =
-                match resolved_result.get_own(global, &bun_core::String::static_("value")) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        let exc = global.take_exception(err);
-                        self.set_last_error(exc);
-                        self.print_js_error(exc);
-                        vm.as_mut().tick();
-                        return;
-                    }
-                };
-            if let Some(value) = maybe_value {
-                actual_result = value;
-            }
-        }
-
-        self.set_last_result(actual_result);
-        if !actual_result.is_undefined() {
-            let global_this = global.to_js_value();
-            global_this.put(global, b"_", actual_result);
-        }
-
-        if let Err(err) = self.copy_value_to_clipboard(actual_result) {
-            let exc = global.take_exception(err);
-            self.set_last_error(exc);
-            self.print_js_error(exc);
         }
         vm.as_mut().tick();
     }
@@ -2432,23 +2423,6 @@ impl<'a> Drop for Repl<'a> {
         self.history.save();
         // line_editor, history, multiline_buffer, editor_buffer, last_result,
         // last_error dropped automatically (ProtectedJSValue unprotects).
-    }
-}
-
-/// Global pointer for signal handler to access the VM.
-// PORTING.md §Global mutable state: read from a signal handler → AtomicPtr.
-// Atomics are async-signal-safe; the previous raw-global `Option<*mut>` was
-// not. `null` encodes `None`.
-static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-#[cfg(unix)]
-extern "C" fn sigint_handler(_: c_int) {
-    let vm = SIGINT_VM.load(core::sync::atomic::Ordering::Acquire);
-    if !vm.is_null() {
-        // `vm` was a valid `*mut jsc::VM` when stored (JS thread is
-        // blocked in wait while the handler runs, so it stays valid).
-        jsc::VM::opaque_ref(vm).set_execution_forbidden(true);
     }
 }
 

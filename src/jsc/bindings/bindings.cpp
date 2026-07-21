@@ -12,9 +12,11 @@
 #include "JavaScriptCore/ErrorType.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/Exception.h"
+#include "JavaScriptCore/VMTraps.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
 #include "JavaScriptCore/ThrowScope.h"
+#include "../vm/SigintWatcher.h"
 
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
@@ -4832,11 +4834,6 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
     return vm->hasTerminationRequest();
 }
 
-void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
-{
-    (*arg0).setExecutionForbidden();
-}
-
 // These may be called concurrently from another thread.
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {
@@ -6277,6 +6274,81 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC:
     return lineColumn.line;
 }
 
+// Armed around one REPL evaluation. The receiver flag is the only durable record
+// of the signal: JSC clears the trap bit and `hasTerminationRequest()` by the time
+// the outermost VM entry scope has unwound.
+namespace {
+class ReplSigintScope final : public Bun::SigintReceiver {
+public:
+    explicit ReplSigintScope(JSC::JSGlobalObject* globalObject)
+        : m_holder(Bun::SigintWatcher::hold(globalObject, this))
+    {
+    }
+
+private:
+    Bun::SigintWatcher::GlobalObjectHolder m_holder;
+};
+}
+
+// Drops whatever termination state a SIGINT left behind so the VM can run
+// JavaScript again.
+static void replClearTermination(JSC::VM& vm)
+{
+    vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
+    if (vm.hasPendingTerminationException()) {
+        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+    }
+    vm.clearHasTerminationRequest();
+}
+
+// Arms SIGINT watching for `globalObject`: a SIGINT then raises a JSC termination
+// trap that unwinds synchronous JS, the way node's `breakOnSigint` does. Pass the
+// returned scope to `Bun__REPL__disarmSigint`.
+extern "C" void* Bun__REPL__armSigint(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    // Allocate the termination exception up front: the trap handler runs at a
+    // point where allocating one is not allowed.
+    vm.ensureTerminationException();
+    return new ReplSigintScope(globalObject);
+}
+
+extern "C" void Bun__REPL__disarmSigint(JSC::JSGlobalObject* globalObject, void* scope)
+{
+    // Tears down the watcher thread, so no further signal can reach us.
+    delete static_cast<ReplSigintScope*>(scope);
+
+    auto& vm = JSC::getVM(globalObject);
+    // A signal that raced the disarm leaves a trap bit nobody will service;
+    // the next evaluation would terminate the instant it entered the VM.
+    if (vm.traps().hasTrapBit(JSC::VMTraps::NeedTermination)) [[unlikely]] {
+        replClearTermination(vm);
+    }
+}
+
+extern "C" bool Bun__REPL__sigintRequested(void* scope)
+{
+    return scope && static_cast<ReplSigintScope*>(scope)->getSigintReceived();
+}
+
+// Clears the SIGINT termination state and returns the error to report, or an
+// empty JSValue when no interrupt is pending.
+extern "C" JSC::EncodedJSValue Bun__REPL__takeSigintError(JSC::JSGlobalObject* globalObject, void* scope)
+{
+    if (!Bun__REPL__sigintRequested(scope)) {
+        return JSC::JSValue::encode({});
+    }
+
+    auto& vm = JSC::getVM(globalObject);
+    static_cast<ReplSigintScope*>(scope)->setSigintReceived(false);
+    replClearTermination(vm);
+
+    JSC::JSObject* error = Bun::createError(globalObject, Bun::ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED,
+        "Script execution was interrupted by `SIGINT`"_s);
+    globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), error);
+    return JSC::JSValue::encode(error);
+}
+
 // REPL evaluation function - evaluates JavaScript code in the global scope
 // Returns the result value, or undefined if an exception was thrown
 // If an exception is thrown, the exception value is stored in *exception
@@ -6306,6 +6378,14 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
 
     WTF::NakedPtr<JSC::Exception> evalException;
     JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);
+
+    // SIGINT unwound the script, and `evalException` is the internal
+    // TerminatedExecutionError. The caller reports
+    // ERR_SCRIPT_EXECUTION_INTERRUPTED via `Bun__REPL__takeSigintError` instead.
+    if (evalException && vm.isTerminationException(evalException.get())) [[unlikely]] {
+        *exception = JSC::JSValue::encode(JSC::jsUndefined());
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
 
     if (evalException) {
         *exception = JSC::JSValue::encode(evalException->value());

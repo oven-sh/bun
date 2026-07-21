@@ -281,28 +281,36 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
+static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, NodeVMGlobalObject* contextGlobalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
-    if (vm.hasTerminationRequest()) {
-        vm.drainMicrotasksForGlobalObject(globalObject);
-        // The termination may have fired inside an afterEvaluate microtask
-        // checkpoint, leaving the termination exception pending; clear it so
-        // the ERR_SCRIPT_EXECUTION_* error below replaces it.
-        if (vm.hasPendingTerminationException())
-            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        if (script->getSigintReceived()) {
-            script->setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
-        }
+    if (!vm.hasTerminationRequest())
+        return false;
+
+    // Neither this script's own SIGINT nor its own timeout, so an enclosing scope
+    // asked for the termination. Only that scope can classify it: re-raise and let
+    // its `checkForTermination` (or `Bun__REPL__evaluate`) report.
+    if (!script->getSigintReceived() && !timeout) {
+        JSC::throwException(globalObject, scope, vm.ensureTerminationException());
         return true;
     }
 
-    return false;
+    // Despite the name this *clears* the queue, so scope it to the terminated
+    // context. `runInThisContext` has none of its own (null, nothing to clear);
+    // passing `globalObject` there would discard the caller's microtasks.
+    vm.drainMicrotasksForGlobalObject(contextGlobalObject);
+    // The termination may have fired inside an afterEvaluate microtask
+    // checkpoint, leaving the termination exception pending; clear it so
+    // the ERR_SCRIPT_EXECUTION_* error below replaces it.
+    if (vm.hasPendingTerminationException())
+        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+    vm.clearHasTerminationRequest();
+    if (script->getSigintReceived()) {
+        script->setSigintReceived(false);
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    } else {
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
+    }
+    return true;
 }
 
 void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)
@@ -383,7 +391,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
+    if (checkForTermination(vm, globalObject, globalObject, scope, script, newLimit)) {
         return {};
     }
 
@@ -448,7 +456,9 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
+    // `runInThisContext` evaluates in the caller's global, so there is no
+    // contextified global whose microtask queue the termination may clear.
+    if (checkForTermination(vm, globalObject, nullptr, scope, script, newLimit)) {
         return {};
     }
 

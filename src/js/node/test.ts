@@ -3194,7 +3194,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts);
     // node's root test is already running while files load, so before() hooks
     // registered at a file's top level execute immediately, in file order.
-    getRootNode().started = true;
+    callerRoot.started = true;
     try {
       for (const file of files) {
         if (file === Bun.main) {
@@ -3265,8 +3265,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       standaloneQueue.push(...pruned);
     }
 
-    const root = getRootNode();
-    const hookError = await executeStandaloneQueue(root);
+    const hookError = await executeStandaloneQueue(callerRoot);
     if (hookError !== undefined) {
       console.error(hookError);
       counts.failed++;
@@ -3303,11 +3302,12 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     activeRunFile = null;
     // Give the caller its own tests and mode flags back so a standalone file
     // that also calls run() still gets its beforeExit pass (finding: the run
-    // must not latch standalone state for the rest of the process).
-    const root = getRootNode();
-    root.started = false;
-    root.hooks = savedRootHooks;
-    root.reportedCount = savedRootReportedCount;
+    // must not latch standalone state for the rest of the process). Restores
+    // onto the SAME root the snapshot cleared (getRootNode() can return a
+    // fresh per-file root under bun test once fileGeneration advances).
+    callerRoot.started = false;
+    callerRoot.hooks = savedRootHooks;
+    callerRoot.reportedCount = savedRootReportedCount;
     standaloneQueue.push(...callerEntries);
     standaloneActive = wasStandaloneActive || callerEntries.length > 0;
     standaloneScheduled = wasScheduled;

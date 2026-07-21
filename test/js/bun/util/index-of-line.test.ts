@@ -86,9 +86,8 @@ test("indexOfLine is linear on large input with a non-ASCII byte", async () => {
 }, 60_000);
 
 test("indexOfLine coerces offset before snapshotting the buffer", () => {
-  // `offset.valueOf()` can detach the buffer. Before the fix, the stale
-  // snapshot was scanned (reading freed memory); now the buffer is captured
-  // after coercion and seen as detached (length 0) so the result is -1.
+  // Detaching the buffer during offset coercion must be observed as
+  // length 0, so the result is -1.
   const N = 1 << 16;
   const keep: Uint8Array[] = [];
   const b = Buffer.from(new ArrayBuffer(N)).fill(0x41);

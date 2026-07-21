@@ -929,7 +929,7 @@ pub(crate) fn js_password_object_verify_sync(
         };
     }
 
-    let Some(password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
+    let Some(mut password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
         return Err(global_object.throw_invalid_argument_type(
             "verify",
             "password",
@@ -945,6 +945,10 @@ pub(crate) fn js_password_object_verify_sync(
             "string or TypedArray",
         ));
     };
+
+    // `StringOrBuffer::from_js` above may call a boxed String's `toString`,
+    // which can detach `password`'s backing ArrayBuffer (use-after-free).
+    password.refresh_buffer(global_object);
 
     // defer password.deinit() / hash_.deinit() — Drop at scope exit.
 

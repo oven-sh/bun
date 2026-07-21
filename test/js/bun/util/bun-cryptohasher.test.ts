@@ -2,10 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 
 describe("input buffer detached by output argument's toString", () => {
-  // A boxed String's `toString` runs during output-encoding coercion. If the
-  // input buffer's slice was snapshotted before that, detaching it here leaves
-  // the hasher reading freed memory. After the fix, the input is re-snapshotted
-  // as detached (length 0), so the result is the digest of the empty input.
+  // Detaching the input during output-arg coercion must be observed as
+  // length 0, so the result is the digest of the empty input.
   const N = 1 << 16;
   const keep: Uint8Array[] = [];
   const mk = () => Buffer.from(new ArrayBuffer(N)).fill(0x41);
@@ -40,9 +38,8 @@ describe("input buffer detached by output argument's toString", () => {
   });
 
   test("Bun.CryptoHasher.hash (output=Uint8Array, input=String object)", () => {
-    // Reverse direction stays safe: input is a boxed String whose toString
-    // detaches the output buffer before it is snapshotted. The output buffer
-    // is captured as detached (length 0) and a length check throws.
+    // Reverse direction: input's toString detaches the output buffer, which
+    // is then captured at length 0 and rejected by the length check.
     const out = Buffer.from(new ArrayBuffer(32));
     const evilInput = Object.assign(new String("A"), {
       toString() {
@@ -50,7 +47,9 @@ describe("input buffer detached by output argument's toString", () => {
         return "A";
       },
     });
-    expect(() => Bun.CryptoHasher.hash("sha256", evilInput as unknown as string, out)).toThrow();
+    expect(() => Bun.CryptoHasher.hash("sha256", evilInput as unknown as string, out)).toThrow(
+      /TypedArray must be at least 32 bytes/,
+    );
     expect(out.byteLength).toBe(0);
   });
 });

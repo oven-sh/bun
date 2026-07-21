@@ -368,10 +368,8 @@ describe("randomUUIDv5", () => {
   });
 
   test("name buffer detached by namespace argument's toString", () => {
-    // A boxed String namespace's `toString` runs during coercion. Before the
-    // fix, the name buffer's slice was snapshotted first, so detaching it here
-    // left UUID5 reading freed memory. Now namespace is decoded first and the
-    // name buffer is captured as detached (length 0).
+    // Detaching the name buffer during namespace coercion must be observed
+    // as length 0, so the result is UUIDv5 of the empty name.
     const N = 1 << 16;
     const keep: Uint8Array[] = [];
     const b = Buffer.from(new ArrayBuffer(N)).fill(0x41);

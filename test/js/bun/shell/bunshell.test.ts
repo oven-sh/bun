@@ -2802,12 +2802,41 @@ describe("subshell", () => {
     // test_oE 'redirection on subshell'
     TestBuilder.command /* sh */ `
   (echo 1; echo 2; echo 3; echo 4) >sub_out
-  # (tail -n 2) <sub_out
   cat sub_out
   `
-      .error("Subshells with redirections are currently not supported. Please open a GitHub issue.")
-      // .stdout("1\n2\n3\n4\n")
+      .ensureTempDir()
+      .stdout("1\n2\n3\n4\n")
       .runAsTest("redirection on subshell");
+
+    // https://github.com/oven-sh/bun/issues/11124
+    TestBuilder.command /* sh */ `(echo hello) > test.txt`
+      .fileEquals("test.txt", "hello\n")
+      .runAsTest("subshell stdout redirect to file");
+
+    TestBuilder.command /* sh */ `(echo first) > out.txt; (echo second) >> out.txt`
+      .fileEquals("out.txt", "first\nsecond\n")
+      .runAsTest("subshell append redirect to file");
+
+    TestBuilder.command /* sh */ `(echo works) > $OUTFILE`
+      .env({ ...bunEnv, OUTFILE: "expanded.txt" })
+      .fileEquals("expanded.txt", "works\n")
+      .runAsTest("subshell redirect with variable expansion in path");
+
+    TestBuilder.command /* sh */ `(echo hi 1>&2) 2>&1`
+      .stdout("hi\n")
+      .stderr("")
+      .runAsTest("subshell stderr dup to stdout");
+
+    TestBuilder.command /* sh */ `(echo lo) 1>&2`.stdout("").stderr("lo\n").runAsTest("subshell stdout dup to stderr");
+
+    TestBuilder.command /* sh */ `echo $( (echo hi 1>&2) 2>&1 )`
+      .stdout("hi\n")
+      .runAsTest("subshell fd-dup inside command substitution");
+
+    TestBuilder.command /* sh */ `(cat) < in.txt`
+      .file("in.txt", "hello\n")
+      .stdout("hello\n")
+      .runAsTest("subshell stdin redirect");
 
     // test_oE 'subshell ending with semicolon'
     TestBuilder.command /* sh */ `

@@ -6525,8 +6525,7 @@ impl<'a> Resolver<'a> {
                     // A worklist DFS (pop, record, push children forward) yields that
                     // order in `parent_configs` and matches the prior behaviour for a
                     // single-string extends.
-                    let mut worklist: BoundedArray<*mut TSConfigJSON, 64> =
-                        BoundedArray::default();
+                    let mut worklist: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
                     worklist.append(tsconfig_json)?;
                     'walk: while let Some(current_ptr) = worklist.pop() {
                         parent_configs.append(current_ptr)?;

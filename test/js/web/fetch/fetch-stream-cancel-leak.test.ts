@@ -141,12 +141,9 @@ test("ReadableStream from fetch should be GC'd after body.cancel()", async () =>
 });
 
 test("response.body.cancel() on a never-read body aborts the underlying fetch", async () => {
-  // fetch() response body streams are lazily materialized on first read. Cancelling
-  // before that first read must still reach the native source and abort the transfer
-  // instead of silently resolving while the client keeps draining the socket.
-  //
-  // Run in a subprocess so the unbounded server stream is cleaned up with the process
-  // and so the client-side RSS growth in the failing case can't OOM the test runner.
+  // Cancelling an unread response body must abort the native transfer, not resolve
+  // while the client keeps draining. Runs in a subprocess so the unbounded stream
+  // and RSS growth in the failing case are contained and cleaned up on exit.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

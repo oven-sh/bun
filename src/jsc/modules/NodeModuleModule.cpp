@@ -4,6 +4,8 @@
 #include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSCInlines.h>
+#include <string>
+#include <sys/stat.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -33,6 +35,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPackageJSON);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
@@ -588,6 +591,106 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
     return NodeModuleModule__findPath(globalObject, request_bun_str, paths);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto arg = callFrame->argument(0);
+    if (arg.isUndefinedOrNull()) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    WTF::String pathStr = arg.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Check for base argument (2nd arg: __filename or import.meta.url)
+    WTF::String fsPath;
+    if (callFrame->argumentCount() > 1 && !callFrame->argument(1).isUndefined()) {
+        JSC::JSValue baseValue = callFrame->argument(1);
+        WTF::String baseStr = baseValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        WTF::String basePath;
+        if (baseStr.startsWith("file://"_s)) {
+            WTF::URL url = WTF::URL(baseStr);
+            if (url.isValid()) basePath = url.fileSystemPath();
+            else basePath = baseStr;
+        } else {
+            basePath = baseStr;
+        }
+
+        auto lastSlash = basePath.reverseFind('/');
+        WTF::String baseDir = (lastSlash != WTF::notFound)
+            ? basePath.substring(0, lastSlash)
+            : WTF::String("."_s);
+
+        if (!baseDir.isEmpty() && baseDir.characterAt(baseDir.length() - 1) != '/') {
+            baseDir = baseDir + "/"_s;
+        }
+        fsPath = baseDir + pathStr;
+
+        // Normalize '..' and '.'
+        Vector<WTF::String> components;
+        auto parts = fsPath.split('/');
+        for (auto& part : parts) {
+            if (part == "."_s) continue;
+            if (part == ".."_s) {
+                if (!components.isEmpty() && components.last() != ".."_s) {
+                    components.removeLast();
+                }
+            } else {
+                components.append(part);
+            }
+        }
+        WTF::StringBuilder builder;
+        for (size_t i = 0; i < components.size(); i++) {
+            if (i > 0) builder.append('/');
+            builder.append(components[i]);
+        }
+        fsPath = builder.toString();
+    } else if (pathStr.startsWith("file://"_s)) {
+        WTF::URL url = WTF::URL(pathStr);
+        if (!url.isValid()) return JSC::JSValue::encode(JSC::jsUndefined());
+        fsPath = url.fileSystemPath();
+    } else {
+        fsPath = pathStr;
+    }
+
+    if (fsPath.isEmpty()) return JSC::JSValue::encode(JSC::jsUndefined());
+
+    std::string currentPath(fsPath.utf8().data());
+
+    while (true) {
+        if (!currentPath.empty() && currentPath.back() != '/') currentPath += '/';
+
+        std::string pkgJsonPath = currentPath + "package.json";
+        struct stat statBuf;
+        if (stat(pkgJsonPath.c_str(), &statBuf) == 0 && S_ISREG(statBuf.st_mode)) {
+            auto result = String::fromUTF8(pkgJsonPath.data(), pkgJsonPath.size());
+            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsString(vm, WTFMove(result))));
+        }
+
+        if (!currentPath.empty() && currentPath.back() == '/') currentPath.pop_back();
+
+        if (currentPath.empty() || (currentPath.size() == 1 && currentPath[0] == '/')) {
+            std::string rootPkgJson = "/package.json";
+            if (stat(rootPkgJson.c_str(), &statBuf) == 0 && S_ISREG(statBuf.st_mode)) {
+                auto result = String::fromUTF8(rootPkgJson.data(), rootPkgJson.size());
+                RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsString(vm, WTFMove(result))));
+            }
+            break;
+        }
+
+        auto lastSep = currentPath.rfind('/');
+        if (lastSep == std::string::npos) break;
+        currentPath = currentPath.substr(0, lastSep);
+    }
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 // These two setters are only used if you directly hit
 // `Module.prototype.require` or `module.require`. When accessing the cjs
 // require argument, this is a bound version of `require`, which calls into the
@@ -922,6 +1025,7 @@ _cache                  getModuleCacheObject              PropertyCallback
 _debug                  getModuleDebugObject              PropertyCallback
 _extensions             getModuleExtensionsObject         PropertyCallback
 _findPath                jsFunctionFindPath               Function 3
+findPackageJSON          jsFunctionFindPackageJSON          Function 2
 _initPaths              JSBuiltin                         Function|Builtin 0
 _load                   jsFunctionLoad                    Function 1
 _nodeModulePaths        Resolver__nodeModulePathsForJS    Function 1

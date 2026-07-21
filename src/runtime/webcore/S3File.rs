@@ -604,6 +604,7 @@ impl S3BlobStatTask {
             this.cast::<core::ffi::c_void>(),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
+            s3_store.options.idle_timeout_seconds,
         )?;
         Ok(promise)
     }
@@ -631,6 +632,7 @@ impl S3BlobStatTask {
             this.cast::<core::ffi::c_void>(),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
+            s3_store.options.idle_timeout_seconds,
         )?;
         Ok(promise)
     }
@@ -658,6 +660,7 @@ impl S3BlobStatTask {
             this.cast::<core::ffi::c_void>(),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
+            s3_store.options.idle_timeout_seconds,
         )?;
         Ok(promise)
     }

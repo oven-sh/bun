@@ -233,6 +233,31 @@ pub(crate) fn get_credentials_with_options(
                     new_credentials.options.retry = retry as u8;
                 }
             }
+
+            // timeout: number (ms) | false — matches fetch()'s `timeout` option.
+            if let Some(timeout_value) = opts.get(global_object, "timeout")? {
+                if timeout_value.is_boolean() {
+                    if !timeout_value.as_boolean() {
+                        new_credentials.options.idle_timeout_seconds = Some(0);
+                    }
+                } else if timeout_value.is_number() {
+                    let ms = timeout_value.as_number();
+                    new_credentials.options.idle_timeout_seconds =
+                        Some(if ms.is_finite() && ms > 0.0 {
+                            (ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
+                                as core::ffi::c_uint
+                        } else {
+                            0
+                        });
+                } else if !timeout_value.is_empty_or_undefined_or_null() {
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"timeout",
+                        b"number or boolean",
+                        timeout_value,
+                    ));
+                }
+            }
+
             if let Some(acl) =
                 opts.get_optional_enum_from_map(global_object, "acl", &ACL::MAP, ACL_ONE_OF)?
             {

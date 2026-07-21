@@ -623,7 +623,7 @@ impl BlobExt for Blob {
             // so clone the `Rc<S3Credentials>` out (cheap ref bump)
             // and stash `path` as a raw `*const [u8]` whose backing store is
             // kept alive by the same `t.blob` now owned by the heap task.
-            let (cred, path, payer);
+            let (cred, path, payer, idle_timeout);
             {
                 let s3 = t
                     .blob
@@ -634,6 +634,7 @@ impl BlobExt for Blob {
                 cred = std::rc::Rc::clone(s3.get_credentials());
                 path = std::ptr::from_ref::<[u8]>(s3.path());
                 payer = s3.request_payer;
+                idle_timeout = s3.options.idle_timeout_seconds;
             }
             // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
             // it stays valid until `Task::done` deinits the blob in the callback.
@@ -654,6 +655,7 @@ impl BlobExt for Blob {
                     t_ptr,
                     proxy.as_deref(),
                     payer,
+                    idle_timeout,
                 )?;
             } else {
                 crate::webcore::__s3_client::download(
@@ -663,6 +665,7 @@ impl BlobExt for Blob {
                     t_ptr,
                     proxy.as_deref(),
                     payer,
+                    idle_timeout,
                 )?;
             }
             return Ok(());
@@ -1847,12 +1850,12 @@ impl BlobExt for Blob {
                 s3.get_credentials().dupe(),
                 path,
                 global_this,
-                Default::default(),
+                s3.options,
                 self.content_type_or_mime_type(),
                 None,
                 None,
                 proxy,
-                None,
+                s3.storage_class,
                 s3.request_payer,
             );
         }
@@ -4697,6 +4700,7 @@ fn write_file_with_empty_source_to_destination(
                 proxy_url,
                 aws_options.storage_class,
                 aws_options.request_payer,
+                aws_options.options.idle_timeout_seconds,
                 Wrapper::resolve,
                 bun_core::heap::into_raw(Box::new(Wrapper {
                     promise,
@@ -4976,6 +4980,7 @@ pub fn write_file_with_source_destination(
                         proxy_url,
                         aws_options.storage_class,
                         aws_options.request_payer,
+                        aws_options.options.idle_timeout_seconds,
                         Wrapper::resolve,
                         bun_core::heap::into_raw(Box::new(Wrapper {
                             store: source_store.clone(),
@@ -5940,6 +5945,7 @@ impl S3BlobDownloadTask {
             S3BlobDownloadTask::on_s3_download_resolved(result, ctx.cast::<S3BlobDownloadTask>())
         }
 
+        let idle_timeout = s3_store.options.idle_timeout_seconds;
         if blob.offset.get() > 0 {
             let len: Option<usize> = if blob.size.get() != MAX_SIZE {
                 Some(usize::try_from(blob.size.get()).expect("int cast"))
@@ -5956,6 +5962,7 @@ impl S3BlobDownloadTask {
                 this.cast::<c_void>(),
                 proxy,
                 s3_store.request_payer,
+                idle_timeout,
             )?;
         } else if blob.size.get() == MAX_SIZE {
             crate::webcore::__s3_client::download(
@@ -5965,6 +5972,7 @@ impl S3BlobDownloadTask {
                 this.cast::<c_void>(),
                 proxy,
                 s3_store.request_payer,
+                idle_timeout,
             )?;
         } else {
             let len: usize = usize::try_from(blob.size.get()).expect("int cast");
@@ -5978,6 +5986,7 @@ impl S3BlobDownloadTask {
                 this.cast::<c_void>(),
                 proxy,
                 s3_store.request_payer,
+                idle_timeout,
             )?;
         }
         Ok(promise)

@@ -404,6 +404,7 @@ impl S3Ext for S3 {
             .cast::<c_void>(),
             proxy,
             aws_options.request_payer,
+            aws_options.options.idle_timeout_seconds,
         )?;
 
         Ok(value)
@@ -509,6 +510,7 @@ impl S3Ext for S3 {
             Wrapper::resolve,
             wrapper.cast::<c_void>(),
             proxy,
+            aws_options.options.idle_timeout_seconds,
         )?;
 
         Ok(value)

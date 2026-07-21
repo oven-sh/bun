@@ -361,6 +361,7 @@ impl UploadPart {
                 body: self.data(),
                 search_params: Some(search_params),
                 request_payer: ctx.request_payer,
+                idle_timeout_seconds: ctx.options.idle_timeout_seconds,
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Part(Self::on_part_response),
@@ -448,6 +449,7 @@ impl MultiPartUpload {
                             acl: this.acl,
                             storage_class: this.storage_class,
                             request_payer: this.request_payer,
+                            idle_timeout_seconds: this.options.idle_timeout_seconds,
                             ..Default::default()
                         },
                         s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
@@ -830,6 +832,7 @@ impl MultiPartUpload {
                 body: &self.multipart_upload_list,
                 search_params: Some(search_params),
                 request_payer: self.request_payer,
+                idle_timeout_seconds: self.options.idle_timeout_seconds,
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
@@ -861,6 +864,7 @@ impl MultiPartUpload {
                 body: b"",
                 search_params: Some(search_params),
                 request_payer: self.request_payer,
+                idle_timeout_seconds: self.options.idle_timeout_seconds,
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),
@@ -897,6 +901,7 @@ impl MultiPartUpload {
                     acl: self.acl,
                     storage_class: self.storage_class,
                     request_payer: self.request_payer,
+                    idle_timeout_seconds: self.options.idle_timeout_seconds,
                     ..Default::default()
                 },
                 s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
@@ -1039,6 +1044,7 @@ impl MultiPartUpload {
                     acl: self.acl,
                     storage_class: self.storage_class,
                     request_payer: self.request_payer,
+                    idle_timeout_seconds: self.options.idle_timeout_seconds,
                     ..Default::default()
                 },
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),

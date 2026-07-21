@@ -549,6 +549,8 @@ pub struct S3SimpleRequestOptions<'a> {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
+    /// `None` = global default; `Some(0)` = disable idle timer; `Some(n)` = n seconds.
+    pub idle_timeout_seconds: Option<core::ffi::c_uint>,
 }
 
 impl<'a> Default for S3SimpleRequestOptions<'a> {
@@ -566,7 +568,22 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             acl: None,
             storage_class: None,
             request_payer: false,
+            idle_timeout_seconds: None,
         }
+    }
+}
+
+/// Translate the `S3Options.timeout`-style field (`None` = global default,
+/// `Some(0)` = disable, `Some(n)` = n seconds) into the pair of
+/// `bun_http::async_http::Options` fields.
+#[inline]
+pub(crate) fn http_timeout_options(
+    idle_timeout_seconds: Option<core::ffi::c_uint>,
+) -> (Option<bool>, Option<core::ffi::c_uint>) {
+    match idle_timeout_seconds {
+        None => (None, None),
+        Some(0) => (Some(true), None),
+        Some(s) => (None, Some(s)),
     }
 }
 
@@ -679,6 +696,7 @@ pub(crate) fn execute_simple_s3_request(
     let vm = VirtualMachine::get();
     let verbose = vm.as_mut().get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
+    let (disable_timeout, idle_timeout_seconds) = http_timeout_options(options.idle_timeout_seconds);
     task.http.write(AsyncHTTP::init(
         options.method,
         url,
@@ -697,6 +715,8 @@ pub(crate) fn execute_simple_s3_request(
             http_proxy,
             verbose: Some(verbose),
             reject_unauthorized: Some(reject_unauthorized),
+            disable_timeout,
+            idle_timeout_seconds,
             ..Default::default()
         },
     ));

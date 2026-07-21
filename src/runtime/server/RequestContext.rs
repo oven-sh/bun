@@ -2625,6 +2625,7 @@ where
                         std::ptr::from_mut::<Self>(this).cast::<c_void>(),
                         proxy_url,
                         s3.request_payer,
+                        s3.options.idle_timeout_seconds,
                     ); // TODO: properly propagate exception upwards
                     return;
                 }

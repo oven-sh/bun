@@ -293,6 +293,36 @@ declare module "bun" {
     retry?: number;
 
     /**
+     * The socket idle timeout in milliseconds. If no bytes move in either
+     * direction for this long the request fails with a `Timeout` error. This
+     * is an inactivity timeout (re-armed on every byte sent or received), not
+     * a wall-clock deadline for the whole request. For multipart uploads the
+     * timeout applies to each individual part request. Setting this to `false`
+     * (or `0`) disables the idle timeout for the request.
+     *
+     * When omitted the global HTTP idle timeout applies (defaults to 5
+     * minutes and can be overridden via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`).
+     *
+     * This option has the same semantics as `fetch()`'s `timeout` option.
+     *
+     * @example
+     * ```ts
+     * // Fail fast against a wedged endpoint
+     * await s3.file("object.txt", { timeout: 2000 }).text();
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Set a default timeout for every operation on this client
+     * const s3 = new Bun.S3Client({
+     *   bucket: "my-bucket",
+     *   timeout: 10_000,
+     * });
+     * ```
+     */
+    timeout?: number | false;
+
+    /**
      * The Content-Type of the file.
      * Automatically set based on file extension when possible.
      *

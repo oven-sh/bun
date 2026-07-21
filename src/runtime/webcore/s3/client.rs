@@ -68,6 +68,7 @@ pub(crate) fn stat(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    idle_timeout_seconds: Option<core::ffi::c_uint>,
 ) -> JsTerminatedResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -77,6 +78,7 @@ pub(crate) fn stat(
             proxy_url,
             body: b"",
             request_payer,
+            idle_timeout_seconds,
             ..Default::default()
         },
         s3_simple_request::Callback::Stat(callback),
@@ -91,6 +93,7 @@ pub(crate) fn download(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    idle_timeout_seconds: Option<core::ffi::c_uint>,
 ) -> JsTerminatedResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -100,6 +103,7 @@ pub(crate) fn download(
             proxy_url,
             body: b"",
             request_payer,
+            idle_timeout_seconds,
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
@@ -107,6 +111,7 @@ pub(crate) fn download(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn download_slice(
     this: &S3Credentials,
     path: &[u8],
@@ -116,6 +121,7 @@ pub(crate) fn download_slice(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    idle_timeout_seconds: Option<core::ffi::c_uint>,
 ) -> JsTerminatedResult<()> {
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
@@ -144,6 +150,7 @@ pub(crate) fn download_slice(
             body: b"",
             range: range.map(Vec::into_boxed_slice),
             request_payer,
+            idle_timeout_seconds,
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
@@ -158,6 +165,7 @@ pub(crate) fn delete(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    idle_timeout_seconds: Option<core::ffi::c_uint>,
 ) -> JsTerminatedResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -167,6 +175,7 @@ pub(crate) fn delete(
             proxy_url,
             body: b"",
             request_payer,
+            idle_timeout_seconds,
             ..Default::default()
         },
         s3_simple_request::Callback::Delete(callback),
@@ -184,6 +193,7 @@ pub(crate) fn list_objects(
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
+    idle_timeout_seconds: Option<core::ffi::c_uint>,
 ) -> JsTerminatedResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
@@ -362,11 +372,17 @@ pub(crate) fn list_objects(
             S3HttpSimpleTask::http_callback,
         ),
         bun_http::FetchRedirect::Follow,
-        bun_http::async_http::Options {
-            http_proxy,
-            verbose: Some(vm.get_verbose_fetch()),
-            reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
-            ..Default::default()
+        {
+            let (disable_timeout, idle_timeout_seconds) =
+                s3_simple_request::http_timeout_options(idle_timeout_seconds);
+            bun_http::async_http::Options {
+                http_proxy,
+                verbose: Some(vm.get_verbose_fetch()),
+                reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+                disable_timeout,
+                idle_timeout_seconds,
+                ..Default::default()
+            }
         },
     ));
 
@@ -379,6 +395,7 @@ pub(crate) fn list_objects(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn upload(
     this: &S3Credentials,
     path: &[u8],
@@ -390,6 +407,7 @@ pub fn upload(
     proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
+    idle_timeout_seconds: Option<core::ffi::c_uint>,
     callback: fn(S3UploadResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
@@ -406,6 +424,7 @@ pub fn upload(
             acl,
             storage_class,
             request_payer,
+            idle_timeout_seconds,
             ..Default::default()
         },
         s3_simple_request::Callback::Upload(callback),
@@ -918,6 +937,7 @@ pub fn upload_stream(
 }
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn download_stream(
     this: &S3Credentials,
     path: &[u8],
@@ -925,6 +945,7 @@ pub(crate) fn download_stream(
     size: Option<usize>,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    idle_timeout_seconds: Option<core::ffi::c_uint>,
     callback: fn(
         chunk: &MutableString,
         has_more: bool,
@@ -1079,12 +1100,18 @@ pub(crate) fn download_stream(
             S3HttpDownloadStreamingTask::http_callback,
         ),
         bun_http::FetchRedirect::Follow,
-        bun_http::async_http::Options {
-            http_proxy,
-            verbose: Some(verbose),
-            signals: Some(task.signals),
-            reject_unauthorized: Some(reject_unauthorized),
-            ..Default::default()
+        {
+            let (disable_timeout, idle_timeout_seconds) =
+                s3_simple_request::http_timeout_options(idle_timeout_seconds);
+            bun_http::async_http::Options {
+                http_proxy,
+                verbose: Some(verbose),
+                signals: Some(task.signals),
+                reject_unauthorized: Some(reject_unauthorized),
+                disable_timeout,
+                idle_timeout_seconds,
+                ..Default::default()
+            }
         },
     ));
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
@@ -1108,6 +1135,7 @@ pub fn readable_stream(
     size: Option<usize>,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    idle_timeout_seconds: Option<core::ffi::c_uint>,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     struct S3DownloadStreamWrapper {
@@ -1279,6 +1307,7 @@ pub fn readable_stream(
         size,
         proxy_url,
         request_payer,
+        idle_timeout_seconds,
         S3DownloadStreamWrapper::opaque_callback,
         wrapper.cast::<c_void>(),
     );

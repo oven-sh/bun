@@ -500,6 +500,9 @@ public:
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
                                                                                                              \
+    /* JSC's original %Segments.prototype%.containing; see IntlSegmentsContaining.cpp. */                    \
+    V(public, WriteBarrier<JSC::JSFunction>, m_intlSegmentsContainingOriginal)                               \
+                                                                                                             \
     /* When a napi module initializes on dlopen, we need to know what the value is */                        \
     V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \
                                                                                                              \

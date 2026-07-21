@@ -26,8 +26,6 @@
 #include "JavaScriptCore/InitializeThreading.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/InternalFunction.h"
-#include "JavaScriptCore/IntlSegments.h"
-#include "JavaScriptCore/IntlSegmentsPrototype.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSCJSValue.h"
@@ -2228,16 +2226,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, moduleNamespacePrototype));
         });
 
-    // Override %Segments.prototype%.containing to work around a JSC bug at
-    // surrogate-pair segment starts; see IntlSegmentsContaining.cpp.
-    m_segmentsStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            JSGlobalObject* globalObject = init.owner;
-            JSC::IntlSegmentsPrototype* segmentsPrototype = JSC::IntlSegmentsPrototype::create(init.vm, globalObject, JSC::IntlSegmentsPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
-            segmentsPrototype->putDirectNativeFunction(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "containing"_s), 1, Bun::intlSegmentsPrototypeFuncContainingFix, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
-            init.set(JSC::IntlSegments::createStructure(init.vm, globalObject, segmentsPrototype));
-        });
-
     m_vmModuleContextMap.initLater(
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
@@ -3169,6 +3157,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "appendStackTrace"_s), 2, errorConstructorFuncAppendStackTrace, ImplementationVisibility::Private, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
     errorConstructor->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "prepareStackTrace"_s), JSC::CustomGetterSetter::create(vm, errorConstructorPrepareStackTraceGetter, errorConstructorPrepareStackTraceSetter), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+
+    Bun::installIntlSegmentsContainingFix(this, vm);
+    scope.assertNoExceptionExceptTermination();
 
     JSC::JSObject* consoleObject = this->get(this, JSC::Identifier::fromString(vm, "console"_s)).getObject();
     scope.assertNoExceptionExceptTermination();

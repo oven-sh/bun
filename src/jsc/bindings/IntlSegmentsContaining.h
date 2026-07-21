@@ -2,8 +2,12 @@
 
 #include "root.h"
 
+namespace Zig {
+class GlobalObject;
+}
+
 namespace Bun {
 
-JSC_DECLARE_HOST_FUNCTION(intlSegmentsPrototypeFuncContainingFix);
+void installIntlSegmentsContainingFix(Zig::GlobalObject*, JSC::VM&);
 
 } // namespace Bun

@@ -25,6 +25,7 @@ type FSStream = import("node:fs").ReadStream &
     flush: boolean;
     open: () => void;
     autoClose: boolean;
+    _writableState: { defaultEncoding: string };
     /**
      * true = path must be opened
      * sink = FileSink
@@ -631,6 +632,15 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   }
 }
 
+// The FileSink encodes strings as UTF-8, so every other encoding has to be
+// decoded to bytes here, the way `decodeStrings` does on the Writable path this
+// fast path bypasses. Buffer.from throws ERR_UNKNOWN_ENCODING for bad encodings.
+function decodeStringChunk(stream: FSStream, chunk: string, encoding: any) {
+  if (!encoding) encoding = stream._writableState.defaultEncoding;
+  if (encoding === "utf8" || encoding === "utf-8") return chunk;
+  return Buffer.from(chunk, encoding);
+}
+
 // This function implementation is not correct.
 const writablePrototypeWrite = Writable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
@@ -650,6 +660,10 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   }
   if (typeof cb !== "function") {
     cb = streamNoop;
+  }
+
+  if (typeof data === "string") {
+    data = decodeStringChunk(this, data, encoding);
   }
 
   const fileSink = this[kWriteStreamFastPath];

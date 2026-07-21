@@ -1893,22 +1893,25 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
     const raw = net.createServer();
     const port = await listen(raw as unknown as Server);
     const wrapped = Promise.withResolvers<void>();
+    let secured: TLSSocket | undefined;
     raw.on("connection", socket => {
-      const secured = new TLSSocket(socket, { isServer: true, ...COMMON_CERT });
+      secured = new TLSSocket(socket, { isServer: true, ...COMMON_CERT });
       // Same tick as the constructor - no await, no nextTick.
       secured.write("banner");
       secured.on("error", wrapped.reject);
       secured.on("secure", () => wrapped.resolve());
     });
+    let client: TLSSocket | undefined;
     try {
-      const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
       const received = Promise.withResolvers<string>();
       client.on("error", received.reject);
       client.once("data", chunk => received.resolve(chunk.toString()));
       expect(await received.promise).toBe("banner");
       await wrapped.promise;
-      client.destroy();
     } finally {
+      client?.destroy();
+      secured?.destroy();
       raw.close();
     }
   });
@@ -1920,23 +1923,27 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
   it("buffers post-handshake bytes for a 'data' listener attached after an await", async () => {
     const server = createServer(COMMON_CERT);
     const observed = Promise.withResolvers<{ flowing: unknown; body: string }>();
+    let accepted: TLSSocket | undefined;
     server.on("secureConnection", async socket => {
+      accepted = socket;
       // A force-resumed socket emits its bytes before this handler can ask for
       // them; a manualStart one buffers them until the first read.
       const flowing = socket.readableFlowing;
       await once(socket, "readable");
       observed.resolve({ flowing, body: socket.read().toString() });
     });
+    let client: TLSSocket | undefined;
     try {
       const port = await listen(server);
-      const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
-        client.write("early-bytes");
+      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+        client!.write("early-bytes");
       });
       client.on("error", observed.reject);
       // node reports null here, not false: the socket was never resumed.
       expect(await observed.promise).toEqual({ flowing: null, body: "early-bytes" });
-      client.destroy();
     } finally {
+      client?.destroy();
+      accepted?.destroy();
       server.close();
     }
   });
@@ -1954,18 +1961,19 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
       socket.on("close", hadError => closed.resolve({ hadError, clientError }));
     });
     server.on("secureConnection", socket => socket.destroy());
+    let plain: net.Socket | undefined;
     try {
       const port = await listen(server);
-      const plain = net.connect(port, "127.0.0.1", () => {
+      plain = net.connect(port, "127.0.0.1", () => {
         // Not a ClientHello: the handshake fails before it starts.
-        plain.write("this is not a TLS record at all\r\n\r\n");
+        plain!.write("this is not a TLS record at all\r\n\r\n");
       });
       plain.on("error", () => {});
       const result = await closed.promise;
       expect(result.hadError).toBe(true);
       expect(typeof result.clientError).toBe("string");
-      plain.destroy();
     } finally {
+      plain?.destroy();
       server.close();
     }
   });
@@ -1983,7 +1991,9 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
     // listener is in place when it fires. Node's own _handleTimeout is
     // registered first and emits 'tlsClientError' from inside that dispatch,
     // so a user listener always observes it second.
+    let accepted: net.Socket | undefined;
     server.on("connection", socket => {
+      accepted = socket;
       socket.once("timeout", () => {
         order.push("timeout");
         timedOut.resolve({ order, code, destroyed: socket.destroyed });
@@ -1994,17 +2004,19 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
       order.push("tlsClientError");
       code = (err as Error & { code?: string }).code!;
     });
+    let plain: net.Socket | undefined;
     try {
       const port = await listen(server);
       // Connect at the TCP level and never send a ClientHello.
-      const plain = net.connect(port, "127.0.0.1");
+      plain = net.connect(port, "127.0.0.1");
       plain.on("error", () => {});
       const result = await timedOut.promise;
       expect(result.code).toBe("ERR_TLS_HANDSHAKE_TIMEOUT");
       expect(result.order).toEqual(["tlsClientError", "timeout"]);
       expect(result.destroyed).toBe(false);
-      plain.destroy();
     } finally {
+      plain?.destroy();
+      accepted?.destroy();
       server.close();
     }
   });
@@ -2028,15 +2040,16 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
       socket.setTimeout(50);
       socket.once("timeout", () => idled.resolve({ tlsClientError, errored }));
     });
+    let client: TLSSocket | undefined;
     try {
       const port = await listen(server);
-      const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
       client.on("error", () => {});
       const result = await idled.promise;
       // A stale handshake handler would turn this into ERR_TLS_HANDSHAKE_TIMEOUT.
       expect(result).toEqual({ tlsClientError: null, errored: null });
-      client.destroy();
     } finally {
+      client?.destroy();
       server.close();
     }
   });
@@ -2065,11 +2078,12 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
       socket.end();
     });
     server.on("tlsClientError", err => outcome.resolve((err as Error & { code?: string }).code ?? "rejected"));
+    let client: TLSSocket | undefined;
     try {
       const port = await listen(server);
       server.setSecureContext({ key: agent1Key, cert: agent1Cert });
       expect((server as unknown as { _requestCert: boolean })._requestCert).toBe(true);
-      const client = connect({
+      client = connect({
         port,
         host: "127.0.0.1",
         rejectUnauthorized: false,
@@ -2078,8 +2092,8 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
       client.on("error", () => {});
       // The same code node v26.3.0 reports for this scenario.
       expect(await outcome.promise).toBe("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE");
-      client.destroy();
     } finally {
+      client?.destroy();
       server.close();
     }
   });
@@ -2098,14 +2112,15 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
       socket.end();
     });
     server.on("tlsClientError", err => outcome.resolve((err as Error & { code?: string }).code ?? "rejected"));
+    let client: TLSSocket | undefined;
     try {
       const port = await listen(server);
       expect((server as unknown as { _requestCert: unknown })._requestCert).toBeUndefined();
-      const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
       client.on("error", () => {});
       expect(await outcome.promise).toBe("accepted");
-      client.destroy();
     } finally {
+      client?.destroy();
       server.close();
     }
   });

@@ -1882,6 +1882,11 @@ extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* global
     return globalObject->makeNapiEnvForFFI();
 }
 
+extern "C" JSC::EncodedJSValue ZigGlobalObject__processEnvObject(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->processEnvObject());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = JSC::getVM(globalObject);

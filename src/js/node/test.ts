@@ -338,11 +338,20 @@ function makeRunCounts() {
     todo: 0,
     topLevel: 0,
     suites: 0,
+    // Not a node diagnostic counter; node flips a separate harness.success for
+    // a non-skip/non-todo failed suite (countCompletedTest), which the port
+    // tracks here so a suite-only failure (throwing describe with no children,
+    // expectFailure suite whose children passed) still fails the run.
+    failedSuites: 0,
   } as unknown as Record<string, number>;
 }
 
 function addRunCounts(into: Record<string, number>, from: Record<string, number>) {
   for (const key of Object.keys(from)) into[key] += from[key];
+}
+
+function runSucceeded(counts: Record<string, number>): boolean {
+  return counts.failed === 0 && counts.cancelled === 0 && counts.failedSuites === 0;
 }
 
 function emitRunDiagnostics(reporter: TestsStream, counts: Record<string, number>, durationMs: number) {
@@ -420,7 +429,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {
       __proto__: null,
-      success: counts.failed === 0 && counts.cancelled === 0,
+      success: runSucceeded(counts),
       counts,
       duration_ms: durationMs,
       file: undefined,
@@ -526,20 +535,21 @@ async function runOneFile(
   // Two failure shapes: the file died before reporting anything (top-level
   // throw — node emits a file-level test:fail and no per-file summary), or its
   // tests failed (covered by the children's events; completes `subtestsFailed`).
-  const fileFailed = exitCode !== 0 && fileCounts.failed === 0 && fileCounts.cancelled === 0;
-  const subtestsFailed = fileCounts.failed > 0 || fileCounts.cancelled > 0;
+  const fileSucceeded = runSucceeded(fileCounts);
+  const fileFailed = exitCode !== 0 && fileSucceeded;
+  const subtestsFailed = !fileSucceeded;
   const fileDuration = roundDurationMs(performance.now() - fileStarted);
   let error: Error | undefined;
 
   if (subtestsFailed) {
-    const n = fileCounts.failed + fileCounts.cancelled;
+    const n = fileCounts.failed + fileCounts.cancelled + fileCounts.failedSuites;
     error = makeTestFailure(`${n} subtest${n === 1 ? "" : "s"} failed`, "subtestsFailed");
   }
 
   if (!fileFailed) {
     reporter.emitMessage("test:summary", {
       __proto__: null,
-      success: fileCounts.failed === 0 && fileCounts.cancelled === 0,
+      success: fileSucceeded,
       counts: fileCounts,
       duration_ms: fileDuration,
       file: absolute,
@@ -557,7 +567,7 @@ async function runOneFile(
     __proto__: null,
     ...fileNode,
     type: undefined,
-    testNumber: 1,
+    testNumber: fileCounts.topLevel,
     details: {
       __proto__: null,
       duration_ms: fileDuration,
@@ -571,7 +581,7 @@ async function runOneFile(
       __proto__: null,
       ...fileNode,
       type: undefined,
-      testNumber: 1,
+      testNumber: fileCounts.topLevel,
       details: { __proto__: null, duration_ms: fileDuration, type: "test", error },
     });
   }
@@ -603,8 +613,10 @@ function republishChildEvent(
     if (isVerdict) {
       // node counts a suite in `suites` and stops there: a skipped or todo
       // suite never lands in skipped/todo/passed/tests (countCompletedTest).
-      if (isSuite) counts.suites++;
-      else {
+      if (isSuite) {
+        counts.suites++;
+        if (type === "test:fail" && data.skip === undefined && data.todo === undefined) counts.failedSuites++;
+      } else {
         counts.tests++;
         const failureType = data.error?.failureType;
         // node's kCanceledTests (runner.js): these failure kinds count as
@@ -3271,7 +3283,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {
       __proto__: null,
-      success: counts.failed === 0 && counts.cancelled === 0,
+      success: runSucceeded(counts),
       counts,
       duration_ms: durationMs,
       file: undefined,
@@ -3344,7 +3356,7 @@ async function runStandalone() {
     emitRunDiagnostics(stream, counts, durationMs);
     stream.emitMessage("test:summary", {
       __proto__: null,
-      success: counts.failed === 0 && counts.cancelled === 0,
+      success: runSucceeded(counts),
       counts,
       duration_ms: durationMs,
       file: undefined,
@@ -3352,7 +3364,7 @@ async function runStandalone() {
     stream.endStream();
     standaloneSink = null;
     await reporterDone;
-    if (counts.failed > 0 || counts.cancelled > 0) process.exitCode = 1;
+    if (!runSucceeded(counts)) process.exitCode = 1;
     // node's harness calls process.exit() after postRun when the flag is set;
     // mirrors the eval driver's handling for the --test path.
     if (process.execArgv.includes("--test-force-exit")) {
@@ -3471,9 +3483,11 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
         `Received ${Bun.inspect(names)}`,
     );
     (error as { code?: string }).code = "ERR_INVALID_ARG_VALUE";
+    // node's parseCommandLine throws during lazyBootstrapRoot before any test
+    // runs; the eval-driver twin fatal()s. Returning would let the queue run
+    // with no reporter attached.
     console.error(error);
-    process.exitCode = 1;
-    return;
+    process.exit(1);
   }
 
   const { PassThrough, compose } = require("node:stream");

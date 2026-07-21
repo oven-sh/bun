@@ -301,8 +301,6 @@ struct RouteIndex {
     name: &'static [u8],
     match_name: &'static [u8],
     filepath: &'static [u8],
-    public_path: &'static [u8],
-    hash: u32,
 }
 
 // TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
@@ -318,8 +316,6 @@ pub struct RouteIndexList {
     name: Vec<&'static [u8]>,
     match_name: Vec<&'static [u8]>,
     filepath: Vec<&'static [u8]>,
-    public_path: Vec<&'static [u8]>,
-    hash: Vec<u32>,
 }
 
 impl RouteIndexList {
@@ -328,8 +324,6 @@ impl RouteIndexList {
         self.name.reserve_exact(cap);
         self.match_name.reserve_exact(cap);
         self.filepath.reserve_exact(cap);
-        self.public_path.reserve_exact(cap);
-        self.hash.reserve_exact(cap);
         Ok(())
     }
     pub(crate) fn push(&mut self, item: RouteIndex) {
@@ -337,8 +331,6 @@ impl RouteIndexList {
         self.name.push(item.name);
         self.match_name.push(item.match_name);
         self.filepath.push(item.filepath);
-        self.public_path.push(item.public_path);
-        self.hash.push(item.hash);
     }
     #[inline]
     pub fn len(&self) -> usize {
@@ -359,10 +351,6 @@ impl RouteIndexList {
     #[inline]
     pub fn items_filepath(&self) -> &[&'static [u8]] {
         &self.filepath
-    }
-    #[inline]
-    pub fn items_hash(&self) -> &[u32] {
-        &self.hash
     }
 }
 
@@ -386,7 +374,6 @@ pub struct Routes {
     /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
     /// no borrow it doesn't actually take; matches `static_` above.
     pub index: Option<NonNull<Route>>,
-    pub index_id: Option<usize>,
 
     // allocator dropped — global mimalloc
     pub config: RouteConfig,
@@ -404,7 +391,6 @@ impl Default for Routes {
             dynamic_len: 0,
             static_: StringHashMap::new(),
             index: None,
-            index_id: Some(0),
             config: RouteConfig::default(),
             client_framework_enabled: false,
         }
@@ -722,17 +708,12 @@ impl<'a> RouteLoader<'a> {
                 index_id = Some(i);
             }
 
-            let (filepath, match_name, public_path) = (
-                route.abs_path.as_bytes(),
-                route.match_name.as_bytes(),
-                route.public_path.as_bytes(),
-            );
+            let (filepath, match_name) =
+                (route.abs_path.as_bytes(), route.match_name.as_bytes());
             route_list.push(RouteIndex {
                 name: route.name,
                 filepath,
                 match_name,
-                public_path,
-                hash: route.full_hash,
                 route,
             });
         }
@@ -758,7 +739,6 @@ impl<'a> RouteLoader<'a> {
             // pointer.
             index: this.index,
             config,
-            index_id,
             client_framework_enabled: false,
         }
     }
@@ -950,11 +930,6 @@ pub struct Route {
 
     pub abs_path: AbsPath,
 
-    /// URL-safe path for the route's transpiled script relative to project's top level directory
-    /// - It might not share a prefix with the absolute path due to symlinks.
-    /// - It has a leading slash
-    pub public_path: Interned,
-
     pub kind: pattern::Tag,
 
     pub has_uppercase: bool,
@@ -1054,11 +1029,11 @@ impl Route {
             let is_index = name.is_empty();
 
             let mut has_uppercase = false;
-            // NOTE: reshaped for borrowck — both arms intern via DirnameStore
-            // (process-lifetime arena → `&'static`), so the post-if bindings are
-            // 'static and the route_file_buf borrow is dropped before the
-            // abs-path block below needs it mutably.
-            let (public_path, name, match_name): (&'static [u8], &'static [u8], &'static [u8]) =
+            // NOTE: reshaped for borrowck — the non-index arm interns via
+            // DirnameStore (process-lifetime arena → `&'static`), so the
+            // post-if bindings are 'static and the route_file_buf borrow is
+            // dropped before the abs-path block below needs it mutably.
+            let (name, match_name): (&'static [u8], &'static [u8]) =
                 if !name.is_empty() {
                     validation_result = match Pattern::validate(&name[1..], log) {
                         Some(v) => v,
@@ -1092,16 +1067,9 @@ impl Route {
 
                     debug_assert!(match_name[0] != b'/');
                     debug_assert!(name[0] == b'/');
-                    (public_path, name, match_name)
+                    (name, match_name)
                 } else {
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
-                    (
-                        public_path,
-                        Route::INDEX_ROUTE_NAME,
-                        Route::INDEX_ROUTE_NAME,
-                    )
+                    (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
                 };
 
             if abs_path_str.is_empty() {
@@ -1212,14 +1180,13 @@ impl Route {
             #[cfg(all(debug_assertions, windows))]
             {
                 debug_assert!(!strings::index_of_char(name, b'\\').is_some());
-                debug_assert!(!strings::index_of_char(public_path, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(abs_path.as_bytes(), b'\\').is_some());
                 // SAFETY: read-only reborrow; the `&mut` write above is dead.
                 debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
             }
 
-            // NOTE: name/match_name/public_path are already `&'static` via
+            // NOTE: name/match_name are already `&'static` via
             // DirnameStore::append above. `entry.base()` borrows the entry (it
             // may be inline-stored for ≤31-byte names); intern it
             // explicitly to get `&'static` without a lifetime transmute.
@@ -1232,7 +1199,6 @@ impl Route {
             Some(Route {
                 name,
                 basename,
-                public_path: Interned::from_static(public_path),
                 match_name: Interned::from_static(match_name),
                 full_hash: if is_index {
                     INDEX_ROUTE_HASH

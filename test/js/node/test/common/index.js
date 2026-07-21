@@ -139,7 +139,11 @@ if (process.argv.length === 2 &&
         continue;
       }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
-        globalThis.gc ??= () => Bun.gc(true);
+        // onGC()'s WeakRef check (common/gc.js) is scheduled after each gc()
+        // so its one-setImmediate contract holds regardless of
+        // FinalizationRegistry-vs-setImmediate task ordering.
+        const { onGCScheduleCheck } = require('./gc');
+        globalThis.gc ??= () => { Bun.gc(true); onGCScheduleCheck(); };
         break;
       }
       if ((flag === "--expose-externalize-string" || flag === "--expose_externalize_string") && process.versions.bun) {

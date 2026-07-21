@@ -100,11 +100,71 @@ const net = require("net");
 `;
 }
 
+// A terminate inside the *open* handler takes a different route back into JS:
+// on_open's error branch runs mark_inactive() -> close_and_detach() ->
+// us_socket_close, which synchronously dispatches on_close.
+const openWorkerSource = `
+const { parentPort } = require("worker_threads");
+const shared = new Int32Array(require("worker_threads").workerData);
+const net = require("net");
+
+const server = net.createServer(socket => {
+  socket.write(Buffer.alloc(1 << 16, "x").toString());
+  ${handlerBody}
+});
+server.listen(0, "127.0.0.1", () => parentPort.postMessage(server.address().port));
+`;
+
+// Same shape for Bun.serve websockets: ServerWebSocket::on_open's error branch
+// calls websocket().close(), which re-enters ServerWebSocket::on_close.
+const wsOpenWorkerSource = `
+const { parentPort } = require("worker_threads");
+const shared = new Int32Array(require("worker_threads").workerData);
+
+const server = Bun.serve({
+  port: 0,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response("no upgrade", { status: 400 });
+  },
+  websocket: {
+    open() {${handlerBody}},
+    message() {},
+    close() {},
+    error() {},
+  },
+});
+parentPort.postMessage(server.port);
+`;
+
 const listenDriver = `
     const conn = net.connect({ port, host: "127.0.0.1" });
     await new Promise(resolve => conn.once("data", resolve));
     // Closing the client drives on_close on the server's per-connection socket.
     conn.destroy();
+`;
+
+// The parent must not block in Atomics.wait before the bytes have actually left
+// the socket, or the worker's handler never fires.
+const openDriver = `
+    const conn = net.connect({ port, host: "127.0.0.1" });
+    conn.on("error", () => {});
+    await new Promise(resolve => conn.once("connect", resolve));
+`;
+
+// Raw handshake rather than \`new WebSocket\`: the upgrade has to be flushed
+// before the parent blocks, and the server's open() never lets the client's
+// handshake complete.
+const wsOpenDriver = `
+    const conn = net.connect({ port, host: "127.0.0.1" });
+    conn.on("error", () => {});
+    conn.on("data", () => {});
+    await new Promise(resolve => conn.once("connect", resolve));
+    await new Promise(resolve => conn.write(
+      "GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n",
+      resolve,
+    ));
 `;
 
 const wsDriver = `
@@ -127,6 +187,14 @@ describe.skipIf(isWindows)(
       [
         "Bun.serve websocket message handler (WebSocketServerContext::run_error_callback)",
         parentSource(wsWorkerSource, wsDriver, "ws.close();"),
+      ],
+      [
+        "node:net connection handler (on_open -> mark_inactive -> on_close)",
+        parentSource(openWorkerSource, openDriver, "conn.destroy();"),
+      ],
+      [
+        "Bun.serve websocket open handler (ServerWebSocket::on_close)",
+        parentSource(wsOpenWorkerSource, wsOpenDriver, "conn.destroy();"),
       ],
     ] as const) {
       test.concurrent(

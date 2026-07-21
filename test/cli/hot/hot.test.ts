@@ -776,3 +776,80 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+// JSModuleLoader::loadModule's returned promise is not retained by JSC once
+// it settles. pending_internal_promise holds it as a raw cell pointer and is
+// polled every tick by the --hot run loop (via
+// report_exception_in_hot_reloaded_module_if_needed and reload()). Without a
+// GC root, a collection between ticks can free the cell and the next poll
+// reads a dead JSPromise (Sentry BUN-38CT: SIGSEGV in JSPromise::status ->
+// WriteBarrierBase::get). Conservative stack scanning usually keeps it alive
+// on the caller's stack, which is why the crash is rare and the race is not
+// deterministically reproducible in-process; this test instead asserts the
+// invariant the fix establishes: the stored promise is always GC-protected.
+it(
+  "roots the entry-point evaluation promise so per-tick status reads can't see a freed cell",
+  async () => {
+    const root = join(cwd, "pip-root.js");
+    // reload_entry_point stores pending_internal_promise before module
+    // evaluation runs, so heapStats() inside the entry module observes whether
+    // that store took a protect(). A later setImmediate snapshot confirms the
+    // root persists once the promise has settled and nothing in JSC references
+    // it anymore.
+    writeFileSync(
+      root,
+      `
+        const { heapStats } = require("bun:jsc");
+        function protectedPromises() {
+          const counts = heapStats().protectedObjectTypeCounts;
+          let n = 0;
+          for (const [k, v] of Object.entries(counts)) {
+            if (k.includes("Promise")) n += v;
+          }
+          return { n, counts };
+        }
+        const during = protectedPromises();
+        setImmediate(() => {
+          const after = protectedPromises();
+          console.log(JSON.stringify({ during, after }));
+          process.exit(0);
+        });
+      `,
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const line = stdout.split("\n").find(l => l.startsWith("{"));
+    if (!line) {
+      throw new Error(`no JSON line in stdout.\nstdout: ${JSON.stringify(stdout)}\nstderr: ${stderr}`);
+    }
+    const { during, after } = JSON.parse(line);
+    // At minimum the entry-point evaluation promise must be protected while
+    // stored in pending_internal_promise, both during evaluation and on the
+    // next tick (the window the run loop reads it in). Assert on a combined
+    // object so the full protectedObjectTypeCounts map appears in the failure
+    // diff when either >=1 check fails.
+    expect({
+      duringProtectedPromises: during.n >= 1,
+      afterProtectedPromises: after.n >= 1,
+      duringCounts: during.counts,
+      afterCounts: after.counts,
+    }).toEqual({
+      duringProtectedPromises: true,
+      afterProtectedPromises: true,
+      duringCounts: expect.any(Object),
+      afterCounts: expect.any(Object),
+    });
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

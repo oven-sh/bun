@@ -288,8 +288,10 @@ pub struct VirtualMachine {
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
     pub resolved_path_dups: Vec<Box<[u8]>>,
     pub is_us_loop_entered: bool,
+    /// Entry-point evaluation promise. Always GC-protected while `Some`;
+    /// every write goes through [`set_pending_internal_promise`] which
+    /// balances the previous `protect()`.
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
-    pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub hot_reload_deferred: bool,
     pub entry_point_result: EntryPointResult,
@@ -2322,6 +2324,22 @@ impl VirtualMachine {
         }
     }
 
+    /// Store (or clear) the entry-point evaluation promise. The promise is
+    /// polled across event-loop ticks by the `--hot` run loop
+    /// ([`report_exception_in_hot_reloaded_module_if_needed`] and [`reload`]),
+    /// and the module loader drops its own reference once the promise settles,
+    /// so it must be a GC root while stored here. Balances the previous
+    /// `protect()` before taking the new one.
+    pub fn set_pending_internal_promise(&mut self, promise: Option<*mut JSInternalPromise>) {
+        if let Some(prev) = self.pending_internal_promise {
+            JSValue::from_cell(prev).unprotect();
+        }
+        self.pending_internal_promise = promise;
+        if let Some(p) = promise {
+            JSValue::from_cell(p).protect();
+        }
+    }
+
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
     /// `bun:main` entry, run preloads, and kick off module evaluation.
     pub fn reload_entry_point(
@@ -2389,10 +2407,7 @@ impl VirtualMachine {
                     // SAFETY: hook contract.
                     let p = unsafe { (hooks.load_preloads)(self) }?;
                     if !p.is_null() {
-                        JSValue::from_cell(p).ensure_still_alive();
-                        JSValue::from_cell(p).protect();
-                        self.pending_internal_promise = Some(p);
-                        self.pending_internal_promise_is_protected = true;
+                        self.set_pending_internal_promise(Some(p));
                         return Ok(p);
                     }
                 }
@@ -2400,8 +2415,7 @@ impl VirtualMachine {
                 // Check if Module.runMain was patched.
                 if self.has_patched_run_main {
                     bun_core::hint::cold();
-                    self.pending_internal_promise = None;
-                    self.pending_internal_promise_is_protected = false;
+                    self.set_pending_internal_promise(None);
                     let global_ref = self.global();
                     let argv1 = jsc::bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
                         .map_err(|_| crate::CrateError::JSError)?;
@@ -2415,8 +2429,7 @@ impl VirtualMachine {
                         return Ok(stored);
                     }
                     let resolved = JSC__JSInternalPromise__resolvedPromise(global_ref, ret);
-                    self.pending_internal_promise = Some(resolved);
-                    self.pending_internal_promise_is_protected = false;
+                    self.set_pending_internal_promise(Some(resolved));
                     return Ok(resolved);
                 }
             }
@@ -2440,9 +2453,7 @@ impl VirtualMachine {
                 p
             };
 
-            self.pending_internal_promise = Some(promise);
-            self.pending_internal_promise_is_protected = false;
-            JSValue::from_cell(promise).ensure_still_alive();
+            self.set_pending_internal_promise(Some(promise));
             Ok(promise)
         } else {
             let global = self.global;
@@ -2451,9 +2462,7 @@ impl VirtualMachine {
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
                     .map(NonNull::as_ptr)
                     .ok_or(crate::CrateError::JSError)?;
-            self.pending_internal_promise = Some(promise);
-            self.pending_internal_promise_is_protected = false;
-            JSValue::from_cell(promise).ensure_still_alive();
+            self.set_pending_internal_promise(Some(promise));
             Ok(promise)
         }
     }
@@ -3593,13 +3602,8 @@ impl VirtualMachine {
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
-        if self.pending_internal_promise_is_protected {
-            if let Some(p) = self.pending_internal_promise {
-                JSValue::from_cell(p).unprotect();
-            }
-            self.pending_internal_promise_is_protected = false;
-        }
-        // reload_entry_point() stores into pending_internal_promise on every return path.
+        // reload_entry_point() stores into pending_internal_promise on every
+        // return path; that store unprotects the outgoing promise.
         let main = self.main;
         // Note: reshaped for borrowck — copy the `RawSlice` first to avoid
         // overlapping `&self`/`&mut self` borrows.
@@ -4609,10 +4613,7 @@ impl VirtualMachine {
                 // SAFETY: hook contract.
                 let p = unsafe { (hooks.load_preloads)(self) }?;
                 if !p.is_null() {
-                    JSValue::from_cell(p).ensure_still_alive();
-                    self.pending_internal_promise = Some(p);
-                    JSValue::from_cell(p).protect();
-                    self.pending_internal_promise_is_protected = true;
+                    self.set_pending_internal_promise(Some(p));
                     return Ok(p);
                 }
             }
@@ -4624,9 +4625,7 @@ impl VirtualMachine {
         let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
             .map(NonNull::as_ptr)
             .ok_or(crate::CrateError::JSError)?;
-        self.pending_internal_promise = Some(promise);
-        self.pending_internal_promise_is_protected = false;
-        JSValue::from_cell(promise).ensure_still_alive();
+        self.set_pending_internal_promise(Some(promise));
         Ok(promise)
     }
 
@@ -4796,13 +4795,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
-        if let Some(promise) = self.pending_internal_promise {
-            if self.pending_internal_promise_is_protected {
-                JSValue::from_cell(promise).unprotect();
-                self.pending_internal_promise_is_protected = false;
-            }
-            self.pending_internal_promise = None;
-        }
+        self.set_pending_internal_promise(None);
         self.has_patched_run_main = false;
         self.set_main(b"");
         self.main_hash = 0;

@@ -741,6 +741,112 @@ describe.concurrent(() => {
       expect(stderr).not.toInclude("error: boom");
       expect(exitCode).toBe(0);
     });
+
+    it("fires in main thread after a Worker that emitted 'exit' terminates", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker } = require("worker_threads");
+            process.on("exit", code => console.log("main exit: " + code));
+            const w = new Worker(
+              'process.on("exit", code => console.log("worker exit: " + code));',
+              { eval: true },
+            );
+            w.on("exit", () => console.log("worker terminated"));
+          `,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        stdout: ["worker exit: 0", "worker terminated", "main exit: 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("fires in main thread after a Worker that touched process terminates", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker } = require("worker_threads");
+            process.on("exit", code => console.log("main exit: " + code));
+            const w = new Worker('process.title;', { eval: true });
+            w.on("exit", () => console.log("worker terminated"));
+          `,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        stdout: ["worker terminated", "main exit: 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("fires in main thread after a Worker calls process.exit()", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker } = require("worker_threads");
+            process.on("exit", code => console.log("main exit: " + code));
+            const w = new Worker(
+              'process.on("exit", code => console.log("worker exit: " + code)); process.exit(3);',
+              { eval: true },
+            );
+            w.on("exit", code => console.log("worker terminated: " + code));
+          `,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        stdout: ["worker exit: 3", "worker terminated: 3", "main exit: 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("fires once per thread, not once per process", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker } = require("worker_threads");
+            process.on("exit", code => console.log("exit 0: " + code));
+            const src = 'const { threadId } = require("worker_threads");' +
+              'process.on("exit", code => console.log("exit " + threadId + ": " + code));';
+            let remaining = 3;
+            for (let i = 0; i < 3; i++) {
+              const w = new Worker(src, { eval: true });
+              w.on("exit", () => {
+                if (--remaining === 0) console.log("all workers terminated");
+              });
+            }
+          `,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout.trim().split("\n").sort();
+      expect({ lines, stderr, exitCode }).toEqual({
+        lines: ["all workers terminated", "exit 0: 0", "exit 1: 0", "exit 2: 0", "exit 3: 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
   it("process.memoryUsage", () => {

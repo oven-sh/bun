@@ -3254,8 +3254,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     // Resolve group id (accepts string group name or numeric gid)
     JSValue groupResolved = maybe_gid_by_name(scope, globalObject, groupValue);
     RETURN_IF_EXCEPTION(scope, {});
-    gid_t groupId = groupResolved.toUInt32(globalObject);
+
+    // Validate the resolved group value: must be a finite non-negative number
+    double groupNumber = groupResolved.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (!std::isfinite(groupNumber) || groupNumber < 0 || groupNumber > static_cast<double>(std::numeric_limits<gid_t>::max())) {
+        JSC::throwTypeError(globalObject, scope, "The "extraGroup" argument must be a non-negative safe integer"_s);
+        return {};
+    }
+    gid_t groupId = static_cast<gid_t>(groupNumber);
     
     auto result = callWithoutThreadSuspension([&] { return initgroups(userUtf8.data(), groupId); });
     if (result != 0) throwSystemError(scope, globalObject, "initgroups"_s, errno);

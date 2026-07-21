@@ -157,12 +157,13 @@ bitflags::bitflags! {
         const MEMFD                    = 1 << 7;
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
+        const KEEP_ALIVE               = 1 << 10; // default true
     }
 }
 
 impl PosixFlags {
     pub const fn new() -> Self {
-        PosixFlags::CLOSE_HANDLE
+        Self::from_bits_truncate(PosixFlags::CLOSE_HANDLE.bits() | PosixFlags::KEEP_ALIVE.bits())
     }
 }
 
@@ -179,7 +180,10 @@ impl PosixBufferedReader {
         }
     }
 
-    pub fn update_ref(&self, value: bool) {
+    pub fn update_ref(&mut self, value: bool) {
+        // Remember the ref state so a poll created later (lazy start) honours
+        // an unref() that preceded the first registration.
+        self.flags.set(PosixFlags::KEEP_ALIVE, value);
         let Some(poll) = self.handle.get_poll() else {
             return;
         };
@@ -331,11 +335,11 @@ impl PosixBufferedReader {
         self.buffer()
     }
 
-    pub fn disable_keeping_process_alive<C>(&self, _event_loop_ctx: C) {
+    pub fn disable_keeping_process_alive<C>(&mut self, _event_loop_ctx: C) {
         self.update_ref(false);
     }
 
-    pub fn enable_keeping_process_alive<C>(&self, _event_loop_ctx: C) {
+    pub fn enable_keeping_process_alive<C>(&mut self, _event_loop_ctx: C) {
         self.update_ref(true);
     }
 
@@ -414,7 +418,9 @@ impl PosixBufferedReader {
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
-        if !poll.has_flag(FilePollFlag::WasEverRegistered) {
+        if !poll.has_flag(FilePollFlag::WasEverRegistered)
+            && self.flags.contains(PosixFlags::KEEP_ALIVE)
+        {
             poll.enable_keeping_process_alive(ev);
         }
 
@@ -439,7 +445,9 @@ impl PosixBufferedReader {
         if self.get_fd() != fd {
             self.handle = PollOrFd::Fd(fd);
         }
-        self.register_poll();
+        if !self.flags.contains(PosixFlags::IS_PAUSED) {
+            self.register_poll();
+        }
 
         sys::Result::Ok(())
     }

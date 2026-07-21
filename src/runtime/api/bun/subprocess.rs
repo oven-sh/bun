@@ -1020,16 +1020,22 @@ impl Subprocess<'_> {
 
         // Node.js keeps reading stdout/stderr until EOF after the direct child
         // is reaped (a grandchild may still be writing). Sync and async both
-        // resume reads here; timeout/maxBuffer bound the sync wait.
+        // resume reads here; timeout/maxBuffer bound the sync wait. A lazy
+        // reader is paused until JS pulls, so unpause it first; backpressure
+        // is moot once the direct child has exited.
         if let Readable::Pipe(pipe) = self.stdout.get() {
             if !pipe.reader.is_done() {
-                Readable::pipe_reader_mut(pipe).reader.read();
+                let reader = &mut Readable::pipe_reader_mut(pipe).reader;
+                reader.unpause();
+                reader.read();
             }
         }
 
         if let Readable::Pipe(pipe) = self.stderr.get() {
             if !pipe.reader.is_done() {
-                Readable::pipe_reader_mut(pipe).reader.read();
+                let reader = &mut Readable::pipe_reader_mut(pipe).reader;
+                reader.unpause();
+                reader.read();
             }
         }
 

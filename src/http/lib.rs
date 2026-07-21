@@ -3867,19 +3867,8 @@ impl<'a> HTTPClient<'a> {
             }
         };
         // handle_response_metadata may mutate `response`; mirror it back so
-        // clone_metadata() sees the up-to-date headers regardless of the
-        // content-encoding branch below.
+        // clone_metadata() sees the up-to-date headers.
         self.state.pending_response = Some(response);
-
-        if (self.state.content_encoding_i as usize) < response.headers.list.len()
-            && !self.state.flags.did_set_content_encoding
-        {
-            // if it compressed with this header, it is no longer because we will decompress it
-            self.state.flags.did_set_content_encoding = true;
-            self.state.content_encoding_i = u8::MAX;
-            // we need to reset the pending response because we removed a header
-            self.state.pending_response = Some(response);
-        }
 
         if should_continue == ShouldContinue::Finished {
             if self.state.flags.is_redirect_pending {
@@ -5037,7 +5026,7 @@ impl<'a> HTTPClient<'a> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
-        for (header_i, header) in response.headers.list.iter().enumerate() {
+        for header in response.headers.list.iter() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
                     // RFC 9110 section 9.3.6: a client MUST ignore
@@ -5089,18 +5078,14 @@ impl<'a> HTTPClient<'a> {
                             || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
                         {
                             self.state.encoding = Encoding::Gzip;
-                            self.state.content_encoding_i = header_i as u8;
                         } else if strings::eql_case_insensitive_ascii_check_length(
                             value, b"deflate",
                         ) {
                             self.state.encoding = Encoding::Deflate;
-                            self.state.content_encoding_i = header_i as u8;
                         } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                             self.state.encoding = Encoding::Brotli;
-                            self.state.content_encoding_i = header_i as u8;
                         } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                             self.state.encoding = Encoding::Zstd;
-                            self.state.content_encoding_i = header_i as u8;
                         }
                     }
                 }

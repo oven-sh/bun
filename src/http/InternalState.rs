@@ -27,7 +27,6 @@ pub struct InternalState<'a> {
 
     pub transfer_encoding: Encoding,
     pub encoding: Encoding,
-    pub content_encoding_i: u8,
     pub chunked_decoder: bun_picohttp::phr_chunked_decoder,
     pub decompressor: Decompressor,
     pub stage: Stage,
@@ -65,7 +64,6 @@ pub struct InternalState<'a> {
 pub struct InternalStateFlags {
     pub allow_keepalive: bool,
     pub received_last_chunk: bool,
-    pub did_set_content_encoding: bool,
     pub is_redirect_pending: bool,
     pub is_libdeflate_fast_path_disabled: bool,
     pub resend_request_body_on_redirect: bool,
@@ -98,7 +96,6 @@ impl InternalStateFlags {
         Self {
             allow_keepalive: true,
             received_last_chunk: false,
-            did_set_content_encoding: false,
             is_redirect_pending: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
@@ -126,7 +123,6 @@ impl Default for InternalState<'_> {
             flags: InternalStateFlags::new(),
             transfer_encoding: Encoding::Identity,
             encoding: Encoding::Identity,
-            content_encoding_i: u8::MAX,
             chunked_decoder: bun_picohttp::phr_chunked_decoder::default(),
             decompressor: Decompressor::None,
             stage: Stage::Pending,

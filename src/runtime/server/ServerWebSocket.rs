@@ -708,6 +708,13 @@ impl ServerWebSocket {
             return;
         }
 
+        // on_open's error branch closes the socket, landing here with the
+        // termination from its handler still pending. Both branches below
+        // enter JS, which trips assertNoException().
+        if handler.global_object().has_exception() {
+            return;
+        }
+
         // Copy to a stack local before `sig.signal()` re-enters JS: a GC
         // between the test and the `.call(...)` could otherwise collect it.
         let on_close_handler = handler.on_close;

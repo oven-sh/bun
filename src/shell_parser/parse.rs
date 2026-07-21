@@ -1649,46 +1649,48 @@ impl<'bump> Parser<'bump> {
                             break 'var_decl None;
                         }
 
-                        if eq_idx as usize == txt.len() - 1 {
+                        let value: ast::Atom<'bump> = if eq_idx as usize == txt.len() - 1 {
+                            // The value starts in a later token (`FOO=$bar`,
+                            // `FOO="x"`). The literal part carrying a word-initial
+                            // `~` only ever lands in the `txt_value` branch below,
+                            // so nothing here needs tilde marking.
                             if self.delimits(self.peek()) {
                                 let _ = self.expect_delimit();
-                                break 'var_decl Some(ast::Assign {
-                                    label,
-                                    value: ast::Atom::Simple(ast::SimpleAtom::Text(b"")),
-                                });
-                            }
-                            let atom = match self.parse_atom()? {
-                                Some(a) => a,
-                                None => {
-                                    self.add_error(format_args!("Expected an atom"))?;
-                                    return Err(ParseError::Expected.into());
+                                ast::Atom::Simple(ast::SimpleAtom::Text(b""))
+                            } else {
+                                match self.parse_atom()? {
+                                    Some(a) => a,
+                                    None => {
+                                        self.add_error(format_args!("Expected an atom"))?;
+                                        return Err(ParseError::Expected.into());
+                                    }
                                 }
-                            };
-                            break 'var_decl Some(ast::Assign { label, value: atom });
-                        }
-
-                        let txt_value = &txt[eq_idx as usize + 1..];
-                        if self.delimits(self.peek()) {
-                            let _ = self.expect_delimit();
-                            break 'var_decl Some(ast::Assign {
-                                label,
-                                value: ast::Atom::Simple(ast::SimpleAtom::Text(txt_value)),
-                            });
-                        }
-
-                        let right = match self.parse_atom()? {
-                            Some(a) => a,
-                            None => {
-                                self.add_error(format_args!("Expected an atom"))?;
-                                return Err(ParseError::Expected.into());
+                            }
+                        } else {
+                            // `txt_value` is the unquoted literal text after `=`.
+                            // In an assignment value a `~` is expanded at the
+                            // start and after every unquoted `:` (the
+                            // `PATH=~/bin:$PATH` idiom), so split those positions
+                            // into `Tilde` atoms. Quoted text never reaches here,
+                            // so it correctly stays literal.
+                            let txt_value = &txt[eq_idx as usize + 1..];
+                            let left =
+                                self.split_value_tildes(txt_value, txtrng.start + eq_idx + 1);
+                            if self.delimits(self.peek()) {
+                                let _ = self.expect_delimit();
+                                left
+                            } else {
+                                let right = match self.parse_atom()? {
+                                    Some(a) => a,
+                                    None => {
+                                        self.add_error(format_args!("Expected an atom"))?;
+                                        return Err(ParseError::Expected.into());
+                                    }
+                                };
+                                left.merge(&right, self.alloc)?
                             }
                         };
-                        let left = ast::Atom::Simple(ast::SimpleAtom::Text(txt_value));
-                        let merged = left.merge(&right, self.alloc)?;
-                        break 'var_decl Some(ast::Assign {
-                            label,
-                            value: merged,
-                        });
+                        break 'var_decl Some(ast::Assign { label, value });
                     }
                     None
                 };
@@ -1702,6 +1704,51 @@ impl<'bump> Parser<'bump> {
                 Ok(None)
             }
             _ => Ok(None),
+        }
+    }
+
+    /// Split the unquoted literal text of an assignment value into `Text` and
+    /// `Tilde` atoms. A `~` is a tilde-expansion point at the start of the
+    /// value and immediately after a `:` (the `PATH=~/bin:$PATH` idiom). The
+    /// prefix following each `~` (`+`, `-`, or a user name) is resolved later
+    /// during expansion. `base` is the strpool offset of `bytes[0]`, used to
+    /// skip `~`/`:` bytes that came from an interpolated value (data, not shell
+    /// syntax), so `A=x${":"}~` keeps its literal `~`.
+    fn split_value_tildes(&self, bytes: &'bump [u8], base: u32) -> ast::Atom<'bump> {
+        use ast::SimpleAtom as SA;
+        let mut out: bun_alloc::ArenaVec<'bump, SA<'bump>> =
+            bun_alloc::ArenaVec::with_capacity_in(1, self.alloc);
+        // The start of the value is a tilde-expansion point.
+        let mut at_point = true;
+        let mut seg_start = 0usize;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let b = bytes[i];
+            let interpolated = self.is_interpolated_position(base + i as u32);
+            if at_point && b == b'~' && !interpolated {
+                if i > seg_start {
+                    out.push(SA::Text(&bytes[seg_start..i]));
+                }
+                out.push(SA::Tilde);
+                at_point = false;
+                i += 1;
+                seg_start = i;
+                continue;
+            }
+            at_point = b == b':' && !interpolated;
+            i += 1;
+        }
+        if bytes.len() > seg_start {
+            out.push(SA::Text(&bytes[seg_start..]));
+        }
+        match out.len() {
+            0 => ast::Atom::Simple(SA::Text(b"")),
+            1 => ast::Atom::Simple(out.into_iter().next().unwrap()),
+            _ => ast::Atom::Compound(ast::CompoundAtom {
+                atoms: out.into_bump_slice(),
+                brace_expansion_hint: false,
+                glob_hint: false,
+            }),
         }
     }
 

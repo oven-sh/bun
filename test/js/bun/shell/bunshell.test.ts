@@ -574,6 +574,99 @@ describe("bunshell", () => {
         .stdout("a b~bak\n")
         .runAsTest("backup-suffix idiom after interpolated value");
     });
+
+    // In an assignment value a `~` expands at the start and after every
+    // unquoted `:` (e.g. the `PATH=~/bin:$PATH` idiom), not only at the start
+    // of a command word.
+    describe("in assignment values", async () => {
+      const homeEnv = { ...process.env, HOME: "/home/test", USERPROFILE: "/home/test" };
+      TestBuilder.command`A=~; echo $A`.env(homeEnv).stdout("/home/test\n").runAsTest("bare tilde");
+      TestBuilder.command`A=~/sub; echo $A`.env(homeEnv).stdout("/home/test/sub\n").runAsTest("tilde path");
+      TestBuilder.command`A=x:~; echo $A`.env(homeEnv).stdout("x:/home/test\n").runAsTest("tilde after colon");
+      TestBuilder.command`A=~/b:~/c; echo $A`
+        .env(homeEnv)
+        .stdout("/home/test/b:/home/test/c\n")
+        .runAsTest("multiple colon-separated tildes");
+      TestBuilder.command`MYPATH=~/bin:/usr/bin; echo $MYPATH`
+        .env(homeEnv)
+        .stdout("/home/test/bin:/usr/bin\n")
+        .runAsTest("PATH idiom");
+      // A `~` that is neither at the start nor right after a `:` stays literal.
+      TestBuilder.command`A=a~/b; echo $A`.env(homeEnv).stdout("a~/b\n").runAsTest("tilde mid-value stays literal");
+      // A `~` after `:` followed by `$var`/quoting is not a literal prefix, so
+      // it stays literal (bash forms the tilde-prefix before expansion).
+      TestBuilder.command`A=x:~$U; echo $A`
+        .env({ ...homeEnv, U: "root" })
+        .stdout("x:~root\n")
+        .runAsTest("tilde after colon before a variable stays literal");
+      // Quoted tilde values never expand.
+      TestBuilder.command`A="~"; echo $A`.env(homeEnv).stdout("~\n").runAsTest("double-quoted tilde stays literal");
+      TestBuilder.command`A='~/x'; echo $A`.env(homeEnv).stdout("~/x\n").runAsTest("single-quoted tilde stays literal");
+      // A `~` from an interpolated value is data, not shell syntax: `$`
+      // backslash-escapes it, so it stays literal.
+      TestBuilder.command`${{ raw: "A=x" }}${":~"}${{ raw: "; echo $A" }}`
+        .env(homeEnv)
+        .stdout("x:~\n")
+        .runAsTest("interpolated tilde in an assignment value stays literal");
+
+      // Non-bare prefixes after a `:` (exercises the inner-tilde resolver).
+      TestBuilder.command`A=x:~+; echo $A && pwd`
+        .stdout(out => {
+          const [a, pwd] = out.split("\n");
+          expect(a).toBe(`x:${pwd}`);
+        })
+        .runAsTest("~+ after colon is $PWD");
+      // Unresolvable prefix after a `:` stays literal (inner-tilde None path).
+      TestBuilder.command`A=x:~no-such-user-zz; echo $A`
+        .stdout("x:~no-such-user-zz\n")
+        .runAsTest("unknown user after colon stays literal");
+      if (isPosix) {
+        TestBuilder.command`A=x:~root/y; echo $A`
+          .stdout(out => {
+            expect(out).not.toContain("~");
+            expect(out.startsWith("x:/")).toBe(true);
+            expect(out.endsWith("/y\n")).toBe(true);
+          })
+          .runAsTest("~user after colon resolves");
+      }
+
+      // An inner `~` composed with brace expansion: the `~` resolves first and
+      // its length change must keep the recorded brace metacharacter offsets
+      // aligned. Bun brace-expands assignment values (see the "glob expansion"
+      // suite); bash does not, so this output is intentionally Bun-specific.
+      TestBuilder.command`A=x:~/{a,b}; echo $A`
+        .env(homeEnv)
+        .stdout("x:/home/test/a x:/home/test/b\n")
+        .runAsTest("inner tilde composes with brace expansion");
+    });
+
+    // `~+` / `~-` and `~user` resolve the prefix between `~` and the first
+    // `/` or `:`. `~user` needs getpwnam, which only exists on POSIX.
+    describe("prefixes", async () => {
+      TestBuilder.command`echo ~+ && pwd`
+        .stdout(out => {
+          const [tildePlus, pwd] = out.split("\n");
+          expect(tildePlus).toBe(pwd);
+        })
+        .runAsTest("~+ is $PWD");
+
+      // `:` terminates the prefix and an unknown user stays literal on every
+      // platform (unknown `~user` is always literal; Windows has no getpwnam).
+      const homeEnv = { ...process.env, HOME: "/home/test", USERPROFILE: "/home/test" };
+      TestBuilder.command`echo ~:x`.env(homeEnv).stdout("/home/test:x\n").runAsTest("colon terminates tilde prefix");
+      TestBuilder.command`echo ~no-such-user-zz`.stdout("~no-such-user-zz\n").runAsTest("unknown user stays literal");
+
+      if (isPosix) {
+        TestBuilder.command`echo ~root`
+          .stdout(out => {
+            expect(out).not.toContain("~");
+            expect(out.startsWith("/")).toBe(true);
+          })
+          .runAsTest("~user resolves to the user home directory");
+
+        TestBuilder.command`cd / && cd /tmp && echo ~-`.stdout("/\n").runAsTest("~- is $OLDPWD");
+      }
+    });
   });
 
   // Ported from GNU bash "quote.tests"

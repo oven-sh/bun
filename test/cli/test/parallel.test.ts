@@ -597,6 +597,7 @@ test("--parallel partitions by directory and steals from the end", async () => {
   // dispatch order; across PIDs they interleave, which the grouping tolerates.
   type Row = { pid: number; file: string };
   const rows: Row[] = [...stderr.matchAll(/^ROW=(.+)$/gm)].map(m => JSON.parse(m[1]));
+  expect(rows.length).toBe(16);
   const dirOf = (r: Row) => r.file.replaceAll("\\", "/").split("/").slice(-2, -1)[0]!;
   const byPid = new Map<number, Row[]>();
   for (const r of rows) (byPid.get(r.pid) ?? byPid.set(r.pid, []).get(r.pid)!).push(r);

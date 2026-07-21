@@ -693,6 +693,21 @@ describe("absolute path pattern", async () => {
     const glob = new Glob(`${tmpdir}/hello/friends/nice.json`);
     console.log(Array.from(glob.scanSync({ cwd: tmpdir })));
   });
+
+  test("fully-literal absolute path returns the entry", async () => {
+    using dir = tempDir("glob-abs-literal", {
+      "a.js": "x",
+      "sub/keep": "",
+    });
+    const file = path.join(String(dir), "a.js");
+    const subdir = path.join(String(dir), "sub");
+
+    expect([...new Glob(file).scanSync()]).toEqual([file]);
+    expect(await Array.fromAsync(new Glob(file).scan())).toEqual([file]);
+    expect([...new Glob(subdir).scanSync({ onlyFiles: false })]).toEqual([subdir]);
+    expect([...new Glob(subdir).scanSync({ onlyFiles: true })]).toEqual([]);
+    expect([...new Glob(path.join(String(dir), "missing.js")).scanSync()]).toEqual([]);
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/24936

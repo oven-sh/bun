@@ -459,6 +459,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     let fd = match A::open(pathz)? {
                         Err(e) => {
                             if e.get_errno() == E::ENOTDIR {
+                                self.walker.matched_paths.insert(&path, ());
                                 self.iter_state = IterState::Matched(path);
                                 return Ok(Ok(()));
                             }
@@ -472,6 +473,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         Ok(fd) => fd,
                     };
                     let _ = A::close(fd);
+                    if self.walker.only_files {
+                        self.iter_state = IterState::GetNext;
+                        return Ok(Ok(()));
+                    }
+                    self.walker.matched_paths.insert(&path, ());
                     self.iter_state = IterState::Matched(path);
                     return Ok(Ok(()));
                 }

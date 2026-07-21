@@ -848,6 +848,21 @@ Date)
       `,
     );
   });
+  it("same-file helper in tail position, decoy in argument", async () => {
+    // The fallback scan parses the expression rather than byte-scanning, so a
+    // `.toMatchInlineSnapshot(` substring inside the expect() argument (string,
+    // template, or comment) must not be matched.
+    await tester.test(
+      v => /*js*/ `
+        function snap() {
+          return expect(".toMatchInlineSnapshot(" /* .toMatchInlineSnapshot(\`\`) */).toMatchInlineSnapshot(${v("", bad, '`".toMatchInlineSnapshot("`')});
+        }
+        test("cases", () => {
+          snap();
+        });
+      `,
+    );
+  });
   it("same-file helper, different values at same call site", async () => {
     await tester.testError(
       {

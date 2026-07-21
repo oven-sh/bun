@@ -734,8 +734,11 @@ impl Expect {
 
         // Capture the `expect(...)` call site now, while the caller's frame is
         // still on the stack. A matcher called in tail position cannot recover
-        // this frame later (see the `Expect` struct comment).
-        let expect_srcloc = callframe.get_caller_src_loc(global_this);
+        // this frame later (see the `Expect` struct comment). The unmapped
+        // variant skips the sourcemap remap (two mutex acquisitions + VLQ
+        // search) since this runs on every `expect()` call; `inline_snapshot`
+        // remaps on demand.
+        let expect_srcloc = callframe.get_caller_src_loc_unmapped(global_this);
 
         let expect = Expect {
             flags: Cell::new(Flags::default()),
@@ -1167,15 +1170,27 @@ impl Expect {
 
             // Fallback location: where `expect(...)` itself was called. Only
             // usable when that call happened in the same file we write back to.
-            let (fallback_line, fallback_col) =
-                if this.expect_src_file.eql_utf8(fget_source_path_text) {
+            // The values stored on `Expect` are un-remapped (captured cheaply
+            // on the `expect()` hot path); remap here. `remap` takes and
+            // returns +1 ownership of `str`, so give it a fresh ref and
+            // release whatever comes back.
+            let (fallback_line, fallback_col) = {
+                let mut expect_loc = bun_jsc::call_frame::CallerSrcLoc {
+                    str: this.expect_src_file.dupe_ref(),
+                    line: this.expect_src_line,
+                    column: this.expect_src_col,
+                };
+                expect_loc.remap(global_this);
+                let _expect_loc_str_guard = bun_core::OwnedString::new(expect_loc.str);
+                if expect_loc.str.eql_utf8(fget_source_path_text) {
                     (
-                        core::ffi::c_ulong::from(this.expect_src_line),
-                        core::ffi::c_ulong::from(this.expect_src_col),
+                        core::ffi::c_ulong::from(expect_loc.line),
+                        core::ffi::c_ulong::from(expect_loc.column),
                     )
                 } else {
                     (0, 0)
-                };
+                }
+            };
 
             // 2. save to write later
             runner.snapshots.add_inline_snapshot_to_write(file_id, super::snapshot::InlineSnapshotToWrite {

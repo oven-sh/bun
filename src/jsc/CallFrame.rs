@@ -181,6 +181,18 @@ impl CallFrame {
         CallerSrcLoc { str, line, column }
     }
 
+    /// Like `get_caller_src_loc` but skips the sourcemap remap (two mutex
+    /// acquisitions + hashmap lookup + VLQ search). Cheap enough for hot
+    /// paths; call `CallerSrcLoc::remap` later when a mapped location is
+    /// actually needed.
+    pub fn get_caller_src_loc_unmapped(&self, global_this: &JSGlobalObject) -> CallerSrcLoc {
+        let mut str = bun_core::String::default();
+        let mut line: c_uint = 0;
+        let mut column: c_uint = 0;
+        Bun__CallFrame__getCallerSrcLocUnmapped(self, global_this, &mut str, &mut line, &mut column);
+        CallerSrcLoc { str, line, column }
+    }
+
     #[cfg(debug_assertions)]
     pub fn describe_frame(&self) -> &ZStr {
         // SAFETY: FFI returns a NUL-terminated C string with lifetime tied to the frame.
@@ -260,6 +272,14 @@ pub struct CallerSrcLoc {
     pub str: bun_core::String,
     pub line: c_uint,
     pub column: c_uint,
+}
+
+impl CallerSrcLoc {
+    /// Apply sourcemap remapping in place. No-op for an already-mapped
+    /// location (the remap is idempotent for URLs with no saved mapping).
+    pub fn remap(&mut self, global_this: &JSGlobalObject) {
+        Bun__remapSrcLoc(global_this, &mut self.str, &mut self.line, &mut self.column);
+    }
 }
 
 pub struct Iterator<'a> {
@@ -415,6 +435,19 @@ unsafe extern "C" {
         out_str: &mut bun_core::String,
         out_line: &mut c_uint,
         out_column: &mut c_uint,
+    );
+    safe fn Bun__CallFrame__getCallerSrcLocUnmapped(
+        cf: &CallFrame,
+        global: &JSGlobalObject,
+        out_str: &mut bun_core::String,
+        out_line: &mut c_uint,
+        out_column: &mut c_uint,
+    );
+    safe fn Bun__remapSrcLoc(
+        global: &JSGlobalObject,
+        io_str: &mut bun_core::String,
+        io_line: &mut c_uint,
+        io_column: &mut c_uint,
     );
     #[cfg(debug_assertions)]
     fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const core::ffi::c_char;

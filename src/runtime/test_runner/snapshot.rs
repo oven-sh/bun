@@ -95,45 +95,6 @@ impl InlineSnapshotToWrite {
     }
 }
 
-/// Scan `text[from..]` for the matcher identifier `fn_name` as the target of a
-/// property call (`.<fn_name>(`), returning its byte offset. Whitespace is
-/// permitted around `.` and `(`. Used when JSC tail-call elimination loses the
-/// exact matcher-call column and we only have the `expect(...)` location.
-fn find_matcher_call(text: &[u8], from: usize, fn_name: &[u8]) -> Option<usize> {
-    let mut cursor = from;
-    while let Some(rel) = strings::index_of(&text[cursor..], fn_name) {
-        let pos = cursor + rel;
-        let after = pos + fn_name.len();
-        // Require `.` immediately (modulo JS whitespace) before the name.
-        let mut b = pos;
-        while b > from {
-            let c = text[b - 1];
-            if c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' {
-                b -= 1;
-            } else {
-                break;
-            }
-        }
-        let dot_ok = b > from && text[b - 1] == b'.';
-        // Require `(` immediately (modulo JS whitespace) after the name.
-        let mut a = after;
-        while a < text.len() {
-            let c = text[a];
-            if c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' {
-                a += 1;
-            } else {
-                break;
-            }
-        }
-        let paren_ok = a < text.len() && text[a] == b'(';
-        if dot_ok && paren_ok {
-            return Some(pos);
-        }
-        cursor = after;
-    }
-    None
-}
-
 /// Compute the 1-based (line, column) of byte offset `target` in `text`,
 /// counting columns in UTF-16 code units to match JSC / source-map semantics.
 fn byte_offset_to_line_col(text: &[u8], target: usize) -> (c_ulong, c_ulong) {
@@ -514,9 +475,12 @@ impl<'a> Snapshots<'a> {
             // 2a. resolve fallback locations: when the matcher was called in
             // tail position, JSC's proper tail calls eliminate the helper's
             // frame and `(line, col)` points at the helper's *caller* instead
-            // of the matcher call site. Scan forward from the `expect(...)`
-            // location (captured before the tail call) to find the real
-            // `.<fn_name>(` and fix up `(line, col)` before sorting.
+            // of the matcher call site. Parse the expression at the
+            // `expect(...)` location (captured before the tail call) and pull
+            // the matcher's `name_loc` off the AST, then fix up `(line, col)`
+            // before sorting. Parsing (rather than byte-scanning) keeps decoy
+            // occurrences inside string/template/comment arguments from
+            // matching.
             for ils in ils_info.iter_mut() {
                 // c_ulong is u32 on Windows (LLP64); widen explicitly.
                 #[allow(clippy::useless_conversion)]
@@ -545,7 +509,84 @@ impl<'a> Snapshots<'a> {
                 ) else {
                     continue;
                 };
-                if let Some(found) = find_matcher_call(&file_text, fallback, ils.kind) {
+
+                // Parse `expect(<args>).<chain>.<fn_name>(<args>)` starting at
+                // the `expect` identifier and walk to the outermost call's
+                // `.name_loc`. Errors (including lexer errors) are discarded:
+                // this is a best-effort fallback and the main loop reports a
+                // clear error if it still can't find the matcher. The log
+                // guard temporarily installs a scratch `Log` so lexer/parser
+                // diagnostics from a failed parse don't surface.
+                let found: Option<usize> = 'parse: {
+                    let mut scratch_log = bun_ast::Log::init();
+                    let scratch_log_ptr: *mut bun_ast::Log = &raw mut scratch_log;
+                    // SAFETY: `scratch_log` outlives `'parse`; sole `&mut` is
+                    // held by the lexer/parser below.
+                    let mut lexer = js_lexer::Lexer::init_without_reading(
+                        unsafe { &mut *scratch_log_ptr },
+                        &source,
+                        &arena,
+                    );
+                    if fallback > 0 {
+                        lexer.current += fallback - (lexer.current - lexer.end);
+                        lexer.step();
+                    }
+                    if lexer.next().is_err() {
+                        break 'parse None;
+                    }
+                    let opts = js_parser::ParserOptions::init(
+                        vm.transpiler.options.jsx.clone(),
+                        bun_ast::Loader::Js,
+                    );
+                    let mut __parser_slot =
+                        core::mem::MaybeUninit::<js_parser::TSXParser<'_>>::uninit();
+                    if js_parser::TSXParser::init(
+                        &mut __parser_slot,
+                        &arena,
+                        core::ptr::NonNull::new(scratch_log_ptr)
+                            .expect("scratch_log_ptr from &raw mut"),
+                        &source,
+                        &vm.transpiler.options.define,
+                        lexer,
+                        opts,
+                    )
+                    .is_err()
+                    {
+                        break 'parse None;
+                    }
+                    // SAFETY: `init` returned `Ok`; guard drops the slot.
+                    let mut __parser_guard =
+                        scopeguard::guard(__parser_slot, |mut s| unsafe {
+                            s.assume_init_drop()
+                        });
+                    // SAFETY: guard armed only after `init` succeeded.
+                    let parser: &mut js_parser::TSXParser<'_> =
+                        unsafe { __parser_guard.assume_init_mut() };
+
+                    let Ok(expr) = parser.parse_expr(js_parser::Level::Lowest) else {
+                        break 'parse None;
+                    };
+                    let Some(call) = expr.data.e_call() else {
+                        break 'parse None;
+                    };
+                    let Some(dot) = call.target.data.e_dot() else {
+                        break 'parse None;
+                    };
+                    if dot.name != ils.kind {
+                        break 'parse None;
+                    }
+                    let loc = dot.name_loc.start;
+                    if loc < 0 {
+                        break 'parse None;
+                    }
+                    let loc = loc as usize;
+                    if !strings::starts_with(&file_text[loc..], ils.kind) {
+                        break 'parse None;
+                    }
+                    Some(loc)
+                };
+
+                if let Some(found) = found {
                     let (line, col) = byte_offset_to_line_col(&file_text, found);
                     bun_core::scoped_log!(
                         inline_snapshot,

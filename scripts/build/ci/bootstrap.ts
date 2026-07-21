@@ -6,21 +6,19 @@
 //   node scripts/build/ci/bootstrap.ts --image=<key> --ci --repo-ref=<ref>
 //   node scripts/build/ci/bootstrap.ts --image=<key> --ci --dry-run
 //
-// Every value it acts on comes from the image entry in ./ci/spec.ts named by
-// --image; there are no implicit defaults. --dry-run prints the complete
-// plan (every step, command, download, and file write) without changing
-// the machine — the way to review what a bake will do, from any host.
+// The plan is the image's `components` list from ./spec.ts, resolved by
+// ./components/registry.ts — the same list the image hash walks. There are
+// no implicit defaults. --dry-run prints the complete plan (every step,
+// command, download, and file write) without changing the machine — the
+// way to review what a bake will do, from any host.
 //
 // See scripts/build/ci/README.md for the whole image system.
 
 import { parseArgs } from "node:util";
-import type { LinuxContext } from "./bootstrap/linux.ts";
 import { detectHost } from "./bootstrap/host.ts";
-import { baseSystemSteps, browserSteps, ciSteps, crossToolchainSteps, nodejsSteps, toolchainSteps } from "./bootstrap/linux.ts";
 import { banner, log, mode, runSteps } from "./bootstrap/runtime.ts";
-import type { WindowsContext } from "./bootstrap/windows.ts";
-import { windowsSteps } from "./bootstrap/windows.ts";
-import { resolveLinuxArtifacts, resolveWindowsArtifacts } from "./artifacts.ts";
+import { linuxArtifacts, linuxSteps, windowsArtifacts, windowsSteps } from "./components/registry.ts";
+import { verifyHost } from "./components/verify-host.ts";
 import { imageEntry, imageName } from "./naming.ts";
 import { epoch } from "./spec.ts";
 
@@ -69,6 +67,7 @@ async function main(): Promise<void> {
 
   banner(`Bun CI image bootstrap: ${imageName(image)} (epoch ${epoch})${ci ? " [CI]" : ""}${dryRun ? " [DRY RUN]" : ""}`);
   log(`spec entry: ${image.key} (${image.os} ${image.arch})`);
+  log(`components (${image.components.length}): ${image.components.join(", ")}`);
   log(`repo ref for caches: ${repoRef}`);
 
   const host = await detectHost();
@@ -77,21 +76,14 @@ async function main(): Promise<void> {
     if (host.os !== "linux" && !dryRun) {
       throw new Error(`Image "${image.key}" is linux but this host is ${host.os}. Use --dry-run to inspect the plan from another OS.`);
     }
-    const ctx: LinuxContext = { image, host, ci, repoRef, artifacts: resolveLinuxArtifacts(image) };
-    await runSteps(`Bootstrap ${image.key}`, [
-      ...baseSystemSteps(ctx),
-      ...nodejsSteps(ctx),
-      ...toolchainSteps(ctx),
-      ...browserSteps(ctx),
-      ...crossToolchainSteps(ctx),
-      ...ciSteps(ctx),
-    ]);
+    const ctx = { image, host, ci, repoRef, artifacts: linuxArtifacts(image) };
+    await runSteps(`Bootstrap ${image.key}`, [verifyHost(image, host), ...linuxSteps(image, ctx)]);
   } else {
     if (host.os !== "windows" && !dryRun) {
       throw new Error(`Image "${image.key}" is windows but this host is ${host.os}. Use --dry-run to inspect the plan from another OS.`);
     }
-    const ctx: WindowsContext = { image, host, ci, repoRef, artifacts: resolveWindowsArtifacts(image) };
-    await runSteps(`Bootstrap ${image.key}`, windowsSteps(ctx));
+    const ctx = { image, host, ci, repoRef, artifacts: windowsArtifacts(image) };
+    await runSteps(`Bootstrap ${image.key}`, [verifyHost(image, host), ...windowsSteps(image, ctx)]);
   }
 }
 

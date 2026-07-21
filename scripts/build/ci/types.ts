@@ -173,10 +173,28 @@ export type LinuxImageBase = {
   /** FLOATING installer scripts (fetched, run, unverifiable by design). */
   readonly dockerInstallUrl: string;
   readonly tailscaleInstallUrl: string;
+  /** The things baked onto this image, BY COMPONENT NAME, IN INSTALL
+   * ORDER (components/registry.ts resolves the names). Ordering is data:
+   * this list is the sequencer's only input, and the same list is walked
+   * to build the hashed download bundle. */
+  readonly components: readonly string[];
+  /** Every path a linux bake writes to, rooted so each is written once.
+   * Components compose their locations from these roots (see
+   * components/paths.ts) — no path string is restated across components. */
   readonly paths: {
+    /** Where binaries land (node, bun, curl-h3, age, buildkite-agent). */
+    readonly bin: string;
+    /** Where /opt-style trees land (rust, ndk, sysroots, prefetch cache). */
+    readonly opt: string;
+    /** node include tree for headers. */
+    readonly include: string;
     readonly buildkiteUser: string;
     readonly buildkiteHome: string;
-    readonly buildkiteAgentPath: string;
+    /** Filename of the bundled agent inside buildkiteHome. A single fact:
+     * machine.mjs names its esbuild output this, and the service definition
+     * runs it, so uploader and runner can't diverge (or fork on a rename). */
+    readonly buildkiteAgentEntry: string;
+    /** Extra state dirs the buildkite user owns. */
     readonly buildkiteDirs: readonly string[];
     readonly prefetchDir: string;
     readonly installCacheDir: string;
@@ -309,9 +327,19 @@ export type WindowsImageBase = {
   /** nssm mirror fallback for when nssm.cc (Scoop's source) is down. */
   readonly nssmFallbackZipUrl: string;
   readonly pdbAddr2line: { readonly version: string };
+  /** The things baked onto this image, by component name, in install
+   * order (see LinuxImageBase.components). */
+  readonly components: readonly string[];
+  /** Every path a windows bake writes to, rooted so each is written once
+   * (see components/paths.ts for how components compose from these). */
   readonly paths: {
+    /** Small tools survive Sysprep here (bun, curl-h3, pdb-addr2line, nssm). */
+    readonly system32: string;
+    /** Where multi-file installs land (ccache, ...). */
+    readonly programFiles: string;
     readonly buildkiteHome: string;
-    readonly buildkiteAgentPath: string;
+    /** Filename of the bundled agent inside buildkiteHome (see linux). */
+    readonly buildkiteAgentEntry: string;
     readonly prefetchDir: string;
     readonly installCacheDir: string;
     /** Where the Scoop-installed node lands; the agent service runs it. */

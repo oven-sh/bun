@@ -826,16 +826,19 @@ function getTestBunStep(platform, options, testOptions = {}) {
 function getEnsureImageStep(platform) {
   const { os, arch, distro, release } = platform;
   const cloud = os === "windows" ? "azure" : "aws";
+  // --image names the spec entry; machine.mjs computes `${key}-${hash}` from
+  // it, so the baked name can only be what the spec says. The platform flags
+  // stay for machine.mjs's launch shape (instance type, disk, base image).
   const command = [
     "node",
     "./scripts/machine.mjs",
     "create-image",
+    `--image=${getImageKey(platform)}`,
     `--os=${os}`,
     `--arch=${arch}`,
     distro && `--distro=${distro}`,
     `--release=${release}`,
     `--cloud=${cloud}`,
-    `--image-name=${getImageName(platform)}`,
     "--ci",
     "--authorized-org=oven-sh",
   ];

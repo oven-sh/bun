@@ -9,7 +9,8 @@ import { inspect, parseArgs } from "node:util";
 import { azure } from "./azure.mjs";
 import { packerDownload } from "./build/ci/artifacts.ts";
 import { BOOTSTRAP_SOURCE_DIRS, LINUX_REMOTE_ROOT, linuxBootstrapCommand } from "./build/ci/delivery.ts";
-import { imageEntry, imageKey } from "./build/ci/naming.ts";
+import { agentEntry } from "./build/ci/components/paths.ts";
+import { imageEntry, imageName as computeImageName } from "./build/ci/naming.ts";
 import { windowsPackerTemplate } from "./build/ci/packer.ts";
 import { docker } from "./docker.mjs";
 import { tart } from "./tart.mjs";
@@ -367,8 +368,7 @@ const aws = {
     // The base AMI is a fact on the image's spec entry (FLOATING: the newest
     // AMI matching the glob at bake time). CI bakes only spec'd images; ad-hoc
     // `ssh` sessions of other distros must pass --image-id explicitly.
-    const { os, arch, distro, release } = options;
-    const entry = imageEntry(imageEntryKey(options));
+    const entry = options.imageEntry;
     if (entry.os !== "linux") {
       throw new Error(`getBaseImage: ${entry.key} is not a linux/AWS image`);
     }
@@ -792,7 +792,7 @@ export function getDiskSize(options) {
   if (diskSizeGb) {
     return diskSizeGb;
   }
-  return imageEntry(imageEntryKey(options)).bake.diskSizeGb;
+  return options.imageEntry.bake.diskSizeGb;
 }
 
 /**
@@ -1025,17 +1025,6 @@ function getRdpFile(hostname, username) {
  * @property {(options: MachineOptions) => Promise<Machine>} createMachine
  */
 
-/**
- * The spec image key for machine.mjs's platform flags (os/arch/distro/
- * release), so an ad-hoc `ssh` or a create-image without --image-name
- * still resolves to a spec entry.
- * @param {MachineOptions} options
- */
-function imageEntryKey(options) {
-  const { os, arch, distro, release } = options;
-  return imageKey(distro === undefined ? { os, arch, release } : { os, arch, release, distro });
-}
-
 function getCloud(name) {
   switch (name) {
     case "docker":
@@ -1147,13 +1136,14 @@ async function getAzureToken(tenantId, clientId, clientSecret) {
  * @param {string} options.agentPath esbuild-bundled agent.mjs
  * @param {string} options.bootstrapDir directory holding scripts/build/ci
  */
-async function buildWindowsImageWithPacker({ imageName, arch, ci, repoRef, agentPath, bootstrapDir }) {
+async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, bootstrapDir }) {
   const { getSecret } = await import("./utils.mjs");
-  const key = imageName.replace(/-[0-9a-f]{16}$/, "");
-  const image = imageEntry(key);
   if (image.os !== "windows") {
-    throw new Error(`buildWindowsImageWithPacker: ${key} is not a windows image entry`);
+    throw new Error(`buildWindowsImageWithPacker: ${image.key} is not a windows image entry`);
   }
+  const key = image.key;
+  const arch = image.arch;
+  const imageName = computeImageName(image);
 
   // Azure credentials from Buildkite secrets. The gallery name/location live
   // in the spec (image.gallery); the resource group and where Packer puts
@@ -1336,6 +1326,7 @@ async function main() {
       "instance-type": { type: "string" },
       "image-id": { type: "string" },
       "image-name": { type: "string" },
+      "image": { type: "string" },
       "cpu-count": { type: "string" },
       "memory-gb": { type: "string" },
       "disk-size-gb": { type: "string" },
@@ -1380,8 +1371,18 @@ async function main() {
 
   const cloud = getCloud(args["cloud"]);
 
+  // The spec image entry this run is about: named exactly by --image (the
+  // spec key). ci.mjs passes it; nothing here reverse-engineers a key from
+  // os/arch/distro/release (that reconstruction can't recover abi/features).
+  const imageKeyFlag = args["image"];
+  if (!imageKeyFlag) {
+    throw new Error(`--image=<key> is required (a key from scripts/build/ci/spec.ts)`);
+  }
+  const imageEntryValue = imageEntry(imageKeyFlag);
+
   /** @type {MachineOptions} */
   const options = {
+    imageEntry: imageEntryValue,
     cloud: args["cloud"],
     os: parseOs(args["os"]),
     arch: parseArch(args["arch"]),
@@ -1407,11 +1408,12 @@ async function main() {
 
   let { detached, bootstrap, ci, os, arch, distro, release } = options;
 
-  // The image being baked (create-image) or booted (ssh): the spec entry
-  // named by --image-name, or resolved from --os/--arch/--distro/--release.
-  // The image name (`${key}-${hash}`) comes with the entry via ci.mjs's
-  // --image-name; there are no version numbers or build-number suffixes.
-  const imageName = args["image-name"];
+  // create-image bakes options.imageEntry (from --image). The image name is
+  // COMPUTED from the entry (`${key}-${hash}`) — never taken from the command
+  // line — so what gets baked can only be named what the spec says it is.
+  // --image-name remains only the pre-existing "boot an existing AMI" input
+  // (options.imageName, used by createMachine's image lookup).
+  const bakeName = options.ci ? computeImageName(imageEntryValue) : undefined;
 
   // Tell bootstrap which ref of the repo to shallow-clone for the prefetch
   // caches — the dep version pins live in scripts/build/deps/ and aren't
@@ -1441,7 +1443,9 @@ async function main() {
       }
       const entryPath = resolve(import.meta.dirname, "agent.mjs");
       const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
-      agentPath = join(tmpPath, "agent.mjs");
+      // Named from the spec fact the remote path also derives from, so the
+      // bundle we upload and the file the service runs are one string.
+      agentPath = join(tmpPath, imageEntryValue.paths.buildkiteAgentEntry);
       await spawnSafe($`${npx} esbuild ${entryPath} --bundle --platform=node --format=esm --outfile=${agentPath}`);
     }
   }
@@ -1452,7 +1456,7 @@ async function main() {
     if (!imageName) {
       throw new Error("create-image for windows requires --image-name (ci.mjs passes the spec-derived name)");
     }
-    await buildWindowsImageWithPacker({ imageName, arch, ci, repoRef, agentPath, bootstrapDir });
+    await buildWindowsImageWithPacker({ image: options.imageEntry, ci, repoRef, agentPath, bootstrapDir });
     return;
   }
 
@@ -1540,9 +1544,8 @@ async function main() {
         // machine (ssh command) is provisioned by hand.
         throw new Error("Windows bootstrap runs through the Packer path (create-image --cloud=azure)");
       }
-      // The image entry the bootstrap builds: from --image-name (CI) or
-      // resolved from the platform flags (ad-hoc create-image / ssh).
-      const entry = imageEntry(imageName ? imageName.replace(/-[0-9a-f]{16}$/, "") : imageEntryKey(options));
+      // The image entry the bootstrap builds (resolved from --image in main).
+      const entry = options.imageEntry;
       await startGroup("Uploading bootstrap sources...", async () => {
         // bootstrapDir's basename matches LINUX_REMOTE_ROOT's, so `scp -r`
         // of the directory into the parent lands it exactly at the root.
@@ -1563,7 +1566,7 @@ async function main() {
     if (agentPath) {
       {
         const tmpPath = "/tmp/agent.mjs";
-        const remotePath = imageEntry(imageEntryKey(options)).paths.buildkiteAgentPath;
+        const remotePath = agentEntry(options.imageEntry);
         await startGroup("Installing agent...", async () => {
           await machine.upload(agentPath, tmpPath);
           const command = [];
@@ -1585,10 +1588,10 @@ async function main() {
     }
 
     if (command === "create-image") {
-      // Content-addressed: the image name is the spec-derived `${key}-${hash}`
-      // ci.mjs passed as --image-name. There are no version numbers or
-      // build-number suffixes; an ad-hoc local bake gets a draft name.
-      const label = imageName || `${imageEntryKey(options)}-draft-${Date.now()}`;
+      // Content-addressed: `${key}-${hash}` computed from the spec entry.
+      // There are no version numbers or build-number suffixes; a non-CI
+      // local bake gets a draft name so it can't shadow a real image.
+      const label = bakeName ?? `${options.imageEntry.key}-draft-${Date.now()}`;
       await startGroup("Creating image...", async () => {
         console.log("Creating image:", label);
         const result = await machine.snapshot(label);

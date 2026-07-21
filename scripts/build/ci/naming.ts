@@ -14,7 +14,7 @@
 // up — no wildcards, no version numbers, no newest-wins.
 
 import { createHash } from "node:crypto";
-import { resolveArtifacts } from "./artifacts.ts";
+import { resolveArtifacts } from "./components/registry.ts";
 import { epoch, images } from "./spec.ts";
 import type { Arch, Image } from "./types.ts";
 

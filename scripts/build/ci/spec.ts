@@ -204,10 +204,15 @@ const crossToolchains: CrossToolchains = {
   crossBinutils: ["binutils-x86-64-linux-gnu"],
 };
 
+/** The roots every linux image writes to. Locations under a root are
+ * derived in components/paths.ts, so each root is written exactly once. */
 const linuxPaths: LinuxImageBase["paths"] = {
+  bin: "/usr/local/bin",
+  opt: "/opt",
+  include: "/usr/local/include",
   buildkiteUser: "buildkite-agent",
   buildkiteHome: "/var/lib/buildkite-agent",
-  buildkiteAgentPath: "/var/lib/buildkite-agent/agent.mjs",
+  buildkiteAgentEntry: "agent.mjs",
   buildkiteDirs: ["/var/cache/buildkite-agent", "/var/log/buildkite-agent", "/var/run/buildkite-agent"],
   prefetchDir: "/opt/bun-prefetch",
   installCacheDir: "/var/cache/bun-install",
@@ -486,9 +491,12 @@ const windowsShared: WindowsSharedFields = {
   },
   nssmFallbackZipUrl: "https://buncistore.blob.core.windows.net/artifacts/nssm-2.24-103-gdee49fc.zip",
   pdbAddr2line: { version: "0.11.2" },
+  // Roots; derived locations come from components/paths.ts.
   paths: {
+    system32: "C:\\Windows\\System32",
+    programFiles: "C:\\Program Files",
     buildkiteHome: "C:\\buildkite-agent",
-    buildkiteAgentPath: "C:\\buildkite-agent\\agent.mjs",
+    buildkiteAgentEntry: "agent.mjs",
     prefetchDir: "C:\\bun-prefetch",
     installCacheDir: "C:\\bun-install-cache",
     node: "C:\\Scoop\\apps\\nodejs\\current\\node.exe",
@@ -507,6 +515,82 @@ const windowsShared: WindowsSharedFields = {
   },
 };
 
+
+// ---------------------------------------------------------------------------
+// Component sequences (install order is data)
+// ---------------------------------------------------------------------------
+
+/** The install sequence every linux image shares. ci-user precedes nodejs
+ * (whose gyp cache lands in the buildkite home) and prefetch. base-system
+ * (build essentials) precedes python-fuse (built from source on alpine). */
+const linuxCommonComponents = [
+  "base-system",
+  "ci-user",
+  "nodejs",
+  "bun",
+  "curl-h3",
+  "age",
+  "python-fuse",
+  "cmake",
+  "llvm",
+  "rust",
+  "docker",
+  "tailscale",
+  "chromium",
+  "buildkite-agent",
+  "prefetch",
+  "core-dumps",
+  "cleanup",
+] as const;
+
+/** The build host additionally installs the cross toolchains, before the
+ * CI finalization steps (buildkite-agent, prefetch, core-dumps, cleanup). */
+const linuxBuildHostComponents = [
+  "base-system",
+  "ci-user",
+  "nodejs",
+  "bun",
+  "curl-h3",
+  "age",
+  "python-fuse",
+  "cmake",
+  "llvm",
+  "rust",
+  "docker",
+  "tailscale",
+  "chromium",
+  "cross-binutils",
+  "android-ndk",
+  "freebsd-sysroot",
+  "glibc-sysroot",
+  "musl-sysroot",
+  "windows-sysroot",
+  "macos-sdk",
+  "buildkite-agent",
+  "prefetch",
+  "core-dumps",
+  "cleanup",
+] as const;
+
+/** The install sequence every windows image shares. */
+const windowsCommonComponents = [
+  "optimize-windows",
+  "scoop",
+  "nodejs",
+  "powershell",
+  "openssh",
+  "bun",
+  "curl-h3",
+  "ccache",
+  "rust",
+  "pdb-addr2line",
+  "visual-studio",
+  "intel-sde",
+  "buildkite-agent",
+  "prefetch",
+  "defender-removal",
+] as const;
+
 // ---------------------------------------------------------------------------
 // The images
 // ---------------------------------------------------------------------------
@@ -519,6 +603,7 @@ const linuxBuildHost: LinuxBuildHostImage = {
   release: "13",
   abi: "gnu",
   buildHost: true,
+  components: linuxBuildHostComponents,
   base: debianAmi("aarch64"),
   bake: linuxBake("aarch64"),
   packages: debianPackages,
@@ -534,6 +619,7 @@ const linuxTestImages: readonly LinuxTestImage[] = [
     release: "13",
     abi: "gnu",
     buildHost: false,
+    components: linuxCommonComponents,
     base: debianAmi("x64"),
     bake: linuxBake("x64"),
     packages: debianPackages,
@@ -547,6 +633,7 @@ const linuxTestImages: readonly LinuxTestImage[] = [
     release: "25.04",
     abi: "gnu",
     buildHost: false,
+    components: linuxCommonComponents,
     base: ubuntuAmi("25.04", "aarch64"),
     bake: linuxBake("aarch64"),
     packages: ubuntuPackages,
@@ -559,6 +646,7 @@ const linuxTestImages: readonly LinuxTestImage[] = [
     release: "25.04",
     abi: "gnu",
     buildHost: false,
+    components: linuxCommonComponents,
     base: ubuntuAmi("25.04", "x64"),
     bake: linuxBake("x64"),
     packages: ubuntuPackages,
@@ -572,6 +660,7 @@ const linuxTestImages: readonly LinuxTestImage[] = [
     release: alpineRelease,
     abi: "musl",
     buildHost: false,
+    components: linuxCommonComponents,
     base: alpineAmi("aarch64"),
     bake: linuxBake("aarch64"),
     packages: alpinePackages("aarch64"),
@@ -584,6 +673,7 @@ const linuxTestImages: readonly LinuxTestImage[] = [
     release: alpineRelease,
     abi: "musl",
     buildHost: false,
+    components: linuxCommonComponents,
     base: alpineAmi("x64"),
     bake: linuxBake("x64"),
     packages: alpinePackages("x64"),
@@ -597,6 +687,7 @@ const windowsImages: readonly WindowsImage[] = [
     key: "windows-x64-2019",
     arch: "x64",
     release: "2019",
+    components: windowsCommonComponents,
     // Windows Server 2019 Gen2
     base: {
       publisher: "MicrosoftWindowsServer",
@@ -630,6 +721,7 @@ const windowsImages: readonly WindowsImage[] = [
     key: "windows-aarch64-11",
     arch: "aarch64",
     release: "11",
+    components: windowsCommonComponents,
     // Windows 11 ARM64 Insider Preview (the only ARM64 Windows on Azure)
     base: {
       publisher: "MicrosoftWindowsDesktop",

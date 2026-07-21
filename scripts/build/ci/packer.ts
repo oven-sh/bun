@@ -15,6 +15,7 @@
 // Packer accepts JSON templates natively (packer build template.pkr.json).
 
 import { nodejsDownload, nodejsFolderName } from "./artifacts.ts";
+import { windowsAgentEntry } from "./components/paths.ts";
 import type { WindowsImage } from "./types.ts";
 
 export type PackerTemplateInput = {
@@ -165,11 +166,11 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
         {
           type: "file",
           source: agentPath,
-          destination: image.paths.buildkiteAgentPath,
+          destination: windowsAgentEntry(image),
         },
         {
           type: "powershell",
-          inline: [`${image.paths.node} ${image.paths.buildkiteAgentPath} install`],
+          inline: [`${image.paths.node} ${windowsAgentEntry(image)} install`],
           valid_exit_codes: [0],
         },
         // Step 5: reboot to clear pending updates (VS Build Tools, Windows

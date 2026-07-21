@@ -222,14 +222,42 @@ export function run(command: string[], options: RunOptions = {}): Promise<RunRes
   return execute(command, options);
 }
 
+/**
+ * The PATH children see. On Windows the bake installs tools (Scoop shims,
+ * git, 7z, ...) by writing the Machine PATH in the registry; this node
+ * process's own PATH was captured at bake start and never sees them. So
+ * every child gets a PATH freshly assembled from the registry — the
+ * equivalent of the old bootstrap's Refresh-Path after each install.
+ * Elsewhere the inherited PATH is authoritative.
+ */
+export function childPath(): string | undefined {
+  if (process.platform !== "win32") return undefined;
+  const query = (scope: "Machine" | "User"): string => {
+    const result = spawnSync(
+      "powershell",
+      ["-NoProfile", "-Command", `[Environment]::GetEnvironmentVariable('Path','${scope}')`],
+      { encoding: "utf8" },
+    );
+    return result.status === 0 ? result.stdout.trim() : "";
+  };
+  const parts = [query("Machine"), query("User"), process.env.Path ?? process.env.PATH ?? ""];
+  return parts.filter(Boolean).join(";");
+}
+
 /** Execute for real (shared by run() and the always-run probes). */
 function execute(command: string[], options: RunOptions): Promise<RunResult> {
   const printable = formatCommand(command);
   log(`$ ${printable}${options.cwd ? `   (cwd: ${options.cwd})` : ""}`);
   return new Promise((resolve, reject) => {
+    const env = { ...process.env, ...options.env };
+    const path = childPath();
+    if (path !== undefined) {
+      env.Path = path;
+      env.PATH = path;
+    }
     const child = nodeSpawn(command[0]!, command.slice(1), {
       cwd: options.cwd,
-      env: options.env ? { ...process.env, ...options.env } : process.env,
+      env,
       stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -306,14 +334,25 @@ export function isRoot(): boolean {
   return typeof process.getuid === "function" && process.getuid() === 0;
 }
 
-/** Prefix a command so it runs as root: itself when already root, else via
- * sudo -n (non-interactive; a password prompt would hang the bake). */
-export function asRoot(command: string[]): string[] {
-  return isRoot() ? command : ["sudo", "-n", "--", ...command];
+/**
+ * Prefix a command so it runs as root: itself when already root, else via
+ * `sudo -n` (non-interactive; a password prompt would hang the bake).
+ *
+ * Any environment the caller sets is threaded through `env NAME=value ...`
+ * INSIDE the sudo, because Debian/Ubuntu sudoers default to `env_reset`:
+ * variables placed on the sudo process itself (RUSTUP_HOME, CARGO_HOME,
+ * DEBIAN_FRONTEND, ...) are silently stripped before the target runs.
+ */
+export function asRoot(command: string[], env: Record<string, string | undefined> = {}): string[] {
+  if (isRoot()) return command;
+  const assignments = Object.entries(env)
+    .filter((entry): entry is [string, string] => entry[1] !== undefined)
+    .map(([name, value]) => `${name}=${value}`);
+  return ["sudo", "-n", "--", "env", ...assignments, ...command];
 }
 
 export function sudo(command: string[], options: RunOptions = {}): Promise<RunResult> {
-  return run(asRoot(command), options);
+  return run(asRoot(command, options.env ?? {}), options);
 }
 
 /** Run a shell script as root. */

@@ -92,6 +92,23 @@ if ($f) { $f.FullName }`,
   return output || undefined;
 }
 
+/** The first directory named `dirName` anywhere under `under` (a probe;
+ * dry-run answers a plausible path). */
+export async function findDirectory(under: string, dirName: string): Promise<string | undefined> {
+  if (mode.dryRun) {
+    log(`[dry-run] would locate directory ${dirName} under ${under}`);
+    return `${under}\\${dirName}`;
+  }
+  const output = await runOutput([
+    "powershell",
+    "-NoProfile",
+    "-Command",
+    `$d = Get-ChildItem ${psq(under)} -Recurse -Directory -Filter ${psq(dirName)} | Select-Object -First 1
+if ($d) { $d.FullName }`,
+  ]);
+  return output || undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Archives
 // ---------------------------------------------------------------------------

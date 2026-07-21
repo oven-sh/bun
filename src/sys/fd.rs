@@ -75,7 +75,7 @@ pub trait FdExt: Copy + Sized {
 
 impl FdExt for Fd {
     fn close(self) {
-        let err = self.close_allowing_bad_file_descriptor(None);
+        let err = self.close_allowing_bad_file_descriptor(Some(bun_core::return_address()));
         debug_assert!(err.is_none()); // use after close!
     }
 
@@ -87,6 +87,12 @@ impl FdExt for Fd {
             log!("close({}) SKIPPED", self);
             return None;
         }
+        // Not `or_else`: the default trim anchor must be read from this frame,
+        // not a closure's (popped before the stack walk runs).
+        let return_address = match return_address {
+            Some(addr) => Some(addr),
+            None => Some(bun_core::return_address()),
+        };
         self.close_allowing_standard_io(return_address)
     }
 
@@ -207,6 +213,12 @@ impl FdExt for Fd {
                         "close({}) = EBADF. This is an indication of a file descriptor UAF",
                         bstr::BStr::new(fd_fmt),
                     );
+                    // Not `or_else`: the default trim anchor must be read from
+                    // this frame, not a closure's.
+                    let return_address = match return_address {
+                        Some(addr) => Some(addr),
+                        None => Some(bun_core::return_address()),
+                    };
                     bun_core::dump_current_stack_trace(
                         return_address,
                         bun_core::DumpStackTraceOptions {

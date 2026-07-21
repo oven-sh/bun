@@ -206,7 +206,9 @@ impl Accessor for SyscallAccessor {
     }
 
     fn close(handle: SyscallHandle) -> Option<SysError> {
-        handle.value.close_allowing_bad_file_descriptor(None)
+        handle
+            .value
+            .close_allowing_bad_file_descriptor(Some(bun_core::return_address()))
     }
 
     fn getcwd(path_buf: &mut PathBuffer) -> Maybe<&[u8]> {

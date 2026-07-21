@@ -35,8 +35,11 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
           console.error("expected code EADDRINUSE, got", e.code);
           process.exit(1);
         }
-        if (e.errno !== -98) {
-          console.error("expected errno -98, got", e.errno);
+        // Node reports the host libuv code: UV_EADDRINUSE is -4091 on
+        // Windows (this suite is Windows-only; POSIX uv negates the host
+        // errno instead).
+        if (e.errno !== -4091) {
+          console.error("expected errno -4091, got", e.errno);
           process.exit(1);
         }
         if (e.syscall !== "listen") {

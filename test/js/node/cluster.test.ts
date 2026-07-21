@@ -971,7 +971,15 @@ if (cluster.isPrimary) {
   });
 } else if (process.env.ROLE === "die") {
   process.on("internalMessage", m => { if (m.act === "newconn") process.exit(0); });
-  net.createServer(() => {}).listen(0, "127.0.0.1");
+  // maxConnections = 0 makes this worker refuse the handoff, so the primary
+  // redistributes on EITHER outcome of the exit-vs-reply race: an escaped
+  // reply says accepted: false, and a killed reply surfaces as the IPC close.
+  // Exiting on a plain accepting server is racy even under real node - the
+  // accepted: true reply escapes whenever uv flushes it before exit, and the
+  // connection then dies with this worker.
+  const srv = net.createServer(() => {});
+  srv.maxConnections = 0;
+  srv.listen(0, "127.0.0.1");
 } else {
   net.createServer(sock => sock.on("data", d => process.send("live got: " + d))).listen(0, "127.0.0.1");
 }

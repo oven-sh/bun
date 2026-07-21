@@ -4,9 +4,6 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_uws as uws;
 
 pub struct WebSocketServerContext {
-    // Set provisionally in `on_create`; the server overwrites it on
-    // adoption. LIFETIMES.tsv = JSC_BORROW — the global outlives the context.
-    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
     pub handler: Handler,
 
     pub max_payload_length: u32, // default 16MB
@@ -230,11 +227,8 @@ pub(crate) fn on_create(
     object: JSValue,
 ) -> JsResult<WebSocketServerContext> {
     // Construct the struct with the handler and explicit defaults up front.
-    // The top-level `global_object` is provisionally set to the param; the
-    // server overwrites it after `on_create` returns anyway.
     let handler = Handler::from_js(global_object, object)?;
     let mut server = WebSocketServerContext {
-        global_object: bun_ptr::BackRef::new(global_object),
         handler,
         max_payload_length: 1024 * 1024 * 16, // 16MB
         max_lifetime: 0,

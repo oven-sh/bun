@@ -72,8 +72,6 @@ pub use draft::*;
 // placeholders to be replaced with a real debug-info backend in a later pass.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod debug {
-    use super::draft::StackTrace;
-
     /// `@returnAddress()` — forwards to the canonical stub in bun_core so that
     /// when it's wired to a real intrinsic, all callers (incl. the canonical
     /// `StoredTrace::capture`) pick it up together.
@@ -87,11 +85,6 @@ pub mod debug {
     #[inline]
     pub(crate) fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
         bun_core::capture_stack_trace(begin, addrs)
-    }
-
-    /// Fallback when ENABLE == false.
-    pub fn panic_impl(_ert: Option<&StackTrace<'_>>, _begin: Option<usize>, msg: &[u8]) -> ! {
-        panic!("{}", bstr::BStr::new(msg))
     }
 
     pub(crate) const HAVE_ERROR_RETURN_TRACING: bool = false;
@@ -3054,18 +3047,6 @@ mod draft {
         }
     }
 
-    /// In many places we catch errors, the trace for them is absorbed and only a
-    /// single line (the error name) is printed. When this is set, we will print
-    /// trace strings for those errors (or full stacks in debug builds).
-    ///
-    /// This can be enabled by passing `--verbose-error-trace` to the CLI.
-    /// In release builds with error return tracing enabled, this is also exposed.
-    /// You can test if this feature is available by checking `bun --help` for the flag.
-    #[inline]
-    pub fn handle_error_return_trace(err_name: &[u8], maybe_trace: Option<&StackTrace>) {
-        handle_error_return_trace_extra::<false>(err_name, maybe_trace);
-    }
-
     unsafe extern "C" {
         fn WTF__DumpStackTrace(ptr: *const usize, count: usize);
     }
@@ -3253,22 +3234,6 @@ mod draft {
         Ok(())
     }
 
-    pub fn dump_current_stack_trace(first_address: Option<usize>, limits: WriteStackTraceLimits) {
-        // Not `unwrap_or_else`: the default trim anchor must be read from this
-        // frame, not from a closure's popped frame (see `panic_impl`).
-        let first_address = match first_address {
-            Some(addr) => addr,
-            None => debug::return_address(),
-        };
-        let mut addrs: [usize; 32] = [0; 32];
-        let n = debug::capture_stack_trace(first_address, &mut addrs);
-        let stack = StackTrace {
-            index: n,
-            instruction_addresses: &addrs,
-        };
-        dump_stack_trace(&stack, limits);
-    }
-
     /// If POSIX, and the existing soft limit for core dumps (ulimit -Sc) is nonzero, change it to zero.
     /// Used in places where we intentionally crash for testing purposes so that we don't clutter CI
     /// with core dumps.
@@ -3309,16 +3274,11 @@ mod draft {
     // `StoredTrace::capture()` instead — this crate no longer owns the type.
     pub use bun_core::StoredTrace;
 
-    /// For large codebases such as bun.bake.DevServer, it may be helpful
-    /// to dump a large amount of state to a file to aid debugging a crash.
-    ///
     /// Pre-crash handlers are likely, but not guaranteed to call. Errors are ignored.
     pub fn append_pre_crash_handler<T: 'static>(
         ptr: *mut T,
         handler: fn(&mut T) -> crate::Result<()>,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Rust can't capture `handler` in a bare `fn` item, so box a closure that
-        // performs the cast+call. Errors are intentionally swallowed (best-effort dump).
         let on_crash = Box::new(move |opaque_ptr: *mut c_void| {
             // SAFETY: `opaque_ptr` is the `ptr.cast()` stored below; it was a valid *mut T
             // when registered and remove_pre_crash_handler() unregisters it before drop.

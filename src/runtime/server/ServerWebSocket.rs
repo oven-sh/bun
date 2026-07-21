@@ -11,7 +11,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject,
-    JSString, JSType, JSUint8Array, JSValue, JsRef, JsResult, ZigStringSlice,
+    JSType, JSValue, JsRef, JsResult, ZigStringSlice,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 
@@ -76,10 +76,6 @@ impl Flags {
         } else {
             self.0 &= !Self::CLOSED_BIT;
         }
-    }
-    #[inline]
-    pub fn opened(self) -> bool {
-        self.0 & Self::OPENED_BIT != 0
     }
     #[inline]
     pub fn set_opened(&mut self, v: bool) {
@@ -980,72 +976,6 @@ impl ServerWebSocket {
         ))
     }
 
-    pub fn publish_binary_without_type_checks(
-        &self,
-        global_this: &JSGlobalObject,
-        topic_str: &JSString,
-        array: &mut JSUint8Array,
-    ) -> JsResult<JSValue> {
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
-            return Ok(JSValue::js_number(0.0));
-        };
-
-        let topic_slice = topic_str.to_slice(global_this);
-        if topic_slice.slice().is_empty() {
-            return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
-        }
-
-        let buffer = array.slice();
-        if buffer.is_empty() {
-            return Ok(JSValue::js_number(0.0));
-        }
-
-        Ok(self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
-            topic_slice.slice(),
-            buffer,
-            Opcode::Binary,
-            true,
-        ))
-    }
-
-    pub fn publish_text_without_type_checks(
-        &self,
-        global_this: &JSGlobalObject,
-        topic_str: &JSString,
-        str: &JSString,
-    ) -> JsResult<JSValue> {
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
-            return Ok(JSValue::js_number(0.0));
-        };
-
-        let topic_slice = topic_str.to_slice(global_this);
-        if topic_slice.slice().is_empty() {
-            return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
-        }
-
-        let slice = str.to_slice(global_this);
-        let buffer = slice.slice();
-
-        if buffer.is_empty() {
-            return Ok(JSValue::js_number(0.0));
-        }
-
-        Ok(self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
-            topic_slice.slice(),
-            buffer,
-            Opcode::Text,
-            true,
-        ))
-    }
-
     // `passThis: true` in server.classes.ts — wrapper is emitted by
     // generated_classes.rs (ServerWebSocketPrototype__cork) and passes
     // `js_this_value` as a 4th arg, which `#[host_fn(method)]` does not model.
@@ -1184,28 +1114,6 @@ impl ServerWebSocket {
         Ok(ret)
     }
 
-    pub fn send_text_without_type_checks(
-        &self,
-        global_this: &JSGlobalObject,
-        message_str: &JSString,
-        compress: bool,
-    ) -> JSValue {
-        if self.is_closed() {
-            bun_output::scoped_log!(WebSocketServer, "sendText() closed");
-            return JSValue::js_number(0.0);
-        }
-
-        let string_slice = message_str.to_slice(global_this);
-
-        let buffer = string_slice.slice();
-        send_status_to_js(
-            self.websocket().send(buffer, Opcode::Text, compress, true),
-            buffer.len(),
-            "sendText",
-            "bytes string",
-        )
-    }
-
     #[bun_jsc::host_fn(method)]
     pub fn send_binary(
         &self,
@@ -1241,27 +1149,6 @@ impl ServerWebSocket {
             "sendBinary",
             "bytes",
         ))
-    }
-
-    pub fn send_binary_without_type_checks(
-        &self,
-        _global_this: &JSGlobalObject,
-        array_buffer: &mut JSUint8Array,
-        compress: bool,
-    ) -> JSValue {
-        if self.is_closed() {
-            bun_output::scoped_log!(WebSocketServer, "sendBinary() closed");
-            return JSValue::js_number(0.0);
-        }
-
-        let buffer = array_buffer.slice();
-        send_status_to_js(
-            self.websocket()
-                .send(buffer, Opcode::Binary, compress, true),
-            buffer.len(),
-            "sendBinary",
-            "bytes",
-        )
     }
 
     #[bun_jsc::host_fn(method)]

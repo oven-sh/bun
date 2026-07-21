@@ -5,14 +5,10 @@ use bun_sys::Fd;
 
 use crate::watcher_impl::{Op, WatchEvent, Watcher};
 
-pub(crate) type EventListIndex = u32;
 pub(crate) type Platform = KEventWatcher;
 
 #[derive(Default)]
 pub struct KEventWatcher {
-    // Everything being watched
-    pub eventlist_index: EventListIndex,
-
     pub fd: Option<Fd>,
 }
 

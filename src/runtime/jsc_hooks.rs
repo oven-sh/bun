@@ -1194,7 +1194,6 @@ fn print_exception(
         vm_ref.print_exception(exception, exception_list, writer, true);
     } else {
         let mut formatter = bun_jsc::console_object::Formatter::new(global);
-        formatter.stack_check = bun_core::StackCheck::init();
         // `Formatter::new` already
         // defaults `error_display_level` to `Full` (ConsoleObject.rs:1176).
         let colors = bun_core::Output::enable_ansi_colors_stderr();

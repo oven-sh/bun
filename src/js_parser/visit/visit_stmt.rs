@@ -581,10 +581,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 match s2_data {
                     StmtData::SFunction(mut func_ref) => {
                         let func: &mut S::Function = &mut *func_ref;
+                        // Leave `func.func.name` unset when the source had none so the
+                        // engine assigns `.name = "default"` (ES2015 SetFunctionName).
                         let name: &'a [u8] = if let Some(func_loc) = func.func.name {
                             p.load_name_from_ref(func_loc.ref_)
                         } else {
-                            func.func.name = Some(data.default_name);
                             js_ast::ClauseItem::DEFAULT_ALIAS
                         };
 

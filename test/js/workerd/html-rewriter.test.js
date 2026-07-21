@@ -683,6 +683,41 @@ describe("HTMLRewriter", () => {
     );
   });
 
+  it("attribute selectors with an empty value match nothing (css3-modsel-184)", () => {
+    // CSS Selectors: [x^=""], [x$=""], [x~=""], [x*=""] represent nothing and never match.
+    const doc = '<a i="0" x=""></a><a i="1" x="v"></a><a i="2" x="a  b"></a><a i="3"></a>';
+    const hits = selector => {
+      const matched = [];
+      new HTMLRewriter()
+        .on(selector, {
+          element(e) {
+            matched.push(e.getAttribute("i"));
+          },
+        })
+        .transform(doc);
+      return matched;
+    };
+
+    expect(hits('[x^=""]')).toEqual([]);
+    expect(hits('[x$=""]')).toEqual([]);
+    expect(hits('[x~=""]')).toEqual([]);
+    expect(hits('[x*=""]')).toEqual([]);
+    // case-insensitive variants take the same guard path
+    expect(hits('[x^="" i]')).toEqual([]);
+    expect(hits('[x$="" i]')).toEqual([]);
+    expect(hits('[x~="" i]')).toEqual([]);
+    // :not() over a selector that matches nothing matches everything
+    expect(hits('a:not([x^=""])')).toEqual(["0", "1", "2", "3"]);
+    expect(hits('a:not([x$=""])')).toEqual(["0", "1", "2", "3"]);
+    expect(hits('a:not([x~=""])')).toEqual(["0", "1", "2", "3"]);
+    // [x=""] is exact-match and must still match the empty attribute
+    expect(hits('[x=""]')).toEqual(["0"]);
+    // non-empty operands are unaffected
+    expect(hits('[x^="v"]')).toEqual(["1"]);
+    expect(hits('[x$="b"]')).toEqual(["2"]);
+    expect(hits('[x~="a"]')).toEqual(["2"]);
+  });
+
   it("supports deleting innerContent", async () => {
     expect(
       await new HTMLRewriter()

@@ -33,6 +33,10 @@ export const lolhtml: Dependency = {
     commit: LOLHTML_COMMIT,
   }),
 
+  // CSS Selectors spec: [x^=""], [x$=""], [x~=""] represent nothing and
+  // must never match. Upstream as https://github.com/cloudflare/lol-html.
+  patches: ["patches/lolhtml/empty-attr-operand.patch"],
+
   // No separate build — compiled as part of the workspace cargo build via
   // `bun_runtime`/`bun_bundler`'s path dep on `vendor/lolhtml`.
   build: () => ({ kind: "none" }),

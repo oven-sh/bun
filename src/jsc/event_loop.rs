@@ -846,6 +846,9 @@ impl EventLoop {
         let mut window = core::mem::MaybeUninit::<[u8; 8192]>::uninit();
         // A real memset of the callee window; black_box keeps it from being
         // elided and from being promoted out of the stack frame.
+        // SAFETY: `window` is a live 8192-byte stack allocation owned by this
+        // frame; writing zeroes to the whole of it is in-bounds and
+        // MaybeUninit places no validity requirement on the bytes.
         unsafe { core::ptr::write_bytes(window.as_mut_ptr().cast::<u8>(), 0, 8192) };
         core::hint::black_box(window.as_mut_ptr());
     }

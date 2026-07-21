@@ -377,10 +377,10 @@ pub use crate::strings_impl::{
     to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
 
-/// memmem — `memchr::memmem` (via bstr): SIMD, guaranteed-linear, same on all platforms.
+/// memmem — `highway_memmem` (HWY_DYNAMIC_DISPATCH MemMemImpl), same on all platforms.
 #[inline]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    bstr::ByteSlice::find(haystack, needle)
+    highway::memmem(haystack, needle)
 }
 
 /// `bun.reinterpretSlice` — `&[T]` → `&[u8]` view (T must be u8/u16 in practice).

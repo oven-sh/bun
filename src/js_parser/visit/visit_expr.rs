@@ -1430,12 +1430,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
         );
 
-        // `import.meta.hot?.accept()` should be treated like a direct
-        // `import.meta.hot.accept()` in development. `import.meta.hot` is
-        // always defined when HMR is enabled, so the `?.` guard is a no-op
-        // and would otherwise prevent `maybe_rewrite_property_access` from
-        // lowering the access to the HMR module member, leaving the
-        // throwing `indirectHot` proxy in place.
+        // `import.meta.hot` is always defined when HMR is enabled, so drop
+        // the `?.` in `import.meta.hot?.X` and let `maybe_rewrite_property_access`
+        // lower it instead of leaving the throwing `indirectHot` proxy in place.
         if e_.optional_chain == Some(js_ast::OptionalChain::Start)
             && matches!(e_.target.data, Data::ESpecial(E::Special::HotEnabled))
         {

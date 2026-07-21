@@ -1167,6 +1167,12 @@ impl JSGlobalObject {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }
 
+    /// The live `process.env` JS object (forces the lazy init). Mutations made
+    /// via `process.env.X = ...` / `delete process.env.X` are visible here.
+    pub fn process_env_object(&self) -> JsResult<JSValue> {
+        crate::from_js_host_call(self, || ZigGlobalObject__processEnvObject(self))
+    }
+
     #[inline]
     pub fn assert_on_js_thread(&self) {
         if cfg!(debug_assertions) {
@@ -1679,6 +1685,7 @@ unsafe extern "C" {
     -> JSValue;
 
     safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
+    safe fn ZigGlobalObject__processEnvObject(this: &JSGlobalObject) -> JSValue;
 
     safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
     safe fn JSC__JSGlobalObject__vm(this: &JSGlobalObject) -> *mut VM;

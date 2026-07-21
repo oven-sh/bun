@@ -62,6 +62,11 @@ pub type ValuesHashMap = HashMap<u64, Box<[u8]>>;
 pub struct InlineSnapshotToWrite {
     pub line: c_ulong,
     pub col: c_ulong,
+    /// `expect(...)` call site; fallback when `(line, col)` misses the matcher
+    /// name (JSC tail-call elimination loses the helper's frame). `(0, 0)` =
+    /// no usable fallback.
+    pub fallback_line: c_ulong,
+    pub fallback_col: c_ulong,
     /// owned (was: owned by Snapshots.allocator)
     pub value: Box<[u8]>,
     pub has_matchers: bool,
@@ -87,6 +92,43 @@ impl InlineSnapshotToWrite {
         }
         false
     }
+}
+
+/// Compute the 1-based (line, column) of byte offset `target` in `text`,
+/// counting columns in UTF-16 code units to match JSC / source-map semantics.
+fn byte_offset_to_line_col(text: &[u8], target: usize) -> (c_ulong, c_ulong) {
+    use bun_core::strings::{CodepointIterator, Cursor};
+    let iter_ = CodepointIterator::init(&text[..target.min(text.len())]);
+    let mut iter = Cursor::default();
+    let mut line: c_ulong = 1;
+    let mut col: c_ulong = 1;
+    let mut prev_cr = false;
+    while iter_.next(&mut iter) {
+        match iter.c {
+            0x0A => {
+                if !prev_cr {
+                    line += 1;
+                }
+                col = 1;
+                prev_cr = false;
+            }
+            0x0D => {
+                line += 1;
+                col = 1;
+                prev_cr = true;
+            }
+            0x2028 | 0x2029 => {
+                line += 1;
+                col = 1;
+                prev_cr = false;
+            }
+            _ => {
+                col += if iter.c > 0xFFFF { 2 } else { 1 };
+                prev_cr = false;
+            }
+        }
+    }
+    (line, col)
 }
 
 pub struct File {
@@ -389,18 +431,7 @@ impl<'a> Snapshots<'a> {
                 }
             });
 
-            // 1. sort ils_info by row, col
-            ils_info.sort_by(|a, b| {
-                if InlineSnapshotToWrite::less_than_fn(a, b) {
-                    core::cmp::Ordering::Less
-                } else if InlineSnapshotToWrite::less_than_fn(b, a) {
-                    core::cmp::Ordering::Greater
-                } else {
-                    core::cmp::Ordering::Equal
-                }
-            });
-
-            // 2. load file text
+            // 1. load file text
             // avoid `Jest::runner()` (would alias `&mut TestRunner` over the live
             // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `parse_file`.
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
@@ -439,6 +470,136 @@ impl<'a> Snapshots<'a> {
 
             let source =
                 bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
+
+            // 2a. resolve fallbacks: a tail-position matcher call loses its
+            // frame to JSC PTC, so parse the `expect(...)` site and pull the
+            // matcher's `name_loc` off the AST to fix `(line, col)` pre-sort.
+            for ils in ils_info.iter_mut() {
+                // c_ulong is u32 on Windows (LLP64); widen explicitly.
+                #[allow(clippy::useless_conversion)]
+                let primary = bun_ast::Source::line_col_to_byte_offset(
+                    &file_text,
+                    1,
+                    1,
+                    u64::from(ils.line),
+                    u64::from(ils.col),
+                );
+                if let Some(p) = primary {
+                    if strings::starts_with(&file_text[p..], ils.kind) {
+                        continue;
+                    }
+                }
+                if ils.fallback_line == 0 {
+                    continue;
+                }
+                #[allow(clippy::useless_conversion)]
+                let Some(fallback) = bun_ast::Source::line_col_to_byte_offset(
+                    &file_text,
+                    1,
+                    1,
+                    u64::from(ils.fallback_line),
+                    u64::from(ils.fallback_col),
+                ) else {
+                    continue;
+                };
+
+                // Parse `expect(<args>).<chain>.<fn_name>(<args>)` and walk to
+                // the outer call's `.name_loc`. Best-effort: parse errors are
+                // swallowed (scratch `Log`); the main loop reports if unfound.
+                let found: Option<usize> = 'parse: {
+                    let mut scratch_log = bun_ast::Log::init();
+                    let scratch_log_ptr: *mut bun_ast::Log = &raw mut scratch_log;
+                    // SAFETY: `scratch_log` outlives `'parse`; sole `&mut` is
+                    // held by the lexer/parser below.
+                    let mut lexer = js_lexer::Lexer::init_without_reading(
+                        unsafe { &mut *scratch_log_ptr },
+                        &source,
+                        &arena,
+                    );
+                    if fallback > 0 {
+                        lexer.current += fallback - (lexer.current - lexer.end);
+                        lexer.step();
+                    }
+                    if lexer.next().is_err() {
+                        break 'parse None;
+                    }
+                    let opts = js_parser::ParserOptions::init(
+                        vm.transpiler.options.jsx.clone(),
+                        bun_ast::Loader::Js,
+                    );
+                    let mut __parser_slot =
+                        core::mem::MaybeUninit::<js_parser::TSXParser<'_>>::uninit();
+                    if js_parser::TSXParser::init(
+                        &mut __parser_slot,
+                        &arena,
+                        core::ptr::NonNull::new(scratch_log_ptr)
+                            .expect("scratch_log_ptr from &raw mut"),
+                        &source,
+                        &vm.transpiler.options.define,
+                        lexer,
+                        opts,
+                    )
+                    .is_err()
+                    {
+                        break 'parse None;
+                    }
+                    // SAFETY: `init` returned `Ok`; guard drops the slot.
+                    let mut __parser_guard =
+                        scopeguard::guard(__parser_slot, |mut s| unsafe {
+                            s.assume_init_drop()
+                        });
+                    // SAFETY: guard armed only after `init` succeeded.
+                    let parser: &mut js_parser::TSXParser<'_> =
+                        unsafe { __parser_guard.assume_init_mut() };
+
+                    let Ok(expr) = parser.parse_expr(js_parser::Level::Lowest) else {
+                        break 'parse None;
+                    };
+                    let Some(call) = expr.data.e_call() else {
+                        break 'parse None;
+                    };
+                    let Some(dot) = call.target.data.e_dot() else {
+                        break 'parse None;
+                    };
+                    if dot.name != ils.kind {
+                        break 'parse None;
+                    }
+                    let loc = dot.name_loc.start;
+                    if loc < 0 {
+                        break 'parse None;
+                    }
+                    let loc = loc as usize;
+                    if !strings::starts_with(&file_text[loc..], ils.kind) {
+                        break 'parse None;
+                    }
+                    Some(loc)
+                };
+
+                if let Some(found) = found {
+                    let (line, col) = byte_offset_to_line_col(&file_text, found);
+                    bun_core::scoped_log!(
+                        inline_snapshot,
+                        "Fallback resolved {}/{} -> {}/{}",
+                        ils.line,
+                        ils.col,
+                        line,
+                        col
+                    );
+                    ils.line = line;
+                    ils.col = col;
+                }
+            }
+
+            // 2b. sort ils_info by row, col
+            ils_info.sort_by(|a, b| {
+                if InlineSnapshotToWrite::less_than_fn(a, b) {
+                    core::cmp::Ordering::Less
+                } else if InlineSnapshotToWrite::less_than_fn(b, a) {
+                    core::cmp::Ordering::Greater
+                } else {
+                    core::cmp::Ordering::Equal
+                }
+            });
 
             let mut result_text: Vec<u8> = Vec::new();
 

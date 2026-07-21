@@ -41,6 +41,12 @@ pub struct Expect {
     pub flags: Cell<Flags>,
     pub parent: Option<bun_test::RefDataPtr>,
     pub custom_label: bun_core::String,
+    // `expect(...)` call site, captured before a tail-position matcher (e.g.
+    // `return expect(v).toMatchInlineSnapshot()`) loses this frame to JSC's
+    // proper tail calls. Un-remapped; see `inline_snapshot`.
+    pub expect_src_file: bun_core::String,
+    pub expect_src_line: core::ffi::c_uint,
+    pub expect_src_col: core::ffi::c_uint,
 }
 
 
@@ -688,6 +694,7 @@ impl Expect {
     #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
         self.custom_label.deref();
+        self.expect_src_file.deref();
         // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
         // so the Box drop below would leak the +1 — release explicitly.
         if let Some(parent) = self.parent.take() {
@@ -724,10 +731,18 @@ impl Expect {
         // error path between ref creation and the wrapper taking ownership; from
         // then on `Expect::finalize` derefs `parent` (RefDataPtr has no Drop).
 
+        // Capture the `expect(...)` call site now, before a tail-position
+        // matcher loses this frame. Unmapped to keep the per-`expect()` cost
+        // low; `inline_snapshot` remaps on demand.
+        let expect_srcloc = callframe.get_caller_src_loc_unmapped(global_this);
+
         let expect = Expect {
             flags: Cell::new(Flags::default()),
             custom_label,
             parent: active_execution_entry_ref,
+            expect_src_file: expect_srcloc.str,
+            expect_src_line: expect_srcloc.line,
+            expect_src_col: expect_srcloc.column,
         };
         // `JsClass::to_js` boxes `self` and hands the pointer to `${T}__create`.
         let expect_js_value = expect.to_js(global_this);
@@ -1149,10 +1164,33 @@ impl Expect {
                 );
             }
 
+            // Fallback: the `expect(...)` call site (stored un-remapped). Remap
+            // here; `remap` is in/out +1 on `str`, so give it a fresh ref and
+            // release whatever comes back. Only usable when it's the same file.
+            let (fallback_line, fallback_col) = {
+                let mut expect_loc = bun_jsc::call_frame::CallerSrcLoc {
+                    str: this.expect_src_file.dupe_ref(),
+                    line: this.expect_src_line,
+                    column: this.expect_src_col,
+                };
+                expect_loc.remap(global_this);
+                let _expect_loc_str_guard = bun_core::OwnedString::new(expect_loc.str);
+                if expect_loc.str.eql_utf8(fget_source_path_text) {
+                    (
+                        core::ffi::c_ulong::from(expect_loc.line),
+                        core::ffi::c_ulong::from(expect_loc.column),
+                    )
+                } else {
+                    (0, 0)
+                }
+            };
+
             // 2. save to write later
             runner.snapshots.add_inline_snapshot_to_write(file_id, super::snapshot::InlineSnapshotToWrite {
                 line: core::ffi::c_ulong::from(srcloc.line),
                 col: core::ffi::c_ulong::from(srcloc.column),
+                fallback_line,
+                fallback_col,
                 value: core::mem::take(&mut pretty_value).into_boxed_slice(),
                 has_matchers: property_matchers.is_some(),
                 is_added: result.is_none(),

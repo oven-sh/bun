@@ -6090,7 +6090,7 @@ CPP_DECL bool Bun__CallFrame__isFromBunMain(JSC::CallFrame* callFrame, JSC::VM* 
     return source.string() == "builtin://bun/main"_s;
 }
 
-CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
+static ALWAYS_INLINE void getCallerSrcLocImpl(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn, bool remap)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::LineColumn lineColumn;
@@ -6114,7 +6114,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
         return WTF::IterationStatus::Continue;
     });
 
-    if (!sourceURL.isEmpty() and lineColumn.line > 0) {
+    if (remap and !sourceURL.isEmpty() and lineColumn.line > 0) {
         OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
         OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
@@ -6132,6 +6132,39 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
     *outSourceURL = Bun::toStringRef(sourceURL);
     *outLine = lineColumn.line;
     *outColumn = lineColumn.column;
+}
+
+CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
+{
+    getCallerSrcLocImpl(callFrame, globalObject, outSourceURL, outLine, outColumn, true);
+}
+
+// Same as above but skips the sourcemap remap (two mutex acquisitions + hashmap
+// lookup + VLQ binary search). Used on the `expect()` hot path, where the
+// caller defers remapping to the rare inline-snapshot writeback path.
+CPP_DECL void Bun__CallFrame__getCallerSrcLocUnmapped(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
+{
+    getCallerSrcLocImpl(callFrame, globalObject, outSourceURL, outLine, outColumn, false);
+}
+
+// Sourcemap-remap a (url, line, col) captured by `getCallerSrcLocUnmapped`.
+// `*ioSourceURL` is in/out +1: caller passes a +1, this may swap it for a new
+// +1, and the caller releases whichever comes back.
+CPP_DECL void Bun__remapSrcLoc(JSC::JSGlobalObject* globalObject, BunString* ioSourceURL, unsigned int* ioLine, unsigned int* ioColumn)
+{
+    if (ioSourceURL->tag == BunStringTag::Empty or ioSourceURL->tag == BunStringTag::Dead or *ioLine == 0)
+        return;
+
+    ZigStackFrame remappedFrame = {};
+    remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(*ioLine).zeroBasedInt();
+    remappedFrame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(*ioColumn).zeroBasedInt();
+    remappedFrame.source_url = *ioSourceURL;
+
+    Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
+
+    *ioSourceURL = remappedFrame.source_url;
+    *ioLine = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
+    *ioColumn = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
 }
 
 extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalObject* global, JSC::JSObject* object)

@@ -794,6 +794,91 @@ Date)
       `,
     );
   });
+  // #2763: `return expect(v).toMatchInlineSnapshot()` is a tail call, so JSC
+  // eliminates the helper's frame and the matcher's caller frame points at
+  // the helper's call site instead of the matcher call site.
+  it("same-file helper in tail position", async () => {
+    await tester.test(
+      v => /*js*/ `
+        function snap(v) {
+          return expect(v).toMatchInlineSnapshot(${v("", bad, '`"hello"`')});
+        }
+        test("cases", () => {
+          snap("hello");
+        });
+      `,
+    );
+  });
+  it("same-file helper in tail position (toThrowErrorMatchingInlineSnapshot)", async () => {
+    await tester.test(
+      v => /*js*/ `
+        function snap(fn) {
+          return expect(fn).toThrowErrorMatchingInlineSnapshot(${v("", bad, '`"boom"`')});
+        }
+        test("cases", () => {
+          snap(() => { throw new Error("boom") });
+        });
+      `,
+    );
+  });
+  it("same-file helper in tail position with direct calls mixed", async () => {
+    await tester.test(
+      v => /*js*/ `
+        function snap(v) {
+          return expect(v).toMatchInlineSnapshot(${v("", bad, '`"helper"`')});
+        }
+        test("cases", () => {
+          expect("before").toMatchInlineSnapshot(${v("", bad, '`"before"`')});
+          snap("helper");
+          expect("after").toMatchInlineSnapshot(${v("", bad, '`"after"`')});
+        });
+      `,
+    );
+  });
+  it("same-file helper in tail position, nested", async () => {
+    await tester.test(
+      v => /*js*/ `
+        function inner(v) {
+          return expect(v).toMatchInlineSnapshot(${v("", bad, '`"nested"`')});
+        }
+        function outer(v) { return inner(v); }
+        test("cases", () => {
+          outer("nested");
+        });
+      `,
+    );
+  });
+  it("same-file helper in tail position, decoy in argument", async () => {
+    // The fallback scan parses the expression rather than byte-scanning, so a
+    // `.toMatchInlineSnapshot(` substring inside the expect() argument (string,
+    // template, or comment) must not be matched.
+    await tester.test(
+      v => /*js*/ `
+        function snap() {
+          return expect(".toMatchInlineSnapshot(" /* .toMatchInlineSnapshot(\`\`) */).toMatchInlineSnapshot(${v("", bad, '`".toMatchInlineSnapshot("`')});
+        }
+        test("cases", () => {
+          snap();
+        });
+      `,
+    );
+  });
+  it("same-file helper, different values at same call site", async () => {
+    await tester.testError(
+      {
+        msg: "error: Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value",
+      },
+      /*js*/ `
+        function snap(v) {
+          return expect(v).toMatchInlineSnapshot();
+        }
+        test("cases", () => {
+          snap("a");
+          snap("b");
+        });
+      `,
+    );
+  });
   it("indentation", async () => {
     await tester.test(
       // prettier-ignore
@@ -890,14 +975,28 @@ test("error snapshots", () => {
   expect(() => {
     throw undefined; // this one doesn't work in jest because it doesn't think the function threw
   }).toThrowErrorMatchingInlineSnapshot(`undefined`);
-  expect(() => {
-    expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
-  }).toThrowErrorMatchingInlineSnapshot(`
+  // The matcher-error message includes ANSI colour codes only when colours are
+  // enabled (CI sets FORCE_COLOR=1); keep the snapshot check but don't fail on
+  // the colour-stripped form.
+  if (Bun.enableANSIColors) {
+    expect(() => {
+      expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    }).toThrowErrorMatchingInlineSnapshot(`
 "\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoThrowErrorMatchingInlineSnapshot\x1B[2m(\x1B[0m\x1B[2m)\x1B[0m
 
 \x1B[1mMatcher error\x1B[0m: Received function did not throw
 "
 `);
+  } else {
+    expect(() => {
+      expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    }).toThrowErrorMatchingInlineSnapshot(`
+"expect(received).toThrowErrorMatchingInlineSnapshot()
+
+Matcher error: Received function did not throw
+"
+`);
+  }
 });
 test("error inline snapshots", () => {
   expect(() => {

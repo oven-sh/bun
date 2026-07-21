@@ -524,6 +524,13 @@ export const webkit: Dependency = {
         resolve(icuRoot, "lib", "libicudata.a"),
       );
     }
+    if (cfg.ohos && cfg.ohosIcuDir) {
+      libs.push(
+        resolve(cfg.ohosIcuDir, "lib", "libicudata.a"),
+        resolve(cfg.ohosIcuDir, "lib", "libicui18n.a"),
+        resolve(cfg.ohosIcuDir, "lib", "libicuuc.a"),
+      );
+    }
 
     const includes = [
       // ABSOLUTE — resolved here because they're in the build dir, not src.

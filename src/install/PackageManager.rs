@@ -1853,7 +1853,8 @@ pub fn init(
         let parts = [b"./.npmrc" as &[u8]];
         let mut len = 0usize;
         if let Some(data_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
-            let p = resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut buf, &parts);
+            let p =
+                resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut buf, &parts);
             if bun_sys::exists_z(p) {
                 len = p.len();
             }

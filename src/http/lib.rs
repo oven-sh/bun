@@ -5168,6 +5168,11 @@ impl<'a> HTTPClient<'a> {
             || response.status_code == 304
         {
             self.state.content_length = Some(0);
+            // RFC 9112 §6.3: these responses terminate at the header block
+            // "regardless of the header fields present in the message", so a
+            // Transfer-Encoding: chunked header must not switch us into the
+            // chunked decoder below.
+            self.state.transfer_encoding = Encoding::Identity;
         }
 
         // Don't do this for proxies because those connections will be open for awhile.

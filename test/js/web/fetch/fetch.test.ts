@@ -2194,6 +2194,56 @@ it("304 not modified with 0 content-length does not cause a request timeout", as
   server.stop(true);
 });
 
+// RFC 9112 §6.3: a 1xx/204/304 response is terminated by the first empty line
+// after the header fields, regardless of any Transfer-Encoding or Content-Length
+// header. Bytes following the header block are not part of this response's body.
+describe.each([
+  [204, "No Content"],
+  [304, "Not Modified"],
+])("%d with Transfer-Encoding: chunked", (status, reason) => {
+  async function serve(wire: string) {
+    return Bun.listen({
+      socket: {
+        open(socket) {
+          socket.write(wire);
+          socket.flush();
+          setTimeout(() => socket.end(), 9999).unref();
+        },
+        data() {},
+        close() {},
+      },
+      port: 0,
+      hostname: "127.0.0.1",
+    });
+  }
+
+  it.concurrent("ignores the chunked body", async () => {
+    const server = await serve(
+      `HTTP/1.1 ${status} ${reason}\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n`,
+    );
+    const response = await fetch(`http://${server.hostname}:${server.port}/`);
+    expect(response.status).toBe(status);
+    expect(await response.text()).toBe("");
+    server.stop(true);
+  });
+
+  it.concurrent("ignores the chunked body when read as a stream", async () => {
+    const server = await serve(
+      `HTTP/1.1 ${status} ${reason}\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n`,
+    );
+    const response = await fetch(`http://${server.hostname}:${server.port}/`);
+    expect(response.status).toBe(status);
+    let received = "";
+    if (response.body) {
+      for await (const chunk of response.body) {
+        received += Buffer.from(chunk).toString();
+      }
+    }
+    expect(received).toBe("");
+    server.stop(true);
+  });
+});
+
 describe("http/1.1 response body length", () => {
   // issue #6932 (support response without Content-Length and Transfer-Encoding) + some regression tests
 

@@ -3622,6 +3622,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         // original net.Socket, not the TLS one.
         TLSSocket::data_set_cached(raw_js_value, global, original_data);
 
+        // Allocate the [raw, tls] result before on_open / start_tls_handshake
+        // so a JS-side OOM here does not leave a ClientHello already in flight.
+        let array = JSValue::create_empty_array(global, 2)?;
+        array.put_index(global, 0, raw_js_value)?;
+        array.put_index(global, 1, tls_js_value)?;
+
         tls.mark_active();
         if was_reffed {
             tls.poll_ref.with_mut(|p| {
@@ -3648,9 +3654,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             bun_opaque::opaque_deref_mut(new_raw.as_ptr()).tls_feed(initial_data.as_slice());
         }
 
-        let array = JSValue::create_empty_array(global, 2)?;
-        array.put_index(global, 0, raw_js_value)?;
-        array.put_index(global, 1, tls_js_value)?;
         Ok(array)
     }
 

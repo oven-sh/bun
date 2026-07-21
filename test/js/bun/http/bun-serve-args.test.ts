@@ -442,15 +442,21 @@ describe("Bun.serve hostname and port validation", () => {
           return new Response("ok");
         },
       });
-      expect(() =>
+      let thrown: unknown;
+      try {
         server.reload({
           // @ts-expect-error - Testing invalid port values
           port: 65536,
           fetch() {
             return new Response("ok");
           },
-        }),
-      ).toThrow(RangeError);
+        });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(RangeError);
+      expect((thrown as RangeError).message).toContain("options.port");
+      expect((thrown as RangeError).message).toContain("65536");
     });
   });
 });

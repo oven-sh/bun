@@ -1237,6 +1237,37 @@ pub fn js_from_owned_slice(
     }
 }
 
+/// A typed array over a `Vec<u8>`'s buffer without copying, shrinking, or
+/// boxing an owner: the finalizer frees by pointer, which releases the
+/// whole allocation (excess capacity included). This is the zero-overhead
+/// form for encode/decode hot paths — same cost as the old leak-based
+/// hand-off, with ownership transfer in the signature.
+pub fn typed_array_from_vec(
+    global: &JSGlobalObject,
+    ty: TypedArrayType,
+    bytes: Vec<u8>,
+) -> JsResult<JSValue> {
+    if bytes.is_empty() {
+        // Dropping releases any reserved capacity (the no-copy path would
+        // strand it) and the empty helper avoids the detached-view trap.
+        return empty_typed_array(global, ty);
+    }
+    let len = bytes.len();
+    let ptr = bytes.leak().as_mut_ptr();
+    // SAFETY: the just-leaked `Vec<u8>` is a default-allocator allocation;
+    // `MarkedArrayBuffer_deallocator` frees it by pointer exactly once.
+    unsafe {
+        make_typed_array_with_bytes_no_copy(
+            global,
+            ty,
+            ptr.cast::<c_void>(),
+            len,
+            Some(MarkedArrayBuffer_deallocator),
+            ptr.cast::<c_void>(),
+        )
+    }
+}
+
 /// A typed array viewing bytes owned by an arbitrary `owner`, without
 /// copying. The owner is boxed (one small allocation) and dropped when the
 /// JS object is collected. `view` picks the exposed byte window out of the

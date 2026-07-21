@@ -102,14 +102,13 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
         return uint8array;
     }
 
-    // The Vec's capacity exceeds its length (transcoding over-reserves), so
-    // hand the whole Vec to JSC as the owner rather than re-boxing the bytes.
+    // The Vec's capacity exceeds its length (transcoding over-reserves);
+    // `from_vec` transfers the whole allocation with no shrink or owner box.
     let bytes = strings::to_utf8_alloc_with_type(slice);
-    bun_jsc::array_buffer::typed_array_from_owner(
+    bun_jsc::array_buffer::typed_array_from_vec(
         global_this,
         JSType::Uint8Array.to_typed_array_type(),
         bytes,
-        |v| v.as_mut_slice(),
     )
     .unwrap_or(JSValue::ZERO)
 }

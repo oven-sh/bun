@@ -2635,14 +2635,13 @@ pub mod JSZlib {
                     }
                 }
 
-                // Ownership of the `Vec` transfers to JSC; it is dropped once
-                // the ArrayBuffer is finalized. No shrink/re-box: the Vec may
-                // hold excess capacity, exactly as the old leak-based path.
-                jsc::array_buffer::typed_array_from_owner(
+                // Ownership of the `Vec`'s allocation transfers to JSC and
+                // is freed by pointer at finalization. No shrink, no owner
+                // box: exactly the old leak-based path's cost.
+                jsc::array_buffer::typed_array_from_vec(
                     global_this,
                     jsc::JSType::Uint8Array.to_typed_array_type(),
                     list,
-                    |v| v.as_mut_slice(),
                 )
             }
         }
@@ -2771,14 +2770,13 @@ pub mod JSZlib {
                     )));
                 }
 
-                // Ownership of the `Vec` transfers to JSC; it is dropped once
-                // the ArrayBuffer is finalized. No shrink/re-box: the Vec may
-                // hold excess capacity, exactly as the old leak-based path.
-                jsc::array_buffer::typed_array_from_owner(
+                // Ownership of the `Vec`'s allocation transfers to JSC and
+                // is freed by pointer at finalization. No shrink, no owner
+                // box: exactly the old leak-based path's cost.
+                jsc::array_buffer::typed_array_from_vec(
                     global_this,
                     jsc::JSType::Uint8Array.to_typed_array_type(),
                     list,
-                    |v| v.as_mut_slice(),
                 )
             }
         }

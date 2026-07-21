@@ -106,19 +106,23 @@ export default function (
   urlIsServer: boolean,
   stopWaitingForConnection: (executionContextId: number) => void,
 ): void {
+  // Match Node.js: an inspector startup failure is a warning, not fatal.
+  // Also release --inspect-wait/--inspect-brk on the inspected VM so user code runs.
+  const onStartupFailed = (error: unknown): void => {
+    console.error(`Failed to start inspector: ${error && (error as any).message ? (error as any).message : error}`);
+    stopWaitingForConnection(executionContextId);
+  };
+
   if (urlIsServer) {
-    connectToUnixServer(executionContextId, url, createBackend, send, close);
+    connectToUnixServer(executionContextId, url, createBackend, send, close, onStartupFailed);
     return;
   }
 
   let debug: Debugger | undefined;
   try {
-    debug = new Debugger(executionContextId, url, createBackend, send, close);
+    debug = new Debugger(executionContextId, url, createBackend, send, close, onStartupFailed);
   } catch (error) {
-    // Match Node.js: a failure to bind the inspector address is a warning, not fatal.
-    console.error(`Failed to start inspector: ${error && (error as any).message ? (error as any).message : error}`);
-    // Release --inspect-wait/--inspect-brk on the inspected VM so user code runs.
-    stopWaitingForConnection(executionContextId);
+    onStartupFailed(error);
     return;
   }
 
@@ -175,6 +179,7 @@ function unescapeUnixSocketUrl(href: string) {
 class Debugger {
   #url?: URL;
   #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
+  #onStartupFailed: (error: unknown) => void;
 
   constructor(
     executionContextId: number,
@@ -182,7 +187,9 @@ class Debugger {
     createBackend: CreateBackendFn,
     send: (message: string | string[]) => void,
     close: () => void,
+    onStartupFailed: (error: unknown) => void,
   ) {
+    this.#onStartupFailed = onStartupFailed;
     this.#createBackend = (refEventLoop, receive) => {
       const backend = createBackend(executionContextId, refEventLoop, receive);
       return {
@@ -301,13 +308,7 @@ class Debugger {
         },
       },
     }).catch(err => {
-      // Force us to send a disconnect message
-      if (!backend) {
-        backend = this.#createBackend(false, () => {});
-        backend.close();
-      }
-
-      $debug("error:", err);
+      this.#onStartupFailed(err);
     });
   }
 
@@ -427,6 +428,7 @@ async function connectToUnixServer(
   createBackend: CreateBackendFn,
   send: (message: string) => void,
   close: () => void,
+  onStartupFailed: (error: unknown) => void,
 ) {
   // Windows uses TCP.
   // POSIX uses Unix sockets.
@@ -451,7 +453,7 @@ async function connectToUnixServer(
         port: Number(port),
       };
     } catch {
-      console.error(`Failed to start inspector: invalid tcp: URL '${unix}'`);
+      onStartupFailed(`invalid tcp: URL '${unix}'`);
       return;
     }
   } else if (unix.startsWith("/")) {
@@ -459,7 +461,7 @@ async function connectToUnixServer(
   } else if (unix.startsWith("fd:")) {
     connectionOptions = { fd: Number(unix.substring("fd:".length)) };
   } else {
-    $debug("Invalid inspector URL:" + unix);
+    onStartupFailed(`invalid inspector URL '${unix}'`);
     return;
   }
 
@@ -515,11 +517,7 @@ async function connectToUnixServer(
       },
     },
   }).catch(error => {
-    // Force it to close
-    const backendRaw = createBackend(executionContextId, true, () => {});
-    close.$call(backendRaw);
-
-    $debug("error:", error);
+    onStartupFailed(error);
   });
 
   return socket;

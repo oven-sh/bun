@@ -1,22 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/5639
-// When the inspector cannot bind its address (EADDRINUSE / EACCES), Bun used to
-// print the internal debugger.ts source + stack trace twice and process.exit(1).
+// When the inspector cannot bind/connect its address, Bun used to print the
+// internal debugger.ts source + stack trace twice and process.exit(1).
 describe.each(["--inspect", "--inspect-wait", "--inspect-brk"])("%s", flag => {
-  test("inspector listen failure warns but does not kill the app", async () => {
-    using holder = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: { data() {} },
-    });
-    const port = holder.port;
-
+  async function run(addr: string) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
-        `${flag}=127.0.0.1:${port}`,
+        `${flag}=${addr}`,
         "-e",
         `console.log("user code ran"); process.stdin.resume(); process.stdin.on("end", () => console.log("user code done"));`,
       ],
@@ -57,5 +51,14 @@ describe.each(["--inspect", "--inspect-wait", "--inspect-brk"])("%s", flag => {
     expect(stderr).not.toContain("Bun.serve(");
 
     expect(exitCode).toBe(0);
+  }
+
+  test("ws listen failure (EADDRINUSE) warns but does not kill the app", async () => {
+    using holder = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    await run(`127.0.0.1:${holder.port}`);
+  });
+
+  test.skipIf(isWindows)("unix:// connect failure (ENOENT) warns but does not kill the app", async () => {
+    await run(`unix://${join(tmpdirSync(), "nonexistent.sock")}`);
   });
 });

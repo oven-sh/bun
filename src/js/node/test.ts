@@ -3479,15 +3479,16 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
   } else if (names.length === 1 && destinationNames.length === 0) {
     destinationNames.push("stdout");
   } else if (names.length !== destinationNames.length) {
-    const error = new TypeError(
-      `The argument '--test-reporter' must match the number of specified '--test-reporter-destination'. ` +
-        `Received ${Bun.inspect(names)}`,
-    );
-    (error as { code?: string }).code = "ERR_INVALID_ARG_VALUE";
     // node's parseCommandLine throws during lazyBootstrapRoot before any test
     // runs; the eval-driver twin fatal()s. Returning would let the queue run
     // with no reporter attached.
-    console.error(error);
+    console.error(
+      $ERR_INVALID_ARG_VALUE(
+        "--test-reporter",
+        names,
+        "must match the number of specified '--test-reporter-destination'",
+      ),
+    );
     process.exit(1);
   }
 
@@ -3526,11 +3527,7 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
     if (typeof reporter !== "function" && !(reporter && typeof (reporter as { pipe?: unknown }).pipe === "function")) {
       // Validate upfront, like node: a plain object must not reach compose(),
       // whose throw would surface as a mid-run unhandled rejection.
-      const error = new TypeError(
-        `The "Reporter" argument must be a function or a stream. Received ${reporter === undefined ? "undefined" : typeof reporter}`,
-      );
-      (error as { code?: string }).code = "ERR_INVALID_ARG_TYPE";
-      console.error(error);
+      console.error($ERR_INVALID_ARG_TYPE("Reporter", ["function", "stream"], reporter));
       process.exitCode = 1;
       continue;
     }

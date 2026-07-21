@@ -5153,6 +5153,10 @@ impl<'a> HTTPClient<'a> {
 
         if pretend_304 {
             response.status_code = 304;
+            // The wire-level message is a 200 with a real body that we are
+            // choosing not to read; don't pool a socket with that body still
+            // in its receive buffer.
+            self.state.flags.allow_keepalive = false;
         }
 
         // According to RFC 7230 section 3.3.3:

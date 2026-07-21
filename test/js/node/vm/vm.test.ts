@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import {
   compileFunction,
   constants,
@@ -1233,6 +1233,116 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
 
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ab=B ba=A");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("node:vm SourceTextModule import.meta", () => {
+  // A SourceTextModule identifier ("vm:module(0)" by default) is not a module
+  // path, so there is nothing to derive import.meta from. Node leaves it empty
+  // and lets the host populate it through options.initializeImportMeta. Bun used
+  // to synthesize url/dirname/filename and a working resolve() from the
+  // identifier, which let sandboxed code resolve against the host filesystem.
+  const metaSource =
+    "export const meta = {" +
+    " ownKeys: Reflect.ownKeys(import.meta)," +
+    " nullProto: Object.getPrototypeOf(import.meta) === null," +
+    " url: String(import.meta.url)," +
+    " dirname: String(import.meta.dirname)," +
+    " filename: String(import.meta.filename)," +
+    " resolve: typeof import.meta.resolve," +
+    " require: typeof import.meta.require," +
+    " custom: String(import.meta.custom) };";
+
+  const empty = {
+    ownKeys: [],
+    nullProto: true,
+    url: "undefined",
+    dirname: "undefined",
+    filename: "undefined",
+    resolve: "undefined",
+    require: "undefined",
+    custom: "undefined",
+  };
+
+  test("is empty by default and only initializeImportMeta populates it", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const src = ${JSON.stringify(metaSource)};
+      const results = {};
+
+      async function run(label, options) {
+        const m = new vm.SourceTextModule(src, options);
+        await m.link(() => { throw new Error("unexpected import"); });
+        await m.evaluate();
+        results[label] = m.namespace.meta;
+      }
+
+      await run("default", undefined);
+      await run("identifier", { identifier: "file:///real/path.mjs" });
+      await run("contextified", { context: vm.createContext({}) });
+      await run("initializeImportMeta", { initializeImportMeta: meta => { meta.custom = "set"; } });
+      console.log(JSON.stringify(results));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      default: empty,
+      identifier: empty,
+      contextified: empty,
+      initializeImportMeta: { ...empty, ownKeys: ["custom"], custom: "set" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("modules dynamically imported by a SourceTextModule still get a real import.meta", async () => {
+    using dir = tempDir("vm-module-import-meta", {
+      "dep.mjs": `export const info = {
+        url: import.meta.url,
+        resolve: typeof import.meta.resolve,
+        dirname: typeof import.meta.dirname,
+      };`,
+      "main.mjs": `
+        import vm from "node:vm";
+        const src = 'const dep = await import("./dep.mjs");' +
+          ' export const inner = { vmUrl: String(import.meta.url),' +
+          ' depUrlIsFileUrl: dep.info.url.startsWith("file://") && dep.info.url.endsWith("/dep.mjs"),' +
+          ' depResolve: dep.info.resolve, depDirname: dep.info.dirname };';
+        const m = new vm.SourceTextModule(src, {
+          importModuleDynamically: specifier => import(new URL(specifier, import.meta.url).href),
+        });
+        await m.link(() => { throw new Error("unexpected static import"); });
+        await m.evaluate();
+        console.log(JSON.stringify(m.namespace.inner));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      vmUrl: "undefined",
+      depUrlIsFileUrl: true,
+      depResolve: "function",
+      depDirname: "string",
+    });
     expect(exitCode).toBe(0);
   });
 });

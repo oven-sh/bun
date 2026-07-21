@@ -3841,6 +3841,17 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
+    // A node:vm module's identifier is not a real module path, so there is nothing
+    // to derive import.meta from. Node leaves it empty and lets the embedder fill
+    // it in through options.initializeImportMeta; do the same.
+    if (record) {
+        if (auto* provider = record->sourceCode().provider()) {
+            auto* fetcher = provider->sourceOrigin().fetcher();
+            if (fetcher && fetcher->fetcherType() == JSC::ScriptFetcher::Type::NodeVM)
+                return JSC::constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure());
+        }
+    }
+
     return Zig::ImportMetaObject::create(globalObject, key);
 }
 

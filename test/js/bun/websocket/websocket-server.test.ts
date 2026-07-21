@@ -1562,3 +1562,139 @@ it.each(["server", "client"] as const)(
     await server.stop();
   },
 );
+
+describe("server.stop() with open WebSockets", () => {
+  async function openServerWithWS() {
+    const serverClose = Promise.withResolvers<{ code: number; reason: string }>();
+    const srv = serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("http");
+      },
+      websocket: {
+        message(ws, m) {
+          ws.send("echo:" + m);
+        },
+        close(_ws, code, reason) {
+          serverClose.resolve({ code, reason });
+        },
+      },
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${srv.port}/`);
+    const opened = Promise.withResolvers<void>();
+    const clientClose = Promise.withResolvers<CloseEvent>();
+    ws.onopen = () => opened.resolve();
+    ws.onerror = () => {};
+    ws.onclose = e => clientClose.resolve(e);
+    await opened.promise;
+    return { srv, ws, serverClose: serverClose.promise, clientClose: clientClose.promise };
+  }
+
+  it("stop(false) sends 1001 to open WebSockets and resolves", async () => {
+    const { srv, ws, serverClose, clientClose } = await openServerWithWS();
+    try {
+      expect(srv.pendingWebSockets).toBe(1);
+      await srv.stop(false);
+      const [s, c] = await Promise.all([serverClose, clientClose]);
+      expect({
+        serverCode: s.code,
+        clientCode: c.code,
+        wasClean: c.wasClean,
+        readyState: ws.readyState,
+        pendingWebSockets: srv.pendingWebSockets,
+      }).toEqual({
+        serverCode: 1001,
+        clientCode: 1001,
+        wasClean: true,
+        readyState: WebSocket.CLOSED,
+        pendingWebSockets: 0,
+      });
+    } finally {
+      ws.close();
+      srv.stop(true);
+    }
+  });
+
+  it("stop(true) sends 1001 to open WebSockets", async () => {
+    const { srv, ws, serverClose, clientClose } = await openServerWithWS();
+    try {
+      await srv.stop(true);
+      const [s, c] = await Promise.all([serverClose, clientClose]);
+      expect({
+        serverCode: s.code,
+        clientCode: c.code,
+        wasClean: c.wasClean,
+        pendingWebSockets: srv.pendingWebSockets,
+      }).toEqual({
+        serverCode: 1001,
+        clientCode: 1001,
+        wasClean: true,
+        pendingWebSockets: 0,
+      });
+    } finally {
+      ws.close();
+      srv.stop(true);
+    }
+  });
+
+  it("stop(true) after stop(false) force-closes remaining connections", async () => {
+    // Use a pending HTTP request so graceful stop has something to wait for
+    // even after the WebSocket is gone.
+    const httpDone = Promise.withResolvers<void>();
+    const srv = serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response(
+          new ReadableStream({
+            pull() {
+              return httpDone.promise;
+            },
+          }),
+        );
+      },
+      websocket: { message() {}, close() {} },
+    });
+    const sock = net.connect(srv.port, "127.0.0.1", () => {
+      sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    });
+    const gotData = Promise.withResolvers<void>();
+    const sockClosed = Promise.withResolvers<void>();
+    sock.once("data", () => gotData.resolve());
+    sock.on("error", () => {});
+    sock.on("close", () => sockClosed.resolve());
+    const ws = new WebSocket(`ws://127.0.0.1:${srv.port}/`);
+    const wsClosed = Promise.withResolvers<CloseEvent>();
+    ws.onopen = () => {};
+    ws.onerror = () => {};
+    ws.onclose = e => wsClosed.resolve(e);
+    await Promise.all([gotData.promise, new Promise(r => (ws.onopen = r))]);
+    try {
+      const graceful = srv.stop(false);
+      expect((await wsClosed.promise).code).toBe(1001);
+      expect(srv.pendingRequests).toBe(1);
+
+      const force = srv.stop(true);
+      await Promise.all([graceful, force, sockClosed.promise]);
+      expect(srv.pendingRequests).toBe(0);
+    } finally {
+      httpDone.resolve();
+      sock.destroy();
+      ws.close();
+      srv.stop(true);
+    }
+  });
+
+  it("stop(false) is not kept alive by an already-closing WebSocket", async () => {
+    const { srv, ws } = await openServerWithWS();
+    try {
+      ws.close(1000, "bye");
+      await srv.stop(false);
+      expect(srv.pendingWebSockets).toBe(0);
+    } finally {
+      srv.stop(true);
+    }
+  });
+});

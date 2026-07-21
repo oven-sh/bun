@@ -788,10 +788,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // Resolved early because the LTO defaults below need it (the windows
-  // -baseline WebKit prebuilt has no -lto variant).
-  const baseline = partial.baseline ?? x64;
-
   // LTO: default on for CI release non-asan non-assertions builds across
   // linux, darwin-cross, and windows-cross. All three use ThinLTO (the JSC
   // ThinLTO miscompile was fixed upstream). The -lto WebKit prebuilts only
@@ -878,7 +874,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Logs: on by default in debug non-test
   const logs = partial.logs ?? debug;
 
-  // (`baseline` is resolved earlier, next to the LTO defaults.)
+  const baseline = partial.baseline ?? x64;
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
 

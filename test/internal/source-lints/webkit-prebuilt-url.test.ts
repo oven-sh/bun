@@ -95,16 +95,12 @@ describe("WebKit prebuilt URL", () => {
     );
   });
 
-  test("asan and debug do not get the -baseline suffix (no -baseline-asan/-baseline-debug tarball)", () => {
+  test("baseline does not affect the suffix (every x64 WebKit is built at the nehalem floor)", () => {
+    expect(prebuiltUrlOf(resolveLinuxRelease({ lto: true, baseline: true }))).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto.tar.gz`,
+    );
     expect(prebuiltUrlOf(resolveLinuxRelease({ asan: true, baseline: true }))).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-asan.tar.gz`,
-    );
-    const dbg = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false, baseline: true, linuxSysroot: "/fake" },
-      mockToolchain(),
-    );
-    expect(prebuiltUrlOf(dbg)).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug.tar.gz`,
     );
   });
 

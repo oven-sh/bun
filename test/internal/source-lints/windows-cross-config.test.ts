@@ -165,23 +165,19 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
   });
 
   test("LTO selects the -lto WebKit prebuilt with a windows-keyed cache dir", () => {
-    const lto = webkit.source(resolveWindowsCross({ lto: true, baseline: false }));
-    if (lto.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${lto.kind}`);
-    expect(lto.url).toContain("bun-webkit-windows-amd64-lto.tar.gz");
-    expect(lto.destDir).toContain("-windows");
-    expect(lto.destDir).toEndWith("-lto");
-
-    const plain = webkit.source(resolveWindowsCross({ lto: false, baseline: false }));
-    if (plain.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${plain.kind}`);
-    expect(plain.url).toContain("bun-webkit-windows-amd64.tar.gz");
-    expect(plain.destDir).not.toEndWith("-lto");
-
-    // Default windows x64 cross config (lto=true, baseline=true): windows has
-    // no -baseline WebKit variant (prebuiltSuffix gates -baseline on cfg.linux),
-    // so it fetches the plain -lto tarball.
+    // Default windows x64 cross config (baseline=true, lto=true): every x64
+    // WebKit is built at the nehalem floor, so the plain -lto tarball is the
+    // one baseline fetches too.
     const def = webkit.source(resolveWindowsCross());
     if (def.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${def.kind}`);
     expect(def.url).toContain("bun-webkit-windows-amd64-lto.tar.gz");
+    expect(def.destDir).toContain("-windows");
+    expect(def.destDir).toEndWith("-lto");
+
+    const plain = webkit.source(resolveWindowsCross({ lto: false }));
+    if (plain.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${plain.kind}`);
+    expect(plain.url).toContain("bun-webkit-windows-amd64.tar.gz");
+    expect(plain.destDir).not.toEndWith("-lto");
 
     const arm64 = webkit.source(resolveWindowsCross({ arch: "aarch64" }));
     if (arm64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${arm64.kind}`);

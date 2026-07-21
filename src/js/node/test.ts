@@ -955,6 +955,9 @@ function maybeCompleteSuite(suite: TestNode): boolean {
   let forcedError: Error | undefined;
   if (expectFailure && !suiteFailed && !isTodo) {
     suiteFailed = true;
+    // Callers re-derive the bubble-up bit from childrenFailed; write it back
+    // (mirroring the isTodo zeroing above) so the parent sees this as failed.
+    suite.childrenFailed = 1;
     forcedError = makeTestFailure("test was expected to fail but passed", "expectedFailure");
   }
   const data = {
@@ -966,7 +969,7 @@ function maybeCompleteSuite(suite: TestNode): boolean {
     parentId: runParentIdFor(suite),
     type: "suite",
     skip: suite.skipped ? (suite.directiveMessage ?? true) : undefined,
-    todo: isTodo ? true : undefined,
+    todo: isTodo ? (suite.directiveMessage ?? true) : undefined,
     expectFailure: xfail,
     duration_ms: suite.startedAtMs > 0 ? roundDurationMs(performance.now() - suite.startedAtMs) : 0,
     tags: suite.tags,

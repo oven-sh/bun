@@ -369,7 +369,6 @@ async function* tap(source) {
 // ---------------------------------------------------------------------------
 class SpecReporter extends Transform {
   #stack: any[] = [];
-  #reported: any[] = [];
   #failedTests: any[] = [];
   #cwd = process.cwd();
 
@@ -414,10 +413,12 @@ class SpecReporter extends Transform {
       // Report all the parent `test:start` events.
       const parent = this.#stack.pop();
       const msg = parent.data;
-      this.#reported.unshift(msg);
       prefix += `${indent(msg.nesting)}${reporterUnicodeSymbolMap["arrow:right"]}${msg.name}\n`;
     }
     const indentation = indent(data.nesting);
+    // node suppresses inline error details for suite lines whose children
+    // already rendered (via a #reported/hasChildren check); this port keeps
+    // inline details off unconditionally and reports errors in the summary.
     return `${formatTestReport(type, data, false, prefix, indentation)}\n`;
   }
 

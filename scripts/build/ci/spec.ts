@@ -222,9 +222,14 @@ const linuxPaths: LinuxImageBase["paths"] = {
   buildkiteHome: "/var/lib/buildkite-agent",
   buildkiteAgentEntry: "agent.mjs",
   buildkiteDirs: ["/var/cache/buildkite-agent", "/var/log/buildkite-agent", "/var/run/buildkite-agent"],
-  prefetchDir: "/opt/bun-prefetch",
-  // Not warming a `bun install` cache right now; set a path to re-enable.
-  installCacheDir: null,
+  // Checkout/work dir = the buildkite home's build subdir (unchanged from
+  // before it was an explicit fact); a stable path keeps ccache effective.
+  workDir: "/var/lib/buildkite-agent/build",
+  caches: {
+    prefetch: "/opt/bun-prefetch",
+    // Not warming a `bun install` cache right now; set a path to re-enable.
+    install: null,
+  },
   coresDirPattern: "/var/bun-cores-{distro}-{release}-{arch}",
 };
 
@@ -546,9 +551,12 @@ const windowsShared: WindowsSharedFields = {
     programFiles: "C:\\Program Files",
     buildkiteHome: "C:\\buildkite-agent",
     buildkiteAgentEntry: "agent.mjs",
-    prefetchDir: "C:\\bun-prefetch",
-    // Not warming a `bun install` cache right now; set a path to re-enable.
-    installCacheDir: null,
+    workDir: "C:\\buildkite-agent\\build",
+    caches: {
+      prefetch: "C:\\bun-prefetch",
+      // Not warming a `bun install` cache right now; set a path to re-enable.
+      install: null,
+    },
     node: "C:\\Scoop\\apps\\nodejs\\current\\node.exe",
   },
   optimize: {

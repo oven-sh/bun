@@ -200,11 +200,20 @@ export type LinuxImageBase = {
     readonly buildkiteAgentEntry: string;
     /** Extra state dirs the buildkite user owns. */
     readonly buildkiteDirs: readonly string[];
-    readonly prefetchDir: string;
-    /** Shared `bun install` download cache dir, warmed at bake time from
-     * the repo's package.json + test/package.json. null = do not warm an
-     * install cache on this image. */
-    readonly installCacheDir: string | null;
+    /** Where CI jobs check out and run (BUILDKITE_BUILD_CHECKOUT_PATH). A
+     * stable path so ccache keys stay valid across jobs. */
+    readonly workDir: string;
+    /** The image's warm caches, gathered so "the cache dirs" are one
+     * findable unit. Each is nullable: null = this image warms/uses no
+     * such cache. */
+    readonly caches: {
+      /** Build-download prefetch cache (BUN_BUILD_PREFETCH_DIR): dep
+       * tarballs pre-fetched so builds skip the network. */
+      readonly prefetch: string | null;
+      /** Shared `bun install` download cache (BUN_INSTALL_CACHE_DIR),
+       * warmed from the repo's package.json + test/package.json. */
+      readonly install: string | null;
+    };
     /** Core dumps: %e = executable, %p = pid. scripts/runner.node.mjs reads
      * cores from this same directory pattern. */
     readonly coresDirPattern: string;
@@ -345,11 +354,17 @@ export type WindowsImageBase = {
     readonly buildkiteHome: string;
     /** Filename of the bundled agent inside buildkiteHome (see linux). */
     readonly buildkiteAgentEntry: string;
-    readonly prefetchDir: string;
-    /** Shared `bun install` download cache dir, warmed at bake time from
-     * the repo's package.json + test/package.json. null = do not warm an
-     * install cache on this image. */
-    readonly installCacheDir: string | null;
+    /** Where CI jobs check out and run (BUILDKITE_BUILD_CHECKOUT_PATH). A
+     * stable path so ccache keys stay valid across jobs. */
+    readonly workDir: string;
+    /** The image's warm caches, gathered so "the cache dirs" are one
+     * findable unit. Each is nullable: null = warm/use no such cache. */
+    readonly caches: {
+      /** Build-download prefetch cache (BUN_BUILD_PREFETCH_DIR). */
+      readonly prefetch: string | null;
+      /** Shared `bun install` download cache (BUN_INSTALL_CACHE_DIR). */
+      readonly install: string | null;
+    };
     /** Where the Scoop-installed node lands; the agent service runs it. */
     readonly node: string;
   };

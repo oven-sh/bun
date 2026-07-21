@@ -32,12 +32,13 @@ export const ciUser: Component = {
             for (const dir of [home, ...image.paths.buildkiteDirs]) {
               await ensureDirectory(dir, { owner: `${user}:${user}` });
             }
-            // Stable checkout directory so ccache is effective across jobs.
+            // Checkout/work dir from the spec fact (paths.workDir) — stable
+            // so ccache is effective across jobs.
             const hooksDir = `${home}/hooks`;
             await ensureDirectory(hooksDir, { mode: "755" });
             await writeText(
               `${hooksDir}/environment`,
-              `#!/bin/sh\nset -efu\n\nexport BUILDKITE_BUILD_CHECKOUT_PATH=${home}/build\n`,
+              `#!/bin/sh\nset -efu\n\nexport BUILDKITE_BUILD_CHECKOUT_PATH=${image.paths.workDir}\n`,
               {
                 mode: 0o755,
               },

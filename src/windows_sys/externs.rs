@@ -339,6 +339,17 @@ pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
 pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
 pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
 
+// Reparse tags (`winnt.h`). `IsReparseTagNameSurrogate` == bit 29: the reparse
+// point names another filesystem entity (symlink, mount point). Non-surrogate
+// tags such as `IO_REPARSE_TAG_APPEXECLINK` are opaque and not traversed.
+pub const IO_REPARSE_TAG_SYMLINK: DWORD = 0xA000_000C;
+pub const IO_REPARSE_TAG_MOUNT_POINT: DWORD = 0xA000_0003;
+pub const IO_REPARSE_TAG_APPEXECLINK: DWORD = 0x8000_001B;
+#[inline]
+pub const fn is_reparse_tag_name_surrogate(tag: DWORD) -> bool {
+    (tag & 0x2000_0000) != 0
+}
+
 // `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
 pub const PIPE_ACCESS_INBOUND: DWORD = 0x0000_0001;
 pub const PIPE_ACCESS_OUTBOUND: DWORD = 0x0000_0002;
@@ -833,8 +844,8 @@ pub mod kernel32 {
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
     pub use super::{
-        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo, SYSTEM_INFO,
-        SetCurrentDirectoryW, SetFilePointerEx,
+        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemDirectoryW, GetSystemInfo,
+        SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx,
     };
     pub use super::{
         GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
@@ -1396,9 +1407,15 @@ unsafe extern "system" {
 
     pub fn GetBinaryTypeW(lpApplicationName: LPCWSTR, lpBinaryType: LPDWORD) -> BOOL;
 
+    pub fn FindFirstFileW(lpFileName: LPCWSTR, lpFindFileData: *mut WIN32_FIND_DATAW) -> HANDLE;
+
+    pub fn FindClose(hFindFile: HANDLE) -> BOOL;
+
     pub fn SetCurrentDirectoryW(lpPathName: LPCWSTR) -> BOOL;
 
     pub fn GetCurrentDirectoryW(nBufferLength: DWORD, lpBuffer: LPWSTR) -> DWORD;
+
+    pub fn GetSystemDirectoryW(lpBuffer: LPWSTR, uSize: DWORD) -> DWORD;
 
     pub fn GetFileAttributesW(lpFileName: LPCWSTR) -> DWORD;
 
@@ -1440,9 +1457,27 @@ unsafe extern "system" {
     pub fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO);
 }
 
+pub const TOKEN_QUERY: DWORD = 0x0008;
+/// `TOKEN_INFORMATION_CLASS::TokenIsAppContainer`
+pub const TOKEN_IS_APP_CONTAINER: c_int = 29;
+
 #[link(name = "advapi32")]
 unsafe extern "system" {
     pub fn SaferiIsExecutableFileType(szFullPathname: LPCWSTR, bFromShellExecute: BOOLEAN) -> BOOL;
+
+    pub fn OpenProcessToken(
+        ProcessHandle: HANDLE,
+        DesiredAccess: DWORD,
+        TokenHandle: *mut HANDLE,
+    ) -> BOOL;
+
+    pub fn GetTokenInformation(
+        TokenHandle: HANDLE,
+        TokenInformationClass: c_int,
+        TokenInformation: LPVOID,
+        TokenInformationLength: DWORD,
+        ReturnLength: *mut DWORD,
+    ) -> BOOL;
 }
 
 // `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the

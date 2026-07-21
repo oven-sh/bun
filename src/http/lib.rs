@@ -4636,29 +4636,26 @@ impl<'a> HTTPClient<'a> {
             self.state.cloned_metadata = None;
         }
 
-        let mut certificate_info: Option<CertificateInfo> = None;
-        if let Some(info) = self.state.certificate_info.take() {
-            // transfer owner ship of the certificate info here
-            certificate_info = Some(info);
-        } else if let Some(metadata) = self.state.cloned_metadata.take() {
-            // transfer owner ship of the metadata here
-            return HTTPClientResult {
-                metadata: Some(metadata),
-                body: body_out::opt_mut(self.state.body_out_str),
-                redirected: self.flags.redirected,
-                fail: self.state.fail,
-                dns_error: self.state.dns_error,
-                dns_hostname: self.state.dns_hostname.take(),
-                // check if we are reporting cert errors, do not have a fail state and we are not done
-                has_more: certificate_info.is_some()
-                    || (self.state.fail.is_none() && !self.state.is_done()),
-                body_size,
-                certificate_info: None,
-                can_stream: (self.state.request_stage == RequestStage::Body
-                    || self.state.request_stage == RequestStage::ProxyBody)
-                    && self.flags.is_streaming_request_body,
-                is_http2: self.flags.protocol != Protocol::Http1_1,
-            };
+        let certificate_info = self.state.certificate_info.take();
+        if certificate_info.is_none() {
+            if let Some(metadata) = self.state.cloned_metadata.take() {
+                // transfer ownership of the metadata here
+                return HTTPClientResult {
+                    metadata: Some(metadata),
+                    body: body_out::opt_mut(self.state.body_out_str),
+                    redirected: self.flags.redirected,
+                    fail: self.state.fail,
+                    dns_error: self.state.dns_error,
+                    dns_hostname: self.state.dns_hostname.take(),
+                    has_more: self.state.fail.is_none() && !self.state.is_done(),
+                    body_size,
+                    certificate_info: None,
+                    can_stream: (self.state.request_stage == RequestStage::Body
+                        || self.state.request_stage == RequestStage::ProxyBody)
+                        && self.flags.is_streaming_request_body,
+                    is_http2: self.flags.protocol != Protocol::Http1_1,
+                };
+            }
         }
         HTTPClientResult {
             body: body_out::opt_mut(self.state.body_out_str),
@@ -4730,14 +4727,12 @@ impl<'a> HTTPClient<'a> {
             }
 
             if self.state.response_message_buffer.owns(incoming_data) {
-                if cfg!(debug_assertions) {
-                    // i'm not sure why this would happen and i haven't seen it happen
-                    // but we should check
-                    debug_assert!(
-                        self.state.get_body_buffer().list.as_ptr()
-                            != self.state.response_message_buffer.list.as_ptr()
-                    );
-                }
+                // i'm not sure why this would happen and i haven't seen it happen
+                // but we should check
+                debug_assert!(
+                    self.state.get_body_buffer().list.as_ptr()
+                        != self.state.response_message_buffer.list.as_ptr()
+                );
                 self.state.response_message_buffer = MutableString::default();
             }
         }
@@ -5289,9 +5284,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
+                                debug_assert!(string_builder.cap == string_builder.len);
 
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());
@@ -5350,9 +5343,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
+                                debug_assert!(string_builder.cap == string_builder.len);
 
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());

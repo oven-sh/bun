@@ -38,6 +38,8 @@ pub mod kernel32 {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
+        // safe: by-value DWORD write to the TEB; cannot fault.
+        pub safe fn SetLastError(dwErrCode: DWORD);
         // ── IOCP / async directory watching ──
         // safe: all args are by-value opaques (`HANDLE`/`ULONG_PTR`/`DWORD`);
         // a bad handle yields NULL + GetLastError, no UB.
@@ -3276,6 +3278,38 @@ mod _win32error_full_table {
 
 pub use bun_libuv_sys as libuv;
 
+/// True when the process token is a Windows AppContainer (lowbox) token.
+/// Cached for the process lifetime; the token's AppContainer bit is immutable.
+pub fn is_app_container() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| {
+        let mut token: win32::HANDLE = core::ptr::null_mut();
+        // SAFETY: GetCurrentProcess() is the pseudo-handle; TOKEN_QUERY
+        // suffices for GetTokenInformation(TokenIsAppContainer).
+        if unsafe {
+            win32::OpenProcessToken(win32::GetCurrentProcess(), win32::TOKEN_QUERY, &mut token)
+        } == 0
+        {
+            return false;
+        }
+        let mut is_ac: win32::DWORD = 0;
+        let mut ret_len: win32::DWORD = 0;
+        // SAFETY: `token` is live from OpenProcessToken above.
+        let ok = unsafe {
+            win32::GetTokenInformation(
+                token,
+                win32::TOKEN_IS_APP_CONTAINER,
+                (&raw mut is_ac).cast(),
+                size_of::<win32::DWORD>() as win32::DWORD,
+                &mut ret_len,
+            )
+        };
+        // SAFETY: `token` is a real handle (not the pseudo-handle); close it.
+        unsafe { win32::CloseHandle(token) };
+        ok != 0 && is_ac != 0
+    })
+}
+
 pub use bun_errno::translate_uv_error_to_e;
 
 pub use bun_windows_sys::externs::GetProcAddress;
@@ -3654,6 +3688,206 @@ pub enum GetFinalPathNameByHandleError {
     NameTooLong,
 }
 
+fn final_name_raw(h: HANDLE, flags: DWORD, buf: &mut [u16]) -> Option<usize> {
+    // SAFETY: buf valid for buf.len().
+    let n =
+        unsafe { externs::GetFinalPathNameByHandleW(h, buf.as_mut_ptr(), buf.len() as u32, flags) }
+            as usize;
+    if n == 0 || n >= buf.len() {
+        None
+    } else {
+        Some(n)
+    }
+}
+
+/// Attribute-only `CreateFileW` (0 access): exempt from share-mode arbitration
+/// and the smallest ACL surface — don't add access bits. `pathz` must be
+/// NUL-terminated; `FILE_FLAG_BACKUP_SEMANTICS` covers directories, harmless on files.
+fn attr_only_open(pathz: &[u16]) -> HANDLE {
+    debug_assert_eq!(pathz.last(), Some(&0));
+    // SAFETY: `pathz` is NUL-terminated (caller contract, debug-asserted).
+    unsafe {
+        CreateFileW(
+            pathz.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            core::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            core::ptr::null_mut(),
+        )
+    }
+}
+
+/// `(\Device\<volume>, letter)` for the system volume, resolved once via
+/// `GetSystemDirectoryW`: the Windows directory carries an inherited
+/// `ALL APPLICATION PACKAGES:(RX)` ACE, so an attribute-only open there
+/// succeeds in any lowbox where the mount manager is denied.
+fn system_volume_device() -> Option<&'static (Vec<u16>, u16)> {
+    static CACHE: std::sync::OnceLock<Option<(Vec<u16>, u16)>> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let mut sysdir = bun_paths::w_path_buffer_pool::get();
+            // SAFETY: sysdir.0 is valid for sysdir.0.len() writes.
+            let n = unsafe {
+                kernel32::GetSystemDirectoryW(sysdir.0.as_mut_ptr(), sysdir.0.len() as u32)
+            } as usize;
+            if n < 3 || n >= sysdir.0.len() {
+                return None;
+            }
+            let letter = sysdir.0[0];
+            if letter >= 128
+                || !(letter as u8).is_ascii_alphabetic()
+                || sysdir.0[1] != u16::from(b':')
+            {
+                return None;
+            }
+            sysdir.0[n] = 0;
+            let h = attr_only_open(&sysdir.0[..=n]);
+            if h == INVALID_HANDLE_VALUE {
+                return None;
+            }
+            let mut nt = bun_paths::w_path_buffer_pool::get();
+            let mut none = bun_paths::w_path_buffer_pool::get();
+            let got = final_name_raw(
+                h,
+                win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
+                &mut nt.0[..],
+            )
+            .zip(final_name_raw(
+                h,
+                win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NONE,
+                &mut none.0[..],
+            ));
+            // SAFETY: `h` is the live handle opened above.
+            unsafe {
+                let _ = externs::CloseHandle(h);
+            }
+            let (nt_len, none_len) = got?;
+            if none_len >= nt_len {
+                return None;
+            }
+            let (device, tail) = nt.0[..nt_len].split_at(nt_len - none_len);
+            if tail != &none.0[..none_len] {
+                return None;
+            }
+            Some((
+                device.to_vec(),
+                u16::from((letter as u8).to_ascii_uppercase()),
+            ))
+        })
+        .as_ref()
+}
+
+/// `VOLUME_NAME_DOS` was denied (AppContainer token). Answer only for handles
+/// on the system volume: `<system drive>:<VOLUME_NAME_NT minus device prefix>`,
+/// byte-identical to what the real API would have composed. Any other device
+/// surfaces the original denial. Callers gate on `is_app_container()`.
+fn lowbox_dos_name_fallback(
+    hFile: HANDLE,
+    out_buffer: &mut [u16],
+) -> Result<&mut [u16], GetFinalPathNameByHandleError> {
+    debug_assert!(is_app_container());
+    let mut nt_buf = bun_paths::w_path_buffer_pool::get();
+    let Some(nt_len) = final_name_raw(
+        hFile,
+        win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
+        &mut nt_buf.0[..],
+    ) else {
+        bun_sys::syslog!(
+            "GetFinalPathNameByHandleW({:p}) = denied (no NT name)",
+            hFile
+        );
+        return Err(GetFinalPathNameByHandleError::FileNotFound);
+    };
+    let nt = &nt_buf.0[..nt_len];
+    let Some((device, letter)) = system_volume_device() else {
+        bun_sys::syslog!(
+            "GetFinalPathNameByHandleW({:p}) = denied (system volume unresolved)",
+            hFile
+        );
+        return Err(GetFinalPathNameByHandleError::FileNotFound);
+    };
+    if !(nt.len() > device.len()
+        && nt[..device.len()] == device[..]
+        && nt[device.len()] == u16::from(b'\\'))
+    {
+        bun_sys::syslog!(
+            "GetFinalPathNameByHandleW({:p}) = denied (not on system volume: {})",
+            hFile,
+            bun_core::fmt::utf16(nt)
+        );
+        return Err(GetFinalPathNameByHandleError::FileNotFound);
+    }
+    let rest = &nt[device.len()..];
+    let total = 2 + rest.len();
+    if total >= out_buffer.len() {
+        return Err(GetFinalPathNameByHandleError::NameTooLong);
+    }
+    out_buffer[0] = *letter;
+    out_buffer[1] = u16::from(b':');
+    out_buffer[2..total].copy_from_slice(rest);
+    // The real API NUL-terminates and raw-shape callers read `buf[len]`;
+    // the bounds check above reserved that slot.
+    out_buffer[total] = 0;
+    bun_sys::syslog!(
+        "GetFinalPathNameByHandleW({:p}) = {} (system-volume fallback)",
+        hFile,
+        bun_core::fmt::utf16(&out_buffer[..total])
+    );
+    Ok(&mut out_buffer[..total])
+}
+
+/// This module's spelling of `GetFinalPathNameByHandleW`: raw-ABI drop-in
+/// (returns the length, or 0 with the thread's last error set) plus, inside an
+/// AppContainer, the same lowbox fallback as [`GetFinalPathNameByHandle`]. The
+/// fallback output keeps the `\\?\` prefix the raw API produces for
+/// `VOLUME_NAME_DOS`; the unwrapped extern stays reachable as
+/// `externs::GetFinalPathNameByHandleW` for the fallback machinery only.
+///
+/// # Safety
+/// `buf` must be valid for writes of `len` u16s.
+pub unsafe fn GetFinalPathNameByHandleW(
+    hFile: HANDLE,
+    buf: *mut u16,
+    len: u32,
+    flags: DWORD,
+) -> u32 {
+    // SAFETY: caller contract.
+    let n = unsafe { externs::GetFinalPathNameByHandleW(hFile, buf, len, flags) };
+    let volume_kind =
+        flags & (win32::VOLUME_NAME_GUID | win32::VOLUME_NAME_NT | win32::VOLUME_NAME_NONE);
+    if n != 0
+        || volume_kind != win32::VOLUME_NAME_DOS
+        || GetLastError() != u32::from(Win32Error::ACCESS_DENIED.0)
+    {
+        return n;
+    }
+    if !is_app_container() {
+        // The token probe can clobber last-error; callers of this raw shape
+        // read it after a 0 return.
+        kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
+        return 0;
+    }
+    // SAFETY: caller contract.
+    let out = unsafe { core::slice::from_raw_parts_mut(buf, len as usize) };
+    const PFX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    if out.len() <= PFX.len() {
+        kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
+        return 0;
+    }
+    let rest_len = match lowbox_dos_name_fallback(hFile, &mut out[PFX.len()..]) {
+        Ok(rest) => rest.len(),
+        Err(_) => {
+            // The fallback's queries clobbered the thread error.
+            kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
+            return 0;
+        }
+    };
+    out[..PFX.len()].copy_from_slice(&PFX);
+    (PFX.len() + rest_len) as u32
+}
+
 pub fn GetFinalPathNameByHandle(
     hFile: HANDLE,
     fmt: win32::GetFinalPathNameByHandleFormat,
@@ -3677,6 +3911,15 @@ pub fn GetFinalPathNameByHandle(
     if return_length == 0 {
         let err = GetLastError();
         bun_sys::syslog!("GetFinalPathNameByHandleW({:p}) = {:?}", hFile, err);
+        // An AppContainer (lowbox) token is denied the mount-manager lookup
+        // behind the DOS volume-name translation while the NT form still
+        // works; rebuild `X:\…` from the NT name (system volume only).
+        if fmt.volume_name == win32::VolumeName::Dos
+            && err == u32::from(Win32Error::ACCESS_DENIED.0)
+            && is_app_container()
+        {
+            return lowbox_dos_name_fallback(hFile, out_buffer);
+        }
         return Err(GetFinalPathNameByHandleError::FileNotFound);
     }
 
@@ -4231,7 +4474,6 @@ pub use bun_windows_sys::externs::CreateSymbolicLinkW;
 pub use bun_windows_sys::externs::DeleteFileW;
 pub use bun_windows_sys::externs::GetCommandLineW;
 pub use bun_windows_sys::externs::GetCurrentThread;
-pub use bun_windows_sys::externs::GetFinalPathNameByHandleW;
 pub use bun_windows_sys::externs::GetProcessTimes;
 pub use bun_windows_sys::externs::SetEndOfFile;
 
@@ -4649,9 +4891,7 @@ pub fn move_opened_file_at(
     // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
     // Bun's minimum supported Windows version is >= win10_rs5.
 
-    if cfg!(debug_assertions) {
-        debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
-    }
+    debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
 
     // The FileName tail here is UTF-16, so the correct cap is
     // `PATH_MAX_WIDE * 2` bytes — sizing against the UTF-8 worst case
@@ -5000,7 +5240,9 @@ bun_core::declare_scope!(windowsUserUniqueId, visible);
 
 #[cfg(test)]
 mod tests {
-    use super::{E, SystemErrno, Win32Error, Win32ErrorExt as _, Win32ErrorUnwrap as _};
+    use super::{
+        E, SystemErrno, Win32Error, Win32ErrorExt as _, Win32ErrorUnwrap as _, system_volume_device,
+    };
 
     /// A Win32 code with no entry in `SystemErrno::init_win32_error`.
     const UNMAPPED: Win32Error = Win32Error(0xFFFE);
@@ -5028,5 +5270,15 @@ mod tests {
     fn to_e_unmapped_is_unknown() {
         assert_eq!(UNMAPPED.to_e(), E::UNKNOWN);
         assert_eq!(SystemErrno::EUNKNOWN.to_e(), E::UNKNOWN);
+    }
+
+    /// Outside an AppContainer this exercises the same open + NT/NONE split
+    /// the lowbox fallback relies on; the system directory is always present.
+    #[test]
+    fn system_volume_device_resolves() {
+        let (device, letter) = system_volume_device().expect("system volume");
+        assert!((*letter as u8).is_ascii_uppercase());
+        let prefix: Vec<u16> = "\\Device\\".encode_utf16().collect();
+        assert!(device.starts_with(&prefix));
     }
 }

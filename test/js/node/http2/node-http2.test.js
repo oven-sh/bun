@@ -3538,3 +3538,37 @@ it("http2 server sends each session's frames to its own peer under interleaved r
     server.close();
   }
 });
+
+// When a worker is terminated mid-stream, ~VM's lastChanceToFinalize can miss the JSH2FrameParser
+// cell for that worker (the same gap the no-validate-leaksan.txt worker tests cover). The parser
+// slot sits in a ManuallyDrop hive, so without h2_frame_parser_on_thread_exit its engine's
+// stream HashMap, lshpack state and per-stream boxes leak. This asserts only that no
+// h2-frame-parser allocation shows up in LeakSanitizer's report; the gap itself also leaks other
+// cell types (Immediate, Blob) that are out of scope here.
+it.skipIf(!isASAN)(
+  "terminating a worker mid-stream releases the H2 parser's native allocations",
+  async () => {
+    const fixture = path.join(import.meta.dir, "worker-terminate-h2-leak-parent.fixture.js");
+    const run = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: {
+          ...bunEnv,
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: "detect_leaks=1",
+        },
+        stderr: "pipe",
+        stdout: "ignore",
+      });
+      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return stderr.match(/^.*(?:h2_frame_parser|h2::connection|h2::hpack).*$/m)?.[0] ?? "";
+    };
+    let h2Leak = "";
+    // The miss is timing-dependent; probe until it fires or we run out of attempts.
+    for (let round = 0; round < 8 && !h2Leak; round++) {
+      h2Leak = await run();
+    }
+    expect(h2Leak).toBe("");
+  },
+  240_000,
+);

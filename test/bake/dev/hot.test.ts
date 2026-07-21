@@ -397,7 +397,7 @@ devTest("import.meta.hot with optional chaining", {
       const data = import.meta.hot?.data;
       data.count ??= 0;
       import.meta.hot?.dispose(() => console.log("Cleaning up"));
-      import.meta.hot?.on("bun:invalidate", () => {});
+      import.meta.hot?.["on"]("bun:invalidate", () => {});
       import.meta.hot?.accept();
       console.log("Initial count: " + data.count++);
     `,

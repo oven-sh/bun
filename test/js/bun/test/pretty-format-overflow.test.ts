@@ -37,7 +37,7 @@ test("deep nesting", () => {
       env: bunEnv,
       cwd: dir,
       stderr: "pipe",
-      stdout: "pipe",
+      stdout: "ignore",
     });
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -75,7 +75,7 @@ test("deep nesting", () => {
         env: bunEnv,
         cwd: dir,
         stderr: "pipe",
-        stdout: "pipe",
+        stdout: "ignore",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 

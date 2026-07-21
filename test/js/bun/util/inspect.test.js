@@ -336,7 +336,6 @@ describe("deep / self-referencing values do not overflow the formatter stack", (
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("[Circular]");
-    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 

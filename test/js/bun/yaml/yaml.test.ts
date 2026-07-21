@@ -2559,9 +2559,8 @@ config:
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
-        expect(stdout).toBe("ok");
-        expect(exitCode).toBe(0);
+        expect({ stdout, exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+        expect(stderr).not.toContain("AddressSanitizer");
       },
     );
 

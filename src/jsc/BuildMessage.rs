@@ -28,7 +28,7 @@ impl Default for BuildMessage {
 impl BuildMessage {
     // `#[JsClass]` emits `BuildMessageClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut BuildMessage> {
-        Err(global.throw_illegal_constructor("BuildMessage"))
+        Err(global.throw_illegal_constructor())
     }
 
     #[crate::host_fn(getter)]

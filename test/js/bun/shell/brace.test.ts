@@ -29,11 +29,12 @@ describe("$.braces", () => {
   });
 
   test("nested sibling product", () => {
-    expect($.braces(`{{d,e}{g,h}}`)).toEqual(["dg", "dh", "eg", "eh"]);
+    // The outer `{...}` has no comma of its own, so it is literal (bash 5.2).
+    expect($.braces(`{{d,e}{g,h}}`)).toEqual(["{dg}", "{dh}", "{eg}", "{eh}"]);
   });
 
   test("nested sibling product with surrounding text", () => {
-    expect($.braces(`pre{{a,b}{c,d}}post`)).toEqual(["preacpost", "preadpost", "prebcpost", "prebdpost"]);
+    expect($.braces(`pre{{a,b}{c,d}}post`)).toEqual(["pre{ac}post", "pre{ad}post", "pre{bc}post", "pre{bd}post"]);
   });
 
   test("nested sibling product mixed with variants", () => {
@@ -41,10 +42,47 @@ describe("$.braces", () => {
   });
 
   test("nested sibling product triple", () => {
-    expect($.braces(`{{a,b}{c,d}{e,f}}`)).toEqual(["ace", "acf", "ade", "adf", "bce", "bcf", "bde", "bdf"]);
+    expect($.braces(`{{a,b}{c,d}{e,f}}`)).toEqual([
+      "{ace}",
+      "{acf}",
+      "{ade}",
+      "{adf}",
+      "{bce}",
+      "{bcf}",
+      "{bde}",
+      "{bdf}",
+    ]);
+  });
+
+  // The nested-expansion parser consumed `}` via the outer loop guard after a
+  // trailing `,`, so `{a,}` inside a nested group yielded one variant instead
+  // of two and the last output slot was left empty.
+  describe("nested with empty variant", () => {
+    test.each([
+      ["{x,a{,}b}", ["x", "ab", "ab"]],
+      ["{x,{a,}}z", ["xz", "az", "z"]],
+      ["{x,{,a}}z", ["xz", "z", "az"]],
+      ["{x,{,}}z", ["xz", "z", "z"]],
+      ["a{b,c{d,}}e", ["abe", "acde", "ace"]],
+      ["a{b,c{,d}}e", ["abe", "ace", "acde"]],
+      ["{x,{a,,b}}", ["x", "a", "", "b"]],
+      ["{x,{a,b,}}", ["x", "a", "b", ""]],
+      ["{{a,},x}", ["a", "", "x"]],
+      ["{{a,}{b,}}", ["ab", "a", "b", ""]],
+      ["p{q,{r,}{s,}}t", ["pqt", "prst", "prt", "pst", "pt"]],
+      // A nested comma-free `{}` previously parsed to 0 variants, which made
+      // expand_nested return early and drop the text after it. It is now 1
+      // empty variant, matching calculate_expanded_amount and expand_flat.
+      ["{x,a{}b}", ["x", "ab"]],
+      ["{a,b{}}c", ["ac", "bc"]],
+      ["{x,{}y}", ["x", "y"]],
+    ])("%s", (pattern, expected) => {
+      expect($.braces(pattern)).toEqual(expected);
+    });
   });
 
   test("very deeply nested", () => {
+    // The innermost `{17}` has no comma, so it is literal (bash 5.2).
     const result = $.braces(`{1,{2,{3,{4,{5,{6,{7,{8,{9,{10,{11,{12,{13,{14,{15,{16,{17}}}}}}}}}}}}}}}}}`);
     expect(result).toEqual([
       "1",
@@ -63,7 +101,7 @@ describe("$.braces", () => {
       "14",
       "15",
       "16",
-      "17",
+      "{17}",
     ]);
   });
 
@@ -141,27 +179,99 @@ describe("$.braces input bounds", () => {
       cmd: [
         bunExe(),
         "-e",
-        `const pattern = Buffer.alloc(50000, "{").toString() + Buffer.alloc(50000, "}").toString();
+        `const deep = Buffer.alloc(100000, "{,").toString() + Buffer.alloc(50000, "}").toString();
 try {
-  Bun.$.braces(pattern);
+  Bun.$.braces(deep);
   console.log("expanded");
 } catch (e) {
   console.log("rejected: " + e.message);
 }
+// The same shape with no commas is one literal word, not a brace expansion.
+const literal = Buffer.alloc(50000, "{").toString() + Buffer.alloc(50000, "}").toString();
+console.log(JSON.stringify(Bun.$.braces(literal)) === JSON.stringify([literal]));
 // A reasonable pattern still expands normally.
 console.log(JSON.stringify(Bun.$.braces("echo {a,b}")));`,
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "rejected: Too many braces in brace expansion
+      true
       ["echo a","echo b"]"
     `);
     expect(exitCode).toBe(0);
+  });
+});
+
+// A `{...}` group with no top-level comma is literal text in bash. The brace
+// lexer used to tokenize it as Open/Close regardless, so a nested `{}` became
+// a zero-variant expansion and the expander dropped the rest of the word.
+describe("comma-less brace group is literal (bash 5.2)", () => {
+  const cases: [string, string[]][] = [
+    // Regressions: the `{}` (and the tail after it) was truncated.
+    ["x{a,{}}y", ["xay", "x{}y"]],
+    ["p{q{},r}s", ["pq{}s", "prs"]],
+    ["{a,b{}}z", ["az", "b{}z"]],
+    ["{a,{}}z", ["az", "{}z"]],
+    ["a{{,}}b", ["a{}b", "a{}b"]],
+    // `{foo}` with no comma is literal at any depth.
+    ["{a,{b}}", ["a", "{b}"]],
+    ["{a{b,c}}", ["{ab}", "{ac}"]],
+    // A comma outside every `{...}` does not make one expand.
+    ["{foo},x", ["{foo},x"]],
+    ["{a},{b}", ["{a},{b}"]],
+    // Controls that were already correct.
+    ["a{b,{c,d}}e", ["abe", "ace", "ade"]],
+    ["{a,b}", ["a", "b"]],
+  ];
+
+  for (const [input, expected] of cases) {
+    test(`$.braces(${JSON.stringify(input)})`, () => {
+      expect($.braces(input)).toEqual(expected);
+    });
+  }
+
+  test("shell: literal {} inside an expanding group keeps the tail", async () => {
+    // Subprocess so the pre-fix `}{,` panic is observed as a non-zero exit;
+    // `echo` is a builtin so argv is observed exactly on every platform.
+    const script = `
+      const { $ } = require("bun");
+      $.nothrow();
+      const cases = ${JSON.stringify([...cases, ["}{,", ["}{,"]]])};
+      for (const [input] of cases) {
+        const { stdout } = await $\`echo \${{ raw: input }}\`.quiet();
+        console.log(JSON.stringify([input, stdout.toString().slice(0, -1)]));
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const lines = stdout
+      .trim()
+      .split("\n")
+      .map(l => JSON.parse(l));
+    expect(lines).toEqual([...cases.map(([input, expected]) => [input, expected.join(" ")]), ["}{,", "}{,"]]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a word with a comma-less brace group and a glob keeps its pattern", async () => {
+    // `{x},*.txt` sets both the brace and glob hints; after the lexer demotes
+    // `{x}` to text the brace-expand count is 0. The original pattern must
+    // still reach the glob walker rather than being taken as the literal word.
+    using dir = tempDir("shell-brace-literal-glob", { "a.txt": "" });
+    const { stderr, exitCode } = await $`echo {x},*.txt`.cwd(String(dir)).nothrow().quiet();
+    expect({ stderr: stderr.toString(), exitCode }).toEqual({
+      stderr: "bun: no matches found: {x},*.txt\n",
+      exitCode: 1,
+    });
   });
 });

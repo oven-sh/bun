@@ -1057,114 +1057,6 @@ pub mod ws2_32 {
         pub s6_addr: [u8; 16],
     }
 
-    /// Winsock error codes — `WSAE*` (`WSABASEERR` = 10000).
-    /// Newtype so `bun_sys::windows::win_sock_error_to_zig_error` can `match` on
-    /// associated consts. Values from `winsock2.h`.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-    pub struct WinsockError(pub u16);
-    impl WinsockError {
-        #[inline]
-        pub const fn raw(self) -> u16 {
-            self.0
-        }
-        pub const WSA_INVALID_HANDLE: Self = Self(6);
-        pub const WSA_NOT_ENOUGH_MEMORY: Self = Self(8);
-        pub const WSA_INVALID_PARAMETER: Self = Self(87);
-        pub const WSA_OPERATION_ABORTED: Self = Self(995);
-        pub const WSA_IO_INCOMPLETE: Self = Self(996);
-        pub const WSA_IO_PENDING: Self = Self(997);
-        pub const WSAEINTR: Self = Self(10004);
-        pub const WSAEBADF: Self = Self(10009);
-        pub const WSAEACCES: Self = Self(10013);
-        pub const WSAEFAULT: Self = Self(10014);
-        pub const WSAEINVAL: Self = Self(10022);
-        pub const WSAEMFILE: Self = Self(10024);
-        pub const WSAEWOULDBLOCK: Self = Self(10035);
-        pub const WSAEINPROGRESS: Self = Self(10036);
-        pub const WSAEALREADY: Self = Self(10037);
-        pub const WSAENOTSOCK: Self = Self(10038);
-        pub const WSAEDESTADDRREQ: Self = Self(10039);
-        pub const WSAEMSGSIZE: Self = Self(10040);
-        pub const WSAEPROTOTYPE: Self = Self(10041);
-        pub const WSAENOPROTOOPT: Self = Self(10042);
-        pub const WSAEPROTONOSUPPORT: Self = Self(10043);
-        pub const WSAESOCKTNOSUPPORT: Self = Self(10044);
-        pub const WSAEOPNOTSUPP: Self = Self(10045);
-        pub const WSAEPFNOSUPPORT: Self = Self(10046);
-        pub const WSAEAFNOSUPPORT: Self = Self(10047);
-        pub const WSAEADDRINUSE: Self = Self(10048);
-        pub const WSAEADDRNOTAVAIL: Self = Self(10049);
-        pub const WSAENETDOWN: Self = Self(10050);
-        pub const WSAENETUNREACH: Self = Self(10051);
-        pub const WSAENETRESET: Self = Self(10052);
-        pub const WSAECONNABORTED: Self = Self(10053);
-        pub const WSAECONNRESET: Self = Self(10054);
-        pub const WSAENOBUFS: Self = Self(10055);
-        pub const WSAEISCONN: Self = Self(10056);
-        pub const WSAENOTCONN: Self = Self(10057);
-        pub const WSAESHUTDOWN: Self = Self(10058);
-        pub const WSAETOOMANYREFS: Self = Self(10059);
-        pub const WSAETIMEDOUT: Self = Self(10060);
-        pub const WSAECONNREFUSED: Self = Self(10061);
-        pub const WSAELOOP: Self = Self(10062);
-        pub const WSAENAMETOOLONG: Self = Self(10063);
-        pub const WSAEHOSTDOWN: Self = Self(10064);
-        pub const WSAEHOSTUNREACH: Self = Self(10065);
-        pub const WSAENOTEMPTY: Self = Self(10066);
-        pub const WSAEPROCLIM: Self = Self(10067);
-        pub const WSAEUSERS: Self = Self(10068);
-        pub const WSAEDQUOT: Self = Self(10069);
-        pub const WSAESTALE: Self = Self(10070);
-        pub const WSAEREMOTE: Self = Self(10071);
-        pub const WSASYSNOTREADY: Self = Self(10091);
-        pub const WSAVERNOTSUPPORTED: Self = Self(10092);
-        pub const WSANOTINITIALISED: Self = Self(10093);
-        pub const WSAEDISCON: Self = Self(10101);
-        pub const WSAENOMORE: Self = Self(10102);
-        pub const WSAECANCELLED: Self = Self(10103);
-        pub const WSAEINVALIDPROCTABLE: Self = Self(10104);
-        pub const WSAEINVALIDPROVIDER: Self = Self(10105);
-        pub const WSAEPROVIDERFAILEDINIT: Self = Self(10106);
-        pub const WSASYSCALLFAILURE: Self = Self(10107);
-        pub const WSASERVICE_NOT_FOUND: Self = Self(10108);
-        pub const WSATYPE_NOT_FOUND: Self = Self(10109);
-        pub const WSA_E_NO_MORE: Self = Self(10110);
-        pub const WSA_E_CANCELLED: Self = Self(10111);
-        pub const WSAEREFUSED: Self = Self(10112);
-        pub const WSAHOST_NOT_FOUND: Self = Self(11001);
-        pub const WSATRY_AGAIN: Self = Self(11002);
-        pub const WSANO_RECOVERY: Self = Self(11003);
-        pub const WSANO_DATA: Self = Self(11004);
-        pub const WSA_QOS_RECEIVERS: Self = Self(11005);
-        pub const WSA_QOS_SENDERS: Self = Self(11006);
-        pub const WSA_QOS_NO_SENDERS: Self = Self(11007);
-        pub const WSA_QOS_NO_RECEIVERS: Self = Self(11008);
-        pub const WSA_QOS_REQUEST_CONFIRMED: Self = Self(11009);
-        pub const WSA_QOS_ADMISSION_FAILURE: Self = Self(11010);
-        pub const WSA_QOS_POLICY_FAILURE: Self = Self(11011);
-        pub const WSA_QOS_BAD_STYLE: Self = Self(11012);
-        pub const WSA_QOS_BAD_OBJECT: Self = Self(11013);
-        pub const WSA_QOS_TRAFFIC_CTRL_ERROR: Self = Self(11014);
-        pub const WSA_QOS_GENERIC_ERROR: Self = Self(11015);
-        pub const WSA_QOS_ESERVICETYPE: Self = Self(11016);
-        pub const WSA_QOS_EFLOWSPEC: Self = Self(11017);
-        pub const WSA_QOS_EPROVSPECBUF: Self = Self(11018);
-        pub const WSA_QOS_EFILTERSTYLE: Self = Self(11019);
-        pub const WSA_QOS_EFILTERTYPE: Self = Self(11020);
-        pub const WSA_QOS_EFILTERCOUNT: Self = Self(11021);
-        pub const WSA_QOS_EOBJLENGTH: Self = Self(11022);
-        pub const WSA_QOS_EFLOWCOUNT: Self = Self(11023);
-        pub const WSA_QOS_EUNKOWNPSOBJ: Self = Self(11024);
-        pub const WSA_QOS_EPOLICYOBJ: Self = Self(11025);
-        pub const WSA_QOS_EFLOWDESC: Self = Self(11026);
-        pub const WSA_QOS_EPSFLOWSPEC: Self = Self(11027);
-        pub const WSA_QOS_EPSFILTERSPEC: Self = Self(11028);
-        pub const WSA_QOS_ESDMODEOBJ: Self = Self(11029);
-        pub const WSA_QOS_ESHAPERATEOBJ: Self = Self(11030);
-        pub const WSA_QOS_RESERVED_PETYPE: Self = Self(11031);
-    }
-
     #[link(name = "ws2_32")]
     unsafe extern "system" {
         /// Raw `WSAGetLastError`. The `Option<SystemErrno>` wrapper lives in `errno`
@@ -1197,9 +1089,9 @@ pub use ws2_32::WSAGetLastError;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Win32Error — a transparent newtype with associated consts so unmapped
-// codes round-trip and `match` on consts works (structural equality). Only the subset referenced by lower-tier
-// crates (errno) is named here; the full 1188-variant table can be extended
-// without ABI change.
+// codes round-trip and `match` on consts works (structural equality). Only
+// the subset referenced by higher-tier crates (notably `bun_errno`) is
+// named here; new MS-ERREF consts can be added without ABI change.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

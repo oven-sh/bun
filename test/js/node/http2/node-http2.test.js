@@ -642,7 +642,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             await doHttp2Request(HTTPS_SERVER, url, { ":path": "/" }, null, TLS_OPTIONS);
             expect("unreachable").toBe(true);
           } catch (err) {
-            expect(err.code).toBe("ERR_HTTP2_ERROR");
+            // Bun.serve only offers "http/1.1" over ALPN, so an h2-only client is
+            // refused during the handshake with a fatal no_application_protocol
+            // alert instead of sending an h2 preface at an HTTP/1.1 server.
+            expect(err.code).toBe("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
           }
         });
         it("works with Duplex", async () => {
@@ -2016,6 +2019,11 @@ it("http2 client receives 'goaway' when the server rejects a stream", async () =
   }
 });
 
+// 10000 is node's count. Bun charges 152 bytes/stream, so its 1 MB cap only
+// trips past ~13800 retained streams: the count is a throughput smoke test here,
+// not the assertion. A debug build runs ~30x slower, so shrink it there.
+const MAX_SESSION_MEMORY_REQUESTS = isDebug ? 2000 : 10000;
+
 it(
   "http2 server with minimal maxSessionMemory handles multiple requests",
   async () => {
@@ -2043,7 +2051,7 @@ it(
         const client = http2.connect(`http://localhost:${port}`);
 
         function next(i) {
-          if (i === 10000) {
+          if (i === MAX_SESSION_MEMORY_REQUESTS) {
             client.close();
             server.close();
             resolve();

@@ -484,6 +484,11 @@ struct us_bun_socket_context_options_t {
     int request_cert;
     unsigned int client_renegotiation_limit;
     unsigned int client_renegotiation_window;
+    /* Server ALPN list in TLS wire format (1-byte length-prefixed names),
+     * copied into the SSL_CTX. NULL or a zero length leaves ALPN
+     * unnegotiated, as if never configured. */
+    const unsigned char *protos;
+    unsigned int protos_len;
 };
 
 enum create_bun_socket_error_t {

@@ -158,6 +158,10 @@ long us_ssl_ctx_live_count(void) {
 static int us_ctx_ex_idx = -1;
 static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
+/* Server-side ALPN list, a `struct us_ctx_alpn_t *`. Per-CTX because SNI
+ * swaps `ssl->ctx` and BoringSSL reads the select callback (and through it
+ * this list) off the post-SNI context. */
+static int us_ctx_alpn_ex_idx = -1;
 /* Marks an SSL_CTX whose verification store holds user-provided CAs (the
  * ca/caFile options or a later addCACert): the per-socket client attach must
  * not replace such a store with the process-shared default roots. */
@@ -218,6 +222,21 @@ static void us_ctx_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   (void)parent; (void)ptr; (void)ad; (void)index; (void)argl; (void)argp;
   atomic_fetch_sub(&ssl_ctx_live, 1);
 }
+
+/* Owned copy of the configured ALPN list, freed with the SSL_CTX. The bytes
+ * must outlive the select callback: SSL_select_next_proto hands back a pointer
+ * INTO this list, which BoringSSL then copies into the ServerHello. */
+struct us_ctx_alpn_t {
+  unsigned int len;
+  unsigned char data[];
+};
+
+static void us_ctx_alpn_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                             int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  us_free(ptr);
+}
+
 static void us_ssl_reneg_state_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                                     int index, long argl, void *argp) {
   (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
@@ -370,6 +389,7 @@ static void us_ex_idx_init(void) {
   us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
   us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
+  us_ctx_alpn_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_alpn_free);
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_sni_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_sni_pending_free);
@@ -889,6 +909,49 @@ static void ssl_ctx_build_fail(SSL_CTX *ctx) {
   SSL_CTX_free(ctx);
 }
 
+/* Server-side ALPN selection against the list configured on this SSL_CTX.
+ * `SSL_get_SSL_CTX` is the post-SNI context, i.e. the one whose callback
+ * BoringSSL just invoked, so each SNI context selects from its own list. */
+static int us_ctx_alpn_select(SSL *ssl, const unsigned char **out,
+                              unsigned char *outlen, const unsigned char *in,
+                              unsigned int inlen, void *arg) {
+  (void)arg;
+  struct us_ctx_alpn_t *alpn =
+      SSL_CTX_get_ex_data(SSL_get_SSL_CTX(ssl), us_ctx_alpn_ex_idx);
+  if (!alpn || !alpn->len) {
+    return SSL_TLSEXT_ERR_NOACK;
+  }
+  unsigned char *selected = NULL;
+  int status = SSL_select_next_proto(&selected, outlen, alpn->data, alpn->len,
+                                     in, inlen);
+  /* RFC 7301 section 3.2: a server supporting none of the protocols the client
+   * offered MUST abort with a fatal no_application_protocol alert. */
+  if (status != OPENSSL_NPN_NEGOTIATED) {
+    return SSL_TLSEXT_ERR_ALERT_FATAL;
+  }
+  *out = selected;
+  return SSL_TLSEXT_ERR_OK;
+}
+
+/* Returns 0 on allocation failure. The ex_data slot owns the copy from the
+ * moment the setter succeeds: its free_func releases it with the SSL_CTX. */
+static int ssl_ctx_set_alpn(SSL_CTX *ctx, const unsigned char *protos,
+                            unsigned int protos_len) {
+  us_ex_idx_ensure();
+  struct us_ctx_alpn_t *alpn = us_malloc(sizeof(*alpn) + protos_len);
+  if (!alpn) {
+    return 0;
+  }
+  alpn->len = protos_len;
+  memcpy(alpn->data, protos, protos_len);
+  if (!SSL_CTX_set_ex_data(ctx, us_ctx_alpn_ex_idx, alpn)) {
+    us_free(alpn);
+    return 0;
+  }
+  SSL_CTX_set_alpn_select_cb(ctx, us_ctx_alpn_select, NULL);
+  return 1;
+}
+
 /* Exported for quic.c (lsquic configures ALPN/transport-params on the SSL_CTX
  * directly) and as the body of us_ssl_ctx_from_options. */
 SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
@@ -1069,6 +1132,13 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
 
   if (options.secure_options) {
     SSL_CTX_set_options(ssl_context, options.secure_options);
+  }
+
+  if (options.protos && options.protos_len) {
+    if (!ssl_ctx_set_alpn(ssl_context, options.protos, options.protos_len)) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
   }
 
   /* Surface resumable sessions through the new-session callback the way Node

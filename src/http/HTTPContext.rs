@@ -1184,6 +1184,21 @@ impl<const SSL: bool> Handler<SSL> {
 
                 return client.first_call::<SSL>(socket);
             } else {
+                // The peer refused our ALPN offer. `error_no` is uSockets' EPROTO
+                // sentinel rather than an X509 verify code, so the table below
+                // would mislabel it as a certificate failure.
+                if handshake_error.is_no_application_protocol() {
+                    client.close_and_fail::<SSL>(
+                        if client.alpn_offer() == AlpnOffer::H2Only {
+                            // The only protocol we offered was h2.
+                            bun_core::err!(HTTP2Unsupported)
+                        } else {
+                            bun_core::err!("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL")
+                        },
+                        socket,
+                    );
+                    return;
+                }
                 // if we are here is because server rejected us, and the error_no is the cause of this
                 // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
                 if client.flags.did_have_handshaking_error {

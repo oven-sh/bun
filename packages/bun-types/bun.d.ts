@@ -4092,6 +4092,16 @@ declare module "bun" {
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
 
+    /**
+     * The protocols a TLS server offers over ALPN, in TLS wire format: a series
+     * of 1-byte length-prefixed names, e.g. `"\x08http/1.1"`. A client that
+     * offers none of them is rejected with a fatal `no_application_protocol`
+     * alert.
+     *
+     * `Bun.serve` defaults to `http/1.1`. `Bun.listen` negotiates nothing unless
+     * this is set. An empty value disables ALPN entirely. A value that is not in
+     * wire format (`"h2"` rather than `"\x02h2"`) throws.
+     */
     ALPNProtocols?: string | BufferSource;
 
     ciphers?: string;

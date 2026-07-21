@@ -849,12 +849,8 @@ pub mod store {
 
         pub fn path(&self) -> &[u8] {
             let mut path_name = bun_url::URL::parse(self.pathlike.slice()).s3_path();
-            // normalize start and ending
-            if bun_core::strings::ends_with(path_name, b"/") {
-                path_name = &path_name[0..path_name.len()];
-            } else if bun_core::strings::ends_with(path_name, b"\\") {
-                path_name = &path_name[0..path_name.len() - 1];
-            }
+            // Trim a leading separator only; a trailing one is part of the key
+            // (`folder/` and `folder` name distinct S3 objects).
             if bun_core::strings::starts_with(path_name, b"/")
                 || bun_core::strings::starts_with(path_name, b"\\")
             {

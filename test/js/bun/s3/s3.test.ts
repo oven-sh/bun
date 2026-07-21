@@ -968,20 +968,19 @@ for (let credentials of allCredentials) {
 
         it("should allow ending with forward slash", async () => {
           const options = { ...s3Options, bucket: S3Bucket };
+          // trailing-slash keys are zero-byte folder markers; the slash is part of the key
           const s3file = s3(`${randomUUID()}/`, options);
-          await s3file.write("Hello Bun!");
-          await s3file.exists();
+          await s3file.write("");
+          expect(await s3file.exists()).toBe(true);
           await s3file.unlink();
-          expect().pass();
         });
 
         it("should allow ending with backslash", async () => {
           const options = { ...s3Options, bucket: S3Bucket };
           const s3file = s3(`${randomUUID()}\\`, options);
-          await s3file.write("Hello Bun!");
-          await s3file.exists();
+          await s3file.write("");
+          expect(await s3file.exists()).toBe(true);
           await s3file.unlink();
-          expect().pass();
         });
       });
 

@@ -362,7 +362,7 @@ impl S3Credentials {
             }
         }
 
-        let path = normalize_name(path);
+        let path = normalize_key(path);
         let bucket = normalize_name(bucket);
 
         // if we allow path.len == 0 it will list the bucket for now we disallow
@@ -1215,6 +1215,12 @@ fn normalize_name(name: &[u8]) -> &[u8] {
         return name;
     }
     strings::trim(name, b"/\\")
+}
+
+/// Trims leading separators only. A trailing separator is part of the key:
+/// `folder/` and `folder` name distinct S3 objects (folder markers).
+fn normalize_key(key: &[u8]) -> &[u8] {
+    strings::trim_left(key, b"/\\")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

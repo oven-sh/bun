@@ -253,11 +253,9 @@ describe("unterminated string literals in large files", () => {
   });
 });
 
-// The runtime transpiler hoists top-level class declarations that are safe to
-// move (to help with certain cyclic-import cases). That move must not jump over
-// an earlier statement that references the class binding, or the temporal dead
-// zone disappears and `bun run` accepts code that the bundled output / Node
-// reject.
+// The runtime transpiler hoists top-level class declarations to help cyclic
+// imports. That hoist must not jump over an earlier reference to the class
+// binding, or the temporal dead zone disappears.
 describe("top-level class declaration TDZ", () => {
   const tdzFixture = (decl: string) => /* js */ `
     const out = [];
@@ -303,9 +301,8 @@ describe("top-level class declaration TDZ", () => {
     expect(exitCode).toBe(0);
   });
 
-  // When nothing before the declaration references the class, the runtime
-  // transpiler still hoists it. Checking the `--target=bun` output asserts
-  // that this change did not disable the cyclic-import workaround wholesale.
+  // Classes with no earlier reference are still hoisted, so the cyclic-import
+  // workaround itself stays in place.
   test.concurrent("still hoisted when no earlier statement references it", async () => {
     using dir = tempDir("runtime-transpiler-class-hoist", {
       "index.mjs": /* js */ `

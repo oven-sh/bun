@@ -1052,15 +1052,9 @@ impl<'a> Parser<'a> {
                     }
 
                     js_ast::StmtData::SClass(class) => {
-                        // Move class statements to the top of the file if we can.
-                        // This automatically resolves some cyclical import issues.
-                        // https://github.com/kysely-org/kysely/issues/412
-                        //
-                        // Skip the move when an earlier top-level statement already
-                        // references the class name. Earlier statements have been
-                        // visited by the time we reach this one, so the symbol's
-                        // `use_count_estimate` reflects those references. Moving the
-                        // declaration above such a use would erase its TDZ.
+                        // Move class statements ahead of other code to help cyclical imports
+                        // (https://github.com/kysely-org/kysely/issues/412). Skip when an
+                        // earlier statement already references the name so its TDZ is kept.
                         let used_before_decl = match class.class.class_name {
                             Some(name) => {
                                 p.symbols.as_slice()[name.ref_.inner_index() as usize]
@@ -1081,13 +1075,9 @@ impl<'a> Parser<'a> {
                         }
                     }
                     js_ast::StmtData::SExportDefault(value) => {
-                        // We move export default statements when we can
-                        // This automatically resolves some cyclical import issues in packages like luxon
-                        // https://github.com/oven-sh/bun/issues/1961
-                        //
-                        // As with `SClass` above, a named default class stays put if
-                        // an earlier statement references the name so its TDZ is
-                        // preserved. Functions are hoisted, so they are unaffected.
+                        // Move export default ahead of other code to help cyclical imports
+                        // (e.g. luxon, #1961). Like `SClass` above, keep a named default
+                        // class in place if an earlier statement already references it.
                         let class_name_ref = match &value.value {
                             js_ast::StmtOrExpr::Stmt(s) => match &s.data {
                                 js_ast::StmtData::SClass(c) => {
@@ -1095,8 +1085,7 @@ impl<'a> Parser<'a> {
                                 }
                                 _ => None,
                             },
-                            // A class *expression* name is only visible inside the
-                            // class body; module-scope TDZ does not apply to it.
+                            // Class-expression names are not visible at module scope.
                             js_ast::StmtOrExpr::Expr(_) => None,
                         };
                         let used_before_decl = match class_name_ref {

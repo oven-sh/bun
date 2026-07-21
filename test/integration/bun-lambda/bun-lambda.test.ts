@@ -3,7 +3,16 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 const runtimePath = path.join(import.meta.dir, "..", "..", "..", "packages", "bun-lambda", "runtime.ts");
-const buildLayerPath = path.join(import.meta.dir, "..", "..", "..", "packages", "bun-lambda", "scripts", "build-layer.ts");
+const buildLayerPath = path.join(
+  import.meta.dir,
+  "..",
+  "..",
+  "..",
+  "packages",
+  "bun-lambda",
+  "scripts",
+  "build-layer.ts",
+);
 
 test("build-layer.ts does not stub process.{stdout,stderr}.getWindowSize (#2081 is fixed)", async () => {
   // When #2081 was open, @oclif/core crashed at import with

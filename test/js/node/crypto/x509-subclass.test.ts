@@ -109,6 +109,8 @@ describe("X509Certificate.prototype accessor enumerability", () => {
     "publicKey",
     "raw",
     "serialNumber",
+    "signatureAlgorithm",
+    "signatureAlgorithmOid",
     "subject",
     "subjectAltName",
     "validFrom",

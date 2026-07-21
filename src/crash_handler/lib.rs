@@ -673,7 +673,7 @@ mod draft {
 
         /// Hardware faults (reason codes '2'..'7'): the only variants with a
         /// `FaultRegisters` context and a self-delimiting reason payload, so
-        /// the v3/v4 register block is appended for them only.
+        /// the v3 register block is appended for them only.
         const fn is_fault(&self) -> bool {
             matches!(
                 self,
@@ -867,8 +867,8 @@ mod draft {
     }
 
     /// GP register snapshot at the fault, lifted from `ucontext_t` / `CONTEXT`
-    /// and encoded into the v3/v4 trace string so the remapper has register
-    /// state when the stack walk is short. Slot order: `NAMES` (bun.report).
+    /// and encoded into the v3 trace string so the remapper has register state
+    /// when the stack walk is short. Slot order: `NAMES` (bun.report).
     #[derive(Clone, Copy)]
     pub struct FaultRegisters {
         /// Faulting instruction pointer (raw, ASLR not removed). Becomes stack
@@ -913,7 +913,7 @@ mod draft {
         }
 
         /// Testing-only: synthesize a fault context so `bun:internal-for-testing`
-        /// can exercise the v3/v4 encoder without a real fault (ASAN owns the
+        /// can exercise the v3 encoder without a real fault (ASAN owns the
         /// SIGSEGV handler under debug builds).
         pub fn for_testing(pc: usize, values: &[u64]) -> Self {
             let mut r = Self::empty(pc, 0);
@@ -2601,11 +2601,21 @@ mod draft {
     ///
     /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
     /// '2' - same as '1' but this build is known to be a canary build
-    /// '3' - '1' plus a trailing register block (StackLine pc, VLQ count,
-    ///       count * 2-VLQ regs) for fault reasons '2'..'7' only; other
-    ///       reasons are byte-identical to '1'.
-    /// '4' - same as '3' but this build is known to be a canary build
-    const VERSION_CHAR: &str = if Environment::IS_CANARY { "4" } else { "3" };
+    /// '3' - '1' plus a build-flags VLQ after the sha (bit0 = canary) and a
+    ///       trailing register block (StackLine pc, VLQ count, count * 2-VLQ
+    ///       regs) for fault reasons '2'..'7' only.
+    const VERSION_CHAR: &str = "3";
+
+    /// Build-variant flags written as one VLQ after the sha (v3+). The canary
+    /// bit replaces the '1'/'2' version-char split so future format bumps use
+    /// one version char instead of two.
+    const BUILD_FLAGS: i32 = {
+        let mut f = 0;
+        if Environment::IS_CANARY {
+            f |= 1 << 0;
+        }
+        f
+    };
 
     // The v1/v2 trace-string
     // format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT` is 9 chars and would
@@ -2836,6 +2846,7 @@ mod draft {
 
         writer.write_all(VERSION_CHAR.as_bytes())?;
         writer.write_all(GIT_SHA.as_bytes())?;
+        writer.write_all(VLQ::encode(BUILD_FLAGS).slice())?;
 
         let packed_features: u64 = bun_analytics::packed_features().bits();
         write_u64_as_two_vlqs(writer, packed_features as usize)?;
@@ -2925,7 +2936,7 @@ mod draft {
             CrashReason::OutOfMemory => writer.write_byte(b'9')?,
         }
 
-        // v3/v4 register block: fault reasons only ('2'..'7', self-delimiting
+        // v3 register block: fault reasons only ('2'..'7', self-delimiting
         // payloads). '0'/'8' read payload to end-of-string so appending here
         // would make them ambiguous; '0'/'1'/'8'/'9' never carry a context.
         if opts.reason.is_fault() {

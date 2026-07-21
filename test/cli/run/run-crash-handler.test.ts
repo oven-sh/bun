@@ -122,7 +122,7 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
   });
 });
 
-describe("trace string v3/v4 (fault pc + register block)", () => {
+describe("trace string v3 (build flags + fault register block)", () => {
   // `noReportEnv` sets BUN_CRASH_REPORT_URL="" so the base URL is empty; the
   // trace string is just `/<version>/<payload>` on its own line.
   function traceStringPayload(stderr: string): string {
@@ -153,7 +153,7 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     return vlq(hi) + vlq(lo);
   }
 
-  test("version char is '3'/'4' and a fault context encodes pc + registers", async () => {
+  test("version char is '3' and a fault context encodes pc + registers", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -170,8 +170,10 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
 
     const payload = traceStringPayload(stderr);
-    // payload = <platform><cmd><version><sha7>... ; version char is at index 2.
-    expect(["3", "4"], `payload=${payload}`).toContain(payload[2]);
+    // payload = <platform><cmd><version><sha7><build_flags vlq>... ; version at index 2.
+    expect(payload[2], `payload=${payload}`).toBe("3");
+    // build_flags VLQ(0|1) is one byte ('A' or 'C') right after the 7-char sha.
+    expect(["A", "C"], `payload=${payload}`).toContain(payload[10]);
 
     const body = payload.replace(/\/view$/, "");
 
@@ -192,7 +194,7 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("non-fault crashes are byte-identical to v1 (no register block)", async () => {
+  test("non-fault crashes have no register block", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -207,10 +209,10 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     void stdout;
 
     const payload = traceStringPayload(stderr);
-    expect(["3", "4"], `payload=${payload}`).toContain(payload[2]);
+    expect(payload[2], `payload=${payload}`).toBe("3");
 
     const body = payload.replace(/\/view$/, "");
-    // Non-fault reasons stay byte-identical to v1 (so '0'/'8' remain
+    // Non-fault reasons have no register block (so '0'/'8' remain
     // end-of-string terminated): body ends at reason '9', no `_A` suffix.
     expect(body.endsWith("A9"), `payload=${body}`).toBe(true);
 

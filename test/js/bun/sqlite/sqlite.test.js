@@ -1389,6 +1389,81 @@ it("issue#6597 with many columns", () => {
   db.close();
 });
 
+describe("empty and duplicate column names", () => {
+  it('an empty alias (AS "") keeps its column and all preceding columns', () => {
+    const db = new Database(":memory:");
+    const stmt = db.prepare('select 1 as a, 2 as "", 3 as b');
+    expect(stmt.get()).toEqual({ a: 1, "": 2, b: 3 });
+    expect(stmt.all()).toEqual([{ a: 1, "": 2, b: 3 }]);
+    expect([...stmt.iterate()]).toEqual([{ a: 1, "": 2, b: 3 }]);
+    expect(stmt.values()).toEqual([[1, 2, 3]]);
+    expect(stmt.columnNames).toEqual(["a", "", "b"]);
+    db.close();
+  });
+
+  it("a trailing empty alias does not wipe the whole row", () => {
+    const db = new Database(":memory:");
+    const stmt = db.prepare('select 10 as first_col, 20 as second_col, 30 as ""');
+    expect(stmt.get()).toEqual({ first_col: 10, second_col: 20, "": 30 });
+    expect(stmt.columnNames).toEqual(["first_col", "second_col", ""]);
+    db.close();
+  });
+
+  it("multiple empty aliases: last value wins on the row object, columnNames keeps all", () => {
+    const db = new Database(":memory:");
+    const stmt = db.prepare('select 1 as "", 2 as x, 3 as ""');
+    expect(stmt.get()).toEqual({ "": 3, x: 2 });
+    expect(stmt.columnNames).toEqual(["", "x", ""]);
+    expect(stmt.values()).toEqual([[1, 2, 3]]);
+    db.close();
+  });
+
+  it("columnNames preserves duplicates and order, matching columnTypes / values()", () => {
+    const db = new Database(":memory:");
+    const stmt = db.prepare("select 1 as a, 2 as b, 3 as a");
+    // row object: last duplicate wins (better-sqlite3/node:sqlite semantics)
+    expect(stmt.get()).toEqual({ a: 3, b: 2 });
+    expect(stmt.columnNames).toEqual(["a", "b", "a"]);
+    expect(stmt.columnNames.length).toBe(stmt.columnTypes.length);
+    expect(stmt.columnNames.length).toBe(stmt.values()[0].length);
+    db.close();
+  });
+
+  it("columnNames preserves all columns on the >64-column slow path with an empty alias", () => {
+    const db = new Database(":memory:");
+    const cols = Array.from({ length: 70 }, (_, i) => `${i} as c${i}`);
+    cols[3] = `999 as ""`;
+    const stmt = db.prepare(`select ${cols.join(", ")}`);
+    const row = stmt.get();
+    const names = stmt.columnNames;
+    expect(names.length).toBe(70);
+    expect(names[0]).toBe("c0");
+    expect(names[3]).toBe("");
+    expect(names[69]).toBe("c69");
+    expect(row.c0).toBe(0);
+    expect(row[""]).toBe(999);
+    expect(row.c69).toBe(69);
+    expect(Object.keys(row).length).toBe(70);
+    db.close();
+  });
+
+  it("columnNames preserves duplicates on the >64-column slow path", () => {
+    const db = new Database(":memory:");
+    const cols = Array.from({ length: 70 }, (_, i) => `${i} as c${i}`);
+    cols[50] = `777 as c0`;
+    const stmt = db.prepare(`select ${cols.join(", ")}`);
+    const names = stmt.columnNames;
+    expect(names.length).toBe(70);
+    expect(names[0]).toBe("c0");
+    expect(names[50]).toBe("c0");
+    const row = stmt.get();
+    expect(row.c0).toBe(777);
+    expect(row.c49).toBe(49);
+    expect(row.c51).toBe(51);
+    db.close();
+  });
+});
+
 it("issue#7147", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");

@@ -789,8 +789,9 @@ impl<'a> Loader<'a> {
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
         // `NODE_ENV=local` would build `.env.local`, which the built-in
-        // `.env.local` slot already loads just before this call.
-        if extra.is_empty() && mode == b"local" {
+        // `.env.local` slot already loads just before this call. The probe and
+        // case-insensitive filesystems both match regardless of case.
+        if extra.is_empty() && mode.eq_ignore_ascii_case(b"local") {
             return Ok(());
         }
 

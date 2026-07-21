@@ -57,14 +57,14 @@ number to bump anywhere. Merging _is_ publishing.
 Eight images, all in `images` in `spec.ts` (`bun run ci:images` prints their
 current names). Linux images are AWS AMIs; Windows are Azure gallery images.
 
-| key | os / arch | role |
-|---|---|---|
-| `linux-aarch64-13-debian` | debian 13, arm64 | **build host** — bakes every cross toolchain (NDK, glibc/musl/windows/macos sysroots) |
-| `linux-x64-13-debian` | debian 13, x64 | test |
-| `linux-{x64,aarch64}-2504-ubuntu` | ubuntu 25.04 | test |
-| `linux-{x64,aarch64}-323-alpine-musl` | alpine 3.23 (musl) | test |
-| `windows-x64-2019` | Windows Server 2019, x64 | build + test |
-| `windows-aarch64-11` | Windows 11, arm64 | build + test |
+| key                                   | os / arch                | role                                                                                  |
+| ------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------- |
+| `linux-aarch64-13-debian`             | debian 13, arm64         | **build host** — bakes every cross toolchain (NDK, glibc/musl/windows/macos sysroots) |
+| `linux-x64-13-debian`                 | debian 13, x64           | test                                                                                  |
+| `linux-{x64,aarch64}-2504-ubuntu`     | ubuntu 25.04             | test                                                                                  |
+| `linux-{x64,aarch64}-323-alpine-musl` | alpine 3.23 (musl)       | test                                                                                  |
+| `windows-x64-2019`                    | Windows Server 2019, x64 | build + test                                                                          |
+| `windows-aarch64-11`                  | Windows 11, arm64        | build + test                                                                          |
 
 ## How do I…
 
@@ -74,18 +74,18 @@ they bake once on your PR and are reused after — you never bump a version or
 force a rebuild by hand. Sanity-check with `bun run ci:images` (dry-runs all
 8 plans in about a second) before pushing.
 
-| Task | Where |
-|---|---|
-| **Bump a dep version** | its `version` in `spec.ts` (shared facts like `llvm`, `nodejs`, `bun` are declared once and fan out) |
-| **Add / remove a package** (apt, apk, Scoop) | the package list in `spec.ts` |
-| **Add a whole new tool** | new `components/<tool>.ts` (how to install) + register it in `components/registry.ts` + add its name to the image's `components` list in `spec.ts` (install order) + its facts on the entry |
-| **Remove a tool** | delete its name from the `components` list in `spec.ts` |
-| **Change a download's mirror / host** | the base-URL fact in `spec.ts` (e.g. `nodejs.distBase`) |
-| **Change a download's URL scheme** | the builder in `artifacts.ts` (code — the *resolved* URL is hashed, so it rebakes correctly) |
-| **Set the work / checkout dir** | `paths.workDir` on that platform's entry (linux and windows are separate facts) |
-| **Set a cache dir, or turn a cache off** | `paths.caches.{prefetch,install}` — a path enables it, `null` disables it |
-| **Turn an optional feature on / off** | its nullable config block on the entry (`null` = off). This is the idiom — Dev Drive would be `devDrive: {...} \| null` if added |
-| **Reorder install steps** | reorder the `components` list — order is data (VS Build Tools before cargo, ci-user before prefetch) |
+| Task                                         | Where                                                                                                                                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Bump a dep version**                       | its `version` in `spec.ts` (shared facts like `llvm`, `nodejs`, `bun` are declared once and fan out)                                                                                        |
+| **Add / remove a package** (apt, apk, Scoop) | the package list in `spec.ts`                                                                                                                                                               |
+| **Add a whole new tool**                     | new `components/<tool>.ts` (how to install) + register it in `components/registry.ts` + add its name to the image's `components` list in `spec.ts` (install order) + its facts on the entry |
+| **Remove a tool**                            | delete its name from the `components` list in `spec.ts`                                                                                                                                     |
+| **Change a download's mirror / host**        | the base-URL fact in `spec.ts` (e.g. `nodejs.distBase`)                                                                                                                                     |
+| **Change a download's URL scheme**           | the builder in `artifacts.ts` (code — the _resolved_ URL is hashed, so it rebakes correctly)                                                                                                |
+| **Set the work / checkout dir**              | `paths.workDir` on that platform's entry (linux and windows are separate facts)                                                                                                             |
+| **Set a cache dir, or turn a cache off**     | `paths.caches.{prefetch,install}` — a path enables it, `null` disables it                                                                                                                   |
+| **Turn an optional feature on / off**        | its nullable config block on the entry (`null` = off). This is the idiom — Dev Drive would be `devDrive: {...} \| null` if added                                                            |
+| **Reorder install steps**                    | reorder the `components` list — order is data (VS Build Tools before cargo, ci-user before prefetch)                                                                                        |
 
 **Review what a bake will do** without touching anything:
 

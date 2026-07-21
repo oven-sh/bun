@@ -1822,7 +1822,8 @@ mod draft {
         unsafe {
             let read = |off: usize| ctx.cast::<u8>().add(off).cast::<u64>().read_unaligned();
             // winnt.h _CONTEXT (x64): Rax at 0x78, then Rcx Rdx Rbx Rsp Rbp Rsi
-            // Rdi R8..R15 Rip, each DWORD64.
+            // Rdi R8..R15 Rip, each DWORD64. learn.microsoft.com ns-winnt-context;
+            // offsets are kernel/user ABI and cannot change.
             let rax = read(0x78);
             let rcx = read(0x80);
             let rdx = read(0x88);
@@ -1876,7 +1877,9 @@ mod draft {
         // SAFETY: the kernel provides a valid CONTEXT; offsets per winnt.h.
         unsafe {
             let read = |off: usize| ctx.cast::<u8>().add(off).cast::<u64>().read_unaligned();
-            // winnt.h _ARM64_NT_CONTEXT: X[31] at 0x8, Sp at 0x100, Pc at 0x108.
+            // winnt.h _ARM64_NT_CONTEXT: X[31] at 0x8, Sp at 0x100, Pc at 0x108
+            // (offsets are comment-annotated in the SDK header itself).
+            // learn.microsoft.com ns-winnt-arm64_nt_context.
             let pc = read(0x108);
             let fp = read(0x8 + 29 * 8);
             let mut r = FaultRegisters::empty(pc as usize, fp as usize);

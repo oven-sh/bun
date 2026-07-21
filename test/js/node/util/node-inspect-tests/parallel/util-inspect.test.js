@@ -1847,11 +1847,10 @@ test("no assertion failures 3", () => {
   ].forEach(([Class, message], i) => {
     const foo = new Class(message);
     const extra = Class.name.includes("Error") ? "" : ` [${foo.name}]`;
-    // TODO: Bun messes with `Error.stack` and this causes this to fail
-    // assert(
-    //   util.inspect(foo).startsWith(`${Class.name}${extra}${message ? `: ${message}` : "\n"}`),
-    //   util.inspect(foo) + "\n...did not start with: " + `${Class.name}${extra}${message ? `: ${message}` : "\n"}`,
-    // );
+    assert(
+      util.inspect(foo).startsWith(`${Class.name}${extra}${message ? `: ${message}` : "\n"}`),
+      util.inspect(foo) + "\n...did not start with: " + `${Class.name}${extra}${message ? `: ${message}` : "\n"}`,
+    );
     Object.defineProperty(foo, Symbol.toStringTag, {
       value: "WOW",
       writable: true,

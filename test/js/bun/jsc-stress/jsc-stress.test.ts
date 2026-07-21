@@ -1,49 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import fs from "fs";
 import { bunEnv, bunExe, isDebug } from "harness";
 import path from "path";
+import { parseJSCFlags } from "./jsc-flags";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 const wasmFixturesDir = path.join(fixturesDir, "wasm");
-
-/**
- * Parse JSC option flags from //@ directives at the top of a test file.
- * Converts --flag=value to BUN_JSC_flag=value environment variables.
- *
- * Supported directives:
- *   //@ runDefault("--flag=value", ...)
- *   //@ runFTLNoCJIT("--flag=value", ...)
- *   //@ runDefaultWasm("--flag=value", ...)
- */
-function parseJSCFlags(filePath: string): Record<string, string> {
-  const content = fs.readFileSync(filePath, "utf-8");
-  const env: Record<string, string> = {};
-
-  for (const line of content.split("\n")) {
-    if (line === "// @bun" || line.trim() === "") continue;
-    if (!line.startsWith("//@")) break;
-
-    const match = line.match(/^\/\/@ (runDefault|runFTLNoCJIT|runDefaultWasm)\((.*)\)/);
-    if (!match) continue;
-
-    const [, mode, argsStr] = match;
-
-    // runFTLNoCJIT implies these flags (from WebKit's run-jsc-stress-tests)
-    if (mode === "runFTLNoCJIT") {
-      env["BUN_JSC_useFTLJIT"] = "true";
-      env["BUN_JSC_useConcurrentJIT"] = "false";
-    }
-
-    // Parse explicit flags: "--key=value"
-    const flagPattern = /"--(\w+)=([^"]+)"/g;
-    let flagMatch;
-    while ((flagMatch = flagPattern.exec(argsStr)) !== null) {
-      env[`BUN_JSC_${flagMatch[1]}`] = flagMatch[2];
-    }
-  }
-
-  return env;
-}
 
 const jsFixtures = [
   // FTL - Math intrinsics

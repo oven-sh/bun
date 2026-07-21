@@ -328,119 +328,32 @@ pub(crate) fn get_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 // Alias for naming consistency.
 pub use get_cwd_u8 as get_cwd;
 
-/// Based on Node v21.6.1 path.posix.basename:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309
-pub fn basename_posix_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
-    // validateString of `path` is performed in pub fn basename.
-    let len = path.len();
-    // Exit early for easier number type use.
-    if len == 0 {
-        return &[];
-    }
-    let mut start: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash: bool = true;
-
-    let _suffix: &[T] = suffix.unwrap_or(&[]);
-    let _suffix_len = _suffix.len();
-    if suffix.is_some() && _suffix_len > 0 && _suffix_len <= len {
-        if _suffix == path {
-            return &[];
-        }
-        // We use an optional value instead of -1, as in Node code, for easier number type use.
-        let mut ext_idx: Option<usize> = Some(_suffix_len - 1);
-        // We use an optional value instead of -1, as in Node code, for easier number type use.
-        let mut first_non_slash_end: Option<usize> = None;
-        let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-        while i_i64 >= i64::try_from(start).expect("int cast") {
-            let i = usize::try_from(i_i64).expect("int cast");
-            let byte = path[i];
-            if byte == T::from_u8(CHAR_FORWARD_SLASH) {
-                // If we reached a path separator that was not part of a set of path
-                // separators at the end of the string, stop now
-                if !matched_slash {
-                    start = i + 1;
-                    break;
-                }
-            } else {
-                if first_non_slash_end.is_none() {
-                    // We saw the first non-path separator, remember this index in case
-                    // we need it if the extension ends up not matching
-                    matched_slash = false;
-                    first_non_slash_end = Some(i + 1);
-                }
-                if let Some(_ext_ix) = ext_idx {
-                    // Try to match the explicit extension
-                    if byte == _suffix[_ext_ix] {
-                        if _ext_ix == 0 {
-                            // We matched the extension, so mark this as the end of our path
-                            // component
-                            end = Some(i);
-                            ext_idx = None;
-                        } else {
-                            ext_idx = Some(_ext_ix - 1);
-                        }
-                    } else {
-                        // Extension does not match, so our result is the entire path
-                        // component
-                        ext_idx = None;
-                        end = first_non_slash_end;
-                    }
-                }
-            }
-            i_i64 -= 1;
-        }
-
-        if let Some(_end) = end {
-            if start == _end {
-                return &path[start..first_non_slash_end.unwrap()];
-            } else {
-                return &path[start.._end];
-            }
-        }
-        return &path[start..len];
-    }
-
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-    while i_i64 > -1 {
-        let i = usize::try_from(i_i64).expect("int cast");
-        let byte = path[i];
-        if byte == T::from_u8(CHAR_FORWARD_SLASH) {
-            // If we reached a path separator that was not part of a set of path
-            // separators at the end of the string, stop now
-            if !matched_slash {
-                start = i + 1;
-                break;
-            }
-        } else if end.is_none() {
-            // We saw the first non-path separator, mark this as the end of our
-            // path component
-            matched_slash = false;
-            end = Some(i + 1);
-        }
-        i_i64 -= 1;
-    }
-
-    if let Some(_end) = end {
-        &path[start.._end]
+/// `path.win32` treats both `/` and `\` as separators; `path.posix` only `/`.
+/// `IS_WINDOWS` is const so the check monomorphizes to the exact comparison
+/// the split posix/win32 functions used.
+#[inline(always)]
+fn is_sep_t<T: PathCharCwd, const IS_WINDOWS: bool>(byte: T) -> bool {
+    if IS_WINDOWS {
+        is_sep_windows_t(byte)
     } else {
-        &[]
+        byte == T::from_u8(CHAR_FORWARD_SLASH)
     }
 }
 
-/// Based on Node v21.6.1 path.win32.basename:
+/// Based on Node v21.6.1 path.posix.basename / path.win32.basename, which
+/// differ only in the separator set and the win32 drive-letter prologue:
+/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L753
-pub fn basename_windows_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
+fn basename_t<'a, T: PathCharCwd, const IS_WINDOWS: bool>(
+    path: &'a [T],
+    suffix: Option<&[T]>,
+) -> &'a [T] {
     // validateString of `path` is performed in pub fn basename.
     let len = path.len();
     // Exit early for easier number type use.
     if len == 0 {
         return &[];
     }
-
-    let is_sep_t = is_sep_windows_t::<T>;
-
     let mut start: usize = 0;
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     let mut end: Option<usize> = None;
@@ -449,7 +362,11 @@ pub fn basename_windows_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]
     // Check for a drive letter prefix so as not to mistake the following
     // path separator as an extra separator at the end of the path that can be
     // disregarded
-    if len >= 2 && is_windows_device_root_t(path[0]) && path[1] == T::from_u8(CHAR_COLON) {
+    if IS_WINDOWS
+        && len >= 2
+        && is_windows_device_root_t(path[0])
+        && path[1] == T::from_u8(CHAR_COLON)
+    {
         start = 2;
     }
 
@@ -467,7 +384,7 @@ pub fn basename_windows_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]
         while i_i64 >= i64::try_from(start).expect("int cast") {
             let i = usize::try_from(i_i64).expect("int cast");
             let byte = path[i];
-            if is_sep_t(byte) {
+            if is_sep_t::<T, IS_WINDOWS>(byte) {
                 // If we reached a path separator that was not part of a set of path
                 // separators at the end of the string, stop now
                 if !matched_slash {
@@ -517,12 +434,16 @@ pub fn basename_windows_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]
     while i_i64 >= i64::try_from(start).expect("int cast") {
         let i = usize::try_from(i_i64).expect("int cast");
         let byte = path[i];
-        if is_sep_t(byte) {
+        if is_sep_t::<T, IS_WINDOWS>(byte) {
+            // If we reached a path separator that was not part of a set of path
+            // separators at the end of the string, stop now
             if !matched_slash {
                 start = i + 1;
                 break;
             }
         } else if end.is_none() {
+            // We saw the first non-path separator, mark this as the end of our
+            // path component
             matched_slash = false;
             end = Some(i + 1);
         }
@@ -534,6 +455,14 @@ pub fn basename_windows_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]
     } else {
         &[]
     }
+}
+
+pub fn basename_posix_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
+    basename_t::<T, false>(path, suffix)
+}
+
+pub fn basename_windows_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
+    basename_t::<T, true>(path, suffix)
 }
 
 pub fn basename_posix_js_t<T: PathCharCwd>(
@@ -812,116 +741,39 @@ pub(crate) fn dirname(
     dirname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
 
-/// Based on Node v21.6.1 path.posix.extname:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1388
-pub(crate) fn extname_posix_t<T: PathCharCwd>(path: &[T]) -> &[T] {
-    // validateString of `path` is performed in pub fn extname.
-    let len = path.len();
-    // Exit early for easier number type use.
-    if len == 0 {
-        return &[];
-    }
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut start_dot: Option<usize> = None;
-    let mut start_part: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash: bool = true;
-    // Track the state of characters (if any) we see before our first dot and
-    // after any path separator we find
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut pre_dot_state: Option<usize> = Some(0);
-
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-    while i_i64 > -1 {
-        let i = usize::try_from(i_i64).expect("int cast");
-        let byte = path[i];
-        if byte == T::from_u8(CHAR_FORWARD_SLASH) {
-            // If we reached a path separator that was not part of a set of path
-            // separators at the end of the string, stop now
-            if !matched_slash {
-                start_part = i + 1;
-                break;
-            }
-            i_i64 -= 1;
-            continue;
-        }
-
-        if end.is_none() {
-            // We saw the first non-path separator, mark this as the end of our
-            // extension
-            matched_slash = false;
-            end = Some(i + 1);
-        }
-
-        if byte == T::from_u8(CHAR_DOT) {
-            // If this is our first dot, mark it as the start of our extension
-            if start_dot.is_none() {
-                start_dot = Some(i);
-            } else if pre_dot_state.is_some() && pre_dot_state.unwrap() != 1 {
-                pre_dot_state = Some(1);
-            }
-        } else if start_dot.is_some() {
-            // We saw a non-dot and non-path separator before our dot, so we should
-            // have a good chance at having a non-empty extension
-            pre_dot_state = None;
-        }
-        i_i64 -= 1;
-    }
-
-    let _end = end.unwrap_or(0);
-    let _pre_dot_state = pre_dot_state.unwrap_or(0);
-    let _start_dot = start_dot.unwrap_or(0);
-    if start_dot.is_none()
-        || end.is_none()
-        // We saw a non-dot character immediately before the dot
-        || (pre_dot_state.is_some() && _pre_dot_state == 0)
-        // The (right-most) trimmed path component is exactly '..'
-        || (_pre_dot_state == 1 && _start_dot == _end - 1 && _start_dot == start_part + 1)
-    {
-        return &[];
-    }
-
-    &path[_start_dot.._end]
+/// Result of [`scan_last_component_t`].
+struct LastComponentScan {
+    // We use optional values instead of -1, as in Node code, for easier number type use.
+    start_dot: Option<usize>,
+    start_part: usize,
+    end: Option<usize>,
+    pre_dot_state: Option<usize>,
 }
 
-/// Based on Node v21.6.1 path.win32.extname:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L840
-pub(crate) fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
-    // validateString of `path` is performed in pub fn extname.
-    let len = path.len();
-    // Exit early for easier number type use.
-    if len == 0 {
-        return &[];
-    }
-    let mut start: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
+/// Reverse scan over the last path component, tracking dot positions. Node
+/// repeats this loop verbatim in both the posix and win32 variants of
+/// `extname` and `parse`; all four call sites share this copy.
+///
+/// `path` must be non-empty; indices below `lower_bound` are not scanned.
+fn scan_last_component_t<T: PathCharCwd, const IS_WINDOWS: bool>(
+    path: &[T],
+    lower_bound: usize,
+    initial_start_part: usize,
+) -> LastComponentScan {
     let mut start_dot: Option<usize> = None;
-    let mut start_part: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
+    let mut start_part = initial_start_part;
     let mut end: Option<usize> = None;
-    let mut matched_slash: bool = true;
+    let mut matched_slash = true;
+
     // Track the state of characters (if any) we see before our first dot and
     // after any path separator we find
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
     let mut pre_dot_state: Option<usize> = Some(0);
 
-    // Check for a drive letter prefix so as not to mistake the following
-    // path separator as an extra separator at the end of the path that can be
-    // disregarded
-
-    if len >= 2 && path[1] == T::from_u8(CHAR_COLON) && is_windows_device_root_t(path[0]) {
-        start = 2;
-        start_part = start;
-    }
-
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-    while i_i64 >= i64::try_from(start).expect("int cast") {
+    let mut i_i64 = i64::try_from(path.len() - 1).expect("int cast");
+    while i_i64 >= i64::try_from(lower_bound).expect("int cast") {
         let i = usize::try_from(i_i64).expect("int cast");
         let byte = path[i];
-        if is_sep_windows_t(byte) {
+        if is_sep_t::<T, IS_WINDOWS>(byte) {
             // If we reached a path separator that was not part of a set of path
             // separators at the end of the string, stop now
             if !matched_slash {
@@ -954,6 +806,45 @@ pub(crate) fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
         i_i64 -= 1;
     }
 
+    LastComponentScan {
+        start_dot,
+        start_part,
+        end,
+        pre_dot_state,
+    }
+}
+
+/// Based on Node v21.6.1 path.posix.extname / path.win32.extname, which differ
+/// only in the separator set and the win32 drive-letter prologue:
+/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1388
+/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L840
+fn extname_t<T: PathCharCwd, const IS_WINDOWS: bool>(path: &[T]) -> &[T] {
+    // validateString of `path` is performed in pub fn extname.
+    let len = path.len();
+    // Exit early for easier number type use.
+    if len == 0 {
+        return &[];
+    }
+    let mut start: usize = 0;
+
+    // Check for a drive letter prefix so as not to mistake the following
+    // path separator as an extra separator at the end of the path that can be
+    // disregarded
+    if IS_WINDOWS
+        && len >= 2
+        && path[1] == T::from_u8(CHAR_COLON)
+        && is_windows_device_root_t(path[0])
+    {
+        start = 2;
+    }
+
+    let LastComponentScan {
+        start_dot,
+        start_part,
+        end,
+        pre_dot_state,
+    } = scan_last_component_t::<T, IS_WINDOWS>(path, start, start);
+
     let _end = end.unwrap_or(0);
     let _pre_dot_state = pre_dot_state.unwrap_or(0);
     let _start_dot = start_dot.unwrap_or(0);
@@ -968,6 +859,14 @@ pub(crate) fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     }
 
     &path[_start_dot.._end]
+}
+
+pub(crate) fn extname_posix_t<T: PathCharCwd>(path: &[T]) -> &[T] {
+    extname_t::<T, false>(path)
+}
+
+pub(crate) fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
+    extname_t::<T, true>(path)
 }
 
 pub use bun_paths::is_sep_posix_t;
@@ -2046,56 +1945,13 @@ pub fn parse_posix_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
         start = 1;
     }
 
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut start_dot: Option<usize> = None;
-    let mut start_part: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash = true;
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-
-    // Track the state of characters (if any) we see before our first dot and
-    // after any path separator we find
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut pre_dot_state: Option<usize> = Some(0);
-
     // Get non-dir info
-    while i_i64 >= i64::try_from(start).expect("int cast") {
-        let i = usize::try_from(i_i64).expect("int cast");
-        let byte = path[i];
-        if byte == T::from_u8(CHAR_FORWARD_SLASH) {
-            // If we reached a path separator that was not part of a set of path
-            // separators at the end of the string, stop now
-            if !matched_slash {
-                start_part = i + 1;
-                break;
-            }
-            i_i64 -= 1;
-            continue;
-        }
-        if end.is_none() {
-            // We saw the first non-path separator, mark this as the end of our
-            // extension
-            matched_slash = false;
-            end = Some(i + 1);
-        }
-        if byte == T::from_u8(CHAR_DOT) {
-            // If this is our first dot, mark it as the start of our extension
-            if start_dot.is_none() {
-                start_dot = Some(i);
-            } else if let Some(_pre_dot_state) = pre_dot_state {
-                if _pre_dot_state != 1 {
-                    pre_dot_state = Some(1);
-                }
-            }
-        } else if start_dot.is_some() {
-            // We saw a non-dot and non-path separator before our dot, so we should
-            // have a good chance at having a non-empty extension
-            pre_dot_state = None;
-        }
-        i_i64 -= 1;
-    }
+    let LastComponentScan {
+        start_dot,
+        start_part,
+        end,
+        pre_dot_state,
+    } = scan_last_component_t::<T, false>(path, start, 0);
 
     if let Some(_end) = end {
         let _pre_dot_state = pre_dot_state.unwrap_or(0);
@@ -2160,7 +2016,7 @@ pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
     let is_sep_t = is_sep_windows_t::<T>;
 
     let mut root_end: usize = 0;
-    let mut byte = path[0];
+    let byte = path[0];
 
     if len == 1 {
         if is_sep_t(byte) {
@@ -2255,56 +2111,13 @@ pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
         root = &path[0..root_end];
     }
 
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut start_dot: Option<usize> = None;
-    let mut start_part = root_end;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash = true;
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-
-    // Track the state of characters (if any) we see before our first dot and
-    // after any path separator we find
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut pre_dot_state: Option<usize> = Some(0);
-
     // Get non-dir info
-    while i_i64 >= i64::try_from(root_end).expect("int cast") {
-        let i = usize::try_from(i_i64).expect("int cast");
-        byte = path[i];
-        if is_sep_t(byte) {
-            // If we reached a path separator that was not part of a set of path
-            // separators at the end of the string, stop now
-            if !matched_slash {
-                start_part = i + 1;
-                break;
-            }
-            i_i64 -= 1;
-            continue;
-        }
-        if end.is_none() {
-            // We saw the first non-path separator, mark this as the end of our
-            // extension
-            matched_slash = false;
-            end = Some(i + 1);
-        }
-        if byte == T::from_u8(CHAR_DOT) {
-            // If this is our first dot, mark it as the start of our extension
-            if start_dot.is_none() {
-                start_dot = Some(i);
-            } else if let Some(_pre_dot_state) = pre_dot_state {
-                if _pre_dot_state != 1 {
-                    pre_dot_state = Some(1);
-                }
-            }
-        } else if start_dot.is_some() {
-            // We saw a non-dot and non-path separator before our dot, so we should
-            // have a good chance at having a non-empty extension
-            pre_dot_state = None;
-        }
-        i_i64 -= 1;
-    }
+    let LastComponentScan {
+        start_dot,
+        start_part,
+        end,
+        pre_dot_state,
+    } = scan_last_component_t::<T, true>(path, root_end, root_end);
 
     if let Some(_end) = end {
         let _pre_dot_state = pre_dot_state.unwrap_or(0);

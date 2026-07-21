@@ -2917,32 +2917,8 @@ pub mod args {
             // `Drop for PathLike` covers every
             // error return below (including `validate_integer`).
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let uid: UidT = 'brk: {
-                let Some(uid_value) = arguments.next() else {
-                    return Err(ctx.throw_invalid_arguments(format_args!("uid is required")));
-                };
-                arguments.eat();
-                break 'brk wrap_to::<UidT>(validators::validate_integer(
-                    ctx,
-                    uid_value,
-                    "uid",
-                    Some(-1),
-                    Some(u32::MAX as i64),
-                )?);
-            };
-            let gid: GidT = 'brk: {
-                let Some(gid_value) = arguments.next() else {
-                    return Err(ctx.throw_invalid_arguments(format_args!("gid is required")));
-                };
-                arguments.eat();
-                break 'brk wrap_to::<GidT>(validators::validate_integer(
-                    ctx,
-                    gid_value,
-                    "gid",
-                    Some(-1),
-                    Some(u32::MAX as i64),
-                )?);
-            };
+            let uid = id_from_js(ctx, arguments, "uid")?;
+            let gid = id_from_js(ctx, arguments, "gid")?;
             Ok(Chown { path, uid, gid })
         }
     }
@@ -2956,32 +2932,8 @@ pub mod args {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fchown> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let uid: UidT = 'brk: {
-                let Some(uid_value) = arguments.next() else {
-                    return Err(ctx.throw_invalid_arguments(format_args!("uid is required")));
-                };
-                arguments.eat();
-                break 'brk wrap_to::<UidT>(validators::validate_integer(
-                    ctx,
-                    uid_value,
-                    "uid",
-                    Some(-1),
-                    Some(u32::MAX as i64),
-                )?);
-            };
-            let gid: GidT = 'brk: {
-                let Some(gid_value) = arguments.next() else {
-                    return Err(ctx.throw_invalid_arguments(format_args!("gid is required")));
-                };
-                arguments.eat();
-                break 'brk wrap_to::<GidT>(validators::validate_integer(
-                    ctx,
-                    gid_value,
-                    "gid",
-                    Some(-1),
-                    Some(u32::MAX as i64),
-                )?);
-            };
+            let uid = id_from_js(ctx, arguments, "uid")?;
+            let gid = id_from_js(ctx, arguments, "gid")?;
             Ok(Fchown { fd, uid, gid })
         }
     }
@@ -3000,7 +2952,57 @@ pub mod args {
         T::from(in_ as u8)
     }
 
+    /// Reads a required `uid`/`gid` argument, validated to `[-1, u32::MAX]`.
+    /// `uid_t` and `gid_t` are the same primitive on every supported platform
+    /// (`u32` on POSIX, libuv's `unsigned char` on Windows), so one reader
+    /// serves both.
+    fn id_from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        name: &str,
+    ) -> JsResult<UidT> {
+        let Some(value) = arguments.next() else {
+            return Err(ctx.throw_invalid_arguments(format_args!("{name} is required")));
+        };
+        arguments.eat();
+        Ok(wrap_to(validators::validate_integer(
+            ctx,
+            value,
+            name,
+            Some(-1),
+            Some(u32::MAX as i64),
+        )?))
+    }
+
     pub type LChown = Chown;
+
+    fn time_arg_from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        name: &str,
+    ) -> JsResult<TimeLike> {
+        let time = node::time_like_from_js(
+            ctx,
+            arguments
+                .next()
+                .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("{name} is required")))?,
+        )?
+        .ok_or_else(|| {
+            ctx.throw_invalid_arguments(format_args!("{name} must be a number or a Date"))
+        })?;
+        arguments.eat();
+        Ok(time)
+    }
+
+    /// Parse the `atime, mtime` argument pair shared by `utimes`/`lutimes`/`futimes`.
+    fn times_from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<(TimeLike, TimeLike)> {
+        let atime = time_arg_from_js(ctx, arguments, "atime")?;
+        let mtime = time_arg_from_js(ctx, arguments, "mtime")?;
+        Ok((atime, mtime))
+    }
 
     pub struct Lutimes {
         pub path: PathLike,
@@ -3011,28 +3013,9 @@ pub mod args {
     impl Lutimes {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Lutimes> {
             // `Drop for PathLike` covers the
-            // `time_like_from_js` throws below.
+            // `times_from_js` throws below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let atime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("atime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date"))
-            })?;
-            arguments.eat();
-            let mtime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("mtime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("mtime must be a number or a Date"))
-            })?;
-            arguments.eat();
+            let (atime, mtime) = times_from_js(ctx, arguments)?;
             Ok(Lutimes { path, atime, mtime })
         }
     }
@@ -3677,26 +3660,7 @@ pub mod args {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Futimes> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let atime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("atime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date"))
-            })?;
-            arguments.eat();
-            let mtime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("mtime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("mtime must be a number or a Date"))
-            })?;
-            arguments.eat();
+            let (atime, mtime) = times_from_js(ctx, arguments)?;
             Ok(Futimes { fd, atime, mtime })
         }
     }
@@ -4849,6 +4813,18 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
     }
 }
 
+/// How `copy_file_range_with_fallbacks` handles EINTR from copy_file_range(2),
+/// preserving the historical split between its two callers: `fs.copyFile`
+/// retries while `fs.cp` surfaces it (matching the original implementations).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EintrPolicy {
+    /// Retry the syscall (`fs.copyFile`).
+    Retry,
+    /// Surface EINTR to the caller as an error (`fs.cp`).
+    Surface,
+}
+
 impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
         // The `bun_sys::access` Windows
@@ -5072,6 +5048,105 @@ impl NodeFS {
                 break;
             }
         }
+        Ok(())
+    }
+
+    /// Shared Linux copy loop for `fs.copyFile` and `fs.cp` once both fds are
+    /// open and the ioctl_ficlone fast path has been ruled out: drains
+    /// `src_fd` into `dest_fd` via copy_file_range(2) (Linux 5.3+; not
+    /// supported in gVisor), falling back to sendfile/read-write when the
+    /// syscall is unavailable or the filesystem rejects it. Takes ownership of
+    /// `dest_fd`: on every exit path it is ftruncated to the bytes written,
+    /// fchmod'd to `st_mode`, and closed.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn copy_file_range_with_fallbacks(
+        src: &ZStr,
+        dest: &ZStr,
+        src_fd: FD,
+        dest_fd: FD,
+        st_mode: Mode,
+        mut size: usize,
+        eintr_policy: EintrPolicy,
+    ) -> Maybe<ret::CopyFile> {
+        // `wrote` is read by the deferred-close scopeguard *after* the copy
+        // loop below mutates it. `Cell<u64>` lets the guard borrow by
+        // reference while the loop `get`s/`set`s, so the value observed at
+        // scope-exit time is the final one.
+        let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
+        let _close_dest = scopeguard::guard((dest_fd, st_mode, &wrote), |(fd, m, wrote)| {
+            // ftruncate/fchmod take only ints — no memory-safety preconditions;
+            // route through the existing `bun_sys` safe wrappers.
+            let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
+            let _ = Syscall::fchmod(fd, m);
+            fd.close();
+        });
+
+        let mut off_in_copy: i64 = 0;
+        let mut off_out_copy: i64 = 0;
+
+        if !sys::copy_file::can_use_copy_file_range_syscall() {
+            let mut w = wrote.get();
+            let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
+                src, dest, src_fd, dest_fd, size, &mut w,
+            );
+            wrote.set(w);
+            return r;
+        }
+
+        // size == 0 means the source stat'd as empty (e.g. procfs): copy
+        // page-sized chunks until EOF instead of trusting the stat size.
+        let until_eof = size == 0;
+        loop {
+            let chunk = if until_eof { sys::page_size() } else { size };
+            // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
+            let written = unsafe {
+                sys::linux::copy_file_range(
+                    src_fd.native(),
+                    &raw mut off_in_copy,
+                    dest_fd.native(),
+                    &raw mut off_out_copy,
+                    chunk,
+                    0,
+                )
+            };
+            if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
+                written,
+                sys::Tag::copy_file_range,
+                dest.as_bytes(),
+            ) {
+                match err.get_errno() {
+                    E::EINTR if eintr_policy == EintrPolicy::Retry => continue,
+                    // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                    // XDEV: cross-device copy not supported
+                    // NOSYS: syscall not available
+                    // OPNOTSUPP: filesystem doesn't support this operation
+                    E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
+                        if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
+                            sys::copy_file::disable_copy_file_range_syscall();
+                        }
+                        let mut w = wrote.get();
+                        let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
+                            src, dest, src_fd, dest_fd, size, &mut w,
+                        );
+                        wrote.set(w);
+                        return r;
+                    }
+                    _ => return err,
+                }
+            }
+            // wrote zero bytes means EOF
+            if written == 0 {
+                break;
+            }
+            wrote.set(wrote.get().saturating_add(written as u64));
+            if !until_eof {
+                size = size.saturating_sub(written as usize);
+                if size == 0 {
+                    break;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -5327,20 +5402,13 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            // VERIFY-FIX(round1): `wrote` is read by the deferred-close scopeguard
-            // *after* the copy loops below mutate it. As a `usize` captured by-copy
-            // the guard always saw 0, and the `&mut (wrote as u64)` call sites
-            // wrote into discarded temporaries. `Cell<u64>` lets the guard borrow
-            // by reference while the loops `get`/`set`, so the value observed at
-            // scope-exit time is the final one.
-            let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
 
             let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
 
-            let mut size: usize = stat_.st_size.max(0) as usize;
+            let size: usize = stat_.st_size.max(0) as usize;
 
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if args.mode.is_force_clone() {
@@ -5372,109 +5440,15 @@ impl NodeFS {
                 sys::copy_file::disable_ioctl_ficlone();
             }
 
-            let _close_dest =
-                scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                    // ftruncate/fchmod take only ints — no memory-safety preconditions; route
-                    // through the existing `bun_sys` safe wrappers (same as lines above).
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m as u32);
-                    fd.close();
-                });
-
-            let mut off_in_copy: i64 = 0;
-            let mut off_out_copy: i64 = 0;
-
-            if !sys::copy_file::can_use_copy_file_range_syscall() {
-                let mut w = wrote.get();
-                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
-                    src, dest, src_fd, dest_fd, size, &mut w,
-                );
-                wrote.set(w);
-                return r;
-            }
-
-            if size == 0 {
-                // copy until EOF
-                loop {
-                    // Linux Kernel 5.3 or later
-                    // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            sys::page_size(),
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest,
-                    ) {
-                        match err.get_errno() {
-                            E::EINTR => continue,
-                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
-                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
-                                    sys::copy_file::disable_copy_file_range_syscall();
-                                }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
-                            }
-                            _ => return err,
-                        }
-                    }
-                    // wrote zero bytes means EOF
-                    if written == 0 {
-                        break;
-                    }
-                    wrote.set(wrote.get().saturating_add(written as u64));
-                }
-            } else {
-                while size > 0 {
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            size,
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest,
-                    ) {
-                        match err.get_errno() {
-                            E::EINTR => continue,
-                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
-                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
-                                    sys::copy_file::disable_copy_file_range_syscall();
-                                }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
-                            }
-                            _ => return err,
-                        }
-                    }
-                    if written == 0 {
-                        break;
-                    }
-                    wrote.set(wrote.get().saturating_add(written as u64));
-                    size = size.saturating_sub(written as usize);
-                }
-            }
-
-            return Ok(());
+            return Self::copy_file_range_with_fallbacks(
+                src,
+                dest,
+                src_fd,
+                dest_fd,
+                stat_.st_mode as Mode,
+                size,
+                EintrPolicy::Retry,
+            );
         }
 
         #[cfg(windows)]
@@ -8199,12 +8173,28 @@ impl NodeFS {
         Maybe::<ret::UnwatchFile>::todo()
     }
 
-    pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
+    /// Shared body of [`Self::utimes`] / [`Self::lutimes`]; they differ only
+    /// in which syscall applies the timestamps and in the node operation name
+    /// (`utime` / `lutime`) reported on errors.
+    fn utimes_with(
+        &mut self,
+        args: &args::Utimes,
+        syscall: sys::Tag,
+        #[cfg(windows)] uv_utime: unsafe extern "C" fn(
+            *mut uv::Loop,
+            *mut uv::fs_t,
+            *const core::ffi::c_char,
+            f64,
+            f64,
+            uv::uv_fs_cb,
+        ) -> uv::ReturnCode,
+        #[cfg(not(windows))] utimens: fn(&ZStr, sys::TimeLike, sys::TimeLike) -> Maybe<()>,
+    ) -> Maybe<ret::Utimes> {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
             let rc = unsafe {
-                uv::uv_fs_utime(
+                uv_utime(
                     bun_io::Loop::get(),
                     &mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
@@ -8216,7 +8206,7 @@ impl NodeFS {
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error {
                     errno,
-                    syscall: sys::Tag::utime,
+                    syscall,
                     path: args.path.slice().into(),
                     ..Default::default()
                 })
@@ -8225,52 +8215,29 @@ impl NodeFS {
             };
         }
         #[cfg(not(windows))]
-        match Syscall::utimens(
+        match utimens(
             args.path.slice_z(&mut self.sync_error_buf),
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
         ) {
             // `err.syscall` must be node's operation name, not `utimensat(2)`.
-            Err(err) => Err(err.with_path_and_syscall(args.path.slice(), sys::Tag::utime)),
+            Err(err) => Err(err.with_path_and_syscall(args.path.slice(), syscall)),
             Ok(_) => Ok(()),
         }
     }
 
+    pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
+        #[cfg(windows)]
+        return self.utimes_with(args, sys::Tag::utime, uv::uv_fs_utime);
+        #[cfg(not(windows))]
+        self.utimes_with(args, sys::Tag::utime, Syscall::utimens)
+    }
+
     pub fn lutimes(&mut self, args: &args::Lutimes, _: Flavor) -> Maybe<ret::Lutimes> {
         #[cfg(windows)]
-        {
-            let mut req = UvFsReq::new();
-            let rc = unsafe {
-                uv::uv_fs_lutime(
-                    bun_io::Loop::get(),
-                    &mut *req,
-                    args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
-                    args.atime,
-                    args.mtime,
-                    None,
-                )
-            };
-            return if let Some(errno) = rc.errno() {
-                Err(sys::Error {
-                    errno,
-                    syscall: sys::Tag::lutime,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                })
-            } else {
-                Ok(())
-            };
-        }
+        return self.utimes_with(args, sys::Tag::lutime, uv::uv_fs_lutime);
         #[cfg(not(windows))]
-        match Syscall::lutimens(
-            args.path.slice_z(&mut self.sync_error_buf),
-            to_sys_time_like(args.atime),
-            to_sys_time_like(args.mtime),
-        ) {
-            // `err.syscall` must be node's operation name, not `utimensat(2)`.
-            Err(err) => Err(err.with_path_and_syscall(args.path.slice(), sys::Tag::lutime)),
-            Ok(_) => Ok(()),
-        }
+        self.utimes_with(args, sys::Tag::lutime, Syscall::lutimens)
     }
 
     pub fn watch(&mut self, args: &args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {
@@ -8829,14 +8796,13 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
 
             let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
 
-            let mut size: usize = stat_.st_size.max(0) as usize;
+            let size: usize = stat_.st_size.max(0) as usize;
 
             if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
@@ -8848,118 +8814,15 @@ impl NodeFS {
                 sys::copy_file::disable_ioctl_ficlone();
             }
 
-            let _close_dest = scopeguard::guard(
-                (dest_fd, stat_.st_mode as Mode, &wrote),
-                |(fd, m, wrote)| {
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m);
-                    fd.close();
-                },
+            return Self::copy_file_range_with_fallbacks(
+                src,
+                dest,
+                src_fd,
+                dest_fd,
+                stat_.st_mode as Mode,
+                size,
+                EintrPolicy::Surface,
             );
-
-            let mut off_in_copy: i64 = 0;
-            let mut off_out_copy: i64 = 0;
-
-            if !sys::copy_file::can_use_copy_file_range_syscall() {
-                let mut w = wrote.get();
-                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
-                    src, dest, src_fd, dest_fd, size, &mut w,
-                );
-                wrote.set(w);
-                return r;
-            }
-
-            if size == 0 {
-                // copy until EOF
-                loop {
-                    // Linux Kernel 5.3 or later
-                    // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            sys::page_size(),
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest.as_bytes(),
-                    ) {
-                        match err.get_errno() {
-                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
-                            // XDEV: cross-device copy not supported
-                            // NOSYS: syscall not available
-                            // OPNOTSUPP: filesystem doesn't support this operation
-                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
-                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
-                                    sys::copy_file::disable_copy_file_range_syscall();
-                                }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
-                            }
-                            _ => return err,
-                        }
-                    }
-                    // wrote zero bytes means EOF
-                    if written == 0 {
-                        break;
-                    }
-                    wrote.set(wrote.get().saturating_add(written as u64));
-                }
-            } else {
-                while size > 0 {
-                    // Linux Kernel 5.3 or later
-                    // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            size,
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest.as_bytes(),
-                    ) {
-                        match err.get_errno() {
-                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
-                            // XDEV: cross-device copy not supported
-                            // NOSYS: syscall not available
-                            // OPNOTSUPP: filesystem doesn't support this operation
-                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
-                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
-                                    sys::copy_file::disable_copy_file_range_syscall();
-                                }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
-                            }
-                            _ => return err,
-                        }
-                    }
-                    // wrote zero bytes means EOF
-                    if written == 0 {
-                        break;
-                    }
-                    wrote.set(wrote.get().saturating_add(written as u64));
-                    size = size.saturating_sub(written as usize);
-                }
-            }
-
-            return Ok(());
         }
 
         #[cfg(target_os = "freebsd")]
@@ -10203,8 +10066,26 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
 // ──────────────────────────────────────────────────────────────────────────
 // NodeFSFunctionEnum — one variant per NodeFS method
 // ──────────────────────────────────────────────────────────────────────────
-#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum NodeFSFunctionEnum {
+/// Declares the enum and derives each variant's `"Async<Name>Task"` heap
+/// label from the same list (Rust has no `type_name::<T>()` in `const`, so
+/// the label is keyed off the `F` discriminant — each `F` is bound to exactly
+/// one `args::*` type via `async_::*`).
+macro_rules! node_fs_function_enum {
+    ($($v:ident),+ $(,)?) => {
+        #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
+        pub enum NodeFSFunctionEnum {
+            $($v,)+
+        }
+
+        impl NodeFSFunctionEnum {
+            pub const fn heap_label(self) -> &'static str {
+                match self { $(Self::$v => concat!("Async", stringify!($v), "Task"),)+ }
+            }
+        }
+    };
+}
+
+node_fs_function_enum!(
     Access,
     AppendFile,
     Chmod,
@@ -10246,7 +10127,7 @@ pub enum NodeFSFunctionEnum {
     Write,
     WriteFile,
     Writev,
-}
+);
 
 impl NodeFSFunctionEnum {
     /// Maps each async-FS function to its event-loop [`TaskTag`] (the `tags!`
@@ -10298,55 +10179,6 @@ impl NodeFSFunctionEnum {
         }
     }
 
-    /// Heap label `"Async<Name>Task"`. Rust has no
-    /// `type_name::<T>()` in `const`, so key off the `F` discriminant
-    /// (each `F` is bound to exactly one `args::*` type via `async_::*`).
-    pub const fn heap_label(self) -> &'static str {
-        macro_rules! lbl { ($($v:ident),+ $(,)?) => { match self { $(Self::$v => concat!("Async", stringify!($v), "Task"),)+ } } }
-        lbl!(
-            Access,
-            AppendFile,
-            Chmod,
-            Chown,
-            Close,
-            CopyFile,
-            Exists,
-            Fchmod,
-            Fchown,
-            Fdatasync,
-            Fstat,
-            Fsync,
-            Ftruncate,
-            Futimes,
-            Lchmod,
-            Lchown,
-            Link,
-            Lstat,
-            Lutimes,
-            Mkdir,
-            Mkdtemp,
-            Open,
-            Read,
-            Readdir,
-            ReadFile,
-            Readlink,
-            Readv,
-            Realpath,
-            RealpathNonNative,
-            Rename,
-            Rm,
-            Rmdir,
-            Stat,
-            Statfs,
-            Symlink,
-            Truncate,
-            Unlink,
-            Utimes,
-            Write,
-            WriteFile,
-            Writev
-        )
-    }
     pub const fn heap_label_uv(self) -> &'static str {
         match self {
             Self::Open => "AsyncOpenUvTask",

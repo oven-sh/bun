@@ -439,20 +439,7 @@ impl StringOrBuffer {
                 Ok(true)
             }
 
-            JSType::ArrayBuffer
-            | JSType::Int8Array
-            | JSType::Uint8Array
-            | JSType::Uint8ClampedArray
-            | JSType::Int16Array
-            | JSType::Uint16Array
-            | JSType::Int32Array
-            | JSType::Uint32Array
-            | JSType::Float32Array
-            | JSType::Float16Array
-            | JSType::Float64Array
-            | JSType::BigInt64Array
-            | JSType::BigUint64Array
-            | JSType::DataView => {
+            t if t.is_array_buffer_like() => {
                 let buffer = if is_async {
                     Buffer::from_js_pinned(global, value)
                         .unwrap_or_else(|| Buffer::from_array_buffer(global, value))

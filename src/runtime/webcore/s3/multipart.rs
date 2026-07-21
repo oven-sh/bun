@@ -623,8 +623,9 @@ impl MultiPartUpload {
         if self.state == State::MultipartCompleted {
             // we are a multipart upload so we need to send the etags and commit
             self.state = State::Finished;
-            // sort the etags
-            self.multipart_etags.sort_by_key(|a| a.number);
+            // Sort by part number. Part numbers are unique (assigned from a
+            // monotonically increasing counter), so stability is not required.
+            self.multipart_etags.sort_unstable_by_key(|a| a.number);
             // start the multipart upload list
             self.multipart_upload_list.extend_from_slice(
                 b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",

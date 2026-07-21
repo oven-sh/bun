@@ -389,8 +389,11 @@ impl<'a> Snapshots<'a> {
                 }
             });
 
-            // 1. sort ils_info by row, col
-            ils_info.sort_by(|a, b| {
+            // 1. sort ils_info by row, col. Stability is not observable:
+            // entries sharing a (line, col) are collapsed to a single write
+            // below, and divergent values error regardless of which one is
+            // encountered first.
+            ils_info.sort_unstable_by(|a, b| {
                 if InlineSnapshotToWrite::less_than_fn(a, b) {
                     core::cmp::Ordering::Less
                 } else if InlineSnapshotToWrite::less_than_fn(b, a) {

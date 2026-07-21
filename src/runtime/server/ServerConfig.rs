@@ -250,8 +250,12 @@ impl ServerConfig {
             }
         }
 
-        // sort the cloned static routes by name for determinism
-        // (descending by path: `order(b, a)`).
+        // Sort the cloned static routes by path for determinism (descending:
+        // `order(b, a)`). Must remain a stable sort: after dedup, distinct
+        // (method, path) entries can share a path, and their relative
+        // registration order into uWS decides which handler wins when e.g.
+        // `.any` and a specific method both register the same route.
+        // Preserving declaration order keeps user intent.
         list.sort_by(|a, b| strings::order(&b.path, &a.path));
 
         Ok(())

@@ -2091,7 +2091,8 @@ pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> 
     }
 
     let array = JSValue::create_empty_array(global_this, sort_indices.len())?;
-    sort_indices.sort_by(|a, b| {
+    // Indices are keyed by unique file names, so stability is not required.
+    sort_indices.sort_unstable_by(|a, b| {
         if GraphFile::less_than_by_index(unsorted_files, *a, *b) {
             core::cmp::Ordering::Less
         } else if GraphFile::less_than_by_index(unsorted_files, *b, *a) {

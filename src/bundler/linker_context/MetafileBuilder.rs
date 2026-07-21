@@ -1001,7 +1001,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     md.extend_from_slice(b"Modules sorted by bytes contributed to the output bundle. Large modules may indicate bloat.\n\n");
 
     // Sort by bytes_in_output descending
-    input_files.sort_by_key(|b| std::cmp::Reverse(b.bytes_in_output));
+    input_files.sort_unstable_by_key(|b| std::cmp::Reverse(b.bytes_in_output));
 
     md.extend_from_slice(b"| Output Bytes | % of Total | Module | Format |\n");
     md.extend_from_slice(b"|--------------|------------|--------|--------|\n");
@@ -1188,7 +1188,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                         }
                     }
 
-                    module_sizes.sort_by_key(|b| std::cmp::Reverse(b.bytes));
+                    module_sizes.sort_unstable_by_key(|b| std::cmp::Reverse(b.bytes));
 
                     let max_modules: usize = 15;
                     for (i, ms) in module_sizes.iter().enumerate() {
@@ -1225,7 +1225,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         });
     }
 
-    highly_imported.sort_by_key(|b| std::cmp::Reverse(b.count));
+    highly_imported.sort_unstable_by_key(|b| std::cmp::Reverse(b.count));
 
     // Show most commonly imported modules
     if !highly_imported.is_empty() {
@@ -1276,7 +1276,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         sorted_paths.push(PathOnly { path: key });
     }
 
-    sorted_paths.sort_by(|a, b| a.path.cmp(b.path));
+    sorted_paths.sort_unstable_by(|a, b| a.path.cmp(b.path));
 
     for sp in sorted_paths.iter() {
         let input_path = sp.path;

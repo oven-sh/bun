@@ -2894,7 +2894,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnIndexForInspect(JSC::EncodedJ
         return JSC::JSValue::encode(quick);
 
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::Get);
     bool has = object->methodTable()->getOwnPropertySlotByIndex(object, globalObject, i, slot);
     if (scope.exception()) [[unlikely]] {

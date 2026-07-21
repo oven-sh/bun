@@ -189,7 +189,13 @@ impl CallFrame {
         let mut str = bun_core::String::default();
         let mut line: c_uint = 0;
         let mut column: c_uint = 0;
-        Bun__CallFrame__getCallerSrcLocUnmapped(self, global_this, &mut str, &mut line, &mut column);
+        Bun__CallFrame__getCallerSrcLocUnmapped(
+            self,
+            global_this,
+            &mut str,
+            &mut line,
+            &mut column,
+        );
         CallerSrcLoc { str, line, column }
     }
 

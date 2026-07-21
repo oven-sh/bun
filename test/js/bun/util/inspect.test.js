@@ -397,6 +397,34 @@ it("jsx with circular props in test diff formatter", () => {
   expect(exitCode).toBe(0);
 });
 
+it("Event in test diff formatter is not spuriously [Circular]", () => {
+  using dir = tempDir("event-diff", {
+    "diff.test.js": `
+      import { test, expect } from "bun:test";
+      test("close event", () => {
+        expect(() => expect(new CloseEvent("close", { code: 1000 })).toEqual({})).toThrow(/CloseEvent/);
+      });
+      test("custom event", () => {
+        expect(() => expect(new CustomEvent("foo")).toEqual({})).toThrow(/CustomEvent/);
+      });
+      test("circular message event still detected", () => {
+        const ev = new MessageEvent("message");
+        Object.defineProperty(ev, "data", { value: ev, configurable: true });
+        expect(() => expect(ev).toEqual({})).toThrow(/\\[Circular\\]/);
+      });
+    `,
+  });
+  const { exitCode, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), "test", "diff.test.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(stderr.toString()).toContain("3 pass");
+  expect(exitCode).toBe(0);
+});
+
 it("deeply nested Proxy chain does not crash", () => {
   // Without the fix, print_proxy recurses on the target without a stack-safety
   // check and segfaults; run in a subprocess so a regression fails the suite

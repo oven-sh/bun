@@ -1975,6 +1975,9 @@ impl<'a> Formatter<'a> {
                     {
                         evt @ (EventType::MessageEvent | EventType::ErrorEvent) => evt,
                         _ => {
+                            // Re-dispatch as Object on the same value: remove it from the
+                            // visited map first so the inner call doesn't see a spurious cycle.
+                            let _ = self.map.remove(&value);
                             return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
                                 writer.ctx, value, JSType::Event,
                             );

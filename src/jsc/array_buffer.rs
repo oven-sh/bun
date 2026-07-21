@@ -1,4 +1,4 @@
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_void;
 use core::ptr;
 
 use crate as jsc;
@@ -155,9 +155,10 @@ impl ArrayBuffer {
         self.value.unpin_array_buffer();
     }
 
-    // require('buffer').kMaxLength.
+    // The largest byte length JavaScriptCore backs an ArrayBuffer with
+    // (`MAX_ARRAY_BUFFER_SIZE`), exposed to JS as `require('buffer').kMaxLength`.
     // keep in sync with Bun::Buffer::kMaxLength
-    pub const MAX_SIZE: c_uint = c_uint::MAX;
+    pub const MAX_SIZE: usize = 1 << 32;
 
     // 4 MB or so is pretty good for mmap()
     const MMAP_THRESHOLD: usize = 1024 * 1024 * 4;
@@ -424,8 +425,8 @@ impl ArrayBuffer {
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> ArrayBuffer {
         ArrayBuffer {
-            len: u32::try_from(bytes.len()).expect("int cast") as usize,
-            byte_len: u32::try_from(bytes.len()).expect("int cast") as usize,
+            len: bytes.len(),
+            byte_len: bytes.len(),
             typed_array_type,
             ptr: bytes.as_mut_ptr(),
             ..Default::default()
@@ -446,8 +447,8 @@ impl ArrayBuffer {
         // this is an FFI hand-off, not a leak.
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
         ArrayBuffer {
-            len: u32::try_from(len).expect("int cast") as usize,
-            byte_len: u32::try_from(len).expect("int cast") as usize,
+            len,
+            byte_len: len,
             typed_array_type,
             ptr,
             ..Default::default()

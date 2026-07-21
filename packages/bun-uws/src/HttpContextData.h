@@ -88,6 +88,10 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
+    /* Gate for the auto 100-continue: when non-zero, an Expect: 100-continue
+     * request whose Content-Length already exceeds this is not sent 100. The
+     * handler's own size check still produces the 413. */
+    uint64_t maxRequestBodySize = 0;
 
     /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2
      * (ALPN) or opened with the prior-knowledge preface is handed over via

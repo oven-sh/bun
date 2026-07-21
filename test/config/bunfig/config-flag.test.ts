@@ -59,12 +59,20 @@ describe.concurrent("bun install --config path binding", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("bare --config errors instead of silently defaulting", async () => {
-    using dir = tempDir("config-flag-install-bare", {
+});
+
+describe.concurrent("bare -c / --config requires a value", () => {
+  test.each([
+    ["install", "--config"],
+    ["install", "-c"],
+    ["--config"],
+    ["-c"],
+  ])("bun %p errors instead of silently defaulting", async (...argv) => {
+    using dir = tempDir("config-flag-bare", {
       "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
     });
-    const { stderr, exitCode } = await run(String(dir), ["install", "--config"]);
-    expect(stderr).toContain("--config");
+    const { stderr, exitCode } = await run(String(dir), argv);
+    expect(stderr).toContain(argv.at(-1)!);
     expect(stderr.toLowerCase()).toContain("requires a value");
     expect(exitCode).not.toBe(0);
   });

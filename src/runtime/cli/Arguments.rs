@@ -936,12 +936,20 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::RunAsNodeCommand
     ) {
         {
+            // Hot-path env read; the actual tokenize/validate stays `#[cold]`
+            // and is only entered when NODE_OPTIONS is set and non-empty.
+            let node_options = match env_var::NODE_OPTIONS.get() {
+                Some(raw) if !raw.is_empty() => crate::cli::node_options::parse(raw),
+                _ => crate::cli::node_options::Parsed::default(),
+            };
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");
             let preloads3 = args.options(b"--import");
             let preload4 = env_var::BUN_INSPECT_PRELOAD.get();
 
             let total_preloads = ctx.preloads.len()
+                + node_options.requires.len()
+                + node_options.imports.len()
                 + preloads.len()
                 + preloads2.len()
                 + preloads3.len()
@@ -954,8 +962,16 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 for p in preloads {
                     all.push(Box::<[u8]>::from(*p));
                 }
+                // NODE_OPTIONS preloads of each kind run before the
+                // corresponding command-line preloads (Node.js parity).
+                for p in node_options.requires {
+                    all.push(p);
+                }
                 for p in preloads2 {
                     all.push(Box::<[u8]>::from(*p));
+                }
+                for p in node_options.imports {
+                    all.push(p);
                 }
                 for p in preloads3 {
                     all.push(Box::<[u8]>::from(*p));

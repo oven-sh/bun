@@ -66,6 +66,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
   // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
   JSC_useJIT: undefined,
+  // Bun now reads NODE_OPTIONS; an ambient value on the host would leak a
+  // preload or a warning into every spawned fixture.
+  NODE_OPTIONS: undefined,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",

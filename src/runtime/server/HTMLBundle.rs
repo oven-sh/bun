@@ -766,10 +766,15 @@ impl Route {
                         // To protect privacy, do not show errors to end users in production.
                         // TODO: Show a generic error page.
                     }
+                    // This runs from a JS event-loop task, not a uWS handler,
+                    // so `end_without_body(true)` alone cannot close the
+                    // socket; write Content-Length so the client has framing.
                     resp.write_status(b"500 Build Failed");
+                    resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(true);
                 }
                 _ => {
+                    resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(true);
                 }
             }

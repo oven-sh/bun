@@ -1117,6 +1117,88 @@ test("node:vm SourceTextModule.link() rejects holey and mismatched argument arra
   expect(exitCode).toBe(0);
 });
 
+describe("createContext with a non-extensible sandbox", () => {
+  // Node's contextify stores globals on a separate inner global and only
+  // copies out to the sandbox via interceptors, so a frozen/sealed/non-extensible
+  // sandbox never blocks guest-side var/function/property creation.
+  test.each([
+    ["frozen", () => Object.freeze({ f0: 1 })],
+    ["sealed", () => Object.seal({ f0: 1 })],
+    ["non-extensible", () => Object.preventExtensions({ f0: 1 })],
+  ] as const)("%s: global creation inside the context works", (_label, make) => {
+    const sandbox = make();
+    createContext(sandbox);
+
+    expect(runInContext("globalThis.a1 = 2; typeof a1", sandbox)).toBe("number");
+    expect(runInContext("a1", sandbox)).toBe(2);
+    expect(runInContext("var v1 = 3; typeof v1", sandbox)).toBe("number");
+    expect(runInContext("v1", sandbox)).toBe(3);
+    expect(runInContext("function f1(){ return 7 }; typeof f1", sandbox)).toBe("function");
+    expect(runInContext("f1()", sandbox)).toBe(7);
+    expect(runInContext("Object.defineProperty(globalThis,'d1',{value:4,configurable:true}); typeof d1", sandbox)).toBe(
+      "number",
+    );
+    expect(
+      runInContext("Object.defineProperty(globalThis,'ac1',{get(){return 42},configurable:true}); ac1", sandbox),
+    ).toBe(42);
+    expect(
+      runInContext(
+        "(d => [d.value, d.writable, d.enumerable, d.configurable])(Object.getOwnPropertyDescriptor(globalThis,'d1'))",
+        sandbox,
+      ),
+    ).toEqual([4, false, false, true]);
+    expect(
+      runInContext(
+        "(d => [typeof d.get, d.set, d.enumerable, d.configurable])(Object.getOwnPropertyDescriptor(globalThis,'ac1'))",
+        sandbox,
+      ),
+    ).toEqual(["function", undefined, false, true]);
+    expect(runInContext("'use strict'; globalThis.s1 = 5; typeof s1", sandbox)).toBe("number");
+    expect(runInContext("[Object.isFrozen(globalThis), Object.isExtensible(globalThis)]", sandbox)).toEqual([
+      false,
+      true,
+    ]);
+
+    // The sandbox is non-extensible, so nothing is copied out.
+    expect(Object.getOwnPropertyDescriptor(sandbox, "a1")).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(sandbox, "v1")).toBeUndefined();
+  });
+
+  test("frozen: writing an existing read-only property is still rejected", () => {
+    const sandbox = Object.freeze({ f0: 1 });
+    createContext(sandbox);
+    expect(runInContext("f0 = 99; f0", sandbox)).toBe(1);
+    expect(runInContext("'use strict'; try{f0 = 99; 'ok'}catch(e){e.constructor.name}", sandbox)).toBe("TypeError");
+    expect(
+      runInContext("try{Object.defineProperty(globalThis,'f0',{value:99}); 'ok'}catch(e){e.constructor.name}", sandbox),
+    ).toBe("TypeError");
+  });
+
+  test("sealed: writing an existing writable property still copies out to the sandbox", () => {
+    const sandbox = Object.seal({ f0: 1 });
+    createContext(sandbox);
+    expect(runInContext("f0 = 99; f0", sandbox)).toBe(99);
+    expect(sandbox.f0).toBe(99);
+  });
+
+  test("frozen: writing a name inherited from Object.prototype does not throw in strict mode", () => {
+    const sandbox = Object.freeze({});
+    createContext(sandbox);
+    expect(runInContext("'use strict'; globalThis.toString = 5; typeof toString", sandbox)).toBe("function");
+    expect(runInContext("'use strict'; globalThis.hasOwnProperty = 1; typeof hasOwnProperty", sandbox)).toBe(
+      "function",
+    );
+  });
+
+  test("writing a read-only property inherited from the sandbox's prototype does not throw in strict mode", () => {
+    const proto = Object.defineProperty({}, "foo", { value: 1, writable: false, enumerable: true, configurable: true });
+    const sandbox = Object.create(proto);
+    createContext(sandbox);
+    expect(runInContext("'use strict'; globalThis.foo = 2; foo", sandbox)).toBe(1);
+    expect(Object.getOwnPropertyDescriptor(sandbox, "foo")).toBeUndefined();
+  });
+});
+
 describe("node:vm SourceTextModule cyclic graph linking", () => {
   // Building a cyclic SourceTextModule graph and linking + evaluating each
   // module from inside the linker callback (instead of linking the whole graph

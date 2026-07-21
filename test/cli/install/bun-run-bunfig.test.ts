@@ -209,7 +209,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     expect(result.success).toBeTrue();
   });
 
-  test("NOT autoload home bunfig.toml", async () => {
+  test("autoload home .bunfig.toml", async () => {
     const runCmd = cmd === "bun" ? ["run"] : [];
 
     const bunfig = toTOMLString({
@@ -236,6 +236,8 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       env: {
         ...bunEnv,
         HOME: pathJoin(cwd, "./my-home"),
+        USERPROFILE: pathJoin(cwd, "./my-home"),
+        XDG_CONFIG_HOME: undefined,
       },
       stderr: "inherit",
       stdout: "pipe",
@@ -244,7 +246,11 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     });
     const nodeBin = result.stdout.toString().trim();
 
-    expect(realpathSync(nodeBin)).toBe(realpathSync(node));
+    if (isWindows) {
+      expect(realpathSync(nodeBin)).toContain("\\bun-node-");
+    } else {
+      expect(realpathSync(nodeBin)).toBe(realpathSync(execPath));
+    }
     expect(result.success).toBeTrue();
   });
 });

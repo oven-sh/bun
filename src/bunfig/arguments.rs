@@ -20,13 +20,20 @@ use crate::bunfig::Bunfig;
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     let paths: [&[u8]; 1] = [b".bunfig.toml"];
 
-    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            data_dir, &mut **buf, &paths,
-        ));
+    // `$XDG_CONFIG_HOME/.bunfig.toml` takes precedence, but only when the file
+    // actually exists there; otherwise fall through to `$HOME/.bunfig.toml`.
+    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get_not_empty() {
+        let len = {
+            let path =
+                resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut **buf, &paths);
+            if bun_sys::exists_z(path) { path.len() } else { 0 }
+        };
+        if len > 0 {
+            return Some(ZStr::from_buf(&buf[..], len));
+        }
     }
 
-    if let Some(home_dir) = env_var::HOME.get() {
+    if let Some(home_dir) = env_var::HOME.get_not_empty() {
         return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
             home_dir, &mut **buf, &paths,
         ));
@@ -76,7 +83,6 @@ fn load_bunfig(
         // SAFETY: same as above; runs on the same thread.
         unsafe { (*log_ptr).level = lvl };
     });
-    ctx.debug.loaded_bunfig = true;
     Bunfig::parse(cmd, &source, ctx)
 }
 
@@ -118,6 +124,9 @@ pub fn load_config_path(
         }
     }
 
+    // `loaded_bunfig` tracks whether the local-config load has been attempted
+    // so the `run_command.rs`/`repl_command.rs` fallbacks don't repeat it.
+    ctx.debug.loaded_bunfig = true;
     load_bunfig(cmd, auto_loaded, config_path, ctx)
 }
 
@@ -153,14 +162,8 @@ pub fn load_config(
 
     let mut config_buf = PathBuffer::uninit();
     if cmd.read_global_config() {
-        if !ctx.has_loaded_global_config {
-            ctx.has_loaded_global_config = true;
-
-            if let Some(path) = get_home_config_path(&mut config_buf) {
-                if let Err(err) = load_config_path(cmd, true, path, ctx) {
-                    report_bunfig_load_failure(ctx.log, err);
-                }
-            }
+        if let Err(err) = load_global_bunfig(cmd, ctx) {
+            report_bunfig_load_failure(ctx.log, err);
         }
     }
 

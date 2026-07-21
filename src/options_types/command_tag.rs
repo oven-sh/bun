@@ -87,20 +87,10 @@ impl Tag {
     }
 
     pub fn read_global_config(self) -> bool {
-        matches!(
-            self,
-            Tag::BunxCommand
-                | Tag::PackageManagerCommand
-                | Tag::InstallCommand
-                | Tag::AddCommand
-                | Tag::RemoveCommand
-                | Tag::UpdateCommand
-                | Tag::PatchCommand
-                | Tag::PatchCommitCommand
-                | Tag::OutdatedCommand
-                | Tag::PublishCommand
-                | Tag::AuditCommand
-        )
+        // Every command that loads a local `bunfig.toml` also loads the global
+        // one first so the documented shallow merge (local overrides global)
+        // applies uniformly to runtime and install settings alike.
+        LOADS_CONFIG[self]
     }
 
     pub fn is_npm_related(self) -> bool {

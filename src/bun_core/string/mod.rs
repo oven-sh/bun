@@ -2084,7 +2084,6 @@ pub mod encoding {
         Hex,
         Buffer,
     }
-    impl Encoding {}
 }
 pub use encoding::Encoding as NodeEncoding;
 

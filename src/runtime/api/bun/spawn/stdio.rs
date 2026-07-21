@@ -114,16 +114,20 @@ impl Stdio {
         }
     }
 
-    pub fn can_use_memfd(&self) -> bool {
+    pub fn can_use_memfd(&self, index: u32) -> bool {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
+            let _ = index;
             return false;
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
-            Self::Memfd(_) | Self::ArrayBuffer(_) => true,
+            Self::Memfd(_) => true,
+            // ArrayBuffer as stdin is input data we can pre-write to a memfd.
+            // As stdout/stderr it is the caller's sink: a pipe writes into it.
+            Self::ArrayBuffer(_) => index == 0,
             // `Self::Pipe` is never memfd: a memfd has no EOF signal, so a
             // grandchild still writing after the child exits would be lost.
             _ => false,
@@ -552,21 +556,47 @@ impl Stdio {
         }
 
         if let Some(array_buffer) = value.as_array_buffer(global) {
-            // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
-            if array_buffer.byte_slice().is_empty() {
-                *out_stdio = Stdio::Ignore;
-                return Ok(());
+            if i == 0 {
+                // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
+                if array_buffer.byte_slice().is_empty() {
+                    *out_stdio = Stdio::Ignore;
+                    return Ok(());
+                }
+                // stdin: copy now so later mutation of the caller's buffer
+                // cannot change what the child reads.
+                let copied_value = jsc::array_buffer::ArrayBuffer::create_buffer(
+                    global,
+                    array_buffer.byte_slice(),
+                )?;
+                let copied = copied_value
+                    .as_array_buffer(global)
+                    .expect("create_buffer returns a Uint8Array");
+                *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
+                    array_buffer: copied,
+                    held: jsc::StrongOptional::create(copied.value, global),
+                });
+            } else if is_sync && (i == 1 || i == 2) {
+                // stdout/stderr: hold the caller's own view so the child's
+                // output can be written into it.
+                *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
+                    array_buffer,
+                    held: jsc::StrongOptional::create(value, global),
+                });
+            } else {
+                let name: &[u8] = match i {
+                    1 => b"stdout",
+                    2 => b"stderr",
+                    _ => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "ArrayBufferView cannot be used for stdio[{i}] yet"
+                        )));
+                    }
+                };
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'{}' ArrayBufferView is only supported with Bun.spawnSync",
+                    bstr::BStr::new(name),
+                )));
             }
-
-            let copied_value =
-                jsc::array_buffer::ArrayBuffer::create_buffer(global, array_buffer.byte_slice())?;
-            let copied = copied_value
-                .as_array_buffer(global)
-                .expect("create_buffer returns a Uint8Array");
-            *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
-                array_buffer: copied,
-                held: jsc::StrongOptional::create(copied.value, global),
-            });
             return Ok(());
         }
 

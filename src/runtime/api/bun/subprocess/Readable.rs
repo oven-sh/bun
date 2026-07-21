@@ -118,16 +118,16 @@ impl Readable {
         // *transferred* into the returned `Readable`. `Stdio` has a `Drop` impl that
         // would close the memfd, so suppress it here to avoid a double-close
         // (EBADF) when the Readable later closes the same fd.
-        let stdio = mem::ManuallyDrop::new(stdio);
+        let mut stdio = mem::ManuallyDrop::new(stdio);
 
         #[cfg(unix)]
         {
-            if matches!(*stdio, Stdio::Pipe) {
+            if matches!(*stdio, Stdio::Pipe | Stdio::ArrayBuffer(..)) {
                 let _ = bun_sys::set_nonblocking(result.unwrap());
             }
         }
 
-        match &*stdio {
+        match &mut *stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
             Stdio::Fd(fd) => {
@@ -166,8 +166,13 @@ impl Readable {
             Stdio::Pipe => {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
-            Stdio::ArrayBuffer(..) | Stdio::Blob(..) => {
-                panic!("TODO: implement ArrayBuffer & Blob support in Stdio readable")
+            Stdio::ArrayBuffer(ab) => {
+                let pipe = PipeReader::create(event_loop, process, result, max_size);
+                Self::pipe_reader_mut(&pipe).sink = Some(core::mem::take(ab));
+                Readable::Pipe(pipe)
+            }
+            Stdio::Blob(..) => {
+                panic!("Blob stdout/stderr is rejected in Stdio::extract_blob")
             }
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
             // ReadableStream is handled separately
@@ -298,7 +303,7 @@ impl Readable {
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
                 Self::pipe_detach(&pipe);
-                Ok(result)
+                result
             }
             Readable::Buffer(_) => {
                 let Readable::Buffer(mut buf) = mem::replace(self, Readable::Closed) else {

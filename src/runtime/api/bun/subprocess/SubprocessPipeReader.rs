@@ -50,6 +50,10 @@ pub struct PipeReader {
     pub ref_count: RefCount<PipeReader>,
     pub state: State,
     pub stdio_result: StdioResult,
+    /// Caller-provided stdout/stderr `Uint8Array` (`Bun.spawnSync` only). When
+    /// set, `to_buffer` copies the collected bytes into it and returns a
+    /// subarray instead of a fresh Buffer.
+    pub sink: Option<jsc::array_buffer::ArrayBufferStrong>,
 }
 
 // `pub const ref/deref = RefCount.ref/deref` — thin forwarders so existing call
@@ -117,6 +121,7 @@ impl PipeReader {
             event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
             stdio_result: result,
             state: State::Pending,
+            sink: None,
         });
         MaxBuf::add_to_pipereader(limit, &mut this.reader.maxbuf);
         #[cfg(windows)]
@@ -304,7 +309,38 @@ impl PipeReader {
         }
     }
 
-    pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    /// If a caller-provided `Uint8Array` sink is attached and the pipe has
+    /// finished, copy the collected output into it and return a `Uint8Array`
+    /// subarray over the bytes that were written. Returns `None` when no sink
+    /// is attached (the normal case), the pipe is still pending, or the sink
+    /// can no longer be resolved.
+    fn fill_sink(&mut self, global_this: &JSGlobalObject) -> Option<JsResult<JSValue>> {
+        if !matches!(self.state, State::Done(_)) {
+            return None;
+        }
+        let sink = self.sink.take()?;
+        let value = sink.held.get()?;
+        // Refetch the backing slice now: the `ArrayBuffer` view cached at
+        // `extract()` time may be stale if GC moved a FastTypedArray while the
+        // child ran.
+        let mut ab = value.as_array_buffer(global_this)?;
+        let dst = ab.byte_slice_mut();
+        let State::Done(done) = &self.state else {
+            unreachable!()
+        };
+        let n = done.len().min(dst.len());
+        dst[..n].copy_from_slice(&done[..n]);
+        Some(jsc::array_buffer::ArrayBuffer::create_subarray(
+            global_this,
+            value,
+            n,
+        ))
+    }
+
+    pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        if let Some(result) = self.fill_sink(global_this) {
+            return result;
+        }
         match &mut self.state {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
@@ -314,10 +350,12 @@ impl PipeReader {
                 // boxed slice so JS becomes the owner — same pattern as
                 // `MarkedArrayBuffer::from_string`.
                 let slice: &'static mut [u8] = Box::leak(bytes.into_boxed_slice());
-                MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
-                    .to_node_buffer(global_this)
+                Ok(
+                    MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
+                        .to_node_buffer(global_this),
+                )
             }
-            _ => JSValue::UNDEFINED,
+            _ => Ok(JSValue::UNDEFINED),
         }
     }
 

@@ -500,17 +500,27 @@ impl Subprocess<'_> {
                     let Readable::Pipe(pipe) = out.replace(Readable::Ignore) else {
                         unreachable!()
                     };
-                    let pipe_state = &mut Readable::pipe_reader_mut(&pipe).state;
-                    if let PipeReader::State::Done(done) = pipe_state {
-                        let taken = core::mem::take(done);
-                        out.set(Readable::Buffer(readable::CowString::init_owned(
-                            taken.into_boxed_slice(),
-                        )));
-                        // pipe.state was emptied via take()
+                    let reader = Readable::pipe_reader_mut(&pipe);
+                    if reader.sink.is_some() && matches!(reader.state, PipeReader::State::Done(_)) {
+                        // A caller-provided Uint8Array sink: keep the pipe so
+                        // `to_buffered_value` can copy into it and return a
+                        // subarray. The `Readable::Pipe` ref we just moved out
+                        // is put back, so no `deref()` here. `State::Err` falls
+                        // through to `Readable::Ignore` + `deref()` below so a
+                        // POSIX read error cannot re-fire on a ref=1 pipe.
+                        out.set(Readable::Pipe(pipe));
+                    } else {
+                        if let PipeReader::State::Done(done) = &mut reader.state {
+                            let taken = core::mem::take(done);
+                            out.set(Readable::Buffer(readable::CowString::init_owned(
+                                taken.into_boxed_slice(),
+                            )));
+                            // pipe.state was emptied via take()
+                        }
+                        // else: *out stays Readable::Ignore (set by replace above).
+                        // RefPtr has no Drop — release the ref this Readable held.
+                        pipe.deref();
                     }
-                    // else: *out stays Readable::Ignore (set by replace above).
-                    // RefPtr has no Drop — release the ref this Readable held.
-                    pipe.deref();
                 }
             }
         }

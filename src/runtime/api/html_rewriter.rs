@@ -358,6 +358,12 @@ impl HTMLRewriter {
         listener: JSValue,
     ) -> JsResult<JSValue> {
         let selector_source = selector_name.to_string();
+        if selector_nesting_too_deep(selector_source.as_bytes()) {
+            return Err(global.throw_value(create_lolhtml_error(
+                global,
+                &"Selector nesting is too deep.",
+            )));
+        }
         let selector = match selector_source.parse::<lol_html::Selector>() {
             Ok(s) => s,
             Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e))),
@@ -1414,6 +1420,46 @@ impl ElementHandler {
 #[derive(Default, Clone, Copy)]
 pub struct ContentOptions {
     pub html: bool,
+}
+
+// ──────────────────────── selector pre-validation ────────────────────────
+
+const MAX_SELECTOR_NESTING_DEPTH: usize = 128;
+
+/// lol-html's selector parser (servo `selectors`) recurses natively on
+/// `:not(...)` and `:host(...)`; a few thousand levels overflows the stack.
+/// Bound paren depth before parsing so `.on()` throws instead of crashing.
+fn selector_nesting_too_deep(selector: &[u8]) -> bool {
+    if !bun_core::strings::contains_char(selector, b'(') {
+        return false;
+    }
+    let mut depth: usize = 0;
+    let mut i = 0;
+    while let Some(&b) = selector.get(i) {
+        i += 1;
+        match b {
+            b'\\' => i += 1,
+            quote @ (b'"' | b'\'') => {
+                while let Some(&b) = selector.get(i) {
+                    i += 1;
+                    match b {
+                        b'\\' => i += 1,
+                        b if b == quote => break,
+                        _ => {}
+                    }
+                }
+            }
+            b'(' => {
+                depth += 1;
+                if depth > MAX_SELECTOR_NESTING_DEPTH {
+                    return true;
+                }
+            }
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
 }
 
 // ────────────────────────── error helpers ────────────────────────────────

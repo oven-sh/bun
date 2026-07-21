@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, tls, tmpdirSync } from "harness";
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -681,6 +681,47 @@ describe("HTMLRewriter", () => {
       "<div><h1><span>1</span></h1><span>2</span><b>3</b></div>",
       "<div><h1><span>1</span></h1><span>new</span><b>3</b></div>",
     );
+  });
+
+  it("rejects deeply nested :not()/:host() selectors without crashing", async () => {
+    // The servo selector parser recurses natively on :not()/:host(); without
+    // a depth guard this overflows the stack during .on(). Run in a child so
+    // a regression shows up as SIGSEGV instead of killing the test runner.
+    const src = `
+      for (const name of ["not", "host"]) {
+        const N = 8000;
+        const sel = (":" + name + "(").repeat(N) + "span" + Buffer.alloc(N, ")").toString();
+        try {
+          new HTMLRewriter().on(sel, { element() {} });
+          console.log(name + " accepted");
+        } catch (e) {
+          console.log(name + " threw: " + e.message);
+        }
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual([
+      "not threw: Selector nesting is too deep.",
+      "host threw: Selector nesting is too deep.",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("caps selector nesting at 128 but accepts shallower nesting", () => {
+    const nest = (name, n) => (":" + name + "(").repeat(n) + "span" + Buffer.alloc(n, ")").toString();
+    expect(() => new HTMLRewriter().on(nest("not", 129), { element() {} })).toThrow("Selector nesting is too deep.");
+    expect(() => new HTMLRewriter().on(nest("host", 129), { element() {} })).toThrow("Selector nesting is too deep.");
+    // Parentheses inside an attribute-value string must not count toward depth.
+    expect(() => new HTMLRewriter().on('[data-x="' + Buffer.alloc(200, "(").toString() + '"]', { element() {} })).not.toThrow();
+    // Single-level :not() continues to work.
+    expect(() => new HTMLRewriter().on(":not(span)", { element() {} })).not.toThrow();
   });
 
   it("supports deleting innerContent", async () => {

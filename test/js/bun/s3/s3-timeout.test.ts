@@ -141,4 +141,11 @@ describe("S3Options.timeout", () => {
     expect(result.ok).toBe(false);
     expect(result.code).toBe("ERR_INVALID_ARG_TYPE");
   });
+
+  test("Bun.inspect shows a configured timeout", () => {
+    const base = { accessKeyId: "a", secretAccessKey: "b", bucket: "c" };
+    expect(Bun.inspect(new Bun.S3Client({ ...base, timeout: 5000 }))).toContain("timeout: 5000");
+    expect(Bun.inspect(new Bun.S3Client({ ...base, timeout: false }))).toContain("timeout: false");
+    expect(Bun.inspect(new Bun.S3Client(base))).not.toContain("timeout:");
+  });
 });

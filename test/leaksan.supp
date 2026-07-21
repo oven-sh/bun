@@ -112,8 +112,6 @@ leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
 leak:create_ssl_context_from_bun_options
 # test/js/node/test/parallel/test-inspector-enabled.js
 leak:jsc.Debugger.startJSDebuggerThread
-# test/js/sql/sqlite-sql.test.ts
-leak:WebCore::jsSQLStatementOpenStatementFunction
 # test/js/web/atomics.test.ts — RunLoop::dispatchAfter's DispatchTimer captures
 # a Ref to itself in m_function; the cycle only breaks when fired(). If stop()
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),

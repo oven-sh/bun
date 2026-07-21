@@ -22,6 +22,9 @@ enum class Fault : uint8_t {
   Post,   // run the real syscall, then report injected status (succeeded-but-told-failed)
   Mangle, // run the real syscall, keep its status, perturb its OUTPUT
           // (the misbehaving filter-driver class: malformed successes)
+  Delay,  // run the real syscall and return its status, but sleep first:
+          // a deterministic timing shift at one coordinate (races,
+          // completion reordering against other threads)
 };
 
 // Mangle kinds — all target the IO_STATUS_BLOCK a synchronous I/O

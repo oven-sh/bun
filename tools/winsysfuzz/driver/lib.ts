@@ -57,7 +57,7 @@ export interface Rec {
   rva: string; // primary callsite (schedule key)
   rvas: string[]; // candidate frames, nearest first
   frame0: string;
-  fault: "" | "P" | "Q" | "M"; // pre / post / mangle
+  fault: "" | "P" | "Q" | "M" | "D"; // pre / post / mangle / delay
   entryOnly: boolean;
   path?: string; // decoded NT path from an 'A' record (WSF_ARGS=1)
 }
@@ -99,7 +99,7 @@ export function parseTrace(text: string): Trace {
         rva: rvas[0] ?? "0",
         rvas,
         frame0: p[6],
-        fault: p[7] === "!P" ? "P" : p[7] === "!Q" ? "Q" : p[7] === "!M" ? "M" : "",
+        fault: p[7] === "!P" ? "P" : p[7] === "!Q" ? "Q" : p[7] === "!M" ? "M" : p[7] === "!D" ? "D" : "",
         entryOnly: false,
       };
       t.recs.push(rec);

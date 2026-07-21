@@ -218,16 +218,22 @@ void LoadSchedule(const char* path) {
     r.anyCallsite = rvaTok[0] == '*';
     r.rva = r.anyCallsite ? 0 : (uintptr_t)strtoull(rvaTok, nullptr, 16);
     r.hitIndex = hitTok[0] == '*' ? 0 : (LONG)strtol(hitTok, nullptr, 10);
-    // mode: pre | post | mangle:short | mangle:zero
+    // mode: pre | post | mangle:short | mangle:zero | delay
+    // status field is hex for statuses; for delay it is decimal milliseconds.
     if (strncmp(modeTok, "mangle", 6) == 0) {
       r.mode = Fault::Mangle;
       r.mangle = strstr(modeTok, "zero") ? MangleKind::Zero : MangleKind::Short;
+      r.status = 0;
+    } else if (strncmp(modeTok, "delay", 5) == 0) {
+      r.mode = Fault::Delay;
+      r.status = (ULONG_PTR)strtoul(statusTok, nullptr, 10);
     } else if ((modeTok[0] == 'p' || modeTok[0] == 'P') && (modeTok[1] == 'r' || modeTok[1] == 'R')) {
       r.mode = Fault::Pre;
+      r.status = (ULONG_PTR)strtoull(statusTok, nullptr, 16);
     } else {
       r.mode = Fault::Post;
+      r.status = (ULONG_PTR)strtoull(statusTok, nullptr, 16);
     }
-    r.status = (ULONG_PTR)strtoull(statusTok, nullptr, 16);
   }
   fclose(f);
   // Group rules by syscall so a hook checks only its own.
@@ -358,6 +364,11 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
     if (fault_ == Fault::Post) {
       ret = injected_;
       tag = " !Q";
+    } else if (fault_ == Fault::Delay) {
+      // Real status returns after a deterministic pause at this coordinate.
+      // The nested NtDelayExecution passes through unlogged (depth > 0).
+      Sleep((DWORD)injected_);
+      tag = " !D";
     } else if (fault_ == Fault::Mangle) {
       tag = " !M";
       // Only a synchronous success has a filled IO_STATUS_BLOCK to mangle;

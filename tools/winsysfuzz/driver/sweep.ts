@@ -53,7 +53,7 @@ const planOnly = argv.includes("--plan-only"); // baseline + estimate, then stop
 //                    CRASH(), Rust alloc abort). A crash here is expected.
 //   judgment       — lying-API (post-mode) / edge cases where "correct"
 //                    behavior is a human call.
-type Mode = "pre" | "post" | "mangle:short" | "mangle:zero";
+type Mode = "pre" | "post" | "mangle:short" | "mangle:zero" | "delay";
 type Fault = { status: string; mode: Mode; expect?: "must-handle" | "abort-expected" | "judgment" };
 const F = (status: string, mode: Mode = "pre", expect: Fault["expect"] = "must-handle"): Fault => ({
   status,
@@ -63,11 +63,21 @@ const F = (status: string, mode: Mode = "pre", expect: Fault["expect"] = "must-h
 // mangle:* faults model the misbehaving filter driver: the syscall really
 // succeeds but its IO_STATUS_BLOCK.Information is perturbed (short / zero
 // bytes). bun must honor the count it is handed, so these are must-handle.
+// delay faults keep the real status but pause first (status field = ms):
+// a deterministic interleaving shift at one coordinate - completion
+// dequeue vs. other threads, a widened race window. A HANG from a delay is
+// a real timing bug; classed 'judgment' since the human decides plausibility.
+const DELAY_MS = "250";
 const FAULTS: Record<string, Fault[]> = {
   NtCreateFile: [F("C0000034"), F("C0000022"), F("C0000043")],
   NtOpenFile: [F("C0000034"), F("C0000022")],
   NtReadFile: [F("C0000185"), F("C0000185", "post", "judgment"), F("0", "mangle:short"), F("0", "mangle:zero")],
-  NtWriteFile: [F("C000007F"), F("C000007F", "post", "judgment"), F("0", "mangle:short")],
+  NtWriteFile: [
+    F("C000007F"),
+    F("C000007F", "post", "judgment"),
+    F("0", "mangle:short"),
+    F(DELAY_MS, "delay", "judgment"),
+  ],
   NtQueryInformationFile: [F("C0000185")],
   NtSetInformationFile: [F("C0000022")],
   NtQueryDirectoryFile: [F("C0000185"), F("0", "mangle:short")],
@@ -78,7 +88,12 @@ const FAULTS: Record<string, Fault[]> = {
   NtDeleteFile: [F("C0000022")],
   NtFsControlFile: [F("C000009A")],
   NtCreateNamedPipeFile: [F("C000009A")],
-  NtDeviceIoControlFile: [F("C000009A"), F("C000009A", "post", "judgment"), F("0", "mangle:short")],
+  NtDeviceIoControlFile: [
+    F("C000009A"),
+    F("C000009A", "post", "judgment"),
+    F("0", "mangle:short"),
+    F(DELAY_MS, "delay", "judgment"),
+  ],
   NtCreateEvent: [F("C000009A")],
   NtCreateSection: [F("C000009A")],
   NtMapViewOfSection: [F("C000009A")],
@@ -88,7 +103,10 @@ const FAULTS: Record<string, Fault[]> = {
   NtAssignProcessToJobObject: [F("C0000022")],
   NtCreateIoCompletion: [F("C000009A")],
   NtRemoveIoCompletion: [F("C0000185", "post", "judgment")],
-  NtRemoveIoCompletionEx: [F("C0000185", "post", "judgment")],
+  // Delaying the IOCP dequeue reorders completions against other threads:
+  // the completion-side lever (completion-after-close, cancel racing
+  // completion).
+  NtRemoveIoCompletionEx: [F("C0000185", "post", "judgment"), F(DELAY_MS, "delay", "judgment")],
   NtAssociateWaitCompletionPacket: [F("C000009A")],
   NtQueryValueKey: [F("C0000034")],
   NtOpenKeyEx: [F("C0000034")],

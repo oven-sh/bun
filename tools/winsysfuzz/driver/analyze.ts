@@ -68,12 +68,12 @@ for (const [sys, a] of rows) {
 
 const injected = recs.filter(r => r.fault);
 if (injected.length) {
-  const modeName = { P: "pre", Q: "post", M: "mangle" } as const;
+  const modeName = { P: "pre", Q: "post", M: "mangle", D: "delay" } as const;
   console.log(`\n${injected.length} injected faults:`);
   for (const r of injected)
     console.log(
       `  seq ${r.seq} tid ${r.tid} ${nameOf(r.sys)} -> ${statusName(r.status)} ` +
-        `(${modeName[r.fault as "P" | "Q" | "M"]}) at bun+0x${r.rva}`,
+        `(${modeName[r.fault as "P" | "Q" | "M" | "D"]}) at bun+0x${r.rva}`,
     );
 }
 

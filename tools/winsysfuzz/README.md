@@ -62,7 +62,15 @@ codegen.ts             cfg -> src/generated/*, driver/generated/*
 src/dllmain.cpp        Detours attach over all resolved Nt* exports
 src/runtime.cpp        trace log, fault schedule, reentrancy guard
 src/launcher.cpp       wsfrun.exe: run target with the DLL injected
-driver/                JS controller/generator (fuzz driver)
+src/symbolize.cpp      wsfsym.exe: RVA -> symbol+source (DbgHelp/PDB)
+driver/lib.ts          shared: parse, symbolize, classify, watchdogged run
+driver/analyze.ts      trace -> per-syscall + per-module census
+driver/coverage.ts     workload suite census + fault-space gap list
+driver/sweep.ts        THE FUZZER: baseline -> enumerate -> inject -> verify
+driver/repro.ts        triage: determinism, callsite, stacks, repro cmd
+driver/hostile.ts      hostile-argument suite + kernel-path correlation
+workloads/*.js         scenario suite (fs/net/spawn/worker/crypto/sqlite)
+HUNTING.md             how to use all of the above to find bugs
 ```
 
 ## Build (on the Windows box)
@@ -95,12 +103,22 @@ seed + program + schedule replays any bug deterministically.
 
 Schedule file, one rule per line:
 ```
-<SyscallName> <bun_rva_hex|*> <hit_index|*> <pre|post> <status_hex>
+<SyscallName> <bun_rva_hex|*> <hit_index|*> <mode> <arg>
 NtCreateFile 1a2b3c 3 pre C0000034
+NtReadFile 232b096 1 mangle:short 0
+NtWriteFile * * delay 300
 ```
-`pre` skips the real call and returns the status (a genuine failure).
-`post` runs the real call then reports the status ("succeeded but told it
-failed" — a distinct fault class that finds double-close / retry bugs).
+Four fault modes:
+- `pre` — skip the real call, return `<arg>` as the status (a genuine
+  failure).
+- `post` — run the real call, then report `<arg>` as the status ("succeeded
+  but told it failed" — finds double-close / retry bugs).
+- `mangle:short` / `mangle:zero` — run the real call and keep its status,
+  but perturb the output `IO_STATUS_BLOCK` (bytes-transferred halved / zeroed):
+  the misbehaving-filter-driver class of malformed successes.
+- `delay` — run the real call and return its status after sleeping `<arg>`
+  milliseconds: a deterministic interleaving shift at one coordinate (races,
+  completion reordering).
 
 The completion side is owned too: bun on Windows is IOCP-driven through
 libuv, and completions dequeue via `NtRemoveIoCompletionEx`, which is hooked

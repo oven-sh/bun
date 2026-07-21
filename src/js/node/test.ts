@@ -809,6 +809,9 @@ function reportDirectiveOnlyNode(node: TestNode, mode: "skip" | "todo") {
     error: undefined,
   };
   emitRunChildEvent("test:complete", { ...data, passed: true });
+  if (node.isSuite) {
+    emitRunChildEvent("test:plan", { __proto__: null, nesting: nestingOf(node) + 1, count: 0 });
+  }
   reportStartChain(node);
   emitRunChildEvent("test:pass", data);
   // Directive-only nodes never execute, so completion bookkeeping for the

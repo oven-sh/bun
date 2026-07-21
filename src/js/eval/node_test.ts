@@ -354,11 +354,13 @@ async function main() {
     process.exit(7);
   }
 
-  const exitCode = success ? 0 : 1;
+  // Write only on failure so an earlier process.exitCode = 1 (e.g. a late
+  // uncaught attributed at attributeProcessError's finished-test branch, or a
+  // reporter-destination error) is not stomped back to 0.
+  if (!success) process.exitCode = 1;
   if (hasFlag("--test-force-exit")) {
-    process.exit(exitCode);
+    process.exit(process.exitCode ?? 0);
   }
-  process.exitCode = exitCode;
 }
 
 await main();

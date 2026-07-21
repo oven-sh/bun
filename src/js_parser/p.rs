@@ -363,6 +363,15 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// we always fold constant expressions.
     pub should_fold_typescript_constant_expressions: bool,
 
+    /// When set, numeric binary arithmetic folds unconditionally even if
+    /// the folded literal would print larger than the source expression.
+    /// Used inside TypeScript enum bodies so the emitted enum table has
+    /// fully computed numeric values (matching `tsc`), and so subsequent
+    /// enum members that reference prior members can resolve to a number.
+    /// Outside this flag, arithmetic folding under `minify_syntax` only
+    /// happens when the folded literal is no longer than the source.
+    pub fold_numeric_constants_unconditionally: bool,
+
     pub emitted_namespace_vars: RefMap,
     pub is_exported_inside_namespace: RefRefMap,
     pub local_type_names: StringBoolMap,
@@ -6001,6 +6010,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => {}
                     }
                 }
+                // Arithmetic between two numeric literals (or inlined enum
+                // numbers) has no `valueOf`/`toString` side effects and
+                // cannot throw — removable when both sides are. Pre-size-
+                // aware folding every such node was folded to `.e_number`
+                // before reaching here; with size-aware folding the
+                // `.e_binary` survives and without this arm an unused
+                // `export class C { ratio = 1/3 }` no longer tree-shakes.
+                //
+                // Uses the non-recursive `extract_numeric_value` rather
+                // than `known_primitive`, whose recursion through
+                // `.bin_add` would stack-overflow on a million-deep
+                // `a+a+a+…` chain. For `.e_number`/inlined-enum operands
+                // the literal fast-path at the top of this fn returns true
+                // directly, so no recursion is needed.
+                js_ast::op::Code::BinAdd
+                | js_ast::op::Code::BinSub
+                | js_ast::op::Code::BinMul
+                | js_ast::op::Code::BinDiv
+                | js_ast::op::Code::BinRem
+                | js_ast::op::Code::BinPow => {
+                    if ex.left.data.extract_numeric_value().is_some()
+                        && ex.right.data.extract_numeric_value().is_some()
+                    {
+                        return true;
+                    }
+                }
                 _ => {}
             },
             js_ast::ExprData::ETemplate(templ) => {
@@ -9114,6 +9149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,
+            fold_numeric_constants_unconditionally: false,
             emitted_namespace_vars: RefMap::default(),
             is_exported_inside_namespace: Default::default(),
             local_type_names: StringBoolMap::default(),

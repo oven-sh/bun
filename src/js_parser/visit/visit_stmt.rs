@@ -2186,7 +2186,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // that's what the TypeScript compiler does.
         let old_should_fold_typescript_constant_expressions =
             p.should_fold_typescript_constant_expressions;
+        let old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
         p.should_fold_typescript_constant_expressions = true;
+        p.fold_numeric_constants_unconditionally = true;
 
         // Create an assignment for each enum value
         for value in values.iter_mut() {
@@ -2313,6 +2315,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.should_fold_typescript_constant_expressions =
             old_should_fold_typescript_constant_expressions;
+        p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
 
         let mut value_stmts: StmtList<'a> = BumpVec::with_capacity_in(value_exprs.len(), p.arena);
         // Generate statements from expressions

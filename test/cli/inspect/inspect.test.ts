@@ -304,11 +304,6 @@ describe("websocket", () => {
   });
 });
 
-// Bun.serve walks every getaddrinfo result for "localhost" (v6 then v4), so a second
-// --inspect on a port whose [::1] side is already held silently binds 127.0.0.1
-// instead. The banner must name the address actually bound, otherwise clients that
-// resolve localhost -> ::1 reach the other listener and the printed URL is dead.
-// https://github.com/oven-sh/bun/issues/2778
 test("bun --inspect banner names the bound address when [::1]:port is held by another listener", async () => {
   const foreign = createTcpServer((socket: Socket) => socket.destroy());
   const port: number = await new Promise((resolve, reject) => {

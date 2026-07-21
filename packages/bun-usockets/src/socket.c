@@ -398,7 +398,12 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
         return 0;
     }
 
-    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0);
+    struct us_socket_t *s = us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0);
+    if (!s) {
+        bsd_close_socket(fds[0]);
+        bsd_close_socket(fds[1]);
+    }
+    return s;
 #endif
 }
 

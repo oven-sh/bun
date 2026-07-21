@@ -617,9 +617,15 @@ impl Watcher {
                 ZStr::from_buf(&buf[..], trailing_slash.len())
             };
 
-            self.platform
-                .watch_dir(path)
-                .map_err(|e| e.with_path(file_path))?
+            match self.platform.watch_dir(path) {
+                Ok(idx) => idx,
+                Err(e) => {
+                    if !stored_fd.is_valid() {
+                        let _ = bun_sys::close(fd);
+                    }
+                    return Err(e.with_path(file_path));
+                }
+            }
         };
 
         self.watchlist.append_assume_capacity(WatchItem {

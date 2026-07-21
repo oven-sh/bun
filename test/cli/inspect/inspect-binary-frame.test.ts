@@ -36,23 +36,22 @@ test("binary frame closes the inspector websocket with 1003 instead of leaving a
     stderr: "pipe",
   });
 
-  let url: URL | undefined;
+  // Drain stderr in the background: breaking a for-await on proc.stderr cancels
+  // the stream and closes the pipe, which can EPIPE the debugger thread's
+  // still-pending async banner writes and abort the first connection.
   let stderr = "";
   const decoder = new TextDecoder();
-  for await (const chunk of inspectee.stderr as ReadableStream) {
-    stderr += decoder.decode(chunk);
-    for (const line of stderr.split("\n")) {
-      try {
-        url = new URL(line);
-      } catch {}
-      if (url?.protocol.includes("ws")) break;
+  const gotUrl = Promise.withResolvers<URL>();
+  void (async () => {
+    for await (const chunk of inspectee!.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk);
+      const m = stderr.match(/ws:\/\/\S+/);
+      if (m) gotUrl.resolve(new URL(m[0]));
     }
-    if (stderr.includes("Listening:")) break;
-  }
-  if (!url) {
-    process.stderr.write(stderr);
-    throw new Error("Unable to find listening URL");
-  }
+  })().catch(() => {});
+  inspectee.exited.then(code => gotUrl.reject(new Error(`inspectee exited (${code}) before listening:\n${stderr}`)));
+
+  const url = await gotUrl.promise;
 
   const ws = new WebSocket(url);
   await new Promise<void>((resolve, reject) => {

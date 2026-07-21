@@ -1069,9 +1069,8 @@ impl<'a> Parser<'a> {
                             }
                             None => false,
                         };
-                        let should_move = !p.options.bundle
-                            && !used_before_decl
-                            && class.class.can_be_moved();
+                        let should_move =
+                            !p.options.bundle && !used_before_decl && class.class.can_be_moved();
 
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
@@ -1102,8 +1101,7 @@ impl<'a> Parser<'a> {
                         };
                         let used_before_decl = match class_name_ref {
                             Some(ref_) => {
-                                p.symbols.as_slice()[ref_.inner_index() as usize]
-                                    .use_count_estimate
+                                p.symbols.as_slice()[ref_.inner_index() as usize].use_count_estimate
                                     > 0
                             }
                             None => false,

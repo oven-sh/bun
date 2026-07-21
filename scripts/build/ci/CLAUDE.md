@@ -4,7 +4,6 @@ This is the guidance document for `scripts/build/ci` (loaded when working in
 this directory). Read it before changing anything here: it explains the design,
 the invariants that must not be broken, and how to make the common changes.
 
-
 How the machines Bun's CI runs on get built, named, and kept in sync with
 the repo. This directory is the whole system: what an image contains, how it
 is baked, and how CI finds it.

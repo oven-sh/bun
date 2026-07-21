@@ -4,9 +4,9 @@
 
 import { shellScript } from "../bootstrap/ops-posix.ts";
 import { download, warn } from "../bootstrap/runtime.ts";
+import type { LinuxImage } from "../types.ts";
 import type { Component } from "./component.ts";
 import { artifact } from "./component.ts";
-import type { LinuxImage } from "../types.ts";
 import { installPackages } from "./system-linux.ts";
 
 /**
@@ -23,8 +23,7 @@ function hasChromeDeb(image: LinuxImage): image is LinuxImage & { chromeDebUrl: 
 export const chromium: Component = {
   name: "chromium",
   linux: {
-    artifacts: image =>
-      hasChromeDeb(image) ? { chromeDeb: { url: image.chromeDebUrl, sha256: null } } : {},
+    artifacts: image => (hasChromeDeb(image) ? { chromeDeb: { url: image.chromeDebUrl, sha256: null } } : {}),
     steps: ctx => {
       const { image } = ctx;
       const chromeDeb = hasChromeDeb(image);

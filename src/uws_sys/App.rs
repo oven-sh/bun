@@ -144,6 +144,10 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
     }
 
+    pub fn set_max_request_body_size(&mut self, max_request_body_size: u64) {
+        c::uws_app_set_max_request_body_size(Self::SSL_FLAG, self.as_raw(), max_request_body_size)
+    }
+
     pub fn clear_routes(&mut self) {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
@@ -536,6 +540,11 @@ pub mod c {
             ssl: i32,
             app: &mut uws_app_t,
             max_header_size: u64,
+        );
+        pub(crate) safe fn uws_app_set_max_request_body_size(
+            ssl: i32,
+            app: &mut uws_app_t,
+            max_request_body_size: u64,
         );
         pub(crate) fn uws_app_get(
             ssl: i32,

@@ -2248,6 +2248,71 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
   }
 });
 
+it("should not send 100 Continue for an over-limit Content-Length with Expect: 100-continue", async () => {
+  // RFC 9110 10.1.1: a server MUST either send 100 Continue and read, or send
+  // a final status. When Content-Length already exceeds maxRequestBodySize the
+  // 413 is decided from the request head alone, so inviting the upload with
+  // 100 Continue first wastes the body transfer for a known rejection.
+  using server = Bun.serve({
+    port: 0,
+    maxRequestBodySize: 100,
+    async fetch(req) {
+      return new Response("len:" + (await req.text()).length);
+    },
+  });
+
+  const probe = (contentLength: number, sendExpect: boolean, body: string = "") =>
+    new Promise<string[]>((resolve, reject) => {
+      let buf = "";
+      let sentBody = body.length === 0;
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(s) {
+            s.write(
+              "POST / HTTP/1.1\r\n" +
+                "Host: x\r\n" +
+                (sendExpect ? "Expect: 100-continue\r\n" : "") +
+                "Content-Length: " +
+                contentLength +
+                "\r\n\r\n",
+            );
+            if (!sendExpect && body) {
+              s.write(body);
+              sentBody = true;
+            }
+          },
+          data(s, d) {
+            buf += d.toString();
+            if (sendExpect && !sentBody && buf.includes("100 Continue")) {
+              sentBody = true;
+              s.write(body);
+            }
+            // A final (non-1xx) status ends the exchange for our purposes.
+            if (/HTTP\/1\.1 [2-5]\d\d/.test(buf)) {
+              s.end();
+            }
+          },
+          close() {
+            resolve(buf.match(/HTTP\/1\.1 \d+ [^\r\n]*/g) || []);
+          },
+          error: reject,
+        },
+      });
+    });
+
+  // Over limit with Expect: the client asked permission; answer 413 directly.
+  expect(await probe(500, true)).toEqual(["HTTP/1.1 413 Request Entity Too Large"]);
+  // Over limit without Expect: unchanged baseline.
+  expect(await probe(500, false)).toEqual(["HTTP/1.1 413 Request Entity Too Large"]);
+  // Under limit with Expect: still get 100 Continue, then the final response.
+  expect(await probe(50, true, Buffer.alloc(50, "x").toString())).toEqual([
+    "HTTP/1.1 100 Continue",
+    "HTTP/1.1 200 OK",
+  ]);
+});
+
 it("should support promise returned from error", async () => {
   const { promise, resolve } = Promise.withResolvers<string>();
 

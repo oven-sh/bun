@@ -780,6 +780,11 @@ public:
         return std::move(*this);
     }
 
+    TemplatedApp &&setMaxRequestBodySize(uint64_t maxRequestBodySize) {
+        httpContext->getSocketContextData()->maxRequestBodySize = maxRequestBodySize;
+        return std::move(*this);
+    }
+
     TemplatedApp &&setMaxHTTPHeaderSize(uint64_t maxHeaderSize) {
         httpContext->getSocketContextData()->maxHeaderSize = maxHeaderSize;
         return std::move(*this);

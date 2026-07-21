@@ -2844,6 +2844,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !this_ref.config.on_node_http_request.is_empty() {
             // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
             unsafe { &mut *this }.set_using_custom_expect_handler(true);
+        } else {
+            // Bun.serve: tell uWS the body-size limit so its auto 100-continue
+            // is skipped for an over-limit Content-Length (RFC 9110 10.1.1);
+            // `prepare_js_request_context` answers 413 from the head alone.
+            let limit = this_ref.config.max_request_body_size as u64;
+            // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
+            if let Some(app) = unsafe { (*this).app } {
+                bun_opaque::opaque_deref_mut(app).set_max_request_body_size(limit);
+            }
         }
 
         // the listen_* trampolines re-derive `&mut *this` synchronously

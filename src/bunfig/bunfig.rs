@@ -380,7 +380,10 @@ impl<'a> Parser<'a> {
             self.load_env_config(&env_expr)?;
         }
 
-        if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
+        if matches!(
+            cmd,
+            CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::RunAsNodeCommand
+        ) {
             if let Some(expr) = json.get(b"serve") {
                 if let Some(port) = expr.get(b"port") {
                     self.expect(&port, ExprTag::ENumber)?;
@@ -401,9 +404,7 @@ impl<'a> Parser<'a> {
                     bun_analytics::TriState::No
                 });
             }
-        }
 
-        if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
             if let Some(expr) = json.get(b"smol") {
                 self.expect(&expr, ExprTag::EBoolean)?;
                 self.ctx.runtime_options.smol = expr.as_bool().expect("infallible: type checked");
@@ -715,6 +716,7 @@ impl<'a> Parser<'a> {
         if cmd.is_npm_related()
             || cmd == CommandTag::RunCommand
             || cmd == CommandTag::AutoCommand
+            || cmd == CommandTag::RunAsNodeCommand
             || cmd == CommandTag::TestCommand
         {
             if let Some(install_obj) = json.get_object(b"install") {

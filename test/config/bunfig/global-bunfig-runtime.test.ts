@@ -91,6 +91,22 @@ describe("global ~/.bunfig.toml applies to runtime commands", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("node shim (argv0=node)", async () => {
+    const { dir, home, app } = layout();
+    using _ = dir;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      argv0: "node",
+      env: baseEnv(home),
+      cwd: app,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("preload-ran\nsentinel");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("local bunfig overrides global for bun run (shallow merge)", async () => {
     using dir = tempDir("global-bunfig-merge", {
       "g.ts": `(globalThis as any).__G = "global";\n`,

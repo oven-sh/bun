@@ -17,15 +17,16 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
-fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    let paths: [&[u8]; 1] = [b".bunfig.toml"];
+/// Resolve `$XDG_CONFIG_HOME/<name>` when it exists, otherwise
+/// `$HOME/<name>` (`$USERPROFILE` on Windows). Used for both the user-level
+/// `.bunfig.toml` and `.npmrc`; `None` when neither env var is set.
+pub fn home_config_path<'a>(buf: &'a mut PathBuffer, name: &[u8]) -> Option<&'a ZStr> {
+    let parts: [&[u8]; 1] = [name];
 
-    // `$XDG_CONFIG_HOME/.bunfig.toml` takes precedence, but only when the file
-    // actually exists there; otherwise fall through to `$HOME/.bunfig.toml`.
     if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get_not_empty() {
         let len = {
             let path =
-                resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut **buf, &paths);
+                resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut **buf, &parts);
             if bun_sys::exists_z(path) {
                 path.len()
             } else {
@@ -39,11 +40,15 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
 
     if let Some(home_dir) = env_var::HOME.get_not_empty() {
         return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            home_dir, &mut **buf, &paths,
+            home_dir, &mut **buf, &parts,
         ));
     }
 
     None
+}
+
+fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
+    home_config_path(buf, b".bunfig.toml")
 }
 
 fn load_bunfig(

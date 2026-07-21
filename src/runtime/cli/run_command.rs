@@ -1490,6 +1490,10 @@ impl Run {
                         Some(entry),
                     )
                 }
+                #[cfg(unix)]
+                bun_jsc::posix_signal_handle::enable_watch_mode_signals(
+                    ctx.debug.watch_kill_signal,
+                );
             }
             _ => {}
         }

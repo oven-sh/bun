@@ -58,6 +58,11 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // instead to terminate the worker sooner
         worker.exit();
     } else {
+        // A watch-reload kill-signal handler may call process.exit; node
+        // restarts the watched child regardless, so let the reload proceed.
+        if bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal() {
+            return;
+        }
         vm.on_exit();
         vm.global_exit();
     }

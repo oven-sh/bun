@@ -291,6 +291,60 @@ macro_rules! __define_signal_code {
 }
 for_each_signal!(__define_signal_code);
 
+impl SignalCode {
+    /// This table uses Linux numbering; returns the current platform's number
+    /// (they differ on macOS/BSD), or `None` when the platform lacks the signal.
+    pub fn platform_number(self) -> Option<i32> {
+        #[cfg(unix)]
+        {
+            use SignalCode as S;
+            Some(match self {
+                S::SIGHUP => libc::SIGHUP,
+                S::SIGINT => libc::SIGINT,
+                S::SIGQUIT => libc::SIGQUIT,
+                S::SIGILL => libc::SIGILL,
+                S::SIGTRAP => libc::SIGTRAP,
+                S::SIGABRT => libc::SIGABRT,
+                S::SIGBUS => libc::SIGBUS,
+                S::SIGFPE => libc::SIGFPE,
+                S::SIGKILL => libc::SIGKILL,
+                S::SIGUSR1 => libc::SIGUSR1,
+                S::SIGSEGV => libc::SIGSEGV,
+                S::SIGUSR2 => libc::SIGUSR2,
+                S::SIGPIPE => libc::SIGPIPE,
+                S::SIGALRM => libc::SIGALRM,
+                S::SIGTERM => libc::SIGTERM,
+                S::SIG16 => return None,
+                S::SIGCHLD => libc::SIGCHLD,
+                S::SIGCONT => libc::SIGCONT,
+                S::SIGSTOP => libc::SIGSTOP,
+                S::SIGTSTP => libc::SIGTSTP,
+                S::SIGTTIN => libc::SIGTTIN,
+                S::SIGTTOU => libc::SIGTTOU,
+                S::SIGURG => libc::SIGURG,
+                S::SIGXCPU => libc::SIGXCPU,
+                S::SIGXFSZ => libc::SIGXFSZ,
+                S::SIGVTALRM => libc::SIGVTALRM,
+                S::SIGPROF => libc::SIGPROF,
+                S::SIGWINCH => libc::SIGWINCH,
+                S::SIGIO => libc::SIGIO,
+                #[cfg(target_os = "linux")]
+                S::SIGPWR => libc::SIGPWR,
+                #[cfg(not(target_os = "linux"))]
+                S::SIGPWR => return None,
+                S::SIGSYS => libc::SIGSYS,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            match self {
+                Self::SIG16 => None,
+                _ => Some(self as u8 as i32),
+            }
+        }
+    }
+}
+
 // ─── analytics::features (MOVE_DOWN from bun_analytics) ───────────────────
 // Atomic counters so cross-thread `.fetch_add` is sound. Only the
 // counters are tier-0; `builtin_modules` (EnumSet over jsc HardcodedModule)

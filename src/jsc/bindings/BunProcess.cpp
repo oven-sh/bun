@@ -1169,17 +1169,104 @@ bool isSignalName(WTF::String input)
     return signalNameToNumberMap->contains(input);
 }
 
-extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
+static void loadSignalNumberToNameMap()
+{
+    static std::once_flag signalNumberToNameMapOnceFlag;
+    std::call_once(signalNumberToNameMapOnceFlag, [] {
+        auto signalNames = getSignalNames();
+        signalNumberToNameMap = new HashMap<int, String>();
+        signalNumberToNameMap->reserveInitialCapacity(31);
+        signalNumberToNameMap->add(SIGHUP, signalNames[0]);
+        signalNumberToNameMap->add(SIGINT, signalNames[1]);
+        signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
+        signalNumberToNameMap->add(SIGILL, signalNames[3]);
+#ifdef SIGTRAP
+        signalNumberToNameMap->add(SIGTRAP, signalNames[4]);
+#endif
+        signalNumberToNameMap->add(SIGABRT, signalNames[5]);
+#ifdef SIGIOT
+        signalNumberToNameMap->add(SIGIOT, signalNames[6]);
+#endif
+#ifdef SIGBUS
+        signalNumberToNameMap->add(SIGBUS, signalNames[7]);
+#endif
+        signalNumberToNameMap->add(SIGFPE, signalNames[8]);
+        signalNumberToNameMap->add(SIGKILL, signalNames[9]);
+#ifdef SIGUSR1
+        signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
+#endif
+        signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
+#ifdef SIGUSR2
+        signalNumberToNameMap->add(SIGUSR2, signalNames[12]);
+#endif
+#ifdef SIGPIPE
+        signalNumberToNameMap->add(SIGPIPE, signalNames[13]);
+#endif
+#ifdef SIGALRM
+        signalNumberToNameMap->add(SIGALRM, signalNames[14]);
+#endif
+        signalNumberToNameMap->add(SIGTERM, signalNames[15]);
+#ifdef SIGCHLD
+        signalNumberToNameMap->add(SIGCHLD, signalNames[16]);
+#endif
+#ifdef SIGCONT
+        signalNumberToNameMap->add(SIGCONT, signalNames[17]);
+#endif
+#ifdef SIGSTOP
+        signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
+#endif
+#ifdef SIGTSTP
+        signalNumberToNameMap->add(SIGTSTP, signalNames[19]);
+#endif
+#ifdef SIGTTIN
+        signalNumberToNameMap->add(SIGTTIN, signalNames[20]);
+#endif
+#ifdef SIGTTOU
+        signalNumberToNameMap->add(SIGTTOU, signalNames[21]);
+#endif
+#ifdef SIGURG
+        signalNumberToNameMap->add(SIGURG, signalNames[22]);
+#endif
+#ifdef SIGXCPU
+        signalNumberToNameMap->add(SIGXCPU, signalNames[23]);
+#endif
+#ifdef SIGXFSZ
+        signalNumberToNameMap->add(SIGXFSZ, signalNames[24]);
+#endif
+#ifdef SIGVTALRM
+        signalNumberToNameMap->add(SIGVTALRM, signalNames[25]);
+#endif
+#ifdef SIGPROF
+        signalNumberToNameMap->add(SIGPROF, signalNames[26]);
+#endif
+        signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
+#ifdef SIGIO
+        signalNumberToNameMap->add(SIGIO, signalNames[28]);
+#endif
+#ifdef SIGINFO
+        signalNumberToNameMap->add(SIGINFO, signalNames[29]);
+#endif
+#ifdef SIGSYS
+        signalNumberToNameMap->add(SIGSYS, signalNames[30]);
+#endif
+#ifdef SIGBREAK
+        signalNumberToNameMap->add(SIGBREAK, signalNames[31]);
+#endif
+    });
+}
+
+extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
     Process* process = globalObject->processObject();
 
+    loadSignalNumberToNameMap();
     String signalName = signalNumberToNameMap->get(signalNumber);
     Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
     MarkedArgumentBuffer args;
     args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
     args.append(jsNumber(signalNumber));
 
-    process->wrapped().emitForBindings(signalNameIdentifier, args);
+    return process->wrapped().emitForBindings(signalNameIdentifier, args);
 }
 
 #if OS(WINDOWS)
@@ -1400,6 +1487,7 @@ extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject*
 extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
+extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listenerCount);
 
 __attribute__((noinline)) static void forwardSignal(int signalNumber)
 {
@@ -1407,6 +1495,31 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
     // This is so that we can be sure not to uninstall signal handlers that we didn't install here.
     Bun__onPosixSignal(signalNumber);
 }
+
+// `bun run --watch` keeps this signal's handler installed for the process
+// lifetime (node's watcher process owns SIGINT the same way), so the
+// listener-removal path below must never restore SIG_DFL for it.
+static int watchModeStickySignal = 0;
+
+#if !OS(WINDOWS)
+static void installForwardSignalHandler(int signalNumber)
+{
+    struct sigaction action;
+    memset(&action, 0, sizeof(struct sigaction));
+    action.sa_handler = forwardSignal;
+    sigemptyset(&action.sa_mask);
+    sigaddset(&action.sa_mask, signalNumber);
+    action.sa_flags = SA_RESTART;
+    sigaction(signalNumber, &action, nullptr);
+}
+
+extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
+{
+    Bun__ensureSignalHandler();
+    watchModeStickySignal = signalNumber;
+    installForwardSignalHandler(signalNumber);
+}
+#endif
 
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
@@ -1453,94 +1566,16 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
         // Signal Handlers
         loadSignalNumberMap();
-        static std::once_flag signalNumberToNameMapOnceFlag;
-        std::call_once(signalNumberToNameMapOnceFlag, [] {
-            auto signalNames = getSignalNames();
-            signalNumberToNameMap = new HashMap<int, String>();
-            signalNumberToNameMap->reserveInitialCapacity(31);
-            signalNumberToNameMap->add(SIGHUP, signalNames[0]);
-            signalNumberToNameMap->add(SIGINT, signalNames[1]);
-            signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
-            signalNumberToNameMap->add(SIGILL, signalNames[3]);
-#ifdef SIGTRAP
-            signalNumberToNameMap->add(SIGTRAP, signalNames[4]);
-#endif
-            signalNumberToNameMap->add(SIGABRT, signalNames[5]);
-#ifdef SIGIOT
-            signalNumberToNameMap->add(SIGIOT, signalNames[6]);
-#endif
-#ifdef SIGBUS
-            signalNumberToNameMap->add(SIGBUS, signalNames[7]);
-#endif
-            signalNumberToNameMap->add(SIGFPE, signalNames[8]);
-            signalNumberToNameMap->add(SIGKILL, signalNames[9]);
-#ifdef SIGUSR1
-            signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
-#endif
-            signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
-#ifdef SIGUSR2
-            signalNumberToNameMap->add(SIGUSR2, signalNames[12]);
-#endif
-#ifdef SIGPIPE
-            signalNumberToNameMap->add(SIGPIPE, signalNames[13]);
-#endif
-#ifdef SIGALRM
-            signalNumberToNameMap->add(SIGALRM, signalNames[14]);
-#endif
-            signalNumberToNameMap->add(SIGTERM, signalNames[15]);
-#ifdef SIGCHLD
-            signalNumberToNameMap->add(SIGCHLD, signalNames[16]);
-#endif
-#ifdef SIGCONT
-            signalNumberToNameMap->add(SIGCONT, signalNames[17]);
-#endif
-#ifdef SIGSTOP
-            signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
-#endif
-#ifdef SIGTSTP
-            signalNumberToNameMap->add(SIGTSTP, signalNames[19]);
-#endif
-#ifdef SIGTTIN
-            signalNumberToNameMap->add(SIGTTIN, signalNames[20]);
-#endif
-#ifdef SIGTTOU
-            signalNumberToNameMap->add(SIGTTOU, signalNames[21]);
-#endif
-#ifdef SIGURG
-            signalNumberToNameMap->add(SIGURG, signalNames[22]);
-#endif
-#ifdef SIGXCPU
-            signalNumberToNameMap->add(SIGXCPU, signalNames[23]);
-#endif
-#ifdef SIGXFSZ
-            signalNumberToNameMap->add(SIGXFSZ, signalNames[24]);
-#endif
-#ifdef SIGVTALRM
-            signalNumberToNameMap->add(SIGVTALRM, signalNames[25]);
-#endif
-#ifdef SIGPROF
-            signalNumberToNameMap->add(SIGPROF, signalNames[26]);
-#endif
-            signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
-#ifdef SIGIO
-            signalNumberToNameMap->add(SIGIO, signalNames[28]);
-#endif
-#ifdef SIGINFO
-            signalNumberToNameMap->add(SIGINFO, signalNames[29]);
-#endif
-#ifdef SIGSYS
-            signalNumberToNameMap->add(SIGSYS, signalNames[30]);
-#endif
-#ifdef SIGBREAK
-            signalNumberToNameMap->add(SIGBREAK, signalNames[31]);
-#endif
-        });
+        loadSignalNumberToNameMap();
 
         if (!signalToContextIdsMap) {
             signalToContextIdsMap = new HashMap<int, SignalHandleValue>();
         }
 
         if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
+            int listenerCount = eventEmitter.listenerCount(eventName);
+            // Mirror the count for the watcher thread's --watch-kill-signal check.
+            Bun__onSignalListenerCountChanged(signalNumber, listenerCount);
 #if OS(LINUX)
             // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
             // suspend and resume the JS thread which we must not override.
@@ -1564,18 +1599,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         };
 #if !OS(WINDOWS)
                         Bun__ensureSignalHandler();
-                        struct sigaction action;
-                        memset(&action, 0, sizeof(struct sigaction));
-
-                        // Set the handler in the action struct
-                        action.sa_handler = forwardSignal;
-
-                        // Clear the sa_mask
-                        sigemptyset(&action.sa_mask);
-                        sigaddset(&action.sa_mask, signalNumber);
-                        action.sa_flags = SA_RESTART;
-
-                        sigaction(signalNumber, &action, nullptr);
+                        installForwardSignalHandler(signalNumber);
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),
@@ -1589,7 +1613,8 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         signalToContextIdsMap->set(signalNumber, signal_handle);
                     }
                 } else {
-                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && eventEmitter.listenerCount(eventName) == 0) {
+                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && listenerCount == 0
+                        && signalNumber != watchModeStickySignal) {
 
 #if !OS(WINDOWS)
                         if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {

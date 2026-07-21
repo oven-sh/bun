@@ -98,6 +98,7 @@ pub mod task_tag {
         Futimes,
         GetAddrInfoRequestTask,
         HotReloadTask,
+        WatchReloadTask,
         ImmediateObject,
         JSCDeferredWorkTask,
         Lchmod,

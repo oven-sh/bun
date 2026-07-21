@@ -3580,6 +3580,18 @@ impl VirtualMachine {
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+        if self.hot_reload == HOT_RELOAD_WATCH {
+            // Watch reload replaces the process: never defer on a pending
+            // entry promise (node restarts regardless of child state), and
+            // emit the --watch-kill-signal JS handlers first, like node.
+            crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
+            let should_clear_terminal = !self
+                .env_loader()
+                .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
+            bun_core::Output::flush();
+            bun_core::reload_process(should_clear_terminal, false);
+        }
+
         if let Some(p) = self.pending_internal_promise {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
@@ -3602,11 +3614,6 @@ impl VirtualMachine {
         let should_clear_terminal = !self
             .env_loader()
             .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
-        if self.hot_reload == HOT_RELOAD_WATCH {
-            bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
-        }
-
         if should_clear_terminal {
             bun_core::Output::flush();
             bun_core::Output::disable_buffering();

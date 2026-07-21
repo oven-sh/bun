@@ -76,6 +76,12 @@ bun --watch test
   --no-clear-screen`.
 </Note>
 
+<Note>
+  Before each restart, `bun run --watch` runs the handlers your script registered for the kill signal (default
+  `SIGTERM`, matching the signal Node.js sends its watched process). Use **`--watch-kill-signal`** to pick a different
+  signal, e.g. `bun --watch --watch-kill-signal SIGINT index.ts`.
+</Note>
+
 ---
 
 ## `--hot` mode

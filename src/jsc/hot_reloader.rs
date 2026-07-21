@@ -252,6 +252,9 @@ impl HotReloaderCtx for VirtualMachine {
 /// The dyn trait below is the type-erased view used by
 /// `HotReloaderCtx::reload`.
 pub type HotReloadTask = Task<VirtualMachine, EventLoop, false>;
+/// `bun run --watch` reload routed through the event loop (only when
+/// `--watch-kill-signal` listeners exist; see `Task::enqueue`).
+pub type WatchReloadTask = Task<VirtualMachine, EventLoop, true>;
 
 /// Trait bound on `Ctx` exposing the operations the reloader needs.
 /// Implemented by `VirtualMachine` and `bun.bake.DevServer`.
@@ -657,7 +660,10 @@ where
             return;
         }
 
-        if RELOAD_IMMEDIATELY {
+        // With --watch-kill-signal listeners registered, reload via the event
+        // loop so the JS thread emits them before execve (node runs the child's
+        // handlers on kill); otherwise execve immediately (node's default kill).
+        if RELOAD_IMMEDIATELY && !crate::posix_signal_handle::watch_kill_signal_has_listeners() {
             Output::flush();
             flush_changed_paths_for_reload();
             bun_core::reload_process(
@@ -682,8 +688,13 @@ where
             // Note: `JscTask::init` requires `Taskable`, but const-generic
             // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
             // Use the raw `(tag, ptr)` constructor.
+            let tag = if RELOAD_IMMEDIATELY {
+                task_tag::WatchReloadTask
+            } else {
+                task_tag::HotReloadTask
+            };
             let concurrent = (*that).concurrent_task.insert(ConcurrentTask {
-                task: JscTask::new(task_tag::HotReloadTask, that.cast::<()>()),
+                task: JscTask::new(tag, that.cast::<()>()),
                 ..Default::default()
             });
             // `&that.concurrent_task` is an interior pointer into a

@@ -186,6 +186,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--watch                           Automatically restart the process on file change"
     ),
     parse_param!(
+        "--watch-kill-signal <STR>         Signal whose handlers run when --watch restarts the process (default: \"SIGTERM\")"
+    ),
+    parse_param!(
         "--hot                             Enable auto reload in the Bun runtime, test runner, or bundler"
     ),
     parse_param!(
@@ -1047,6 +1050,27 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
 
             if args.flag(b"--no-clear-screen") {
                 let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
+            }
+        }
+
+        if let Some(kill_signal) = args.option(b"--watch-kill-signal") {
+            // Node reads --watch-kill-signal only in watch mode; elsewhere it is
+            // accepted and ignored. Matching is case-insensitive (node uppercases).
+            if ctx.debug.hot_reload == HotReload::Watch {
+                let upper = kill_signal.to_ascii_uppercase();
+                match bun_core::SignalCode::from_name(&upper)
+                    .filter(|s| s.platform_number().is_some())
+                {
+                    Some(sig) => ctx.debug.watch_kill_signal = sig,
+                    None => {
+                        Output::print_errorln(format_args!(
+                            "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {}",
+                            String::from_utf8_lossy(kill_signal)
+                        ));
+                        Output::flush();
+                        Global::exit(1);
+                    }
+                }
             }
         }
 

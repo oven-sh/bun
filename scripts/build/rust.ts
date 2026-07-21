@@ -357,7 +357,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // needed because `cargo build --target` still resolves proc-macro crates
     // for the host through the same `-Zbuild-std` flag set. Requires the
     // `rust-src` component, which `rust-toolchain.toml` requests and CI
-    // images preinstall (Dockerfile / bootstrap.sh `rustup component add
+    // images preinstall (scripts/build/ci `rustup component add
     // rust-src`).
     args.push("-Zbuild-std=core,alloc,std,proc_macro,panic_abort");
   }

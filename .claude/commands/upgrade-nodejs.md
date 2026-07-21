@@ -12,9 +12,11 @@ Bun reports a Node.js version for compatibility with the Node.js ecosystem. This
 
 ## Files That Always Need Updates
 
-### 1. Bootstrap Scripts
-- `scripts/bootstrap.sh` - Update `NODEJS_VERSION=`
-- `scripts/bootstrap.ps1` - Update `$NODEJS_VERSION =`
+### 1. CI Image Spec
+- `scripts/build/ci/spec.ts` - Update `nodejs.version` (the single pin for
+  every CI image, Linux and Windows). Changing it re-bakes the images
+  automatically on that branch (the image hash changes); no other file
+  duplicates the version.
 
 ### 2. CMake Configuration
 - `cmake/Options.cmake`

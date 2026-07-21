@@ -7,6 +7,7 @@
 
 import { join } from "node:path";
 import { imageKey, imageName } from "../scripts/build/ci/naming.ts";
+import { alpineRelease } from "../scripts/build/ci/spec.ts";
 import {
   getBuildkiteEmoji,
   getBuildMetadata,
@@ -150,7 +151,7 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", distro: "debian", release: "13" },
   // asan x64 cross-builds from the arm64 host too; if install_cross_compiler_rt()
   // can't fetch amd64 libclang-rt on arm64, this lane may need an x64 host as
-  // the one exception — see scripts/bootstrap.sh.
+  // the one exception — see scripts/build/ci/spec.ts (buildHost).
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
@@ -194,8 +195,8 @@ const testPlatforms = [
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: alpineRelease, tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: alpineRelease, tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
@@ -494,7 +495,7 @@ function getBuildCommand(target, options, mode) {
   //
   // Literal `node` — ci.mjs generates pipeline YAML that runs on a
   // different agent later, so process.execPath (the generator's path)
-  // is wrong. PATH on the agent has node via bootstrap.sh.
+  // is wrong. PATH on the agent has node via the image bootstrap.
   // --experimental-strip-types for Node 24's .ts support (unflagged in
   // 25+; drop once CI bumps past the ABI-141 blocker).
   return `node --experimental-strip-types scripts/build.ts ${getBuildArgs(target, options, mode)}`;
@@ -508,7 +509,7 @@ function getBuildCommand(target, options, mode) {
 function getBuildCppStep(platform, options) {
   const { os, arch } = platform;
   // BoringSSL's win-x64 assembly is NASM syntax. The agent images bake nasm
-  // (.buildkite/Dockerfile); best-effort install covers older images, and
+  // (scripts/build/ci); best-effort install covers older images, and
   // `|| true` keeps a missing package manager from failing the step — the
   // build's own "nasm not found" error is clearer.
   const nasmSetup =
@@ -620,7 +621,7 @@ const PINNED_QEMU = {
  */
 function getEmulatorBinary(platform) {
   const { os, arch } = platform;
-  // Intel SDE is baked into the Windows image by scripts/bootstrap.ps1
+  // Intel SDE is baked into the Windows image by scripts/build/ci
   // (Install-IntelSde): downloadmirror.intel.com sits behind a bot challenge
   // that blocks non-browser clients, so it cannot be downloaded at job time.
   if (os === "windows") return "C:\\intel-sde\\sde.exe";
@@ -653,7 +654,7 @@ function hasWebKitChanges(options) {
 function getVerifyBaselineHost(platform) {
   const { os, arch, abi } = platform;
   if (os === "windows") return { os: "windows", arch, release: "2019" };
-  if (abi === "musl") return { os: "linux", arch, abi: "musl", distro: "alpine", release: "3.23" };
+  if (abi === "musl") return { os: "linux", arch, abi: "musl", distro: "alpine", release: alpineRelease };
   return { os: "linux", arch, distro: "debian", release: "13" };
 }
 

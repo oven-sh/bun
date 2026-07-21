@@ -142,7 +142,7 @@ You can also build Windows binaries (both x64 and arm64) on a Linux host. The bu
 
 ### Prerequisites
 
-1. The same LLVM version a native build uses (see `scripts/bootstrap.sh` `llvm_version_exact`), installed so that `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` are available. On Debian/Ubuntu, `apt.llvm.org` packages provide all of them.
+1. The same LLVM version a native build uses (see `llvm.version` in `scripts/build/ci/spec.ts`), installed so that `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` are available. On Debian/Ubuntu, `apt.llvm.org` packages provide all of them.
 2. `nasm` (only needed for Windows x64; BoringSSL's x64 assembly is NASM syntax).
 3. Rust std for the Windows targets (`rust-toolchain.toml` lists them; `rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc` if missing).
 4. A Windows sysroot: an [xwin](https://github.com/Jake-Shadle/xwin) splat of the MSVC CRT, Windows SDK, and ATL laid out like a Visual Studio install. Downloading these components means accepting Microsoft's license terms for them.
@@ -159,7 +159,7 @@ ln -s include "/opt/winsysroot/Windows Kits/10/Include"
 ln -s lib "/opt/winsysroot/Windows Kits/10/Lib"
 ```
 
-The build looks for the sysroot at `/opt/winsysroot` (or `/opt/xwin`) automatically; elsewhere, set `WINDOWS_SYSROOT=<path>` or pass `--winsysroot=<path>` (a user-writable path also lets configure manage the aliases for you). Configure validates the splat at the start of every cross build. CI agents bake the same splat into their images (`.buildkite/Dockerfile`, `scripts/bootstrap.sh`); when an agent doesn't have one, the build fetches it into its cache dir at configure time.
+The build looks for the sysroot at `/opt/winsysroot` (or `/opt/xwin`) automatically; elsewhere, set `WINDOWS_SYSROOT=<path>` or pass `--winsysroot=<path>` (a user-writable path also lets configure manage the aliases for you). Configure validates the splat at the start of every cross build. CI agents bake the same splat into their images (`scripts/build/ci`); when an agent doesn't have one, the build fetches it into its cache dir at configure time.
 
 ### Building
 

@@ -374,7 +374,9 @@ it("creates", () => {
     ]),
   );
   expect(stmt2.run()).toStrictEqual({
-    changes: 0,
+    // sqlite3_changes() of the most recently completed INSERT/UPDATE/DELETE,
+    // matching better-sqlite3 and node:sqlite.
+    changes: 1,
     lastInsertRowid: 3,
   });
 
@@ -1493,6 +1495,33 @@ it("reports changes in Statement#run", () => {
   expect(db.run(sql).changes).toBe(2);
   expect(db.prepare(sql).run().changes).toBe(2);
   expect(db.query(sql).run().changes).toBe(2);
+});
+
+it("run().changes reports direct changes only (not trigger or foreign-key cascade rows)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE p(x); CREATE TABLE log(y);");
+  db.exec(
+    "CREATE TRIGGER tp AFTER INSERT ON p BEGIN INSERT INTO log VALUES (new.x); INSERT INTO log VALUES (new.x * 2); END;",
+  );
+
+  // Statement#run: one direct row, two trigger rows
+  expect(db.prepare("INSERT INTO p VALUES (5)").run().changes).toBe(1);
+  expect(db.prepare("INSERT INTO p VALUES (?),(?)").run(6, 7).changes).toBe(2);
+
+  // Database#run
+  expect(db.run("INSERT INTO p VALUES (8)").changes).toBe(1);
+  // multi-statement: direct changes summed across statements, trigger rows excluded
+  expect(db.run("INSERT INTO p VALUES (9); INSERT INTO p VALUES (10),(11); SELECT * FROM p;").changes).toBe(3);
+
+  // ON DELETE CASCADE
+  db.exec("PRAGMA foreign_keys = ON; CREATE TABLE par(id INTEGER PRIMARY KEY);");
+  db.exec("CREATE TABLE ch(id INTEGER PRIMARY KEY, pid REFERENCES par(id) ON DELETE CASCADE);");
+  db.exec("INSERT INTO par VALUES (1); INSERT INTO ch VALUES (10,1),(11,1),(12,1);");
+  expect(db.prepare("DELETE FROM par WHERE id = 1").run().changes).toBe(1);
+
+  // sanity: trigger + cascade actually fired
+  expect(db.prepare("SELECT count(*) AS c FROM log").get()).toEqual({ c: 14 });
+  expect(db.prepare("SELECT count(*) AS c FROM ch").get()).toEqual({ c: 0 });
 });
 
 it("#13082", async () => {

@@ -556,13 +556,12 @@ impl Stdio {
         }
 
         if let Some(array_buffer) = value.as_array_buffer(global) {
-            // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
-            if array_buffer.byte_slice().is_empty() {
-                *out_stdio = Stdio::Ignore;
-                return Ok(());
-            }
-
             if i == 0 {
+                // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
+                if array_buffer.byte_slice().is_empty() {
+                    *out_stdio = Stdio::Ignore;
+                    return Ok(());
+                }
                 // stdin: copy now so later mutation of the caller's buffer
                 // cannot change what the child reads.
                 let copied_value = jsc::array_buffer::ArrayBuffer::create_buffer(

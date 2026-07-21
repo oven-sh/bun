@@ -248,6 +248,21 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
+      it("Uint8Array works as stdout when it is empty", () => {
+        gcTick();
+        const stdout_buffer = new Uint8Array(0);
+        const { stdout } = spawnSync([bunExe(), "-e", "console.log('hello world')"], {
+          stdout: stdout_buffer,
+          stderr: null,
+          stdin: null,
+          env: bunEnv,
+        });
+        gcTick();
+        expect(stdout).toBeInstanceOf(Uint8Array);
+        expect(stdout.byteLength).toBe(0);
+        gcTick();
+      });
+
       it("Uint8Array works as stdout when is the exactly size than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(12);

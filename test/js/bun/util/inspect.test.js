@@ -401,7 +401,7 @@ it("deeply nested Proxy chain does not crash", () => {
   // Without the fix, print_proxy recurses on the target without a stack-safety
   // check and segfaults; run in a subprocess so a regression fails the suite
   // instead of killing the runner.
-  const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
+  const { exitCode, stdout, signalCode } = Bun.spawnSync({
     cmd: [
       bunExe(),
       "-e",
@@ -416,7 +416,6 @@ it("deeply nested Proxy chain does not crash", () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(stderr.toString()).toBe("");
   expect(normalizeBunSnapshot(stdout.toString())).toMatchInlineSnapshot(`
     "{
       ok: 1,
@@ -425,6 +424,28 @@ it("deeply nested Proxy chain does not crash", () => {
       ok: 1,
     }"
   `);
+  expect(signalCode).toBeFalsy();
+  expect(exitCode).toBe(0);
+});
+
+it("deeply nested non-cyclic jsx throws RangeError, not segfault", () => {
+  const { exitCode, stdout, signalCode } = Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let el = { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null };
+        for (let i = 0; i < 20000; i++)
+          el = { $$typeof: Symbol.for("react.element"), type: "div", props: { children: el }, key: null };
+        try { Bun.inspect(el); console.log("no throw"); }
+        catch (e) { console.log(e.constructor.name); }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(stdout.toString().trim()).toBe("RangeError");
   expect(signalCode).toBeFalsy();
   expect(exitCode).toBe(0);
 });

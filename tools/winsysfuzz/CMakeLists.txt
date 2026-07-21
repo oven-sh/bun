@@ -45,8 +45,12 @@ target_link_libraries(winsysfuzz PRIVATE detours)
 add_executable(wsfrun src/launcher.cpp)
 target_link_libraries(wsfrun PRIVATE detours)
 
+# --- RVA symbolizer (DbgHelp) --------------------------------------------------
+add_executable(wsfsym src/symbolize.cpp)
+target_link_libraries(wsfsym PRIVATE dbghelp)
+
 if(MSVC)
-  foreach(t winsysfuzz wsfrun)
+  foreach(t winsysfuzz wsfrun wsfsym)
     target_compile_options(${t} PRIVATE /W3 /wd4996)
   endforeach()
 endif()

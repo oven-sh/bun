@@ -51,6 +51,28 @@ volatile LONG64 g_seq = 0;
 
 uintptr_t g_bunBase = 0;
 uintptr_t g_bunEnd = 0;
+// Union of bun.exe's executable sections; scraped callsite candidates must
+// point here (data pointers into .rdata/.data are not return addresses).
+uintptr_t g_txtBase = 0;
+uintptr_t g_txtEnd = 0;
+
+// A return address points just past a call. Checking the preceding bytes
+// for a call encoding filters stack garbage that merely looks like a code
+// pointer. Covers the encodings compilers emit: E8 rel32, and FF /2
+// (register/memory) with optional REX prefix and displacement.
+inline bool AfterCall(uintptr_t ip) {
+  const uint8_t* p = (const uint8_t*)ip;
+  if (ip < g_txtBase + 7) return false;
+  if (p[-5] == 0xE8) return true;                                     // call rel32
+  auto reg2 = [](uint8_t modrm) { return ((modrm >> 3) & 7) == 2; };
+  if (p[-2] == 0xFF && reg2(p[-1])) return true;                        // call reg / [reg]
+  if (p[-3] == 0xFF && reg2(p[-2])) return true;                        // call [reg+disp8] / SIB
+  if (p[-3] >= 0x40 && p[-3] <= 0x4F && p[-2] == 0xFF && reg2(p[-1])) return true; // REX call reg
+  if (p[-4] >= 0x40 && p[-4] <= 0x4F && p[-3] == 0xFF && reg2(p[-2])) return true;
+  if (p[-6] == 0xFF && reg2(p[-5])) return true;                        // call [reg+disp32]
+  if (p[-7] >= 0x40 && p[-7] <= 0x4F && p[-6] == 0xFF && reg2(p[-5])) return true; // REX + disp32
+  return false;
+}
 
 // WSF_FRAMES scales the stack-scrape depth (x32 qwords); 0 = _ReturnAddress only.
 int g_frames = 6;
@@ -217,7 +239,8 @@ CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, const ULONG_PTR* args, int a
     if (limit > end) limit = end;
     for (uintptr_t* p = sp; p < limit && nframes_ < kMaxFrames; p++) {
       uintptr_t v = *p;
-      if (v < g_bunBase || v >= g_bunEnd) continue;
+      if (v < g_txtBase || v >= g_txtEnd) continue;
+      if (!AfterCall(v)) continue;
       frames_[nframes_++] = v;
       if (bunFrame_ == 0) bunFrame_ = v;
     }
@@ -279,6 +302,15 @@ bool RuntimeInit() {
   auto* dos = (IMAGE_DOS_HEADER*)exe;
   auto* nt = (IMAGE_NT_HEADERS*)((uintptr_t)exe + dos->e_lfanew);
   g_bunEnd = g_bunBase + nt->OptionalHeader.SizeOfImage;
+  // Executable-section span, for the callsite scrape's code-pointer test.
+  auto* sec = IMAGE_FIRST_SECTION(nt);
+  for (int i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++) {
+    if (!(sec->Characteristics & IMAGE_SCN_MEM_EXECUTE)) continue;
+    uintptr_t lo = g_bunBase + sec->VirtualAddress;
+    uintptr_t hi = lo + sec->Misc.VirtualSize;
+    if (g_txtBase == 0 || lo < g_txtBase) g_txtBase = lo;
+    if (hi > g_txtEnd) g_txtEnd = hi;
+  }
 
   char dir[MAX_PATH] = ".";
   EnvA("WSF_LOG_DIR", dir, sizeof dir);
@@ -297,6 +329,8 @@ bool RuntimeInit() {
   LogLine("# wsf 1 pid=%lu exe=%s\n", GetCurrentProcessId(), exePath);
   LogLine("# base bun %llx %llx\n", (unsigned long long)g_bunBase,
           (unsigned long long)(g_bunEnd - g_bunBase));
+  LogLine("# text bun %llx %llx\n", (unsigned long long)(g_txtBase - g_bunBase),
+          (unsigned long long)(g_txtEnd - g_txtBase));
   HMODULE ntdll = GetModuleHandleA("ntdll.dll");
   HMODULE kb = GetModuleHandleA("kernelbase.dll");
   LogLine("# base ntdll %llx\n", (unsigned long long)(uintptr_t)ntdll);

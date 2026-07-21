@@ -86,9 +86,11 @@ test(
 // https://github.com/oven-sh/bun/issues/29173
 // JSC's Atomics.wait loop only exits on vm.hasTerminationRequest(), which
 // Bun never set before firing the NeedTermination trap that wakes the waiter.
-test("terminate() interrupts a worker blocked in Atomics.wait", async () => {
-  using dir = tempDir("worker-terminate-atomics-wait", {
-    "worker.js": `
+test(
+  "terminate() interrupts a worker blocked in Atomics.wait",
+  async () => {
+    using dir = tempDir("worker-terminate-atomics-wait", {
+      "worker.js": `
       self.onmessage = ({ data: sab }) => {
         const ia = new Int32Array(sab);
         postMessage("waiting");
@@ -96,7 +98,7 @@ test("terminate() interrupts a worker blocked in Atomics.wait", async () => {
         for (;;) Atomics.wait(ia, 0, 0);
       };
     `,
-    "main.js": `
+      "main.js": `
       const sab = new SharedArrayBuffer(16);
       const ia = new Int32Array(sab);
       const w = new Worker(new URL("./worker.js", import.meta.url).href);
@@ -116,21 +118,23 @@ test("terminate() interrupts a worker blocked in Atomics.wait", async () => {
       };
       w.postMessage(sab);
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("CLOSED\n");
-  expect(exitCode).toBe(0);
-});
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("CLOSED\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
 
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and

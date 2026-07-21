@@ -792,6 +792,23 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     WTF::Vector<JSC::StackFrame> stackTrace;
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
+    // Root the frames' cells: both eager-compute paths below read name/message via
+    // [[Get]] before formatting, which may allocate or run a user getter. The lazy
+    // path moves the frames into the ErrorInstance, which visits them; rooting is a
+    // no-op there.
+    JSC::MarkedArgumentBuffer protectedFrameCells;
+    protectedFrameCells.ensureCapacity(stackTrace.size() * 2);
+    for (auto& frame : stackTrace) {
+        if (auto* callee = frame.callee())
+            protectedFrameCells.append(callee);
+        if (auto* codeBlock = frame.codeBlock())
+            protectedFrameCells.append(codeBlock);
+    }
+    if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
     if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
         if (instance->hasMaterializedErrorInfo()) {
             // Error info was already materialized (e.g. .stack was previously accessed).
@@ -799,20 +816,6 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             // a non-null m_stackTrace, causing ASSERT(!m_errorInfoMaterialized) in
             // computeErrorInfo when GC's finalizeUnconditionally finds unmarked frames.
             // Eagerly compute and set the .stack property instead.
-            // Root the frames' cells first: computing the header reads name/message via
-            // [[Get]], which may allocate or run a user getter before formatting.
-            JSC::MarkedArgumentBuffer protectedFrameCells;
-            protectedFrameCells.ensureCapacity(stackTrace.size() * 2);
-            for (auto& frame : stackTrace) {
-                if (auto* callee = frame.callee())
-                    protectedFrameCells.append(callee);
-                if (auto* codeBlock = frame.codeBlock())
-                    protectedFrameCells.append(codeBlock);
-            }
-            if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
             OrdinalNumber line;
             OrdinalNumber column;
             String sourceURL;

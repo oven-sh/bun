@@ -3434,7 +3434,8 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
 pub use bun_windows_sys::externs::GetHostNameW;
 
 /// `GetHostNameW` with the `WSAStartup` retry it needs when winsock hasn't
-/// been initialized yet. Returns the NUL-terminated hostname slice on success.
+/// been initialized yet. Returns the hostname slice (without the trailing
+/// NUL) on success.
 pub fn gethostname_w(buf: &mut [u16]) -> Option<&[u16]> {
     // `namelen` counts WCHARs including the NUL; MSDN bounds the result at
     // 256, so both callers pass `[u16; 256]`.

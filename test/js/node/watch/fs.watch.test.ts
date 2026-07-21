@@ -987,6 +987,26 @@ describe("fs.promises.watch", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("ENOENT on a missing path surfaces on first iteration, not synchronously", async () => {
+    const missing = path.join(testDir, "does-not-exist-" + Date.now());
+    // The generator body (and the underlying fs.watch call) runs on the first
+    // next(), so the ENOENT must reject the first iteration rather than throw
+    // out of watch() itself. This is the shape node documents: a try wrapping
+    // the for-await catches it.
+    let watcher;
+    expect(() => {
+      watcher = fs.promises.watch(missing);
+    }).not.toThrow();
+    let caught: any;
+    try {
+      for await (const _ of watcher!) {
+      }
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toMatchObject({ code: "ENOENT" });
+  });
+
   test("yields events with a null prototype", async () => {
     const root = path.join(testDir, "null-proto-dir");
     fs.mkdirSync(root, { recursive: true });

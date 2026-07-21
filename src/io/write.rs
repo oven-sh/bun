@@ -67,6 +67,58 @@ impl Write for DiscardingWriter {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// LimitedWriter — output-capped wrapper
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Forwards at most `remaining` bytes to the inner sink, then silently
+/// discards the rest and reports `is_truncated()`. Writes never fail because
+/// of the cap, so callers that treat in-memory writes as infallible are safe.
+pub struct LimitedWriter<'a, W: Write> {
+    pub inner: &'a mut W,
+    pub remaining: usize,
+    pub truncated: bool,
+}
+
+impl<'a, W: Write> LimitedWriter<'a, W> {
+    #[inline]
+    pub fn new(inner: &'a mut W, limit: usize) -> Self {
+        Self {
+            inner,
+            remaining: limit,
+            truncated: false,
+        }
+    }
+}
+
+impl<W: Write> Write for LimitedWriter<'_, W> {
+    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+        if buf.len() <= self.remaining {
+            self.remaining -= buf.len();
+            return self.inner.write_all(buf);
+        }
+        let take = self.remaining;
+        self.remaining = 0;
+        self.truncated = true;
+        if take > 0 {
+            return self.inner.write_all(&buf[..take]);
+        }
+        Ok(())
+    }
+    #[inline]
+    fn flush(&mut self) -> Result<()> {
+        self.inner.flush()
+    }
+    #[inline]
+    fn written_len(&self) -> usize {
+        self.inner.written_len()
+    }
+    #[inline]
+    fn is_truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // FixedBufferStream — cursor over an in-memory buffer
 // ════════════════════════════════════════════════════════════════════════════
 

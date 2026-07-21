@@ -495,7 +495,8 @@ pub mod write;
 // `bun_io::FmtAdapter` / `bun_io::Result`.
 pub use bun_core::fmt::SliceCursor;
 pub use write::{
-    AsFmt, BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntBe, IntLe, Result, Write,
+    AsFmt, BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntBe, IntLe, LimitedWriter,
+    Result, Write,
 };
 
 pub use max_buf as MaxBuf;

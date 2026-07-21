@@ -506,6 +506,47 @@ impl Tag {
     pub const fn can_have_circular_references(self) -> bool {
         matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
     }
+
+    /// Map the wider `console_object` `FormatTag` onto this file's `Tag`.
+    /// Variants the test-runner formatter has no dedicated arm for collapse
+    /// onto `Object` so any caller still renders something useful.
+    pub const fn from_format_tag(tag: bun_jsc::FormatTag) -> Tag {
+        use bun_jsc::FormatTag as Ft;
+        match tag {
+            Ft::StringPossiblyFormatted => Tag::StringPossiblyFormatted,
+            Ft::String => Tag::String,
+            Ft::Undefined => Tag::Undefined,
+            Ft::Double => Tag::Double,
+            Ft::Integer => Tag::Integer,
+            Ft::Null => Tag::Null,
+            Ft::Boolean => Tag::Boolean,
+            Ft::Array => Tag::Array,
+            Ft::Object => Tag::Object,
+            Ft::Function => Tag::Function,
+            Ft::Class => Tag::Class,
+            Ft::Error => Tag::Error,
+            Ft::TypedArray => Tag::TypedArray,
+            Ft::Map => Tag::Map,
+            Ft::Set => Tag::Set,
+            Ft::Symbol => Tag::Symbol,
+            Ft::BigInt => Tag::BigInt,
+            Ft::GlobalObject => Tag::GlobalObject,
+            Ft::Private => Tag::Private,
+            Ft::Promise => Tag::Promise,
+            Ft::JSON => Tag::JSON,
+            Ft::NativeCode => Tag::NativeCode,
+            Ft::JSX => Tag::JSX,
+            Ft::Event => Tag::Event,
+            Ft::MapIterator
+            | Ft::SetIterator
+            | Ft::CustomFormattedObject
+            | Ft::ToJSON
+            | Ft::GetterSetter
+            | Ft::CustomGetterSetter
+            | Ft::Proxy
+            | Ft::RevokedProxy => Tag::Object,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -1154,6 +1195,13 @@ impl<'a> Formatter<'a> {
         js_type: JSType,
     ) -> JsResult<()> {
         if self.failed {
+            return Ok(());
+        }
+        // Once an output-capped writer starts discarding, stop traversing:
+        // shared (non-circular) references re-expand at every occurrence, so
+        // a tiny object graph can otherwise expand exponentially (#34178).
+        if writer_.is_truncated() {
+            self.failed = true;
             return Ok(());
         }
         // reshaped for borrowck — `WrappedWriter` borrows both writer_
@@ -2728,50 +2776,10 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
         value: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
-        use bun_jsc::FormatTag as Ft;
-        // Map the wider `console_object::Tag` onto this file's `Tag`. Only the
-        // variants the `write_format` hooks actually emit are reachable
-        // (Boolean / Double / Object / Private / String); the rest collapse
-        // onto `Object` so any future caller still renders something useful.
-        let local = match tag {
-            Ft::StringPossiblyFormatted => Tag::StringPossiblyFormatted,
-            Ft::String => Tag::String,
-            Ft::Undefined => Tag::Undefined,
-            Ft::Double => Tag::Double,
-            Ft::Integer => Tag::Integer,
-            Ft::Null => Tag::Null,
-            Ft::Boolean => Tag::Boolean,
-            Ft::Array => Tag::Array,
-            Ft::Object => Tag::Object,
-            Ft::Function => Tag::Function,
-            Ft::Class => Tag::Class,
-            Ft::Error => Tag::Error,
-            Ft::TypedArray => Tag::TypedArray,
-            Ft::Map => Tag::Map,
-            Ft::Set => Tag::Set,
-            Ft::Symbol => Tag::Symbol,
-            Ft::BigInt => Tag::BigInt,
-            Ft::GlobalObject => Tag::GlobalObject,
-            Ft::Private => Tag::Private,
-            Ft::Promise => Tag::Promise,
-            Ft::JSON => Tag::JSON,
-            Ft::NativeCode => Tag::NativeCode,
-            Ft::JSX => Tag::JSX,
-            Ft::Event => Tag::Event,
-            // Variants the test-runner formatter has no dedicated arm for:
-            Ft::MapIterator
-            | Ft::SetIterator
-            | Ft::CustomFormattedObject
-            | Ft::ToJSON
-            | Ft::GetterSetter
-            | Ft::CustomGetterSetter
-            | Ft::Proxy
-            | Ft::RevokedProxy => Tag::Object,
-        };
         let mut sink = bun_io::FmtAdapter::new(writer);
         let global = self.global_this;
         self.format::<_, ENABLE_ANSI_COLORS>(
-            TagResult { tag: local, cell },
+            TagResult { tag: Tag::from_format_tag(tag), cell },
             &mut sink,
             value,
             global,
@@ -2810,15 +2818,21 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
     fn amf_print_as<const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
-        w: &mut dyn bun_io::Write,
+        mut w: &mut dyn bun_io::Write,
         v: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
-        // Reuse the `ConsoleFormatter` bridge above (FormatTag → local `Tag`
-        // mapping + `format` dispatch). `AsFmt` adapts `dyn bun_io::Write` →
-        // `core::fmt::Write` for the trait method's signature.
-        let mut bridge = AsFmt::new(w);
-        <Self as bun_jsc::ConsoleFormatter>::print_as::<_, C>(self, tag, &mut bridge, v, cell)
+        // Dispatch straight into `format` with the byte writer: `&mut dyn
+        // Write` forwards `is_truncated()` to a capped sink, which an
+        // `AsFmt`/`FmtAdapter` round-trip would lose (`core::fmt::Write` has
+        // no truncation concept), defeating the #34178 traversal early-exit.
+        let global = self.global_this;
+        self.format::<&mut dyn bun_io::Write, C>(
+            TagResult { tag: Tag::from_format_tag(tag), cell },
+            &mut w,
+            v,
+            global,
+        )
     }
 }
 

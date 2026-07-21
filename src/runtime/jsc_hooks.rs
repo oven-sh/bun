@@ -2921,8 +2921,8 @@ fn transpile_source_code_inner(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
-                    let (bytecode_cache, bytecode_cache_size) = node_compile_cache_blob
-                        .map_or((core::ptr::null_mut(), 0), |(ptr, len)| (ptr, len));
+                    let (bytecode_cache, bytecode_cache_size) =
+                        node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
@@ -3239,8 +3239,8 @@ fn transpile_source_code_inner(
                 // (fd close handled by `_fd_guard` registered above; spec
                 // :251-256 `defer` fires on every exit path.)
 
-                let (bytecode_cache, bytecode_cache_size) = node_compile_cache_blob
-                    .map_or((core::ptr::null_mut(), 0), |(ptr, len)| (ptr, len));
+                let (bytecode_cache, bytecode_cache_size) =
+                    node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
                 return Ok(OwnedResolvedSource::from(ResolvedSource {
                     source_code,
                     specifier: input_specifier.dupe_ref(),

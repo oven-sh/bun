@@ -4,8 +4,8 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use std::collections::HashMap;
-
+use bstr::ByteSlice;
+use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
 use bun_options_types::Format;
@@ -33,7 +33,7 @@ struct CacheState {
     /// returns and where entries live.
     dir: Box<[u8]>,
     dir_handle: sys::Dir,
-    entries: HashMap<u32, Entry>,
+    entries: HashMap<u32, Entry, IdentityContext<u32>>,
 }
 
 // SAFETY: `CacheState` is only reached through the global `STATE` mutex; the
@@ -144,21 +144,20 @@ fn errno_tail(e: &sys::Error) -> String {
 /// Human-readable module name for logs: plain path for CommonJS, `file://`
 /// URL for ESM — matching Node's output.
 fn display_name(filename: &[u8], is_cjs: bool) -> String {
-    let path = String::from_utf8_lossy(filename);
     if is_cjs {
-        path.into_owned()
+        filename.as_bstr().to_string()
     } else if cfg!(windows) {
-        let mut s = String::with_capacity(path.len() + 8);
-        s.push_str("file:///");
-        for c in path.chars() {
-            s.push(if c == '\\' { '/' } else { c });
-        }
-        s
+        let mut bytes = Vec::with_capacity(filename.len() + 8);
+        bytes.extend_from_slice(b"file:///");
+        // 0x5C never appears inside a multi-byte UTF-8 sequence, so a byte
+        // swap matches the per-char replacement.
+        bytes.extend(filename.iter().map(|&b| if b == b'\\' { b'/' } else { b }));
+        bytes.as_bstr().to_string()
     } else {
-        let mut s = String::with_capacity(path.len() + 7);
-        s.push_str("file://");
-        s.push_str(&path);
-        s
+        let mut bytes = Vec::with_capacity(filename.len() + 7);
+        bytes.extend_from_slice(b"file://");
+        bytes.extend_from_slice(filename);
+        bytes.as_bstr().to_string()
     }
 }
 
@@ -363,9 +362,9 @@ fn enable_with_dir(dir: &[u8]) -> EnableResult {
 
     cclog!(
         "[compile cache] resolved path {} + {} -> {}\n",
-        String::from_utf8_lossy(dir),
+        dir.as_bstr(),
         tag,
-        String::from_utf8_lossy(&tagged)
+        tagged.as_bstr()
     );
 
     let dir_handle = match sys::Dir::cwd().make_open_path(&tagged, Default::default()) {
@@ -374,7 +373,7 @@ fn enable_with_dir(dir: &[u8]) -> EnableResult {
             let errname = errno_name(&e);
             cclog!(
                 "[compile cache] creating cache directory {}...{}\n",
-                String::from_utf8_lossy(&tagged),
+                tagged.as_bstr(),
                 errname
             );
             return EnableResult {
@@ -386,7 +385,7 @@ fn enable_with_dir(dir: &[u8]) -> EnableResult {
     };
     cclog!(
         "[compile cache] creating cache directory {}...success\n",
-        String::from_utf8_lossy(&tagged)
+        tagged.as_bstr()
     );
 
     let directory = abs.to_vec();
@@ -530,7 +529,7 @@ fn read_cache_file(state: &CacheState, key: u32, entry: &mut Entry, code: Option
     if LOG_ENABLED.load(Ordering::Relaxed) {
         line = format!(
             "[compile cache] reading cache from {}{}{} for {} {}...",
-            String::from_utf8_lossy(&state.dir),
+            state.dir.as_bstr(),
             SEP as char,
             core::str::from_utf8(&basename).expect("hex"),
             type_name(entry.is_cjs),
@@ -802,9 +801,9 @@ fn persist_locked(state: &mut CacheState) {
 
         let tmp_display = format!(
             "{}{}{}",
-            String::from_utf8_lossy(&state.dir),
+            state.dir.as_bstr(),
             SEP as char,
-            String::from_utf8_lossy(tmpname_zstr.as_bytes())
+            tmpname_zstr.as_bytes().as_bstr()
         );
         cclog!(" -> {tmp_display}\n");
         cclog!(
@@ -840,7 +839,7 @@ fn persist_locked(state: &mut CacheState) {
         let dest_zstr = ZStr::from_buf(&dest_z, 8);
         let final_display = format!(
             "{}{}{}",
-            String::from_utf8_lossy(&state.dir),
+            state.dir.as_bstr(),
             SEP as char,
             core::str::from_utf8(&basename).expect("hex")
         );
@@ -896,7 +895,9 @@ pub fn persist_at_exit() {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__NodeCompileCache__enable(
+/// # Safety
+/// `dir` is null or a live `BunString`; both out-params are valid for write.
+pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
     dir: *const BunString,
     out_directory: *mut BunString,
     out_message: *mut BunString,

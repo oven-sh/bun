@@ -3379,7 +3379,8 @@ RefPtr<Performance> GlobalObject::performance()
     if (!m_performance) {
         auto* context = this->scriptExecutionContext();
         // WTF MonotonicTime value at the instant bunVM()->origin_timer was captured.
-        auto elapsed = Seconds { static_cast<double>(Bun__readOriginTimer(this->bunVM())) / 1000000000.0 };
+        // Raw variant: must ignore the fake-timers override of performance.now().
+        auto elapsed = Seconds { static_cast<double>(Bun__readOriginTimerRaw(this->bunVM())) / 1000000000.0 };
         auto timeOrigin = MonotonicTime::now() - elapsed;
         m_performance = Performance::create(context, timeOrigin);
     }

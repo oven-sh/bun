@@ -45,6 +45,7 @@
 #include <wtf/Seconds.h>
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
+extern "C" uint64_t Bun__readOriginTimerRaw(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
 
 namespace JSC {

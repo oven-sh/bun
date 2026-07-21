@@ -598,18 +598,18 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
     // process hung even though nothing wanted it alive.
     expect(
       await run(`
-        let srvSock;
+        const accepted = Promise.withResolvers();
         const server = Bun.listen({
           hostname: "127.0.0.1",
           port: 0,
-          socket: { open(s) { srvSock = s; }, data() {}, close() {} },
+          socket: { open(s) { accepted.resolve(s); }, data() {}, close() {} },
         });
         const client = await Bun.connect({
           hostname: "127.0.0.1",
           port: server.port,
           socket: { open() {}, data() {}, close() {} },
         });
-        await new Promise(r => setImmediate(r));
+        const srvSock = await accepted.promise;
         server.stop();
         client.unref();
         srvSock.unref();
@@ -626,18 +626,18 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
     // the accepted handle on its own (as does this fix) so "alive" prints.
     expect(
       await run(`
-        let srvSock;
+        const accepted = Promise.withResolvers();
         const server = Bun.listen({
           hostname: "127.0.0.1",
           port: 0,
-          socket: { open(s) { srvSock = s; }, data() {}, close() {} },
+          socket: { open(s) { accepted.resolve(s); }, data() {}, close() {} },
         });
         const client = await Bun.connect({
           hostname: "127.0.0.1",
           port: server.port,
           socket: { open() {}, data() {}, close() {} },
         });
-        await new Promise(r => setImmediate(r));
+        const srvSock = await accepted.promise;
         server.unref();
         client.unref();
         // srvSock is NOT unref'd: it must keep the process alive on its own.

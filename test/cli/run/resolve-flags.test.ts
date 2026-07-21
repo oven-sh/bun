@@ -13,6 +13,8 @@ async function run(cwd: string, argv: string[]) {
   return { stdout, stderr, exitCode };
 }
 
+const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+
 describe("--extension-order", () => {
   const files = {
     "d.ts": `export default "TS";\n`,
@@ -34,42 +36,28 @@ describe("--extension-order", () => {
   ])("%p", flags => {
     test.concurrent("applies to import statements", async () => {
       using dir = tempDir("ext-order", files);
-      const { stdout, stderr, exitCode } = await run(String(dir), [...flags, "i.ts"]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("import JS\n");
-      expect(exitCode).toBe(0);
+      expect(await run(String(dir), [...flags, "i.ts"])).toEqual(ok("import JS\n"));
     });
 
     test.concurrent("applies to require()", async () => {
       using dir = tempDir("ext-order", files);
-      const { stdout, stderr, exitCode } = await run(String(dir), [...flags, "r.cjs"]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("require JS\n");
-      expect(exitCode).toBe(0);
+      expect(await run(String(dir), [...flags, "r.cjs"])).toEqual(ok("require JS\n"));
     });
 
     test.concurrent("applies to dynamic import", async () => {
       using dir = tempDir("ext-order", files);
-      const { stdout, stderr, exitCode } = await run(String(dir), [...flags, "dyn.ts"]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("dynamic JS\n");
-      expect(exitCode).toBe(0);
+      expect(await run(String(dir), [...flags, "dyn.ts"])).toEqual(ok("dynamic JS\n"));
     });
 
     test.concurrent("applies inside node_modules", async () => {
       using dir = tempDir("ext-order", files);
-      const { stdout, stderr, exitCode } = await run(String(dir), [...flags, "p.ts"]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("pkg PKG-JS\n");
-      expect(exitCode).toBe(0);
+      expect(await run(String(dir), [...flags, "p.ts"])).toEqual(ok("pkg PKG-JS\n"));
     });
   });
 
   test.concurrent("defaults still prefer .ts over .js for import without the flag", async () => {
     using dir = tempDir("ext-order", files);
-    const { stdout, exitCode } = await run(String(dir), ["i.ts"]);
-    expect(stdout).toBe("import TS\n");
-    expect(exitCode).toBe(0);
+    expect(await run(String(dir), ["i.ts"])).toEqual(ok("import TS\n"));
   });
 });
 
@@ -92,18 +80,12 @@ describe("--main-fields", () => {
   ])("%p", flags => {
     test.concurrent("resolves the first matching field", async () => {
       using dir = tempDir("main-fields", files);
-      const { stdout, stderr, exitCode } = await run(String(dir), [...flags, "m.ts"]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("module\n");
-      expect(exitCode).toBe(0);
+      expect(await run(String(dir), [...flags, "m.ts"])).toEqual(ok("module\n"));
     });
   });
 
   test.concurrent("--main-fields=main,module prefers main", async () => {
     using dir = tempDir("main-fields", files);
-    const { stdout, stderr, exitCode } = await run(String(dir), ["--main-fields=main,module", "m.ts"]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("main\n");
-    expect(exitCode).toBe(0);
+    expect(await run(String(dir), ["--main-fields=main,module", "m.ts"])).toEqual(ok("main\n"));
   });
 });

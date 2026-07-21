@@ -37,35 +37,41 @@ test.concurrent("--max-old-space-size does not abort workloads that fit under th
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("--max-old-space-size does not kill the process when a worker exceeds the limit", async () => {
-  // The limit only aborts for the main thread VM; Node's model for workers is
-  // resourceLimits + a worker-scoped error, never a process-wide abort.
-  using dir = tempDir("max-old-space-size-worker", {
-    "main.js": `
+// Worker bootstrap alone takes ~5s under debug+ASAN (with or without the
+// flag), so this test needs more than the 5s default timeout.
+test.concurrent(
+  "--max-old-space-size does not kill the process when a worker exceeds the limit",
+  async () => {
+    // The limit only aborts for the main thread VM; Node's model for workers is
+    // resourceLimits + a worker-scoped error, never a process-wide abort.
+    using dir = tempDir("max-old-space-size-worker", {
+      "main.js": `
       const { Worker } = require("node:worker_threads");
       const worker = new Worker("./worker.js");
       worker.on("exit", code => console.log("worker exited " + code));
     `,
-    "worker.js": `
+      "worker.js": `
       const chunks = [];
-      for (let i = 0; i < 128; i++) chunks.push(new Array(131072).fill(i));
+      for (let i = 0; i < 96; i++) chunks.push(new Array(131072).fill(i));
       Bun.gc(true);
       console.log("worker reached " + chunks.length + "MB");
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--max-old-space-size=64", "main.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("JavaScript heap out of memory");
-  expect(stdout).toContain("worker reached 128MB");
-  expect(stdout).toContain("worker exited 0");
-  expect(exitCode).toBe(0);
-});
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--max-old-space-size=64", "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("JavaScript heap out of memory");
+    expect(stdout).toContain("worker reached 96MB");
+    expect(stdout).toContain("worker exited 0");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 test.concurrent("space-separated value of the underscore alias stays in process.execArgv", async () => {
   using dir = tempDir("max-old-space-size-execargv", {

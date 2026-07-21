@@ -64,6 +64,7 @@ const {
   fakeSocketSymbol,
   noBodySymbol,
   kOutHeaders,
+  onDataIncomingMessage,
   validateMsecs,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
@@ -865,9 +866,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
-        // start buffering data if any, the user will need to resume() or .on("data") to read it
+        // Like Node's connectionListener -> parserOnBody: body bytes flow into
+        // the IncomingMessage as they arrive, and the push callback readStop()s
+        // the socket (which emits 'pause' on it) once the buffer fills.
         if (hasBody) {
-          handle.pause();
+          handle.ondata = onDataIncomingMessage.bind(http_req);
+          handle.hasCustomOnData = false;
         }
         drainMicrotasks();
 
@@ -1267,6 +1271,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_CLOSED_CONNECTION = 14,
   HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
   HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED = 16,
+  HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
 }
 // Native callback fired when the HTTP parser rejects incoming bytes. Builds
 // the same error object Node's parser produces and routes it through
@@ -1302,6 +1307,9 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
       err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error: Request has invalid `Transfer-Encoding`");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH:
+      err = $HPE_INVALID_CONTENT_LENGTH("Parse Error: Content-Length can't be present with Transfer-Encoding");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_REQUEST:
       err = $HPE_INVALID_CONSTANT("Parse Error: Expected HTTP/");

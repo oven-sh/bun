@@ -1139,8 +1139,6 @@ impl ServePlugins {
         drop(plugin); // pending.plugin.deinit()
         drop(promise); // Drop on JscStrong releases the slot.
 
-        self.state = ServePluginsState::Err;
-
         for route in html_bundle_routes {
             // BACKREF: route was ref'd when stored (intrusive +1 keeps it alive
             // for this call). R-2: `on_plugins_rejected` takes `&self`.

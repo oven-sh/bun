@@ -3246,16 +3246,23 @@ impl TestCommand {
                     && buntest.bun_test_root.get().hook_scope.is_bare()
                 {
                     let drain_base = vm.unhandled_error_counter;
-                    // Bound by the default test timeout so a handle created by a
-                    // prior file's unref'd callback can't hang the run forever.
-                    let deadline =
+                    // Bound by the effective test timeout (override → default;
+                    // 0 = unlimited, matching `bun <file>`) as a safety valve.
+                    let timeout_ms = match reporter.jest.default_timeout_override {
+                        u32::MAX => reporter.jest.default_timeout_ms,
+                        v => v,
+                    };
+                    let deadline = (timeout_ms != 0).then(|| {
                         bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
-                            .add_ms(i64::from(reporter.jest.default_timeout_ms));
+                            .add_ms(i64::from(timeout_ms))
+                    });
                     while drain_base == vm.unhandled_error_counter
                         && script_keepalive_count(vm) > 0
-                        && bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
-                            .order(&deadline)
-                            .is_lt()
+                        && deadline.is_none_or(|d| {
+                            bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
+                                .order(&d)
+                                .is_lt()
+                        })
                     {
                         vm.event_loop_ref().tick();
                         vm.event_loop_ref().auto_tick();

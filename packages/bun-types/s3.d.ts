@@ -153,7 +153,7 @@ declare module "bun" {
     bucket?: string;
 
     /**
-     * The AWS region. Defaults to `S3_REGION` or `AWS_REGION` environment variables.
+     * The AWS region. Defaults to `S3_REGION`, `AWS_REGION`, or `AWS_DEFAULT_REGION` environment variables.
      *
      * @example
      * ```ts

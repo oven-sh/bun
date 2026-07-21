@@ -14,7 +14,6 @@ pub use libuv::*;
 // `node::types::Dirent::to_js` (which surfaces them to JS as
 // `process.binding('constants').fs.UV_DIRENT_*`).
 // ──────────────────────────────────────────────────────────────────────────
-pub type uv_dirent_type_t = core::ffi::c_uint;
 pub const UV_DIRENT_UNKNOWN: core::ffi::c_int = 0;
 pub const UV_DIRENT_FILE: core::ffi::c_int = 1;
 pub const UV_DIRENT_DIR: core::ffi::c_int = 2;

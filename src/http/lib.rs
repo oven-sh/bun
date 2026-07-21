@@ -45,8 +45,6 @@ pub mod signals;
 pub mod thread_safe_stream_buffer;
 #[path = "websocket.rs"]
 pub mod websocket;
-#[path = "zlib.rs"]
-pub mod zlib;
 
 // ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
@@ -70,7 +68,6 @@ pub use ssl_config::SSLConfig;
 // SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
 // `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
 pub use bun_uws::ssl_wrapper;
-pub use bun_uws::ssl_wrapper::SSLWrapper;
 
 // ── naming aliases ──
 // Submodules use both `HTTPClient`/`HttpClient` and the older name
@@ -110,9 +107,6 @@ pub enum Protocol {
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::HeaderValueIterator;
 pub use init_error::InitError;
-
-/// Compile-time verbosity switch.
-pub const EXTREMELY_VERBOSE: bool = false;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
 /// the user once the headers phase completes.
@@ -154,7 +148,7 @@ impl Drop for HTTPResponseMetadata {
         self.response.status = b"";
     }
 }
-pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
+pub use bun_http_types::{ETag, MimeType};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Standalone items with no deps on HTTPClient/HTTPContext/ssl_*.
@@ -310,11 +304,6 @@ const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;
 pub const MAX_H2_RETRIES: u8 = 5;
 
 const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
-
-#[inline]
-pub fn cleanup(_force: bool) {
-    // No-op: nothing thread-local to clean up.
-}
 
 /// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
 /// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
@@ -1689,7 +1678,6 @@ impl<'a> HTTPClient<'a> {
     pub fn check_server_identity<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
-        cert_error: HTTPCertError,
         ssl: &mut boringssl::c::SSL,
         allow_proxy_url: bool,
     ) -> bool {
@@ -1727,7 +1715,6 @@ impl<'a> HTTPClient<'a> {
                         self.state.certificate_info = Some(CertificateInfo {
                             cert,
                             hostname: Box::<[u8]>::from(hostname),
-                            cert_error,
                         });
 
                         // Park the connection until the JS-side
@@ -3789,8 +3776,6 @@ impl<'a> HTTPClient<'a> {
                 }
                 // special case for websocket upgrade
                 self.flags.upgrade_state = HTTPUpgradeState::Upgraded;
-                self.signals
-                    .store(signals::Field::Upgraded, true, Ordering::Relaxed);
                 // start draining the request body
                 self.flush_stream::<IS_SSL>(socket);
                 break;

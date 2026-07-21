@@ -129,64 +129,6 @@ impl<'a> Entry<'a> {
         unquoted
     }
 
-    pub fn get_version_from_spec(spec: &[u8]) -> Option<&[u8]> {
-        let unquoted = if spec[0] == b'"' && spec[spec.len() - 1] == b'"' {
-            &spec[1..spec.len() - 1]
-        } else {
-            spec
-        };
-
-        if unquoted[0] == b'@' {
-            if let Some(second_at_pos) = strings::index_of_char(&unquoted[1..], b'@') {
-                let version_start = second_at_pos as usize + b"@".len() + 1;
-                let version_part = &unquoted[version_start..];
-
-                if version_part.starts_with(b"npm:") && version_part.len() > 4 {
-                    return Some(&version_part[b"npm:".len()..]);
-                }
-                return Some(version_part);
-            }
-            return None;
-        } else if let Some(npm_idx) = strings::index_of(unquoted, b"@npm:") {
-            let after_npm = npm_idx + b"npm:".len() + 1;
-            if after_npm < unquoted.len() {
-                return Some(&unquoted[after_npm..]);
-            }
-            return None;
-        } else if let Some(url_idx) = strings::index_of(unquoted, b"@https://") {
-            let after_at = url_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(git_idx) = strings::index_of(unquoted, b"@git+") {
-            let after_at = git_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(gh_idx) = strings::index_of(unquoted, b"@github:") {
-            let after_at = gh_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(file_idx) = strings::index_of(unquoted, b"@file:") {
-            let after_at = file_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(idx) = strings::index_of(unquoted, b"@") {
-            let after_at = idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        }
-        None
-    }
-
     pub fn is_git_dependency(version: &[u8]) -> bool {
         version.starts_with(b"git+")
             || version.starts_with(b"git://")

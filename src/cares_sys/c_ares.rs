@@ -553,11 +553,6 @@ impl Drop for hostent_with_ttls {
 // Callers (`dns.rs`) need distinct type names to monomorphise the
 // `CAresRecordType` cache-field constant per record. For now these are plain
 // aliases — the trait impls live downstream.
-pub type NsHostent = struct_hostent;
-pub type PtrHostent = struct_hostent;
-pub type CnameHostent = struct_hostent;
-pub type AHostentWithTtls = hostent_with_ttls;
-pub type AaaaHostentWithTtls = hostent_with_ttls;
 
 #[repr(C)]
 pub struct struct_nameinfo {
@@ -1384,20 +1379,6 @@ pub struct struct_ares_txt_ext {
     pub record_start: u8,
 }
 
-impl struct_ares_txt_ext {
-    /// Safe view of the c-ares-owned TXT record bytes.
-    #[inline]
-    pub fn txt_bytes(&self) -> &[u8] {
-        if self.txt.is_null() {
-            &[]
-        } else {
-            // SAFETY: c-ares allocates `txt` as `length` bytes that live until
-            // `ares_free_data` on the list head; `&self` is the shorter borrow.
-            unsafe { core::slice::from_raw_parts(self.txt, self.length) }
-        }
-    }
-}
-
 #[repr(C)]
 pub struct struct_ares_naptr_reply {
     pub next: *mut struct_ares_naptr_reply,
@@ -2023,80 +2004,15 @@ impl Error {
     }
 }
 
-pub const ARES_FLAG_USEVC: c_int = 1 << 0;
-pub const ARES_FLAG_PRIMARY: c_int = 1 << 1;
-pub const ARES_FLAG_IGNTC: c_int = 1 << 2;
-pub const ARES_FLAG_NORECURSE: c_int = 1 << 3;
-pub const ARES_FLAG_STAYOPEN: c_int = 1 << 4;
-pub const ARES_FLAG_NOSEARCH: c_int = 1 << 5;
-pub const ARES_FLAG_NOALIASES: c_int = 1 << 6;
 pub const ARES_FLAG_NOCHECKRESP: c_int = 1 << 7;
-pub const ARES_FLAG_NO_DFLT_SVR: c_int = 1 << 9;
-pub const ARES_FLAG_EDNS: c_int = 1 << 8;
 pub const ARES_OPT_FLAGS: c_int = 1 << 0;
-pub const ARES_OPT_TIMEOUT: c_int = 1 << 1;
 pub const ARES_OPT_TRIES: c_int = 1 << 2;
-pub const ARES_OPT_NDOTS: c_int = 1 << 3;
-pub const ARES_OPT_UDP_PORT: c_int = 1 << 4;
-pub const ARES_OPT_TCP_PORT: c_int = 1 << 5;
-pub const ARES_OPT_SERVERS: c_int = 1 << 6;
-pub const ARES_OPT_DOMAINS: c_int = 1 << 7;
-pub const ARES_OPT_LOOKUPS: c_int = 1 << 8;
 pub const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
-pub const ARES_OPT_SORTLIST: c_int = 1 << 10;
-pub const ARES_OPT_SOCK_SNDBUF: c_int = 1 << 11;
-pub const ARES_OPT_SOCK_RCVBUF: c_int = 1 << 12;
 pub const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;
-pub const ARES_OPT_ROTATE: c_int = 1 << 14;
-pub const ARES_OPT_EDNSPSZ: c_int = 1 << 15;
-pub const ARES_OPT_NOROTATE: c_int = 1 << 16;
-pub const ARES_OPT_RESOLVCONF: c_int = 1 << 17;
-pub const ARES_OPT_HOSTS_FILE: c_int = 1 << 18;
-pub const ARES_NI_NOFQDN: c_int = 1 << 0;
-pub const ARES_NI_NUMERICHOST: c_int = 1 << 1;
 pub const ARES_NI_NAMEREQD: c_int = 1 << 2;
-pub const ARES_NI_NUMERICSERV: c_int = 1 << 3;
-pub const ARES_NI_DGRAM: c_int = 1 << 4;
-pub const ARES_NI_TCP: c_int = 0;
-pub const ARES_NI_UDP: c_int = ARES_NI_DGRAM;
-pub const ARES_NI_SCTP: c_int = 1 << 5;
-pub const ARES_NI_DCCP: c_int = 1 << 6;
-pub const ARES_NI_NUMERICSCOPE: c_int = 1 << 7;
 pub const ARES_NI_LOOKUPHOST: c_int = 1 << 8;
 pub const ARES_NI_LOOKUPSERVICE: c_int = 1 << 9;
-pub const ARES_NI_IDN: c_int = 1 << 10;
-pub const ARES_NI_IDN_ALLOW_UNASSIGNED: c_int = 1 << 11;
-pub const ARES_NI_IDN_USE_STD3_ASCII_RULES: c_int = 1 << 12;
-pub const ARES_AI_CANONNAME: c_int = 1 << 0;
-pub const ARES_AI_NUMERICHOST: c_int = 1 << 1;
-pub const ARES_AI_PASSIVE: c_int = 1 << 2;
-pub const ARES_AI_NUMERICSERV: c_int = 1 << 3;
-pub const ARES_AI_V4MAPPED: c_int = 1 << 4;
-pub const ARES_AI_ALL: c_int = 1 << 5;
-pub const ARES_AI_ADDRCONFIG: c_int = 1 << 6;
-pub const ARES_AI_NOSORT: c_int = 1 << 7;
-pub const ARES_AI_ENVHOSTS: c_int = 1 << 8;
-pub const ARES_AI_IDN: c_int = 1 << 10;
-pub const ARES_AI_IDN_ALLOW_UNASSIGNED: c_int = 1 << 11;
-pub const ARES_AI_IDN_USE_STD3_ASCII_RULES: c_int = 1 << 12;
-pub const ARES_AI_CANONIDN: c_int = 1 << 13;
-pub const ARES_AI_MASK: c_int = (((((ARES_AI_CANONNAME | ARES_AI_NUMERICHOST) | ARES_AI_PASSIVE)
-    | ARES_AI_NUMERICSERV)
-    | ARES_AI_V4MAPPED)
-    | ARES_AI_ALL)
-    | ARES_AI_ADDRCONFIG;
-pub const ARES_GETSOCK_MAXNUM: c_int = 16;
 
-#[inline]
-pub fn ares_getsock_readable(bits: c_int, num: c_int) -> c_int {
-    bits & (1 << num)
-}
-#[inline]
-pub fn ares_getsock_writable(bits: c_int, num: c_int) -> c_int {
-    bits & (1 << (num + ARES_GETSOCK_MAXNUM))
-}
-
-pub const ARES_LIB_INIT_NONE: c_int = 0;
 pub const ARES_LIB_INIT_WIN32: c_int = 1 << 0;
 pub const ARES_LIB_INIT_ALL: c_int = ARES_LIB_INIT_WIN32;
 
@@ -2104,25 +2020,6 @@ pub const ARES_LIB_INIT_ALL: c_int = ARES_LIB_INIT_WIN32;
 pub const ARES_SOCKET_BAD: ares_socket_t = usize::MAX; // INVALID_SOCKET
 #[cfg(not(windows))]
 pub const ARES_SOCKET_BAD: ares_socket_t = -1;
-
-pub const ares_socket_typedef: &str = "";
-pub type ares_addrinfo_cname = AddrInfo_cname;
-pub type ares_addrinfo_node = AddrInfo_node;
-pub type ares_addrinfo = AddrInfo;
-pub type ares_addrinfo_hints = AddrInfo_hints;
-pub type ares_in6_addr = struct_ares_in6_addr;
-pub type ares_addrttl = struct_ares_addrttl;
-pub type ares_addr6ttl = struct_ares_addr6ttl;
-pub type ares_caa_reply = struct_ares_caa_reply;
-pub type ares_srv_reply = struct_ares_srv_reply;
-pub type ares_mx_reply = struct_ares_mx_reply;
-pub type ares_txt_reply = struct_ares_txt_reply;
-pub type ares_txt_ext = struct_ares_txt_ext;
-pub type ares_naptr_reply = struct_ares_naptr_reply;
-pub type ares_soa_reply = struct_ares_soa_reply;
-pub type ares_uri_reply = struct_ares_uri_reply;
-pub type ares_addr_node = struct_ares_addr_node;
-pub type ares_addr_port_node = struct_ares_addr_port_node;
 
 // Bun__canonicalizeIP_ host fn: see bun_runtime::dns_jsc::cares_jsc
 

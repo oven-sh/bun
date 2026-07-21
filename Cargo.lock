@@ -1602,7 +1602,6 @@ dependencies = [
  "bun_errno",
  "bun_http_types",
  "bun_js_parser",
- "bun_options_types",
  "bun_paths",
  "bun_ptr",
  "bun_resolver",
@@ -2105,17 +2104,12 @@ dependencies = [
 name = "bun_threading"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_alloc",
  "bun_collections",
  "bun_core",
  "bun_ptr",
  "bun_safety",
  "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
  "libc",
  "scopeguard",
  "strum",
@@ -2126,15 +2120,7 @@ dependencies = [
 name = "bun_transpiler"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_bundler",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]

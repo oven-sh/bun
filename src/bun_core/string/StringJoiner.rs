@@ -23,7 +23,7 @@ pub struct StringJoiner<'a> {
 
 enum Node<'a> {
     /// Borrowed for `'a`; the caller's data must stay valid until the joiner's
-    /// last read (`done`/`done_with_end`/`node_slices`/`contains`/`last_byte`).
+    /// last read (`done`/`done_with_end`/`node_slices`/`last_byte`).
     Borrowed(&'a [u8]),
     /// Heap-allocated by this joiner (via `push_owned`/`push_cloned`); freed
     /// when the node drops.
@@ -249,8 +249,6 @@ mod tests {
         j.push(b"abc");
         j.push_cloned(b"def");
         assert_eq!(j.last_byte(), b'f');
-        assert!(!j.contains(b"cd"));
-        assert!(j.contains(b"de"));
         let slices: Vec<&[u8]> = j.node_slices().collect();
         assert_eq!(slices, vec![b"abc".as_slice(), b"def".as_slice()]);
     }

@@ -35,7 +35,6 @@ pub struct StaticRoute {
     pub status_code: u16,
     pub blob: AnyBlob,
     pub cached_blob_size: u64,
-    pub has_content_disposition: bool,
     pub has_date: bool,
     pub headers: Headers,
 }
@@ -108,7 +107,6 @@ impl StaticRoute {
             ref_count: Cell::new(1),
             blob,
             cached_blob_size,
-            has_content_disposition: false,
             has_date,
             headers,
             server: Cell::new(options.server),
@@ -140,7 +138,6 @@ impl StaticRoute {
             ref_count: Cell::new(1),
             blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
-            has_content_disposition: self.has_content_disposition,
             has_date: self.has_date,
             headers: self.headers.clone(),
             server: Cell::new(self.server.get()),
@@ -217,10 +214,7 @@ impl StaticRoute {
                 }
             };
 
-            let mut has_content_disposition = false;
-
             if let Some(h) = response.get_init_headers_mut() {
-                has_content_disposition = h.fast_has(HTTPHeaderName::ContentDisposition);
                 h.fast_remove(HTTPHeaderName::TransferEncoding);
                 h.fast_remove(HTTPHeaderName::ContentLength);
             }
@@ -255,7 +249,6 @@ impl StaticRoute {
                 ref_count: Cell::new(1),
                 blob,
                 cached_blob_size,
-                has_content_disposition,
                 has_date,
                 headers,
                 server: Cell::new(None),

@@ -138,7 +138,6 @@ pub struct PosixBufferedReader {
     pub _offset: usize,
     pub vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
-    pub count: usize,
     // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
     // `add_to_pipereader`/`remove_from_pipereader`, not Arc — see MaxBuf.rs.
     pub maxbuf: Option<NonNull<MaxBuf>>,
@@ -175,7 +174,6 @@ impl PosixBufferedReader {
             _offset: 0,
             vtable: BufferedReaderVTable::init::<T>(),
             flags: PosixFlags::new(),
-            count: 0,
             maxbuf: None,
         }
     }
@@ -209,7 +207,6 @@ impl PosixBufferedReader {
             _offset: other._offset,
             flags: other.flags,
             vtable: BufferedReaderVTable { kind, parent },
-            count: 0,
             maxbuf: None,
         };
         other.flags.insert(PosixFlags::IS_DONE);
@@ -337,10 +334,6 @@ impl PosixBufferedReader {
 
     pub fn disable_keeping_process_alive<C>(&mut self, _event_loop_ctx: C) {
         self.update_ref(false);
-    }
-
-    pub fn enable_keeping_process_alive<C>(&mut self, _event_loop_ctx: C) {
-        self.update_ref(true);
     }
 
     fn finish(&mut self) {
@@ -475,14 +468,6 @@ impl PosixBufferedReader {
             PollOrFd::Fd(_) => true,
             _ => false,
         }
-    }
-
-    pub fn loop_(&self) -> *mut Loop {
-        self.vtable.loop_()
-    }
-
-    pub fn event_loop(&self) -> EventLoopHandle {
-        self.vtable.event_loop()
     }
 
     pub fn read(&mut self) {
@@ -1122,7 +1107,6 @@ pub struct WindowsBufferedReader {
     pub flags: WindowsFlags,
     pub maxbuf: Option<NonNull<MaxBuf>>,
 
-    pub parent: *mut c_void,
     pub vtable: BufferedReaderVTable,
 }
 
@@ -1163,7 +1147,6 @@ impl WindowsBufferedReader {
             _buffer: Vec::new(),
             flags: WindowsFlags::new(),
             maxbuf: None,
-            parent: core::ptr::null_mut(),
             vtable: BufferedReaderVTable::init::<T>(),
         }
     }
@@ -1208,7 +1191,6 @@ impl WindowsBufferedReader {
     }
 
     pub fn set_parent(&mut self, parent: *mut c_void) {
-        self.parent = parent;
         self.vtable.parent = parent;
         if !self.flags.contains(WindowsFlags::IS_DONE) {
             // `Source::set_data` only writes the libuv `.data` field (raw ptr
@@ -1713,11 +1695,6 @@ impl WindowsBufferedReader {
             }
         }
 
-        sys::Result::Ok(())
-    }
-
-    #[cfg(not(windows))]
-    pub fn start_reading(&mut self) -> sys::Result<()> {
         sys::Result::Ok(())
     }
 

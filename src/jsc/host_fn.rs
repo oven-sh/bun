@@ -4,7 +4,6 @@
 //! `#[bun_jsc::host_call]` proc-macro attributes. This file keeps:
 //!   - the runtime result-mapping helpers the macros call into,
 //!   - the FFI surface for `JSFunction` creation,
-//!   - `DomEffect` (plain data),
 //! and stubs the reflection-driven generators (callers hand-write the
 //! equivalent decode/dispatch glue until the proc-macros grow those modes).
 
@@ -45,18 +44,8 @@ pub type JsHostFn = unsafe extern "sysv64" fn(*mut JSGlobalObject, *mut CallFram
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 pub type JsHostFn = unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue;
 
-/// To allow usage of `?` for error handling, Bun provides `to_js_host_fn` to
-/// wrap this type into a `JsHostFn`.
+/// Safe host-function shape; `#[bun_jsc::host_fn]` wraps it into a `JsHostFn`.
 pub type JsHostFnZig = fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
-
-pub type JsHostFnZigWithContext<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
-
-#[cfg(all(windows, target_arch = "x86_64"))]
-pub type JsHostFunctionTypeWithContext<C> =
-    unsafe extern "sysv64" fn(*mut C, *mut JSGlobalObject, *mut CallFrame) -> JSValue;
-#[cfg(not(all(windows, target_arch = "x86_64")))]
-pub type JsHostFunctionTypeWithContext<C> =
-    unsafe extern "C" fn(*mut C, *mut JSGlobalObject, *mut CallFrame) -> JSValue;
 
 /// Expand to the JSC host-function ABI string for the current target. Rust
 /// forbids macros in `extern "<abi>"` position, but *does* accept them as the
@@ -83,27 +72,9 @@ macro_rules! jsc_host_abi {
 
 // Capitalized re-exports — enough call sites (and the crate-root re-export in
 // lib.rs) use the acronym-caps `JSHostFn*` spelling that both must resolve.
-pub use {
-    JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig,
-    JsHostFnZigWithContext as JSHostFnZigWithContext,
-    JsHostFunctionTypeWithContext as JSHostFunctionTypeWithContext,
-};
+pub use {JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig};
 
 // ─────────────────────── host-fn wrapping (proc-macro) ───────────────────────
-
-// Rust cannot mint an `extern "C" fn` item from a
-// const fn pointer without a proc-macro (no `const fn` ABI thunks). Callers use
-// `#[bun_jsc::host_fn]` instead, which emits the shim and calls
-// `to_js_host_fn_result` for the body.
-#[doc(hidden)]
-pub const fn to_js_host_fn(_function_to_wrap: JsHostFnZig) -> ! {
-    panic!("use #[bun_jsc::host_fn] instead of to_js_host_fn()");
-}
-
-#[doc(hidden)]
-pub const fn to_js_host_fn_with_context<C>(_function: JsHostFnZigWithContext<C>) -> ! {
-    panic!("use #[bun_jsc::host_fn(method)] instead of to_js_host_fn_with_context()");
-}
 
 /// Map a `JsResult<JSValue>` to the raw `JSValue` a host fn must return
 /// (`.zero` when an exception is pending).
@@ -306,17 +277,6 @@ pub fn host_fn_getter<T, R: IntoHostFnReturn>(
     host_fn_result(global, || f(this, global))
 }
 
-/// Prototype getter (this: true): `fn(&mut self, JSValue, &JSGlobalObject) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_getter_this<T, R: IntoHostFnReturn>(
-    this: &mut T,
-    this_value: JSValue,
-    global: &JSGlobalObject,
-    f: impl FnOnce(&mut T, JSValue, &JSGlobalObject) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(this, this_value, global))
-}
 
 /// Prototype setter: `fn(&mut self, &JSGlobalObject, JSValue) -> R`.
 #[track_caller]
@@ -330,18 +290,6 @@ pub fn host_fn_setter<T, R: IntoHostSetterReturn>(
     host_setter_result(global, || f(this, global, value))
 }
 
-/// Prototype setter (this: true): `fn(&mut self, JSValue, &JSGlobalObject, JSValue) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_setter_this<T, R: IntoHostSetterReturn>(
-    this: &mut T,
-    this_value: JSValue,
-    global: &JSGlobalObject,
-    value: JSValue,
-    f: impl FnOnce(&mut T, JSValue, &JSGlobalObject, JSValue) -> R,
-) -> bool {
-    host_setter_result(global, || f(this, this_value, global, value))
-}
 
 /// Static / class method or `call`: `fn(&JSGlobalObject, &CallFrame) -> R`.
 #[track_caller]
@@ -482,17 +430,6 @@ pub fn host_fn_construct_this<R: IntoHostConstructReturn>(
     host_construct_result(global, || f(global, callframe, this_value))
 }
 
-/// `getInternalProperties`: `fn(&mut self, &JSGlobalObject, JSValue) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_internal_props<T, R: IntoHostFnReturn>(
-    this: &mut T,
-    global: &JSGlobalObject,
-    this_value: JSValue,
-    f: impl FnOnce(&mut T, &JSGlobalObject, JSValue) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(this, global, this_value))
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // `_shared` siblings — `&T` receiver instead of `&mut T`.
@@ -585,18 +522,6 @@ pub fn host_fn_setter_this_shared<T, R: IntoHostSetterReturn>(
     host_setter_result(global, || f(this, this_value, global, value))
 }
 
-/// `getInternalProperties` (`sharedThis`):
-/// `fn(&self, &JSGlobalObject, JSValue) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_internal_props_shared<T, R: IntoHostFnReturn>(
-    this: &T,
-    global: &JSGlobalObject,
-    this_value: JSValue,
-    f: impl FnOnce(&T, &JSGlobalObject, JSValue) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(this, global, this_value))
-}
 
 /// Finalizer: `fn(Box<T>)`. The user impl receives owned `Box<Self>` —
 /// ownership is transferred from the C++ JSCell wrapper's `m_ctx` slot.
@@ -732,17 +657,6 @@ pub fn from_js_host_call_generic<R>(
 
 // For when bubbling up errors to functions that require a C ABI boundary
 // TODO: make this not need a 'global_this'
-pub fn void_from_js_error(err: JsError, global_this: &JSGlobalObject) {
-    match err {
-        JsError::Thrown => {}
-        JsError::OutOfMemory => {
-            let _ = global_this.throw_out_of_memory();
-        }
-        JsError::Terminated => {}
-    }
-    // TODO: catch exception, declare throw scope, re-throw
-    // c++ needs to be able to see that these host functions can throw for BUN_JSC_validateExceptionChecks
-}
 
 // ───────────────────────────── FFI: JSFunction creation ──────────────────────────────
 
@@ -836,108 +750,6 @@ pub fn new_function_with_data(
     )
 }
 
-// ───────────────────────────── DOMEffect ──────────────────────────────
-
-#[derive(Clone, Copy)]
-pub struct DomEffect {
-    pub reads: [DomEffectId; 4],
-    pub writes: [DomEffectId; 4],
-}
-
-impl Default for DomEffect {
-    fn default() -> Self {
-        // All-zero: ID(0) == InvalidAbstractHeap.
-        Self {
-            reads: [DomEffectId::InvalidAbstractHeap; 4],
-            writes: [DomEffectId::InvalidAbstractHeap; 4],
-        }
-    }
-}
-
-impl DomEffect {
-    pub const TOP: DomEffect = DomEffect {
-        reads: [DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
-        writes: [DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
-    };
-
-    pub const fn for_read(read: DomEffectId) -> DomEffect {
-        DomEffect {
-            reads: [read, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
-            writes: [DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
-        }
-    }
-
-    pub const fn for_write(read: DomEffectId) -> DomEffect {
-        DomEffect {
-            writes: [read, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
-            reads: [DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
-        }
-    }
-
-    pub const PURE: DomEffect = DomEffect {
-        reads: [DomEffectId::InvalidAbstractHeap; 4],
-        writes: [DomEffectId::InvalidAbstractHeap; 4],
-    };
-
-    pub fn is_pure(self) -> bool {
-        matches!(self.reads[0], DomEffectId::InvalidAbstractHeap)
-            && matches!(self.writes[0], DomEffectId::InvalidAbstractHeap)
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DomEffectId {
-    InvalidAbstractHeap = 0,
-    World,
-    Stack,
-    Heap,
-    ButterflyPublicLength,
-    ButterflyVectorLength,
-    GetterSetterGetter,
-    GetterSetterSetter,
-    JSCellCellState,
-    JSCellIndexingType,
-    JSCellStructureID,
-    JSCellTypeInfoFlags,
-    JSObjectButterfly,
-    JSPropertyNameEnumeratorCachedPropertyNames,
-    RegExpObjectLastIndex,
-    NamedProperties,
-    IndexedInt32Properties,
-    IndexedDoubleProperties,
-    IndexedContiguousProperties,
-    IndexedArrayStorageProperties,
-    DirectArgumentsProperties,
-    ScopeProperties,
-    TypedArrayProperties,
-    /// Used to reflect the fact that some allocations reveal object identity
-    HeapObjectCount,
-    RegExpState,
-    MathDotRandomState,
-    JSDateFields,
-    JSMapFields,
-    JSSetFields,
-    JSWeakMapFields,
-    WeakSetFields,
-    JSInternalFields,
-    InternalState,
-    CatchLocals,
-    Absolute,
-    /// DOMJIT tells the heap range with the pair of integers.
-    DOMState,
-    /// Use this for writes only, to indicate that this may fire watchpoints. Usually this is never
-    /// directly written but instead we test to see if a node clobbers this; it just so happens that
-    /// you have to write world to clobber it.
-    WatchpointFire,
-    /// Use these for reads only, just to indicate that if the world got clobbered, then this
-    /// operation will not work.
-    MiscFields,
-    /// Use this for writes only, just to indicate that hoisting the node is invalid. This works
-    /// because we don't hoist anything that has any side effects at all.
-    SideState,
-}
-
 // ───────────────────────── DOMCall codegen helpers ─────────────────────────
 //
 // `DOMCallArgumentType` / `DOMCallArgumentTypeWrapper` / `DOMCallResultType`
@@ -968,4 +780,3 @@ pub struct DomCall {
 
 // There is no generic argument-decoding wrapper: each call site hand-writes
 // its own argument decoding.
-pub type InstanceMethodType<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>;

@@ -152,16 +152,6 @@ pub fn simdutf_encode_url_safe_alloc(source: &[u8]) -> Vec<u8> {
     destination
 }
 
-pub fn decode_len_upper_bound(len: usize) -> usize {
-    match zig_base64::STANDARD.decoder.calc_size_upper_bound(len) {
-        Ok(v) => v,
-        Err(_) => {
-            // fallback
-            len / 4 * 3
-        }
-    }
-}
-
 pub fn decode_len(source: &[u8]) -> usize {
     match zig_base64::STANDARD.decoder.calc_size_for_slice(source) {
         Ok(v) => v,
@@ -234,9 +224,6 @@ pub mod vlq {
 
         // `std::io::Write` is used as the byte-sink trait so base64 stays a
         // tier-0 leaf with no bun_io dep.
-        pub fn write_to(self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
-            writer.write_all(&self.bytes[0..self.len as usize])
-        }
 
         pub const ZERO: VLQ = VLQ_LOOKUP_TABLE[0];
 

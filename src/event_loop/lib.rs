@@ -2,7 +2,6 @@
 #![warn(unused_must_use)]
 pub mod AnyTask;
 pub mod AnyTaskWithExtraContext;
-pub mod AutoFlusher;
 pub mod ConcurrentTask;
 pub mod DeferredTaskQueue;
 pub mod EventLoopTimer;
@@ -34,13 +33,11 @@ pub mod any_event_loop;
 pub use AnyTask::{ErasedJsError, JsResult};
 pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 
-// snake_case alias for the file-level-struct module so higher tiers can
-// `use bun_event_loop::auto_flusher::{AutoFlusher, HasAutoFlusher}` without
-// tripping the type/module namespace collision on the PascalCase form.
-pub use AutoFlusher as auto_flusher;
+// snake_case alias for the file-level-struct module so higher tiers avoid
+// the type/module namespace collision on the PascalCase form.
 pub use DeferredTaskQueue as deferred_task_queue;
 
-pub use MiniEventLoop::{EventLoopKind, PIPE_READ_BUFFER_SIZE, PipeReadBuffer, PlatformEventLoop};
+pub use MiniEventLoop::PipeReadBuffer;
 pub use any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr};
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is

@@ -1,7 +1,6 @@
 use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::{PostgresInt32, PostgresShort};
 use crate::shared::Data;
-use bun_core::String as BunString;
 
 /// Trait capturing the methods `NewReaderWrap` requires of its wrapped context.
 pub trait ReaderContext {
@@ -71,8 +70,6 @@ pub struct NewReaderWrap<Context: ReaderContext> {
     pub wrapped: Context,
 }
 
-pub type Ctx<Context> = Context;
-
 impl<Context: ReaderContext> NewReaderWrap<Context> {
     /// Reborrow as `NewReaderWrap<&mut Context>` so the same reader can be
     /// passed by-value into per-message handlers across loop iterations.
@@ -132,14 +129,6 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Ok(Int::from_be_slice(data.slice()))
     }
 
-    pub fn peek_int<Int: ProtocolInt>(&self) -> Option<Int> {
-        let remain = self.peek();
-        if remain.len() < Int::SIZE {
-            return None;
-        }
-        Some(Int::from_be_slice(&remain[0..Int::SIZE]))
-    }
-
     pub fn expect_int<Int: ProtocolInt>(&mut self, value: Int) -> Result<bool, AnyPostgresError> {
         let actual = self.int::<Int>()?;
         Ok(actual == value)
@@ -174,17 +163,6 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     #[inline]
     pub fn bytes(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         self.read(count)
-    }
-
-    /// Returns a `BunString` that BORROWS the connection read buffer.
-    ///
-    /// Invariant: callers must not hold the returned `BunString` past the next
-    /// buffer fill — `borrow_utf8` stores a raw pointer with no lifetime, so
-    /// the string is only valid until more data is read into the buffer.
-    /// (The bytes live in the connection buffer, not the `Data` wrapper.)
-    pub fn string(&mut self) -> Result<BunString, AnyPostgresError> {
-        let result = self.read_z()?;
-        Ok(BunString::borrow_utf8(result.slice()))
     }
 }
 

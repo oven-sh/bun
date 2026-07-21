@@ -11,8 +11,6 @@ use core::ffi::c_void;
 
 use super::ref_counted_str::RefCountedStr;
 
-bun_core::declare_scope!(EnvStrLog, hidden);
-
 /// Packed `u128` layout (LSB-first):
 /// - bits  0..48  : `ptr` (u48)
 /// - bits 48..64  : `tag` (u16)

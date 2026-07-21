@@ -199,7 +199,7 @@ impl Handlers {
     }
 
     /// Bumps `active_connections`, enters the JS event-loop scope, and returns
-    /// a [`Scope`] whose `exit()` undoes both. The scope holds its own `Rc`, so
+    /// a [`Scope`] whose exit halves undo both. The scope holds its own `Rc`, so
     /// a socket that closes and drops its reference mid-callback cannot free
     /// the `Handlers` the callback is still reading from.
     #[inline]
@@ -441,13 +441,6 @@ impl Scope {
     /// Consumes `self`: a `Scope` is single-use (one `enter` ↔ one exit).
     pub fn mark_inactive(self) -> bool {
         self.handlers.mark_inactive()
-    }
-
-    /// Event-loop exit + `mark_inactive` in one step, for callers that cannot
-    /// observe an intervening handlers transfer.
-    pub fn exit(self) -> bool {
-        self.exit_event_loop();
-        self.mark_inactive()
     }
 }
 

@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isPosix, tempDirWithFiles } from "harness";
+import { isPosix, tempDir } from "harness";
 import { readlinkSync } from "node:fs";
 import { join } from "path";
 import { createTestBuilder } from "../test_builder";
@@ -116,7 +116,7 @@ describe("mv", async () => {
       .runAsTest("still reports a missing source when destination exists");
 
     test.if(isPosix)("does not overwrite a dangling symlink", async () => {
-      const dir = tempDirWithFiles("mv-n-symlink", { src: "NEW\n" });
+      using dir = tempDir("mv-n-symlink", { src: "NEW\n" });
       await $`ln -s nonexistent dst`.cwd(dir).throws(true).quiet();
       await TestBuilder.command`mv -n src dst`.setTempdir(dir).exitCode(0).fileEquals("src", "NEW\n").run();
       expect(readlinkSync(join(dir, "dst"))).toBe("nonexistent");

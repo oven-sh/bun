@@ -374,6 +374,13 @@ impl ClientSession {
             // SAFETY: re-derive — detach() invalidated the prior Unique tag.
             let client = client_mut(client_ptr);
             client.state.flags.received_last_chunk = true;
+            // Stream ended with no accompanying body bytes; drive the
+            // decompressor one last time so a truncated compressed stream
+            // with no content-length is rejected instead of resolved short.
+            let buffer_snap = core::mem::take(&mut client.state.get_body_buffer().list);
+            if let Err(err) = client.state.process_body_buffer(buffer_snap, true) {
+                return client.fail_from_h2(err);
+            }
             return finish(client);
         }
     }

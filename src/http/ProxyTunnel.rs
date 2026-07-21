@@ -540,6 +540,7 @@ fn on_close(ctx: *mut HTTPClient) {
     let in_progress = this.state.stage != Stage::Done
         && this.state.stage != Stage::Fail
         && !this.state.flags.is_redirect_pending;
+    let mut fail_err: Option<crate::Error> = None;
     if in_progress {
         if this.state.is_chunked_encoding() {
             // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
@@ -548,16 +549,16 @@ fn on_close(ctx: *mut HTTPClient) {
                 4 | 5 => {
                     this.state.flags.received_last_chunk = true;
                     let buffer_snap = core::mem::take(&mut this.state.get_body_buffer().list);
-                    if let Err(err) = this.state.process_body_buffer(buffer_snap, true) {
-                        this.fail(err);
-                        crate::http_thread().schedule_proxy_deref(proxy_ptr);
-                        return;
+                    match this.state.process_body_buffer(buffer_snap, true) {
+                        Ok(_) => {
+                            // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+                            progress_update_for_proxy_socket(ctx, proxy_nn);
+                            // Drop our temporary ref asynchronously to avoid freeing within callback
+                            crate::http_thread().schedule_proxy_deref(proxy_ptr);
+                            return;
+                        }
+                        Err(e) => fail_err = Some(e),
                     }
-                    // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-                    progress_update_for_proxy_socket(ctx, proxy_nn);
-                    // Drop our temporary ref asynchronously to avoid freeing within callback
-                    crate::http_thread().schedule_proxy_deref(proxy_ptr);
-                    return;
                 }
                 _ => {}
             }
@@ -566,21 +567,23 @@ fn on_close(ctx: *mut HTTPClient) {
         {
             this.state.flags.received_last_chunk = true;
             let buffer_snap = core::mem::take(&mut this.state.get_body_buffer().list);
-            if let Err(err) = this.state.process_body_buffer(buffer_snap, true) {
-                this.fail(err);
-                crate::http_thread().schedule_proxy_deref(proxy_ptr);
-                return;
+            match this.state.process_body_buffer(buffer_snap, true) {
+                Ok(_) => {
+                    // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+                    progress_update_for_proxy_socket(ctx, proxy_nn);
+                    // Balance the ref we took asynchronously
+                    crate::http_thread().schedule_proxy_deref(proxy_ptr);
+                    return;
+                }
+                Err(e) => fail_err = Some(e),
             }
-            // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-            progress_update_for_proxy_socket(ctx, proxy_nn);
-            // Balance the ref we took asynchronously
-            crate::http_thread().schedule_proxy_deref(proxy_ptr);
-            return;
         }
     }
 
-    // Otherwise, treat as failure.
-    let err = ProxyTunnel::shutdown_err_of(proxy_nn).get();
+    // Otherwise, treat as failure. `close_and_fail` de-tags the outer socket
+    // before `fail()` frees the AsyncHTTP that embeds `self` (the uSockets ext
+    // still points here until then).
+    let err = fail_err.unwrap_or_else(|| ProxyTunnel::shutdown_err_of(proxy_nn).get());
     match ProxyTunnel::socket_of(proxy_nn) {
         &Socket::Ssl(socket) => {
             this.close_and_fail::<true>(err, socket);
@@ -588,7 +591,11 @@ fn on_close(ctx: *mut HTTPClient) {
         &Socket::Tcp(socket) => {
             this.close_and_fail::<false>(err, socket);
         }
-        Socket::None => {}
+        Socket::None => {
+            if fail_err.is_some() {
+                this.fail(err);
+            }
+        }
     }
     ProxyTunnel::set_socket(proxy_nn, Socket::None);
     // Deref after returning to the event loop to avoid lifetime hazards.

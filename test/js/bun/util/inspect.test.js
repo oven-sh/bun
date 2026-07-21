@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
+import vm from "node:vm";
 import { join } from "path";
 import util from "util";
-import vm from "node:vm";
 it("prototype", () => {
   const prototypes = [
     Request.prototype,

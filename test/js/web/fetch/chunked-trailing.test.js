@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import net from "node:net";
 
 it("handles trailing headers split across packets", async () => {
@@ -638,6 +638,52 @@ it("proper error if missing data in middle of chunk extension", async () => {
   } catch (e) {
     expect(e?.code).toBe("ECONNRESET");
   }
+});
+
+describe("rejects malformed chunk-size token", () => {
+  // RFC 9112 §7.1: chunk-size is 1*HEXDIG followed by ";" (chunk-ext) or CRLF.
+  // node/llhttp rejects all of these with HPE_INVALID_CHUNK_SIZE.
+  it.each([
+    ["0x5", ""], // previously misread as size 0: fetch resolved with an empty body
+    ["5g", "hello"], // previously misread as size 5
+    ["5 ", "hello"],
+    ["5\t", "hello"],
+    ["5.0", "hello"],
+    ["5-", "hello"],
+  ])("token %j", async (token, _previouslyResolvedAs) => {
+    const { promise, resolve } = Promise.withResolvers();
+    await using server = net
+      .createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.end(`HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n${token}\r\nhello\r\n0\r\n\r\n`);
+        });
+      })
+      .listen(0, "127.0.0.1", () => resolve(server.address()));
+
+    const address = await promise;
+    const err = await fetch(`http://127.0.0.1:${address.port}/`)
+      .then(res => res.text())
+      .then(body => ({ resolved: body }))
+      .catch(e => e);
+    expect(err?.code).toBe("InvalidHTTPResponse");
+  });
+
+  it("still accepts a chunk-ext immediately after the size", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    await using server = net
+      .createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.end("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;ext=1\r\nhello\r\n0\r\n\r\n");
+        });
+      })
+      .listen(0, "127.0.0.1", () => resolve(server.address()));
+
+    const address = await promise;
+    const res = await fetch(`http://127.0.0.1:${address.port}/`);
+    expect(await res.text()).toBe("hello");
+  });
 });
 
 it("proper error if missing CRLF after chunk data", async () => {

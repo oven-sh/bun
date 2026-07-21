@@ -2,10 +2,9 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
-  // Each file rendezvous-waits on a shared gate file until all three workers
-  // have started one, so worker 0 can't finish early and work-steal worker
-  // 1's file before worker 1 has booted (under ASAN, worker startup easily
-  // exceeds any fixed sleep, which is why this used to be flaky).
+  // Each file rendezvous-waits on a shared gate dir until all three workers
+  // have started one, so worker 0 can't finish and work-steal worker 1's file
+  // before worker 1 boots (ASAN worker startup exceeds any fixed sleep).
   const print = `console.log("WID="+process.env.JEST_WORKER_ID+" "+process.env.BUN_TEST_WORKER_ID+" pid="+process.pid)`;
   const fixture = `import {test} from "bun:test";
     test("t", async () => {
@@ -518,10 +517,9 @@ test("--parallel never interleaves console output across files", async () => {
 });
 
 test("--parallel lazily scales workers based on file duration", async () => {
-  // Each test file prints its PID so we can count distinct worker processes.
-  // (Avoid `import "fs"` here: under debug+ASAN+isolate it re-evaluates the
-  // node:fs module per file and adds ~800ms each, which by itself blows past
-  // the fast-case threshold below.)
+  // Each file prints its PID so we can count distinct workers. Avoid
+  // `import "fs"`: under debug+ASAN+isolate it re-evaluates node:fs per file
+  // (~800ms each), which by itself blows past the fast-case threshold below.
   const body = (sleepMs: number) =>
     `import {test,expect} from "bun:test";
      test("t", async()=>{ console.error("PID="+process.pid); await Bun.sleep(${sleepMs}); expect(1).toBe(1); });`;

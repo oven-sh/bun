@@ -384,6 +384,32 @@ describe("junit reporter", () => {
 
     expect(proc.exitCode).toBe(1);
   });
+
+  it("creates parent directories for --reporter-outfile", async () => {
+    const tmpDir = tempDirWithFiles("junit-mkdir", {
+      "package.json": "{}",
+      "pass.test.js": `
+        import { test, expect } from "bun:test";
+        test("ok", () => expect(1).toBe(1));
+      `,
+    });
+
+    const junitPath = `${tmpDir}/out/nested/junit.xml`;
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath, "pass.test.js"],
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("JUnitReportFailed");
+    const xmlContent = await file(junitPath).text();
+    expect(xmlContent).toContain("<testsuites");
+    expect(xmlContent).toContain('name="ok"');
+    expect(proc.exitCode).toBe(0);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

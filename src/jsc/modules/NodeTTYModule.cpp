@@ -8,14 +8,18 @@ namespace Zig {
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    VM& vm = globalObject->vm();
-    if (callFrame->argumentCount() < 1) {
-        return JSValue::encode(jsBoolean(false));
-    }
+    UNUSED_PARAM(globalObject);
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    int fd = callFrame->argument(0).toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    // Node.js: Number.isInteger(fd) && fd >= 0 && fd <= 2147483647 && isTTY(fd)
+    JSValue fdValue = callFrame->argument(0);
+    if (!fdValue.isNumber())
+        return JSValue::encode(jsBoolean(false));
+
+    double fdDouble = fdValue.asNumber();
+    if (!std::isfinite(fdDouble) || std::trunc(fdDouble) != fdDouble || fdDouble < 0 || fdDouble > INT32_MAX)
+        return JSValue::encode(jsBoolean(false));
+
+    int fd = static_cast<int>(fdDouble);
 
 #if !OS(WINDOWS)
     bool isTTY = isatty(fd);

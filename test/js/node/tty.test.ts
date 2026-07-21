@@ -1,6 +1,43 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
-import { WriteStream } from "node:tty";
+import { isatty, WriteStream } from "node:tty";
+
+describe("isatty", () => {
+  // Node.js does `Number.isInteger(fd) && fd >= 0 && fd <= 2147483647` before
+  // calling the native isTTY, so non-integer fds are never coerced.
+  test("returns false for non-integer fds without coercing the argument", () => {
+    let valueOfCalls = 0;
+    const results = {
+      throwingValueOf: isatty({ valueOf: () => { throw new Error("should not coerce"); } } as any),
+      throwingToPrimitive: isatty({ [Symbol.toPrimitive]: () => { throw new Error("should not coerce"); } } as any),
+      countingValueOf: isatty({ valueOf: () => { valueOfCalls++; return 0; } } as any),
+      bigint: isatty(0n as any),
+      string: isatty("0" as any),
+      nan: isatty(NaN),
+      infinity: isatty(Infinity),
+      float: isatty(1.5),
+      negative: isatty(-1),
+      tooLarge: isatty(2 ** 31),
+      undefined: isatty(undefined as any),
+      null: isatty(null as any),
+    };
+    expect(results).toEqual({
+      throwingValueOf: false,
+      throwingToPrimitive: false,
+      countingValueOf: false,
+      bigint: false,
+      string: false,
+      nan: false,
+      infinity: false,
+      float: false,
+      negative: false,
+      tooLarge: false,
+      undefined: false,
+      null: false,
+    });
+    expect(valueOfCalls).toBe(0);
+  });
+});
 
 describe("ReadStream.prototype.setRawMode", () => {
   // Regression: on Windows, the `fd === 0` branch returned early on success

@@ -1757,10 +1757,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
 #endif
     Bun__initializeSQLite();
 
-    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String path = pathValue.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(topExceptionScope, JSValue::encode(jsUndefined()));
-    (void)topExceptionScope.tryClearException();
+    RETURN_IF_EXCEPTION(scope, {});
     int openFlags = DEFAULT_SQLITE_FLAGS;
     if (callFrame->argumentCount() > 1) {
         JSValue flags = callFrame->argument(1);

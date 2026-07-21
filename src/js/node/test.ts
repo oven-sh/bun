@@ -3749,6 +3749,12 @@ function addSuite(
     effectiveMode === "skip"
       ? kDefaultFunction
       : () => {
+          // A todo suite only reaches wrapped() in run-child mode (describe.todo
+          // would otherwise skip the body); its failures are advisory and must
+          // not reach bun:test's describe-error path, which exits the child
+          // nonzero. todoFlag is read here because describe.todo sets it after
+          // wrapped() is built.
+          const isTodoAdvisory = runChildReporterEnabled && (suiteNode.todoFlag || hasTodoAncestor(suiteNode));
           let built: unknown;
           try {
             built = runWithNode(suiteNode, () => invokeSuiteFn(fn, suiteNode.getSuiteCtx()));
@@ -3759,6 +3765,7 @@ function addSuite(
             suiteNode.childrenFailed++;
             suiteNode.error = err;
             noteSuiteCollectionSettled(suiteNode);
+            if (isTodoAdvisory) return undefined;
             throw err;
           }
           if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
@@ -3768,6 +3775,7 @@ function addSuite(
                 suiteNode.childrenFailed++;
                 suiteNode.error = err;
                 noteSuiteCollectionSettled(suiteNode);
+                if (isTodoAdvisory) return undefined;
                 throw err;
               },
             );
@@ -3924,7 +3932,15 @@ function after(arg0: unknown, arg1: unknown) {
   afterAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(err ?? new Error("after hook failed")),
+      err => {
+        // A todo suite's results are advisory in node: its failing after hook
+        // must not fail the run (mirrors before()'s guard above).
+        if (runChildReporterEnabled && (owner.todoFlag || hasTodoAncestor(owner))) {
+          done();
+          return;
+        }
+        done(err ?? new Error("after hook failed"));
+      },
     );
   });
 }

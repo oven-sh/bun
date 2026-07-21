@@ -26,7 +26,12 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     externals.splice(i, 1);
   }
 
-  const externalModules = [...builtins, ...moduleFiles.filter(f => f && f !== name)].flatMap(b => [`node:${b}`, b]);
+  // Only the sibling fallback entries are in `external`; bare builtin names
+  // are implicitly external via `platform: "node"`. An explicit
+  // `external: ["util"]` would also prefix-match `require("util/")` inside
+  // the polyfill packages, leaving it unresolved instead of bundling the npm
+  // implementation.
+  const externalModules = moduleFiles.filter(f => f && f !== name).flatMap(b => [`node:${b}`, b]);
 
   commands.push(
     esbuild

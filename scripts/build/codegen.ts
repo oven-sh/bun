@@ -696,9 +696,8 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
       cxxSourcesFile,
       ...sources.cxx,
       ...sources.jsCodegen,
-      // cppbind auto-runs `bun install` for its lezer-cpp dep if needed,
-      // but depending on root install ensures that already happened on
-      // first build (and catches lezer version bumps).
+      // cppbind imports @lezer/cpp from the repo-root node_modules; depending
+      // on root install ensures it's present (and catches lezer version bumps).
       o.rootInstall,
     ],
     orderOnlyInputs: [dirStamp],

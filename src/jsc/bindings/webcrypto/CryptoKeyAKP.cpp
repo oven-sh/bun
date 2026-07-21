@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "CryptoKeyAKP.h"
+#include "OpenSSLUtilities.h"
 #include "../wtf-bindings.h"
 
 #if ENABLE(WEB_CRYPTO)
@@ -264,11 +265,11 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyAKP::exportSpki() const
     if (type() != CryptoKeyType::Public)
         return Exception { InvalidAccessError };
 
-    bssl::ScopedCBB cbb;
-    if (!CBB_init(cbb.get(), 0) || !EVP_marshal_public_key(cbb.get(), m_key.get()))
+    auto der = marshalEVPKey(m_key.get(), true);
+    if (!der)
         return Exception { OperationError };
 
-    return Vector<uint8_t>(std::span { CBB_data(cbb.get()), CBB_len(cbb.get()) });
+    return WTF::move(*der);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyAKP::exportPkcs8() const
@@ -276,11 +277,11 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyAKP::exportPkcs8() const
     if (type() != CryptoKeyType::Private)
         return Exception { InvalidAccessError };
 
-    bssl::ScopedCBB cbb;
-    if (!CBB_init(cbb.get(), 0) || !EVP_marshal_private_key(cbb.get(), m_key.get()))
+    auto der = marshalEVPKey(m_key.get(), false);
+    if (!der)
         return Exception { OperationError };
 
-    return Vector<uint8_t>(std::span { CBB_data(cbb.get()), CBB_len(cbb.get()) });
+    return WTF::move(*der);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyAKP::exportRawPublic() const

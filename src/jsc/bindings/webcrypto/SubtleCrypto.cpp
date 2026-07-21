@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "SubtleCrypto.h"
+#include "OpenSSLUtilities.h"
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -1677,12 +1678,12 @@ void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vect
     Vector<uint8_t> spki;
     {
         AsymmetricKeyValue keyValue(key);
-        bssl::ScopedCBB cbb;
-        if (!keyValue.key || !CBB_init(cbb.get(), 0) || !EVP_marshal_public_key(cbb.get(), keyValue.key)) {
+        auto der = marshalEVPKey(keyValue.key, true);
+        if (!der) {
             promise->reject(OperationError, ""_s);
             return;
         }
-        spki = Vector<uint8_t>(std::span { CBB_data(cbb.get()), CBB_len(cbb.get()) });
+        spki = WTF::move(*der);
     }
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(identifier);

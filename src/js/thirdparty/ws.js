@@ -16,6 +16,110 @@ const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
 
+// TLS keys that the native WebSocket understands (parsed by SSLConfig.fromJS).
+// `ws` forwards top-level TLS options to `https.request`/`tls.connect`; Bun
+// reads them from the `tls` option, so collect them off the top-level options.
+// Booleans use `!== undefined` so an explicit `false` (e.g. `rejectUnauthorized:
+// false`, the whole point of connecting to a self-signed server) is forwarded.
+//
+// `ALPNProtocols` is intentionally omitted: Node/`ws` accept the `string[]`
+// form, but SSLConfig.fromJS only takes string/ArrayBuffer/null and throws on
+// an array. Forwarding it would turn a previously-ignored option into a
+// constructor throw, so leave it a no-op (WebSocket negotiates subprotocols via
+// Sec-WebSocket-Protocol, not TLS ALPN).
+const tlsBooleanKeys = ["rejectUnauthorized", "requestCert", "lowMemoryMode"];
+// Scalar options where a falsy value is a legitimate setting (0, ""), so they
+// are forwarded on `!= null` rather than truthiness — matching how `options.tls`
+// would pass them through. `secureOptions`/`clientRenegotiation*` default to 0
+// in SSLConfig, so 0 is effectively a no-op, but this keeps the two paths
+// consistent and preserves an explicit `passphrase: ""`.
+const tlsScalarKeys = ["passphrase", "secureOptions", "clientRenegotiationLimit", "clientRenegotiationWindow"];
+// File/identity options where an empty string means "absent": an empty `ca`
+// (etc.) must not be forwarded, or the native parser treats it as a real (empty)
+// value and the handshake breaks. These stay on a truthy check.
+const tlsFileKeys = [
+  "ca",
+  "cert",
+  "key",
+  "dhParamsFile",
+  "keyFile",
+  "certFile",
+  "caFile",
+  "servername",
+  "serverName",
+  "ciphers",
+];
+const tlsValueKeys = [...tlsScalarKeys, ...tlsFileKeys];
+
+// Agents (e.g. HttpsProxyAgent) stuff connection options into `connectOpts`
+// that aren't all valid Bun TLS options, so keep the agent path to the subset
+// ws users historically pass through an agent.
+const agentTlsValueKeys = ["ca", "cert", "key", "passphrase"];
+
+/**
+ * A file/identity value SSLConfig.fromJS can parse: string | ArrayBuffer | Blob,
+ * or an array of those. Node/`ws` also accept the `key`/`cert` object form
+ * (`{ pem, passphrase }`, bare or in an array) for per-key passphrases, but the
+ * native parser has no arm for a plain object and throws. Skip those shapes so
+ * they stay a no-op (as they were before top-level TLS options were forwarded)
+ * instead of becoming a throw.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isForwardableFileValue(value) {
+  if (!value) return false;
+  if (Array.isArray(value)) {
+    for (const element of value) {
+      if (!isRepresentableFileElement(element)) return false;
+    }
+    return true;
+  }
+  // A bare value must be one of the same representable shapes; a plain
+  // `{ pem, passphrase }` object (or a KeyObject) has no SSLConfig arm, so skip
+  // it like its array-wrapped form rather than forwarding it into a throw.
+  return isRepresentableFileElement(value);
+}
+
+/**
+ * Whether a single file/identity value is a shape SSLConfig.fromJS accepts:
+ * string, ArrayBuffer, TypedArray/DataView, or Blob. A plain object is not.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isRepresentableFileElement(value) {
+  return !$isObject(value) || ArrayBuffer.isView(value) || value instanceof Blob || value instanceof ArrayBuffer;
+}
+
+/**
+ * Collects the TLS options the native WebSocket understands from a source
+ * object. `valueKeys` narrows the set for callers that can't pass the full set
+ * (see {@link agentTlsValueKeys}). Scalar keys (see {@link tlsScalarKeys})
+ * preserve explicit falsy values; everything else is copied when truthy.
+ * @param {Object} source
+ * @param {string[]} [valueKeys]
+ * @returns {Object|null} The TLS options, or null if none were present
+ */
+function extractTlsOptions(source, valueKeys = tlsValueKeys) {
+  if (!$isObject(source)) return null;
+
+  let tls = null;
+  for (const key of tlsBooleanKeys) {
+    if (source[key] !== undefined) {
+      (tls ??= {})[key] = source[key];
+    }
+  }
+  for (const key of valueKeys) {
+    // Scalars forward an explicit falsy value (0, "") like `options.tls` would;
+    // file/identity keys treat a falsy value (e.g. `ca: ""`) as absent and skip
+    // the object-array form the native parser can't represent.
+    const keep = tlsScalarKeys.includes(key) ? source[key] != null : isForwardableFileValue(source[key]);
+    if (keep) {
+      (tls ??= {})[key] = source[key];
+    }
+  }
+  return tls;
+}
+
 /**
  * Extracts TLS and proxy options from an agent object.
  * @param {Object} agent The agent object to extract options from
@@ -23,40 +127,9 @@ const encoder = new TextEncoder();
  */
 function extractAgentOptions(agent) {
   const connectOpts = agent?.connectOpts || agent?.options;
-  let tls = null;
   let proxy = null;
 
-  if ($isObject(connectOpts)) {
-    // Build TLS options
-    const newTlsOptions = {};
-    let hasTlsOptions = false;
-
-    const { rejectUnauthorized, ca, cert, key, passphrase } = connectOpts;
-    if (rejectUnauthorized !== undefined) {
-      newTlsOptions.rejectUnauthorized = rejectUnauthorized;
-      hasTlsOptions = true;
-    }
-    if (ca) {
-      newTlsOptions.ca = ca;
-      hasTlsOptions = true;
-    }
-    if (cert) {
-      newTlsOptions.cert = cert;
-      hasTlsOptions = true;
-    }
-    if (key) {
-      newTlsOptions.key = key;
-      hasTlsOptions = true;
-    }
-    if (passphrase) {
-      newTlsOptions.passphrase = passphrase;
-      hasTlsOptions = true;
-    }
-
-    if (hasTlsOptions) {
-      tls = newTlsOptions;
-    }
-  }
+  const tls = extractTlsOptions(connectOpts, agentTlsValueKeys);
 
   // Build proxy - check connectOpts.proxy first, then agent.proxy
   const agentProxy = connectOpts?.proxy || agent?.proxy;
@@ -159,7 +232,11 @@ class BunWebSocket extends EventEmitter {
     if ($isObject(options)) {
       headers = options?.headers;
       proxy = options?.proxy;
-      tlsOptions = options?.tls;
+      // `ws` forwards top-level TLS options (rejectUnauthorized, ca, cert, ...)
+      // to https.request/tls.connect. An explicit `tls` object stays
+      // authoritative for back-compat with Bun's existing shape.
+      const explicitTls = $isObject(options.tls);
+      tlsOptions = explicitTls ? options.tls : extractTlsOptions(options);
       if ("perMessageDeflate" in options && !options.perMessageDeflate) {
         disableDeflate = true;
       }
@@ -172,8 +249,13 @@ class BunWebSocket extends EventEmitter {
         if (!proxy && agentProxy) {
           proxy = agentProxy;
         }
-        if (!tlsOptions && agentTls) {
-          tlsOptions = agentTls;
+        // An explicit `tls` object is a hard override — don't let an agent's
+        // connect options (which semantically target the proxy hop) leak into
+        // it. Otherwise merge: top-level keys win on conflict while the agent
+        // fills gaps (e.g. an HttpsProxyAgent carrying cert/key alongside a
+        // top-level rejectUnauthorized), instead of dropping one side wholesale.
+        if (!explicitTls && agentTls) {
+          tlsOptions = tlsOptions ? { ...agentTls, ...tlsOptions } : agentTls;
         }
       }
     }

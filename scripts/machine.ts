@@ -4,28 +4,12 @@ import { tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { azure } from "./azure.mjs";
 import { packerDownload } from "./build/ci/artifacts.ts";
 import { BOOTSTRAP_SOURCE_DIRS, LINUX_REMOTE_ROOT } from "./build/ci/delivery.ts";
 import { imageName as computeImageName, imageEntry } from "./build/ci/naming.ts";
 import { linuxPackerTemplate, windowsPackerTemplate } from "./build/ci/packer.ts";
 import { packer } from "./build/ci/spec.ts";
-import { docker } from "./docker.mjs";
-import { tart } from "./tart.mjs";
-import {
-  $,
-  copyFile,
-  getBranch,
-  getSecret,
-  isCI,
-  mkdtemp,
-  rm,
-  spawn,
-  spawnSafe,
-  spawnSyncSafe,
-  waitForPort,
-  which,
-} from "./utils.mjs";
+import { $, getBranch, getSecret, isCI, spawnSafe, which } from "./utils.mjs";
 
 /**
  * The AWS client the CI entry point still needs: a describe-images lookup

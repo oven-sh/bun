@@ -182,6 +182,16 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         }
     }
 
+    // OpenSSL 3 caps GCM IVs at 1024 bits (GCM_IV_MAX_SIZE). BoringSSL has no
+    // such cap, so enforce it here to match Node.js and avoid unbounded GHASH work.
+    if (cipher.isGcmMode()) {
+        ASSERT(ivView);
+
+        if (ivView->byteLength() > 128) {
+            return ERR::CRYPTO_INVALID_IV(scope, globalObject);
+        }
+    }
+
     CipherCtxPointer ctx = CipherCtxPointer::New();
 
     if (cipher.isWrapMode()) {

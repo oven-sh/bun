@@ -59,6 +59,31 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("fd-dup redirect does not consume the next word", () => {
+    // `2>&1` / `1>&2` are complete redirects; the following word is an
+    // argument of the command (bash: `echo a 2>&1 b` prints "a b").
+    const cmd = {
+      assigns: [],
+      name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "a" } }, { simple: { Text: "b" } }],
+      redirect: redirect({ stdout: true, duplicate_out: true }),
+      redirect_file: null,
+    };
+    expect(JSON.parse(parse`echo a 2>&1 b`)).toEqual({ stmts: [{ exprs: [{ cmd }] }] });
+
+    const cmd2 = {
+      assigns: [],
+      name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "a" } }, { simple: { Text: "b" } }],
+      redirect: redirect({ stderr: true, duplicate_out: true }),
+      redirect_file: null,
+    };
+    expect(JSON.parse(parse`echo a 1>&2 b`)).toEqual({ stmts: [{ exprs: [{ cmd: cmd2 }] }] });
+
+    // With the trailing word absent the redirect still stands on its own.
+    expect(JSON.parse(parse`echo a 2>&1`)).toEqual({
+      stmts: [{ exprs: [{ cmd: { ...cmd, name_and_args: cmd.name_and_args.slice(0, 2) } }] }],
+    });
+  });
+
   test("single atom", () => {
     expect(JSON.parse(parse`ls`)).toEqual({
       stmts: [

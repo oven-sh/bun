@@ -63,8 +63,9 @@ function prebuiltSuffix(cfg: Config): string {
   if (cfg.linux && cfg.abi === "musl") s += "-musl";
   if (cfg.linux && cfg.abi === "android") s += "-android";
   // Baseline WebKit artifacts (-march=nehalem, /arch:SSE2 ICU) exist for
-  // Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
-  // arm64 or macOS. Suffix order matches the release asset names:
+  // Linux amd64 (glibc + musl), Windows amd64, and macOS amd64. No baseline
+  // variant for arm64 (no AVX on arm64 — baseline is x64-only). Suffix order
+  // matches the release asset names:
   // bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
   if (cfg.baseline && cfg.x64) s += "-baseline";
   if (cfg.debug) s += "-debug";

@@ -1809,12 +1809,18 @@ impl PostgresSQLConnection {
         match item.status.get() {
             QueryStatus::Running | QueryStatus::Binding | QueryStatus::PartialResponse => {
                 let flags = item.flags.get();
+                if !flags.counted {
+                    return;
+                }
+                item.update_flags(|f| f.counted = false);
                 if flags.simple {
-                    self.nonpipelinable_requests
-                        .set(self.nonpipelinable_requests.get() - 1);
+                    let n = self.nonpipelinable_requests.get();
+                    debug_assert!(n > 0, "nonpipelinable_requests underflow");
+                    self.nonpipelinable_requests.set(n.saturating_sub(1));
                 } else if flags.pipelined {
-                    self.pipelined_requests
-                        .set(self.pipelined_requests.get() - 1);
+                    let n = self.pipelined_requests.get();
+                    debug_assert!(n > 0, "pipelined_requests underflow");
+                    self.pipelined_requests.set(n.saturating_sub(1));
                 }
             }
             QueryStatus::Pending => {
@@ -1940,6 +1946,7 @@ impl PostgresSQLConnection {
                         }
                         self.nonpipelinable_requests
                             .set(self.nonpipelinable_requests.get() + 1);
+                        req.update_flags(|f| f.counted = true);
                         self.update_flags(|f| f.remove(ConnectionFlags::IS_READY_FOR_QUERY));
                         req.status.set(QueryStatus::Running);
                         defer_cleanup!(self);
@@ -2072,7 +2079,10 @@ impl PostgresSQLConnection {
                                         f.remove(ConnectionFlags::IS_READY_FOR_QUERY)
                                     });
                                     req.status.set(QueryStatus::Binding);
-                                    req.update_flags(|f| f.pipelined = true);
+                                    req.update_flags(|f| {
+                                        f.pipelined = true;
+                                        f.counted = true;
+                                    });
                                     self.pipelined_requests
                                         .set(self.pipelined_requests.get() + 1);
 
@@ -2235,7 +2245,10 @@ impl PostgresSQLConnection {
                                         });
                                         req.status.set(QueryStatus::Binding);
                                         statement.status = StatementStatus::Parsing;
-                                        req.update_flags(|f| f.pipelined = true);
+                                        req.update_flags(|f| {
+                                            f.pipelined = true;
+                                            f.counted = true;
+                                        });
                                         self.pipelined_requests
                                             .set(self.pipelined_requests.get() + 1);
                                         self.flush_data_and_reset_timeout();

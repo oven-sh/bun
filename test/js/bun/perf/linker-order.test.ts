@@ -35,6 +35,7 @@ const cfg = (overrides: Partial<Config> = {}) =>
     canary: true,
     mode: "link-only",
     crossTarget: undefined,
+    canRunOnHost: true,
     buildDir: "/tmp/build",
     cwd: "/repo",
     ...overrides,
@@ -124,8 +125,8 @@ describe("deciding whether a build generates its own order file", () => {
     expect(mustGenerateOrderFile(cfg(), pr, false)).toBe(false);
   });
 
-  it("a cross-compiled target never does — it cannot run the binary it linked", () => {
-    const cross = cfg({ crossTarget: "aarch64-unknown-linux-gnu" } as Partial<Config>);
+  it("a target that cannot run on the host never does", () => {
+    const cross = cfg({ canRunOnHost: false } as Partial<Config>);
     expect(shouldGenerateOrderFile(cfg({ ...cross, canary: false } as Partial<Config>), ctx())).toBe(false);
     expect(mustGenerateOrderFile(cross, ctx(), false)).toBe(false);
     expect(orderFileEligible(cross, ctx())).toBe(true); // ...but it can still inherit one

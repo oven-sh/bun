@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import net from "node:net";
 
 // Fuzzer found a heap-use-after-free: connect()'s tls_ctx_failed branch
@@ -41,6 +41,86 @@ test.concurrent("RedisClient survives a failed custom-TLS context without freein
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });
+
+// Fuzzer found a heap-use-after-free that survived the ScopedRef refactor:
+// on_connection_timeout's unconditional `ScopedRef::adopt` released a ref the
+// timer no longer held, so the ScopedRef drop at scope end brought the
+// intrusive count to 0 and freed the Box<JSValkeyClient> while the JS wrapper
+// (and the other armed timer) still pointed at it; GC finalize -> stop_timers
+// then read the freed allocation. Repro: server answers HELLO then stops
+// replying, so the connection/idle-timeout and reconnect timers churn against
+// each other under subscribe/close/connect re-entry.
+test.concurrent(
+  "RedisClient survives connection-timeout + reconnect churn against an under-replying server",
+  async () => {
+    const src = `
+    const CRLF = "\\r\\n";
+    const blk = s => "$" + s.length + CRLF + s + CRLF;
+    const HELLO = "%1" + CRLF + blk("proto") + ":3" + CRLF;
+    const sockets = [];
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) { s.data = { buf: "" }; sockets.push(s); },
+        data(s, d) {
+          s.data.buf += d.toString("latin1");
+          if (s.data.buf.includes("HELLO")) {
+            s.write(HELLO);
+            s.data.buf = "";
+          }
+          // anything else is ignored (under-replying)
+        },
+        close() {},
+      },
+    });
+    const url = "redis://127.0.0.1:" + server.port;
+    for (let round = 0; round < ${isASAN ? 40 : 120}; round++) {
+      const c = new Bun.RedisClient(url, {
+        autoReconnect: true,
+        connectionTimeout: 1 + (round % 4),
+        idleTimeout: 1 + (round % 5),
+        maxRetries: 2,
+      });
+      c.onconnect = () => {}; c.onclose = () => {};
+      try { await c.connect(); } catch {}
+      try { c.subscribe("ch", () => {}).catch(() => {}); } catch {}
+      try { c.get("k").catch(() => {}); } catch {}
+      await new Promise(r => setTimeout(r, round % 7));
+      if (round % 2) while (sockets.length) try { sockets.pop()?.terminate?.(); } catch {}
+      await new Promise(r => setTimeout(r, round % 5));
+      try { c.close(); } catch {}
+      try { c.connect().catch(() => {}); } catch {}
+      await new Promise(r => setImmediate(r));
+      try { c.close(); } catch {}
+      // Before the fix the backing allocation could already be freed here;
+      // ASAN reports heap-use-after-free on the status read inside this getter.
+      if (typeof c.connected !== "boolean") throw new Error("expected boolean");
+      if (round % 3 === 0) Bun.gc(true);
+    }
+    for (const s of sockets) try { s.terminate?.(); } catch {}
+    server.stop(true);
+    Bun.gc(true);
+    await 1;
+    Bun.gc(true);
+    console.log("OK");
+    process.exit(0);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("OK");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Fuzzer found the same over-release reachable from subscribe() when the
 // socket dies mid-call: upsert_receive_handler's exit guard re-enters

@@ -294,8 +294,10 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
-extern "C" JSC::EncodedJSValue Bun__getTLSDefaultCiphers(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
-extern "C" JSC::EncodedJSValue Bun__setTLSDefaultCiphers(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+// Rust side is #[host_fn(export = ...)] which emits extern "sysv64" on
+// win-x64; BUN_DECLARE_HOST_FUNCTION carries SYSV_ABI so both sides agree.
+BUN_DECLARE_HOST_FUNCTION(Bun__getTLSDefaultCiphers);
+BUN_DECLARE_HOST_FUNCTION(Bun__setTLSDefaultCiphers);
 
 JSC_DEFINE_HOST_FUNCTION(getDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

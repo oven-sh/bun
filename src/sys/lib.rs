@@ -1596,6 +1596,9 @@ pub const MAX_COUNT: usize = u32::MAX as usize;
 #[cfg(unix)]
 pub(crate) mod safe_libc {
     use core::ffi::c_int;
+    // `close` is a libc symbol std relies on; this is an FFI import (not a
+    // competing definition) with the canonical signature.
+    #[allow(suspicious_runtime_symbol_definitions)]
     unsafe extern "C" {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub(crate) safe fn close(fd: c_int) -> c_int;
@@ -7376,7 +7379,22 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
             return false;
         }
         if (attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
-            // Check if the underlying file exists by opening it.
+            // Only name-surrogate reparse points (symlinks, mount points) stand in for
+            // another path. Non-surrogate tags such as IO_REPARSE_TAG_APPEXECLINK are
+            // opaque: the entry exists as-is and following it can fail spuriously.
+            let mut fd: w::WIN32_FIND_DATAW = bun_core::ffi::zeroed();
+            // SAFETY: path is NUL-terminated UTF-16; fd is valid for write.
+            let find = unsafe { w::FindFirstFileW(path.as_ptr(), &mut fd) };
+            if find != bun_windows_sys::INVALID_HANDLE_VALUE {
+                // SAFETY: valid find handle from FindFirstFileW.
+                unsafe {
+                    let _ = w::FindClose(find);
+                }
+                if !w::is_reparse_tag_name_surrogate(fd.dwReserved0) {
+                    return true;
+                }
+            }
+            // Name surrogate (or no tag available): follow it by opening the target.
             // SAFETY: path is NUL-terminated; null security/template handles.
             let rc = unsafe {
                 w::CreateFileW(

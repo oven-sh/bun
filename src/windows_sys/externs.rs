@@ -339,6 +339,17 @@ pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
 pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
 pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
 
+// Reparse tags (`winnt.h`). `IsReparseTagNameSurrogate` == bit 29: the reparse
+// point names another filesystem entity (symlink, mount point). Non-surrogate
+// tags such as `IO_REPARSE_TAG_APPEXECLINK` are opaque and not traversed.
+pub const IO_REPARSE_TAG_SYMLINK: DWORD = 0xA000_000C;
+pub const IO_REPARSE_TAG_MOUNT_POINT: DWORD = 0xA000_0003;
+pub const IO_REPARSE_TAG_APPEXECLINK: DWORD = 0x8000_001B;
+#[inline]
+pub const fn is_reparse_tag_name_surrogate(tag: DWORD) -> bool {
+    (tag & 0x2000_0000) != 0
+}
+
 // `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
 pub const PIPE_ACCESS_INBOUND: DWORD = 0x0000_0001;
 pub const PIPE_ACCESS_OUTBOUND: DWORD = 0x0000_0002;
@@ -1395,6 +1406,10 @@ unsafe extern "system" {
     ) -> BOOL;
 
     pub fn GetBinaryTypeW(lpApplicationName: LPCWSTR, lpBinaryType: LPDWORD) -> BOOL;
+
+    pub fn FindFirstFileW(lpFileName: LPCWSTR, lpFindFileData: *mut WIN32_FIND_DATAW) -> HANDLE;
+
+    pub fn FindClose(hFindFile: HANDLE) -> BOOL;
 
     pub fn SetCurrentDirectoryW(lpPathName: LPCWSTR) -> BOOL;
 

@@ -201,16 +201,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// ScopeError
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ScopeError {
-    #[error("no_value")]
-    NoValue,
-}
-
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
     load_npmrc_config,

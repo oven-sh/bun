@@ -249,9 +249,7 @@ impl RequestBodyBuffer {
         // A `Vec` cannot adopt a foreign allocator+buffer, so this
         // allocates a fresh Vec of the same capacity.
         // Callers that can should write into allocated_slice() directly instead.
-        let mut arraylist = Vec::with_capacity(self.allocated_slice().len());
-        arraylist.clear();
-        arraylist
+        Vec::with_capacity(self.allocated_slice().len())
     }
 }
 

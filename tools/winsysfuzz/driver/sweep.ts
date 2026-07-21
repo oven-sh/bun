@@ -228,6 +228,12 @@ interface Result {
 }
 const results: Result[] = [];
 let next = 0;
+// Load-health controls: every CONTROL_EVERY jobs a worker also runs the
+// program with NO fault. If those unfaulted controls creep toward the
+// watchdog, the box was saturated during the sweep and every HANG in that
+// window is suspect - measured, not guessed after the fact.
+const CONTROL_EVERY = 25;
+const controls: { ms: number; outcome: string; exitCode: number | null }[] = [];
 // Append each result the moment it lands so a long sweep is watchable
 // (tail the file) and survives an interrupt with everything so far.
 const liveLog = join(workRoot, "sweep-progress.jsonl");
@@ -239,6 +245,13 @@ async function worker(w: number) {
     const idx = next++;
     if (idx >= plan.length) return;
     const job = plan[idx];
+    if (idx > 0 && idx % CONTROL_EVERY === 0) {
+      // Ambient-load probe: same program, no fault, under current contention.
+      const ctlDir = join(runsDir, `control${String(idx).padStart(4, "0")}`);
+      ensureDir(ctlDir);
+      const ctl = await runOnce({ bun, args: progArgs, workDir: ctlDir, timeoutMs });
+      controls.push({ ms: ctl.ms, outcome: ctl.outcome, exitCode: ctl.exitCode });
+    }
     // Unique dir per job (never reused) - no stale trace can be misread.
     const dir = join(runsDir, `job${String(job.id).padStart(4, "0")}`);
     ensureDir(dir);
@@ -401,6 +414,20 @@ if (findings.length) {
   md.push(`- program: \`${progArgs.join(" ")}\``);
   md.push(`- ${results.length} runs; outcomes: ${[...counts.entries()].map(([k, v]) => `${k}=${v}`).join(" ")}`);
   md.push(`- baseline exit=${base.exitCode} in ${base.ms}ms; watchdog ${timeoutMs / 1000}s (verify at ${(2 * timeoutMs) / 1000}s)`);
+  // Load-health during the sweep, measured by the interleaved no-fault
+  // controls. A degraded control means the box was saturated at some point:
+  // HANGs are then suspect and every 'load-dependent' verdict doubly so.
+  if (controls.length) {
+    const worst = Math.max(...controls.map(c => c.ms));
+    const degraded = controls.filter(c => c.outcome === "hang" || c.ms >= timeoutMs * 0.7).length;
+    md.push(
+      `- **load health**: ${controls.length} no-fault control run(s) during the sweep; worst ${worst}ms ` +
+        `(baseline ${base.ms}ms), ${degraded} degraded` +
+        (degraded
+          ? ` -> **the box saturated during this sweep: treat HANG timings and load-dependent verdicts with suspicion**`
+          : ` -> box stayed healthy; timings are trustworthy`),
+    );
+  }
   md.push("");
   if (!findings.length) md.push("No CRASH/HANG findings in this sweep.");
   // Cards ordered by what to chase first: confirmed, then slow, then the
@@ -465,6 +492,7 @@ await Bun.write(
       bun,
       program: progArgs,
       baseline: { exit: base.exitCode, ms: base.ms },
+      loadControls: controls,
       results: results.map(r => ({
         outcome: r.outcome,
         verdict: verdicts.get(r)?.verdict ?? null,

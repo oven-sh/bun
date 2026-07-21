@@ -15,11 +15,13 @@ import {
   lastStage,
   moduleOf,
   replayCoordinate,
+  runOnce,
   statusName,
   symbolize,
   wsfrun,
   stamp,
   type ReplayResult,
+  type RunResult,
 } from "./lib";
 
 const argv = process.argv.slice(2);
@@ -38,6 +40,14 @@ const progArgs: string[] = [];
 for (let i = progIdx + 1; i < argv.length && !argv[i].startsWith("--"); i++) progArgs.push(argv[i]);
 const times = Math.max(1, +(flag("--times", "3") as string));
 const timeoutMs = 1000 * +(flag("--timeout", "30") as string);
+// --stress K [--rounds R]: the load re-verify for a load-dependent finding.
+// Each round runs K faulted replays CONCURRENTLY plus one no-fault CONTROL
+// of the same program. Faulted lanes bad while the control finishes clean
+// => a real timing-sensitive lead (the fault, not the load, is doing it).
+// Control also degrading => the box was saturated: the "finding" is an
+// artifact. This is the distinction 'load-dependent' alone cannot make.
+const stress = +(flag("--stress", "0") as string);
+const rounds = Math.max(1, +(flag("--rounds", "2") as string));
 // Never-reused timestamped root: nothing is ever deleted; old runs accumulate.
 const outDir = join(flag("--out", "C:\\wsfrepro") as string, stamp);
 ensureDir(outDir);
@@ -57,6 +67,55 @@ for (let n = 1; n <= times; n++) {
   });
   runs.push({ ...r, n });
   console.log(`  run${n}: ${r.outcome} exit=${r.exitCode} fired=${r.fired} ${r.ms}ms`);
+}
+
+// --- stress: concurrent replays with a control lane -------------------------
+interface StressRound {
+  r: number;
+  control: RunResult;
+  lanes: ReplayResult[];
+}
+const stressRounds: StressRound[] = [];
+let stressVerdict = "";
+if (stress > 0) {
+  console.log(`\nstress: ${rounds} round(s) x ${stress} faulted lane(s) + 1 no-fault control lane`);
+  for (let r = 1; r <= rounds; r++) {
+    // Launch everything at once: faulted lanes contend with each other
+    // exactly as they did in the sweep, while the control tells us whether
+    // the box itself was healthy under that load.
+    const lanes = Array.from({ length: stress }, (_, k) =>
+      replayCoordinate({
+        bun,
+        args: progArgs,
+        schedule,
+        dir: join(outDir, `stress${r}`, `lane${k + 1}`),
+        timeoutMs,
+        capture: false,
+      }),
+    );
+    const control = runOnce({ bun, args: progArgs, workDir: join(outDir, `stress${r}`, "control"), timeoutMs });
+    const [ctl, ...res] = await Promise.all([control, ...lanes]);
+    stressRounds.push({ r, control: ctl as RunResult, lanes: res as ReplayResult[] });
+    const laneOut = (res as ReplayResult[]).map(l => l.outcome).join(",");
+    const c = ctl as RunResult;
+    console.log(
+      `  round ${r}: lanes=[${laneOut}] control=${c.outcome === "hang" ? "HANG" : `exit=${c.exitCode}`} ${c.ms}ms`,
+    );
+  }
+  // Control healthy = exited AND not itself near the watchdog.
+  const healthy = (c: RunResult) => c.outcome === "exit" && c.ms < timeoutMs * 0.7;
+  const badWhileHealthy = stressRounds.some(
+    s => healthy(s.control) && s.lanes.some(l => l.outcome === "HANG" || l.outcome === "CRASH"),
+  );
+  const badOnlyWhenSick = stressRounds.some(
+    s => !healthy(s.control) && s.lanes.some(l => l.outcome === "HANG" || l.outcome === "CRASH"),
+  );
+  stressVerdict = badWhileHealthy
+    ? "REAL timing-sensitive lead: faulted lanes fail while the no-fault control finishes clean under the same load."
+    : badOnlyWhenSick
+      ? "LOAD ARTIFACT: the unfaulted control degraded too - the box was saturated; discount this finding."
+      : "not reproduced even under load: no faulted lane failed.";
+  console.log(`  stress verdict: ${stressVerdict}`);
 }
 
 // Callsite: symbolize every DISTINCT candidate frame from a real fired
@@ -108,6 +167,19 @@ md.push("## Repro (PowerShell)");
 md.push("```");
 md.push(reproCmd);
 md.push("```");
+if (stressRounds.length) {
+  md.push("");
+  md.push(`## Stress: ${stress} concurrent faulted lanes + no-fault control, ${rounds} round(s)`);
+  md.push(`**${stressVerdict}**`);
+  md.push("");
+  for (const s of stressRounds) {
+    const c = s.control;
+    md.push(
+      `- round ${s.r}: lanes = ${s.lanes.map(l => `${l.outcome}(${l.ms}ms)`).join(", ")} ; ` +
+        `control = ${c.outcome === "hang" ? "HANG" : `exit ${c.exitCode}`} in ${c.ms}ms`,
+    );
+  }
+}
 for (const r of runs) {
   md.push("");
   md.push(`## Run ${r.n}: ${r.outcome} (exit=${r.exitCode}, ${r.ms}ms, fault fired ${r.fired}x)`);

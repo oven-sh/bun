@@ -60,6 +60,7 @@ export interface Rec {
   fault: "" | "P" | "Q" | "M" | "D"; // pre / post / mangle / delay
   entryOnly: boolean;
   path?: string; // decoded NT path from an 'A' record (WSF_ARGS=1)
+  detail?: string; // 'D' record: handle target, AFD ioctl, len/xfer (WSF_ARGS=1)
 }
 
 // Undo the runtime's UTF-16 escaping (\uXXXX) back to a JS string.
@@ -108,6 +109,10 @@ export function parseTrace(text: string): Trace {
       // 'A <seq> <sysid> <escaped-path>': attaches to its X record by seq.
       const rec = bySeq.get(+p[1]);
       if (rec) rec.path = unescapePath(p.slice(3).join(" "));
+    } else if (p[0] === "D") {
+      // 'D <seq> <sysid> k=v ...': typed detail (handle target, ioctl, len).
+      const rec = bySeq.get(+p[1]);
+      if (rec) rec.detail = p.slice(3).join(" ");
     } else if (p[0] === "E") {
       const rvas = p[4] === "0" ? [] : p[4].split(",");
       t.recs.push({ seq: +p[1], tid: +p[2], sys: +p[3], status: "", rva: rvas[0] ?? "0", rvas, frame0: p[5], fault: "", entryOnly: true });

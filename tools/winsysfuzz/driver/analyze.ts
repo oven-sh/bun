@@ -31,15 +31,28 @@ for (const n of trace.notes) console.log(n);
 console.log(`\n${recs.length} records, ${new Set(recs.map(r => r.tid)).size} threads\n`);
 
 // --- by syscall -------------------------------------------------------------
-type Agg = { count: number; statuses: Map<string, number>; callsites: Map<string, number>; faults: number };
+type Agg = {
+  count: number;
+  statuses: Map<string, number>;
+  callsites: Map<string, number>;
+  faults: number;
+  details: Map<string, number>; // decoded detail (target/ioctl) tally
+};
 const bySys = new Map<number, Agg>();
 for (const r of recs) {
   let a = bySys.get(r.sys);
-  if (!a) bySys.set(r.sys, (a = { count: 0, statuses: new Map(), callsites: new Map(), faults: 0 }));
+  if (!a)
+    bySys.set(r.sys, (a = { count: 0, statuses: new Map(), callsites: new Map(), faults: 0, details: new Map() }));
   a.count++;
   if (!r.entryOnly) a.statuses.set(r.status, (a.statuses.get(r.status) ?? 0) + 1);
   if (r.rva !== "0") a.callsites.set(r.rva, (a.callsites.get(r.rva) ?? 0) + 1);
   if (r.fault) a.faults++;
+  // Tally the typed detail with volatile numbers folded (xfer=/len= vary):
+  // "ioctl=AFD_RECV on h=s:Afd" recurs, its byte counts don't.
+  if (r.detail || r.path) {
+    const d = (r.detail ?? "").replace(/\b(xfer|len)=\d+/g, "$1=#") + (r.path ? ` path=${r.path}` : "");
+    a.details.set(d.trim(), (a.details.get(d.trim()) ?? 0) + 1);
+  }
 }
 
 const rows = [...bySys.entries()].sort((a, b) => b[1].count - a[1].count);
@@ -63,6 +76,11 @@ for (const [sys, a] of rows) {
   if (showCallsites) {
     const cs = [...a.callsites.entries()].sort((x, y) => y[1] - x[1]).slice(0, 5);
     for (const [rva, c] of cs) console.log("    bun+0x" + rva.padEnd(10) + " x" + c);
+  }
+  // Decoded detail (WSF_ARGS=1): what was actually touched.
+  if (a.details.size) {
+    const ds = [...a.details.entries()].sort((x, y) => y[1] - x[1]).slice(0, 4);
+    for (const [d, c] of ds) console.log(`      | ${d} x${c}`);
   }
 }
 

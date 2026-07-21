@@ -558,6 +558,10 @@ struct HookEntry {
   const char* category;
   int8_t iosbIndex; // arg index of the PIO_STATUS_BLOCK, -1 if none (mangle target)
   int8_t oaIndex;   // arg index of the POBJECT_ATTRIBUTES, -1 if none (path decode)
+  int8_t ioctlIndex;  // arg index of an IoControlCode/FsControlCode, -1 if none
+  int8_t handleIndex; // arg index of the primary in-HANDLE (File/Socket/Key), -1 if none
+  int8_t lengthIndex; // arg index of a ULONG Length (bytes requested), -1 if none
+  int8_t hOutIndex;   // arg index of the PHANDLE created by an open/create, -1 if none
 };
 
 extern HookEntry kHooks[SYS__COUNT];

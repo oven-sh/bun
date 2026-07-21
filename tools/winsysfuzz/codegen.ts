@@ -141,6 +141,10 @@ H.push("  const uint8_t* argDir;   // 0=in 1=out 2=inout (bit 7 = optional)");
 H.push("  const char* category;");
 H.push("  int8_t iosbIndex; // arg index of the PIO_STATUS_BLOCK, -1 if none (mangle target)");
 H.push("  int8_t oaIndex;   // arg index of the POBJECT_ATTRIBUTES, -1 if none (path decode)");
+H.push("  int8_t ioctlIndex;  // arg index of an IoControlCode/FsControlCode, -1 if none");
+H.push("  int8_t handleIndex; // arg index of the primary in-HANDLE (File/Socket/Key), -1 if none");
+H.push("  int8_t lengthIndex; // arg index of a ULONG Length (bytes requested), -1 if none");
+H.push("  int8_t hOutIndex;   // arg index of the PHANDLE created by an open/create, -1 if none");
 H.push("};");
 H.push("");
 H.push("extern HookEntry kHooks[SYS__COUNT];");
@@ -186,10 +190,20 @@ C.push("HookEntry kHooks[SYS__COUNT] = {");
 for (const s of syscalls) {
   const iosb = s.args.findIndex(a => a.type === "PIO_STATUS_BLOCK");
   const oa = s.args.findIndex(a => a.type === "POBJECT_ATTRIBUTES");
+  // Control codes, the primary input handle, and requested byte lengths are
+  // named consistently in the cfg (IoControlCode / FsControlCode,
+  // FileHandle / SocketHandle / KeyHandle / EventHandle, Length): richer,
+  // typed trace context and the basis for handle-targeted faults.
+  const ioctl = s.args.findIndex(a => /^(IoControlCode|FsControlCode)$/.test(a.name));
+  const handle = s.args.findIndex(
+    a => a.type === "HANDLE" && a.dir === "in" && /^(FileHandle|SocketHandle|Handle|KeyHandle|PortHandle)$/.test(a.name),
+  );
+  const length = s.args.findIndex(a => a.type === "ULONG" && a.name === "Length");
+  const hOut = s.args.findIndex(a => a.type === "PHANDLE" && a.dir === "out");
   C.push(
     `  {${JSON.stringify(s.name)}, (void**)&Real_${s.name}, (void*)&Hook_${s.name}, ${s.args.length}, ` +
       `${s.ret === "NTSTATUS" ? "true" : "false"}, ${s.name}_types, ${s.name}_names, ${s.name}_dirs, ` +
-      `${JSON.stringify(s.category)}, ${iosb}, ${oa}},`,
+      `${JSON.stringify(s.category)}, ${iosb}, ${oa}, ${ioctl}, ${handle}, ${length}, ${hOut}},`,
   );
 }
 C.push("};");

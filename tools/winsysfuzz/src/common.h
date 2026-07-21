@@ -53,9 +53,9 @@ class CallCtx {
   // The first is the schedule's key; the rest let the analyzer walk past an
   // inlined std:: frame to the owning module.
   void FormatRvas(char* out, size_t cap) const;
-  // WSF_ARGS=1: emit an 'A' record with the decoded NT path (path-bearing
-  // syscalls only), sharing seq with the X record it belongs to.
-  void LogArgs(LONG64 seq) const;
+  // Handle-table maintenance (always) plus WSF_ARGS=1 detail records:
+  // A (decoded NT path) and D (handle target, AFD ioctl, lengths).
+  void LogDetail(LONG64 seq, ULONG_PTR ret) const;
   uint32_t sys_;
   bool live_;      // false => reentrant call: pass straight through, no log/fault
   uint8_t nframes_;

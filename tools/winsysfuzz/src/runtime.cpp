@@ -80,6 +80,86 @@ int g_frames = 6;
 // ('A' records) — the hostile-argument attack's ground truth.
 bool g_logArgs = false;
 
+// --- handle typing ---------------------------------------------------------
+// A per-process open-handle table: when a create/open succeeds we remember
+// what the handle refers to (a file's path tail, a named pipe, the AFD
+// socket device), so later reads/writes/ioctls can say "write to
+// scratch.sqlite" or "AFD ioctl on socket" instead of a bare 0x1c4 - and
+// so faults can later target WHAT is being touched, not just where. Bounded
+// hash table, lock-free-ish (relaxed correctness is fine: worst case a stale
+// tag), never allocates in a hook.
+struct HandleEnt {
+  volatile ULONG_PTR h; // 0 = empty
+  char kind;            // 'f' file, 's' socket(AFD), 'p' pipe, 'k' key, 'o' other
+  char tail[46];        // trailing bytes of the object name (ASCII-narrowed)
+};
+constexpr int kHandleSlots = 4096;
+HandleEnt g_handles[kHandleSlots];
+
+inline int HandleSlot(ULONG_PTR h) { return (int)(((uintptr_t)h >> 2) & (kHandleSlots - 1)); }
+
+// Classify a decoded NT path into a handle kind, and keep its readable tail.
+void RememberHandle(ULONG_PTR h, const wchar_t* path, size_t units) {
+  if (!h || !units) return;
+  HandleEnt& e = g_handles[HandleSlot(h)];
+  char kind = 'o';
+  // \Device\Afd = a socket; \Device\NamedPipe or \??\pipe\ = a pipe.
+  for (size_t i = 0; i + 3 < units; i++) {
+    if ((path[i] == L'A' || path[i] == L'a') && path[i + 1] == L'f' && path[i + 2] == L'd') { kind = 's'; break; }
+    if ((path[i] == L'P' || path[i] == L'p') && (path[i + 1] == L'i') && (path[i + 2] == L'p') && (path[i + 3] == L'e')) { kind = 'p'; break; }
+  }
+  if (kind == 'o') kind = 'f';
+  // keep the last ~44 chars of the name for readability
+  size_t start = units > 44 ? units - 44 : 0;
+  size_t o = 0;
+  for (size_t i = start; i < units && o < sizeof e.tail - 1; i++) {
+    wchar_t c = path[i];
+    e.tail[o++] = (c > 0x20 && c < 0x7f) ? (char)c : '_';
+  }
+  e.tail[o] = 0;
+  e.kind = kind;
+  e.h = h; // publish last
+}
+
+const HandleEnt* LookupHandle(ULONG_PTR h) {
+  if (!h) return nullptr;
+  const HandleEnt& e = g_handles[HandleSlot(h)];
+  return e.h == h ? &e : nullptr;
+}
+
+void ForgetHandle(ULONG_PTR h) {
+  HandleEnt& e = g_handles[HandleSlot(h)];
+  if (e.h == h) e.h = 0;
+}
+
+// Decode the AFD (winsock kernel driver) ioctls bun's sockets go through -
+// which turns "some NtDeviceIoControlFile failed" into "AFD_RECV failed".
+const char* AfdName(ULONG code) {
+  switch (code) {
+    case 0x12003: return "AFD_BIND";
+    case 0x12007: return "AFD_CONNECT";
+    case 0x1200B: return "AFD_START_LISTEN";
+    case 0x1200F: return "AFD_WAIT_FOR_LISTEN";
+    case 0x12010: return "AFD_ACCEPT";
+    case 0x12017: return "AFD_RECV";
+    case 0x1201B: return "AFD_RECV_DATAGRAM";
+    case 0x1201F: return "AFD_SEND";
+    case 0x12023: return "AFD_SEND_DATAGRAM";
+    case 0x12024: return "AFD_POLL";
+    case 0x1202B: return "AFD_GET_ADDRESS";
+    case 0x1202F: return "AFD_QUERY_HANDLES";
+    case 0x12043: return "AFD_GET_INFO";
+    case 0x12047: return "AFD_SET_CONTEXT";
+    case 0x1204B: return "AFD_SET_CONNECT_JOIN_HANDLES";
+    case 0x1207B: return "AFD_TRANSMIT_FILE";
+    case 0x120BB: return "AFD_SUPER_CONNECT";
+    case 0x120BF: return "AFD_SUPER_DISCONNECT";
+    case 0x120C7: return "AFD_RIO";
+    case 0x120D3: return "AFD_ADDRESS_LIST_QUERY";
+    default: return nullptr;
+  }
+}
+
 // Copy an OBJECT_ATTRIBUTES' ObjectName into 'out' (UTF-16), tolerating a
 // wild pointer from the target: reading through a bad pointer bun passed
 // must fault into __except here, not crash the process and get blamed on
@@ -345,7 +425,7 @@ bool CallCtx::PreFault() {
       LogLine("X %lld %lu %u %llx %s %llx !P\n", seq, GetCurrentThreadId(), sys_,
               (unsigned long long)injected_, rvas,
               (unsigned long long)(nframes_ ? frames_[0] : 0));
-      LogArgs(seq);
+      LogDetail(seq, injected_);
       return true;
     }
     return false; // post-fault: real call runs, Exit() substitutes
@@ -401,22 +481,82 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
     LONG64 seq = InterlockedIncrement64(&g_seq);
     LogLine("X %lld %lu %u %llx %s %llx%s\n", seq, GetCurrentThreadId(), sys_,
             (unsigned long long)ret, rvas, (unsigned long long)(nframes_ ? frames_[0] : 0), tag);
-    LogArgs(seq);
+    LogDetail(seq, ret);
   }
   return ret;
 }
 
-// Path decode for hostile-argument verification: the NT path that actually
-// reached the kernel, as an 'A' record sharing its X record's seq.
-void CallCtx::LogArgs(LONG64 seq) const {
-  int8_t oa = kHooks[sys_].oaIndex;
-  if (!g_logArgs || oa < 0 || oa >= argc_) return;
-  wchar_t path[400];
-  size_t units = SafeCopyObjectName((const void*)args_[oa], path, 400);
-  if (!units) return;
-  char esc[900];
-  EscapeUtf16(path, units, esc, sizeof esc);
-  LogLine("A %lld %u %s\n", seq, sys_, esc);
+// Detail decoding + handle-table maintenance for one syscall exit.
+//  - Handle table (always on): remember what each newly created handle
+//    refers to, forget closed ones - so later ops can name their target.
+//  - 'A' record: the NT path handed to a path-bearing syscall.
+//  - 'D' record: typed detail - the handle's target/kind, the AFD ioctl,
+//    the requested length and bytes actually transferred.
+// A and D share the X record's seq. Only when WSF_ARGS=1 (they cost log volume).
+void CallCtx::LogDetail(LONG64 seq, ULONG_PTR ret) const {
+  const HookEntry& e = kHooks[sys_];
+  bool success = (ULONG)ret == 0;
+
+  // Handle table maintenance.
+  if (sys_ == SYS_NtClose && argc_ > 0) {
+    ForgetHandle(args_[0]);
+  } else if (success && e.hOutIndex >= 0 && e.hOutIndex < argc_) {
+    ULONG_PTR h = 0;
+    __try {
+      h = (ULONG_PTR)(*(HANDLE*)args_[e.hOutIndex]);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+      h = 0;
+    }
+    if (h && e.oaIndex >= 0 && e.oaIndex < argc_) {
+      wchar_t p[128];
+      size_t u = SafeCopyObjectName((const void*)args_[e.oaIndex], p, 128);
+      if (u) RememberHandle(h, p, u);
+    }
+  }
+
+  if (!g_logArgs) return;
+
+  // 'A': path.
+  if (e.oaIndex >= 0 && e.oaIndex < argc_) {
+    wchar_t path[400];
+    size_t units = SafeCopyObjectName((const void*)args_[e.oaIndex], path, 400);
+    if (units) {
+      char esc[900];
+      EscapeUtf16(path, units, esc, sizeof esc);
+      LogLine("A %lld %u %s\n", seq, sys_, esc);
+    }
+  }
+
+  // 'D': typed detail. Build "k=v k=v" only for fields this syscall has.
+  char d[256];
+  int o = 0;
+  d[0] = 0;
+  if (e.handleIndex >= 0 && e.handleIndex < argc_) {
+    ULONG_PTR h = args_[e.handleIndex];
+    const HandleEnt* he = LookupHandle(h);
+    if (he) o += snprintf(d + o, sizeof d - o, " h=%c:%s", he->kind, he->tail);
+    else o += snprintf(d + o, sizeof d - o, " h=%llx", (unsigned long long)h);
+  }
+  if (e.ioctlIndex >= 0 && e.ioctlIndex < argc_ && o < (int)sizeof d) {
+    ULONG code = (ULONG)args_[e.ioctlIndex];
+    const char* name = AfdName(code);
+    o += name ? snprintf(d + o, sizeof d - o, " ioctl=%s", name)
+              : snprintf(d + o, sizeof d - o, " ioctl=%lx", code);
+  }
+  if (e.lengthIndex >= 0 && e.lengthIndex < argc_ && o < (int)sizeof d)
+    o += snprintf(d + o, sizeof d - o, " len=%lu", (ULONG)args_[e.lengthIndex]);
+  if (success && e.iosbIndex >= 0 && e.iosbIndex < argc_ && o < (int)sizeof d) {
+    ULONG_PTR info = 0;
+    bool ok = true;
+    __try {
+      auto* iosb = (IO_STATUS_BLOCK*)args_[e.iosbIndex];
+      info = iosb ? iosb->Information : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+      ok = false;
+    }
+    if (ok) o += snprintf(d + o, sizeof d - o, " xfer=%llu", (unsigned long long)info);
+  }
+  if (o > 0) LogLine("D %lld %u%s\n", seq, sys_, d);
 }
 
 // --- runtime init ----------------------------------------------------------

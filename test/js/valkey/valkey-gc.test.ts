@@ -183,13 +183,13 @@ test.concurrent("RedisClient survives subscribe() + close() against a server tha
 
 // Same fault class as above, with the yield point moved so the server-side
 // close is processed before `close()`: on_close takes the auto-reconnect
-// branch, and the still-armed connection-timeout timer then fires against a
-// Disconnected client. on_valkey_close/on_valkey_reconnect previously adopted
-// the socket keep-alive ref unconditionally; when the close/fail path re-enters
-// under the fired timer that adopt could spend the JS wrapper's own +1, so the
-// guards at the end of on_connection_timeout dropped the count to 0 and freed
-// the Box while the wrapper was live. GC finalize -> stop_timers then read the
-// freed allocation.
+// branch, the reconnect timer is armed, and the still-armed connection-timeout
+// timer later fires against a Disconnected client. This is the interleaving
+// under which the fuzzer drives on_connection_timeout to drop the final ref
+// while the JS wrapper is live; the race is timing-dependent and does not
+// fire deterministically in CI, so this test exercises the path and relies on
+// ASAN plus the assertion in `JSValkeyClient::destructor` to catch an
+// over-release if one occurs.
 test.concurrent("RedisClient survives on_connection_timeout firing after an auto-reconnect close", async () => {
   const src = `
     const CRLF = "\\r\\n";
@@ -210,7 +210,6 @@ test.concurrent("RedisClient survives on_connection_timeout firing after an auto
       },
     });
     const url = "redis://127.0.0.1:" + server.port;
-    const clients = [];
     for (let round = 0; round < ${isASAN ? 80 : 200}; round++) {
       const c = new Bun.RedisClient(url, { autoReconnect: true, connectionTimeout: 2000 });
       c.onconnect = () => {}; c.onclose = () => {};
@@ -223,17 +222,18 @@ test.concurrent("RedisClient survives on_connection_timeout firing after an auto
       await new Promise(r => setImmediate(r));
       try { c.subscribe("ch" + round, () => {}).catch(() => {}); } catch {}
       try { c.close(); } catch {}
-      clients.push(c);
+      // Read through the Box while the wrapper is still live; under ASAN this
+      // trips heap-use-after-free if the round over-released.
+      if (typeof c.connected !== "boolean") throw new Error("expected boolean");
       if (round % 8 === 0) Bun.gc(false);
       await new Promise(r => setTimeout(r, 1));
     }
-    // Drive GC so finalize() runs and would touch any freed allocation.
+    // Wrappers from earlier rounds are now unreachable; collect so
+    // finalize() -> stop_timers runs (and would touch a freed Box if one
+    // was over-released without having crashed the .connected probe).
     Bun.gc(true);
     await new Promise(r => setTimeout(r, 50));
     Bun.gc(true);
-    for (const c of clients) {
-      if (typeof c.connected !== "boolean") throw new Error("expected boolean");
-    }
     while (sockets.length) try { sockets.pop()?.terminate?.(); } catch {}
     server.stop(true);
     console.log("OK");

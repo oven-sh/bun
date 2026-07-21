@@ -167,10 +167,8 @@ const buildPlatforms = [
   // as macOS above. There is no native Windows build lane: the Windows fleet
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
-  // release ships. Both lanes build without LTO for now: the windows x64
-  // cross toolchain supports ThinLTO + cross-language LTO (--lto=on), but
-  // LLVM's thin backends miscompile JSC on x86-64 at -O1+, so it is not the
-  // default — see the ltoDefault comment in scripts/build/config.ts.
+  // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
+  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
@@ -1397,7 +1395,6 @@ async function getPipelineOptions() {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    // Opt a PR into the LTO build (same as main). See getBuildArgs().
     buildImages,
     dryRun: parseOption(/\[(dry run)\]/i),
     publishImages,
@@ -1539,13 +1536,10 @@ async function getPipeline(options = {}) {
     }
   }
 
-  // Binary-size tracking. Non-LTO PR binaries are larger than the LTO main
-  // canary they compare against, so only [lto] PRs enforce the threshold;
-  // main records the baseline and non-LTO PRs annotate only.
+  // Binary-size tracking: main records the baseline, PRs enforce the threshold.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
   if (!buildId && strippedPlatforms.length) {
-    const sizeRecordOnly = isMainBranch();
-    steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: sizeRecordOnly }));
+    steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
   }
 
   // Sign Windows builds on release (non-canary main) or when [sign windows]

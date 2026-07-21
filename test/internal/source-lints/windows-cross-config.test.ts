@@ -75,39 +75,25 @@ function resolveWindowsCross(partial: PartialConfig = {}, toolchain = mockToolch
 }
 
 describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)", () => {
-  test("ci release x64 cross builds default to non-LTO; --lto=on opts into ThinLTO with cross-language LTO", () => {
+  test("ci release x64 cross builds default to ThinLTO with cross-language LTO", () => {
     const cfg = resolveWindowsCross();
     expect(cfg.windows).toBe(true);
     expect(cfg.crossTarget).toBe("x86_64-pc-windows-msvc");
-    // Not the default: LLVM's ThinLTO backends miscompile JSC on x86-64 at
-    // -O1+ (see the ltoDefault comment in config.ts).
-    expect(cfg.lto).toBe(false);
-    expect(cfg.crossLangLto).toBe(false);
-
-    // The toolchain support is still wired up behind --lto=on --baseline=off
-    // (x64 defaults to baseline now, and no -baseline-lto prebuilt exists).
-    const opted = resolveWindowsCross({ lto: true, baseline: false });
-    expect(opted.lto).toBe(true);
+    expect(cfg.lto).toBe(true);
     // Rust↔C++ inlining: rustc emits bitcode (-Clinker-plugin-lto) and the
     // final lld-link runs one ThinLTO graph across both halves.
-    expect(opted.crossLangLto).toBe(true);
+    expect(cfg.crossLangLto).toBe(true);
   });
 
-  test("no -lto WebKit prebuilt exists for arm64 or baseline — LTO is forced off there", () => {
+  test("no -lto WebKit prebuilt exists for arm64 — LTO is forced off there", () => {
     // arm64: LLVM's CodeView emitter aborts on ARM64 NEON tuple registers
     // during LTO codegen, so oven-sh/WebKit ships no windows-arm64-lto.
     const arm64 = resolveWindowsCross({ arch: "aarch64" });
     expect(arm64.lto).toBe(false);
     expect(arm64.crossLangLto).toBe(false);
-
-    // baseline: no windows-amd64-baseline-lto variant.
-    const baseline = resolveWindowsCross({ baseline: true });
-    expect(baseline.lto).toBe(false);
-
     // Forced off even when explicitly requested, so the WebKit fetch never
     // 404s on a tarball that doesn't exist.
     expect(resolveWindowsCross({ arch: "aarch64", lto: true }).lto).toBe(false);
-    expect(resolveWindowsCross({ baseline: true, lto: true }).lto).toBe(false);
   });
 
   test("local (non-ci) release builds stay non-LTO unless asked", () => {
@@ -193,7 +179,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // x64 defaults to baseline now: the default config fetches the -baseline prebuilt.
     const def = webkit.source(resolveWindowsCross());
     if (def.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${def.kind}`);
-    expect(def.url).toContain("bun-webkit-windows-amd64-baseline.tar.gz");
+    expect(def.url).toContain("bun-webkit-windows-amd64-lto.tar.gz");
 
     const arm64 = webkit.source(resolveWindowsCross({ arch: "aarch64" }));
     if (arm64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${arm64.kind}`);

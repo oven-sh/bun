@@ -890,7 +890,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
  */
 export function rustLtoLinkInputs(n: Ninja, cfg: Config, rustObjects: string[]): string[] {
   const rustLib = rustObjects[0];
-  if (!cfg.crossLangLto || cfg.darwin || cfg.windows || rustLib === undefined) return rustObjects;
+  // All LTO platforms now use ThinLTO with -fno-split-lto-unit and per-CGU
+  // rust bitcode (CARGO_PROFILE_RELEASE_LTO=off), so the regular-LTO summary
+  // fix-up below is never needed. Delete this function once confirmed.
+  if (cfg.lto || !cfg.crossLangLto || cfg.darwin || cfg.windows || rustLib === undefined) return rustObjects;
   assert(
     cfg.rustSysroot !== undefined && cfg.host.rustTriple !== undefined,
     "ELF cross-language LTO needs rustc's sysroot to locate its LLVM tools (llvm-link/opt) for the regular-LTO summary fix-up, but rustc wasn't found",

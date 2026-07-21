@@ -666,18 +666,7 @@ export function findRustLld(os: OS): {
   if (rustup !== undefined && channel !== undefined) {
     spawnSync(
       rustup,
-      [
-        "-q",
-        "toolchain",
-        "install",
-        channel,
-        "--force",
-        "--no-self-update",
-        "--profile",
-        "minimal",
-        "--component",
-        "rust-src",
-      ],
+      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
       {
         encoding: "utf8",
         timeout: 300_000,

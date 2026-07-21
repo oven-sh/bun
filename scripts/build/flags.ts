@@ -508,13 +508,9 @@ export const globalFlags: Flag[] = [
     // (typeidCompatibleVTable entries) and whole-program devirtualization
     // runs in index-based mode via --lto-whole-program-visibility at link
     // time. 0 is also the default for rustc, for Apple targets, and for the
-    // WebKit macos/windows -lto prebuilts, so this is the configuration that
-    // can't drift. Windows: -fwhole-program-vtables is never passed there
-    // (see above) so 0 is already the default — kept explicit so the
-    // ThinLTO graph can't drift if that ever changes. Not linux: full LTO
-    // (no per-module summaries, so the flag is meaningless there).
+    // WebKit -lto prebuilts, so this is the configuration that can't drift.
     flag: "-fno-split-lto-unit",
-    when: c => (c.darwin || c.windows) && c.lto,
+    when: c => c.lto,
     desc: "Index-based WPD: keep type metadata in the ThinLTO summaries, no regular-LTO half",
   },
 

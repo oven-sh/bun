@@ -12,7 +12,8 @@
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { DARWIN_STACK_SIZE } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
@@ -167,9 +168,11 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
 
   if (needsMuslCrtDecompress(cfg)) {
     // llvm-objcopy (multi-target; host GNU objcopy rejects foreign-arch ELF).
+    // Resolve it next to clang (debian has no unversioned symlink on PATH).
     // restat=1: a no-op decompress keeps the mtime so the link doesn't re-run.
+    const llvmObjcopy = resolve(dirname(cfg.cc), "llvm-objcopy");
     n.rule("shim_crt_decompress", {
-      command: `llvm-objcopy --decompress-debug-sections $in $out`,
+      command: `${q(existsSync(llvmObjcopy) ? llvmObjcopy : "llvm-objcopy")} --decompress-debug-sections $in $out`,
       description: "decompress-crt $out",
       restat: true,
     });

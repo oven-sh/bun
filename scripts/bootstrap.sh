@@ -1198,6 +1198,9 @@ install_llvm() {
 
 		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
 		install_packages "llvm-$(llvm_version)-tools"
+		# Put the full LLVM bin dir on PATH so unversioned llvm-objcopy,
+		# llvm-strip, llvm-ar etc. resolve (debian only symlinks a subset).
+		append_to_path "/usr/lib/llvm-$(llvm_version)/bin"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"

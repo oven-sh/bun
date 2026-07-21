@@ -1142,8 +1142,7 @@ impl Arguments {
                     .unwrap_or(false);
 
                 if let Some(interval_) = options_or_callable.get(global, "interval")? {
-                    interval =
-                        validators::validate_uint32(global, interval_, "interval", false)?;
+                    interval = validators::validate_uint32(global, interval_, "interval", false)?;
                 }
             }
         }

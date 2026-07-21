@@ -712,8 +712,6 @@ describe.concurrent("fetch-tls", () => {
     // alert before any certificate verification runs.
     const alpn = tls.createServer({ ...CERT_LOCALHOST_IP, ALPNProtocols: ["bun-bogus-alpn"] }, () => {});
     alpn.on("tlsClientError", () => {});
-    alpn.listen(0, "127.0.0.1");
-    await once(alpn, "listening");
 
     // Plain TCP server behind an https:// URL: the ClientHello is answered
     // with bytes that are not a TLS record (WRONG_VERSION_NUMBER).
@@ -721,8 +719,6 @@ describe.concurrent("fetch-tls", () => {
       s.on("error", () => {});
       s.end("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
     });
-    plain.listen(0, "127.0.0.1");
-    await once(plain, "listening");
 
     // CONNECT proxy that opens the tunnel and then feeds non-TLS bytes into
     // it: the inner TLS handshake (SSLWrapper) must report the same identity
@@ -739,10 +735,15 @@ describe.concurrent("fetch-tls", () => {
         }
       });
     });
-    proxy.listen(0, "127.0.0.1");
-    await once(proxy, "listening");
 
     try {
+      alpn.listen(0, "127.0.0.1");
+      await once(alpn, "listening");
+      plain.listen(0, "127.0.0.1");
+      await once(plain, "listening");
+      proxy.listen(0, "127.0.0.1");
+      await once(proxy, "listening");
+
       const alpnPort = (alpn.address() as net.AddressInfo).port;
       const plainPort = (plain.address() as net.AddressInfo).port;
       const proxyPort = (proxy.address() as net.AddressInfo).port;

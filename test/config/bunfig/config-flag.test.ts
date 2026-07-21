@@ -61,9 +61,9 @@ describe.concurrent("bun install --config path binding", () => {
 });
 
 describe.concurrent("bare -c / --config requires a value", () => {
-  test.each([["install", "--config"], ["install", "-c"], ["--config"], ["-c"]])(
+  test.each([[["install", "--config"]], [["install", "-c"]], [["--config"]], [["-c"]]])(
     "bun %p errors instead of silently defaulting",
-    async (...argv) => {
+    async argv => {
       using dir = tempDir("config-flag-bare", {
         "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
       });

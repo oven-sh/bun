@@ -350,8 +350,9 @@ pub enum Data {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// Every payload variant is either a `StoreRef<T>` (8 bytes, align 4) or a ZST,
-// so `Data` = 1-byte discriminant + 8-byte payload → 12 at align 4. `Stmt` =
+// Every payload variant is either a `StoreRef<T>` (8 bytes, align 4) or a small
+// inline `Copy` value that fits the 8-byte payload slot (e.g. `S::Debugger`'s
+// `bool`), so `Data` = 1-byte discriminant + 8-byte payload → 12 at align 4. `Stmt` =
 // `Data` (12, align 4) + `Loc` (i32) → 16. `Option<Data>`/`Option<Stmt>`
 // niche-pack via spare discriminant values (33 variants < 256); a
 // `#[repr(C)]`/`#[repr(u32)]` on `Data` would break it.
@@ -372,8 +373,8 @@ const _: () = assert!(
 const _: () = assert!(core::mem::size_of::<StoreRef<S::SExpr>>() == core::mem::size_of::<usize>());
 
 /// Tag compare, then payload compare. Payloads here are arena pointers
-/// (`StoreRef<T>`) or ZSTs, so this is tag + pointer-identity, never a deep
-/// structural compare.
+/// (`StoreRef<T>`) or small inline values, so this is tag + pointer-identity
+/// (inline variants compare tag-only), never a deep structural compare.
 impl PartialEq for Data {
     fn eq(&self, other: &Self) -> bool {
         use Data::*;
@@ -421,7 +422,7 @@ impl Eq for Data {}
 // Callers `.unwrap()` (or pattern-match) — the `Option` is the cheapest
 // sound encoding of a tag mismatch.
 // Mirrors `expr::Data::e_*()`. Returns `Option<StoreRef<T>>` (Copy) for
-// pointer-payload variants and `Option<T>` by value for inline ZST variants.
+// pointer-payload variants and `Option<T>` by value for inline `Copy` variants.
 impl Data {
     // ── StoreRef<S::*> field-style accessors ────────────────────────────
     #[inline]
@@ -906,9 +907,9 @@ impl Data {
     }
 
     // ── Inline (by-value) payload accessors ─────────────────────────────
-    // These variants store the payload directly (no `StoreRef`); all are
-    // zero-sized `Copy` types. Returned by value for symmetry with
-    // `expr::Data::e_boolean()` etc.
+    // These variants store the payload directly (no `StoreRef`); all are small
+    // `Copy` types (ZSTs, or `S::Debugger`'s single `bool`). Returned by value
+    // for symmetry with `expr::Data::e_boolean()` etc.
     #[inline]
     pub fn s_type_script(&self) -> Option<S::TypeScript> {
         if let Data::STypeScript(v) = *self {

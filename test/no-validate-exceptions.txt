@@ -111,3 +111,8 @@ test/bundler/native-plugin.test.ts
 # `bun run build` in the react templates loads bun-plugin-tailwind's napi
 # addon, same Init() pattern.
 test/cli/init/init.test.ts
+
+# Pausing under --inspect-brk serializes the call frame's scopeChain, which has
+# a pre-existing unchecked-exception path in WebKit's inspector
+# (JSJavaScriptCallFrame::scopeChain).
+test/cli/inspect/inspect-brk-breakpoint.test.ts

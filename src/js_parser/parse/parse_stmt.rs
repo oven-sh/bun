@@ -790,7 +790,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn t_debugger(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         p.lexer.expect_or_insert_semicolon()?;
-        Ok(p.s(S::Debugger {}, loc))
+        Ok(p.s(
+            S::Debugger {
+                break_on_first_line: false,
+            },
+            loc,
+        ))
     }
 
     #[inline(never)]

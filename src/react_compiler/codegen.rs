@@ -1400,7 +1400,9 @@ fn codegen_instruction_nullable(
             InstructionValue::Debugger { .. } => {
                 return Ok(Some(Stmt {
                     loc: convert_loc(instr.loc),
-                    data: StmtData::SDebugger(S::Debugger {}),
+                    data: StmtData::SDebugger(S::Debugger {
+                        break_on_first_line: false,
+                    }),
                 }));
             }
             InstructionValue::UnsupportedNode { node_type, loc, .. } => {

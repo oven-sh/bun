@@ -6388,7 +6388,23 @@ pub mod __gated_printer {
                     );
                     self.print_newline();
                 }
-                StmtData::SDebugger(_) => {
+                StmtData::SDebugger(s) => {
+                    if s.break_on_first_line {
+                        // Emit the injected `--inspect-brk` debugger inline (no
+                        // trailing newline) so it does not shift the first real
+                        // statement onto the next line. See the field comment on
+                        // `S::Debugger` and oven-sh/bun#32591.
+                        self.print_space_before_identifier();
+                        self.print(b"debugger;");
+                        // Leave `prev_stmt_tag` as if nothing was printed. The
+                        // next statement is the first real one, and some arms
+                        // (SClass, the export statements) print a leading
+                        // newline when the previous statement is neither empty
+                        // nor export-like, which would re-introduce the line
+                        // shift this inline emission avoids.
+                        self.prev_stmt_tag = StmtTag::SEmpty;
+                        return Ok(());
+                    }
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);

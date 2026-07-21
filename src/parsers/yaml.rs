@@ -13,7 +13,7 @@ use core::fmt;
 use bun_alloc::AllocError;
 use bun_ast::{self, E, Expr, G};
 use bun_ast::{self as ast, Loc};
-use bun_collections::{StringHashMap, VecExt};
+use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::{self, StackCheck};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2389,8 +2389,10 @@ pub struct Parser<'i, Enc: Encoding> {
     /// rejected because the placeholder is still empty at merge time.
     pub open_anchors: Vec<*const ()>,
     /// Collection nodes known to be on a cycle. `charge_alias_expansion`
-    /// must not descend into these.
-    pub self_referential: Vec<*const ()>,
+    /// must not descend into these. O(1) membership keeps the per-node work
+    /// in `charge_alias_expansion` constant regardless of how many
+    /// self-referential anchors the document declares.
+    pub self_referential: HashMap<*const (), ()>,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
@@ -2429,7 +2431,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
             allow_self_referential_aliases: false,
             open_anchors: Vec::new(),
-            self_referential: Vec::new(),
+            self_referential: HashMap::default(),
         }
     }
 
@@ -4045,9 +4047,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             // parsed. Mark it so later alias charges don't walk
                             // the cycle; the placeholder is empty here so there
                             // is nothing to charge for its body yet.
-                            if !self.self_referential.contains(&ptr) {
-                                self.self_referential.push(ptr);
-                            }
+                            self.self_referential.put(ptr, ())?;
                         }
                     }
                     self.charge_alias_expansion(copy)?;

@@ -26,7 +26,11 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
         let len = {
             let path =
                 resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut **buf, &paths);
-            if bun_sys::exists_z(path) { path.len() } else { 0 }
+            if bun_sys::exists_z(path) {
+                path.len()
+            } else {
+                0
+            }
         };
         if len > 0 {
             return Some(ZStr::from_buf(&buf[..], len));

@@ -4,7 +4,9 @@ use std::ffi::CString;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::{Store as BlobStore, StoreRef};
+use crate::webcore::blob::store::Data;
+use crate::webcore::blob::{MAX_SIZE, Store as BlobStore, StoreRef};
+use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, Output, ZBox};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -408,9 +410,12 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
 
 /// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
 fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigStringSlice> {
-    // For Blob, use sharedView (no copy needed). The backing store outlives
-    // the returned slice for the duration of the caller's tarball build.
+    // For Blob, use sharedView for in-memory blobs; read the file for
+    // file-backed blobs (Bun.file()), whose shared_view() is empty.
     if let Some(blob) = blob_from_js(value) {
+        if blob.needs_to_read_file() {
+            return read_file_backed_blob(global, blob);
+        }
         return Ok(ZigStringSlice::from_utf8_never_free(blob.shared_view()));
     }
 
@@ -421,6 +426,49 @@ fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigString
 
     // For strings, convert (allocates)
     value.to_slice(global)
+}
+
+/// Reads data from a file-backed Blob synchronously, respecting blob offset and size.
+fn read_file_backed_blob(global: &JSGlobalObject, blob: &Blob) -> JsResult<ZigStringSlice> {
+    let Some(store) = blob.store() else {
+        return Ok(ZigStringSlice::EMPTY);
+    };
+    let Data::File(file) = &store.data else {
+        return Ok(ZigStringSlice::EMPTY);
+    };
+
+    // Read the full file first since bun_sys::File has no offset/length read.
+    let file_data = match &file.pathlike {
+        PathOrFileDescriptor::Path(path) => bun_sys::File::read_from(Fd::cwd(), path.slice())
+            .map_err(|e| e.with_path(path.slice()).throw(global))?,
+        // borrow(): the fd is owned by the blob, so this must not close it on drop.
+        PathOrFileDescriptor::Fd(fd) => bun_sys::File::borrow(fd)
+            .read_to_end()
+            .map_err(|e| e.throw(global))?,
+    };
+
+    if file_data.is_empty() {
+        return Ok(ZigStringSlice::EMPTY);
+    }
+
+    // Apply blob offset and size to support sliced file-backed blobs.
+    let offset = blob.offset.get() as usize;
+    if offset >= file_data.len() {
+        return Ok(ZigStringSlice::EMPTY);
+    }
+    let remaining = file_data.len() - offset;
+    let size = if blob.size.get() == MAX_SIZE {
+        remaining
+    } else {
+        (blob.size.get() as usize).min(remaining)
+    };
+
+    if offset == 0 && size == file_data.len() {
+        return Ok(ZigStringSlice::init_owned(file_data));
+    }
+    Ok(ZigStringSlice::init_owned(
+        file_data[offset..offset + size].to_vec(),
+    ))
 }
 
 /// Static method: Archive.write(path, data, options?)

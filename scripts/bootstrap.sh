@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 41
+# Version: 42
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1557,7 +1557,7 @@ install_linux_glibc_sysroot() {
 
 alpine_sysroot_version() {
 	# Keep in sync with the alpine release testPlatforms runs on.
-	print "3.23"
+	print "3.24"
 }
 
 install_linux_musl_sysroot() {

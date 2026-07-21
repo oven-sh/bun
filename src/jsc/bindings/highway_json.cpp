@@ -1,6 +1,12 @@
 // SIMD structural indexer for JSON (simdjson-style "stage 1"), runtime-dispatched via Google
 // Highway. Plain JSON only: a `/` or `'` outside a string sets BUN_JSON_IDX_ODDITY and returns.
 
+// BitsFromMask needs a fixed-width vector; Highway only provides it for the
+// fixed-size SVE_256/SVE2_128 variants, not scalable SVE/SVE2. clang >= 22
+// stops marking scalable SVE as HWY_BROKEN, so disable it here explicitly.
+#undef HWY_DISABLED_TARGETS
+#define HWY_DISABLED_TARGETS (HWY_SVE | HWY_SVE2)
+
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_json.cpp"
 #include <hwy/foreach_target.h>

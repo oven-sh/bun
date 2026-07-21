@@ -26,29 +26,20 @@
 # ships ClangCL. Runs everywhere else.
 [ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
-# Verbatim node v26.3.0 tests that register an object with onGC() (a
-# FinalizationRegistry), call globalThis.gc(), then assert every registered
-# object's cleanup callback has fired. V8 is precise and delivers the
-# callback within one tick; JSC gives no such guarantee, and on the
-# linux-x64-musl release build one object out of N intermittently survives
-# the test's gc+setImmediate loop (http tests wedge at done/collected/total
-# 8/7/8; net/tls fail the single-tick assertion). The same tests pass on
-# glibc/darwin/windows and the deterministic retention check in
-# test/js/node/http/node-http-client-request-gc.test.ts (#34500) passes on
-# every lane, so ClientRequest IS collectable; the musl-only residual has
-# not been root-caused. The files are verbatim upstream ports we do not
-# edit (test/js/node/test/parallel/CLAUDE.md). Quarantined on the failing
-# linux-x64-musl matrix only so they keep running everywhere else.
-#
-# tls/net: single gc()+setImmediate, fails fast (builds 63145, 75280):
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # onGC callback not delivered within one gc()+setImmediate on musl x64 release
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-net-connect-memleak.js [ FLAKY ] # onGC callback not delivered within one gc()+setImmediate on musl x64 release
-# http: loops gc()+setImmediate until countGC === count; one ClientRequest
-# of N is not collected so the loop never terminates (builds 74665, 75248, 75256):
-[ LINUX-X64-MUSL ] test/js/node/test/sequential/test-gc-http-client.js [ TIMEOUT ] # one of N ClientRequests not collected by gc()+setImmediate loop on musl x64 release
-[ LINUX-X64-MUSL ] test/js/node/test/sequential/test-gc-http-client-onerror.js [ TIMEOUT ] # one of N ClientRequests not collected by gc()+setImmediate loop on musl x64 release
-[ LINUX-X64-MUSL ] test/js/node/test/sequential/test-gc-http-client-timeout.js [ TIMEOUT ] # one of N ClientRequests not collected by gc()+setImmediate loop on musl x64 release
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-gc-http-client-connaborted.js [ TIMEOUT ] # one of N ClientRequests not collected by gc()+setImmediate loop on musl x64 release
+# Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
+# within ONE globalThis.gc() + ONE setImmediate after the connect callback's
+# closure is unreferenced. The FinalizationRegistry spec gives no timing
+# guarantee for cleanup callbacks; JSC schedules them via DeferredWorkTimer
+# with no defined ordering relative to the immediate queue. The connect
+# listener IS removed (verified: listenerCount("secureConnect") === 0 in
+# done()) and the object IS collected (test passes 70/70 on darwin and
+# glibc Linux); on alpine x64 the FR callback delivery slips past the single
+# setImmediate after this PR's added module loads at process startup shift
+# the heap layout. The robust fix is gcUntil() rather than a single tick,
+# but the file is a verbatim upstream port. Quarantined on the failing
+# linux-x64-musl matrix only; still runs everywhere else (build 63145:
+# alpine 3.23 x64 + x64-baseline only).
+[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
 
 # Both tests mock _handle.setKeepAlive and assert it receives SECONDS
 # (libuv's uv_tcp_keepalive convention). In Bun, _handle is the public
@@ -94,24 +85,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
 # Tests failed due to ASAN: SEGV on unknown address
 [ ASAN ] test/integration/next-pages/test/dev-server.test.ts [ CRASH ]
-
-# worker.terminate() lands while a process.* lazy PropertyCallback builder
-# (stdout/stderr/stdin/nextTick/mainModule, via setupWorkerStdio) is in JS;
-# tryClearException() refuses to clear the TerminationException, so the
-# builder returns with it pending and reifyStaticProperty reports the slot
-# found, tripping JSC's "ASSERTION FAILED: !scope.exception() || !result"
-# in getOwnPropertyDescriptor / JSValue::get. Tracked in #34095; fix PRs
-# #33966 and #33418. x64-asan only (e.g. builds 75570, 75601); release
-# lanes are unaffected. Remove once either fix PR lands.
-[ ASAN ] test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js [ CRASH ] # #34095: JSC assertion when terminate() interrupts a lazy PropertyCallback builder
-# The stress test is the bun-owned 8×10-worker amplification of the above,
-# but on CI it only ever hits JSC::ExceptionScope::assertNoException at
-# ExceptionScope.h:61 (6/6: builds 75493/75495/75514/75597/75604/75606),
-# which #33966 reports still reproducing at ~1/4000 workers AFTER its
-# lazy-builder fix ("termination landing later in the bootstrap, after the
-# stdio builders have completed"). Tracked separately in #34690; this entry
-# is NOT removable with the one above.
-[ ASAN ] test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts [ CRASH ] # #34690: ExceptionScope::assertNoException during worker terminate bootstrap
 
 # Tests failed due to ASAN: use-after-poison
 [ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]
@@ -187,15 +160,3 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
 # node:http servers cannot listen on Windows named pipes yet (ENOENT from
 # uv_pipe bind), so common.PIPE-based http tests cannot run there.
-
-# macOS fast-exit-intermediate race in the new no-orphans machinery (#34768);
-# fix open in #33965. Hit darwin lanes on consecutive builds of this branch
-# (76399, 76440) and sibling branches (76401 both darwin-14 lanes, 76406,
-# 76419) — ~1 retry each, whack-a-mole across lanes.
-[ DARWIN ] test/cli/run/no-orphans.test.ts [ FLAKY ] # #33965: fast-exit intermediate race on macOS
-
-# SIGABRT: ExceptionScope::assertNoException (ExceptionScope.h:61) during the
-# http2 reset-flood loop; same assertion family as #34690 but with no worker
-# involvement. Hits unrelated branches (incl. a deps-bot bump, build 75670)
-# and ~1 in 3 asan runs on this stack. Tracked in #34846.
-[ ASAN ] test/js/node/test/parallel/test-http2-reset-flood.js [ CRASH ] # #34846: assertNoException during reset flood

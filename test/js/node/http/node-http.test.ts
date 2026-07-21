@@ -2058,6 +2058,17 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(response.split("\r\n")[0]).toBe("HTTP/1.1 200 ");
     });
 
+    test("statusMessage = '' without writeHead still defaults the reason phrase", async () => {
+      // Node's _implicitHeader applies `if (!statusMessage) STATUS_CODES[code]`,
+      // which treats "" as unset; only an explicit writeHead(N, "") preserves it.
+      server.on("request", (req, res) => {
+        res.statusMessage = "";
+        res.end("x");
+      });
+      const response = await sendRequestLatin1("GET / HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n");
+      expect(response.split("\r\n")[0]).toBe("HTTP/1.1 200 OK");
+    });
+
     test("writeHead(200, 'Ünïcödé') writes latin1 obs-text", async () => {
       server.on("request", (req, res) => {
         res.writeHead(200, "Ünïcödé");

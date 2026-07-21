@@ -1601,13 +1601,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // WHATWG Fetch (Request constructor step 36): only GET and HEAD forbid a
-    // request body. OPTIONS with content is legal (RFC 9110 §9.3.7).
-    if !ALLOW_GET_BODY
-        && matches!(method, Method::GET | Method::HEAD)
-        && body.has_body()
-        && !upgraded_connection
-    {
+    // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally
+    // rejects TRACE (RFC 9110 §9.3.8 "MUST NOT send content") since it does
+    // not enforce forbidden methods. has_request_body() encodes exactly that.
+    if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
             format_args!("{FETCH_ERROR_UNEXPECTED_BODY}"),

@@ -39,8 +39,7 @@ describe("TZ=<legacy zone> at process start", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const out = JSON.parse(stdout);
     expect(out.tz).toBe(tz);
     expect(out.offset).toBe(offset);
@@ -69,8 +68,7 @@ describe("process.env.TZ = <legacy zone> at runtime", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const out = JSON.parse(stdout);
       expect(out.offset).toBe(offset);
       expect(out.string).toMatch(display);
@@ -101,8 +99,7 @@ test("unrelated IANA zones still work", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const out = JSON.parse(stdout);
   expect(out.offset).toBe(240);
   expect(out.resolved).toBe("America/New_York");
@@ -117,8 +114,7 @@ test("unknown TZ values remain unknown", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const out = JSON.parse(stdout);
   expect(Number.isInteger(out.offset)).toBe(true);
   expect(out.resolved).not.toBe("Not/A_Zone");

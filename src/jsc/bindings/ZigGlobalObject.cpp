@@ -3323,28 +3323,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
-} // namespace Zig
-
-// JSC's intlResolveTimeZoneID drops non-'/' zone names, so TZ=EST5EDT etc.
-// silently fell back to UTC. Map the eight affected names to their tzdata
-// `backward` Link targets (case-sensitive, matching Node).
-String Bun::canonicalizeLegacyTimeZoneName(StringView timeZone)
-{
-    if (timeZone.isEmpty() || timeZone.length() > 7 || timeZone.contains('/'))
-        return String();
-    if (timeZone == "EST5EDT"_s) return "America/New_York"_s;
-    if (timeZone == "CST6CDT"_s) return "America/Chicago"_s;
-    if (timeZone == "MST7MDT"_s) return "America/Denver"_s;
-    if (timeZone == "PST8PDT"_s) return "America/Los_Angeles"_s;
-    if (timeZone == "CET"_s) return "Europe/Brussels"_s;
-    if (timeZone == "MET"_s) return "Europe/Brussels"_s;
-    if (timeZone == "EET"_s) return "Europe/Athens"_s;
-    if (timeZone == "WET"_s) return "Europe/Lisbon"_s;
-    return String();
-}
-
-namespace Zig {
-
 extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)
 {
     auto& vm = JSC::getVM(globalObject);

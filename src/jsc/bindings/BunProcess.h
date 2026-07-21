@@ -15,6 +15,8 @@ using namespace JSC;
 
 extern "C" int getRSS(size_t* rss);
 
+String canonicalizeLegacyTimeZoneName(StringView timeZone);
+
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
 

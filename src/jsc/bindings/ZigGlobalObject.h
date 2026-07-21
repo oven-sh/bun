@@ -845,8 +845,6 @@ ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
     return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
 }
 
-String canonicalizeLegacyTimeZoneName(StringView timeZone);
-
 }
 
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT

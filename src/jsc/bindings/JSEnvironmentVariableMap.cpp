@@ -482,6 +482,24 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
     "no_proxy"_s,
 };
 
+// JSC's intlResolveTimeZoneID drops non-'/' zone names, so TZ=EST5EDT etc.
+// silently fell back to UTC. Map the eight affected names to their tzdata
+// `backward` Link targets (case-sensitive, matching Node).
+String canonicalizeLegacyTimeZoneName(StringView timeZone)
+{
+    if (timeZone.isEmpty() || timeZone.length() > 7 || timeZone.contains('/'))
+        return String();
+    if (timeZone == "EST5EDT"_s) return "America/New_York"_s;
+    if (timeZone == "CST6CDT"_s) return "America/Chicago"_s;
+    if (timeZone == "MST7MDT"_s) return "America/Denver"_s;
+    if (timeZone == "PST8PDT"_s) return "America/Los_Angeles"_s;
+    if (timeZone == "CET"_s) return "Europe/Brussels"_s;
+    if (timeZone == "MET"_s) return "Europe/Brussels"_s;
+    if (timeZone == "EET"_s) return "Europe/Athens"_s;
+    if (timeZone == "WET"_s) return "Europe/Lisbon"_s;
+    return String();
+}
+
 // The parse-and-apply bodies for the three side-effecting env vars, shared by
 // the regular process.env CustomSetters and applySharedEnvSideEffects so a new
 // side-effecting var need only be added in one place.
@@ -489,7 +507,7 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
     if (value.length() >= 32)
         return;
-    auto canonical = Bun::canonicalizeLegacyTimeZoneName(value);
+    auto canonical = canonicalizeLegacyTimeZoneName(value);
     if (WTF::setTimeZoneOverride(canonical.isNull() ? value : canonical)) {
         WTF::timeZoneDidChange();
         JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();

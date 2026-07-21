@@ -278,6 +278,8 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
+extern "C" size_t Bun__Node__MaxOldSpaceSizeBytes;
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup)
 {
     static std::once_flag jsc_init_flag;
@@ -319,6 +321,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // the remaining integration work lands. BUN_JSC_useTemporal=1
             // re-enables it for opt-in testing.
             JSC::Options::useTemporal() = false;
+            // --max-old-space-size: size the GC heuristics to the requested
+            // cap so collection ramps up before the limit is reached, like V8.
+            // A BUN_JSC_forceRAMSize env override below still wins.
+            if (size_t heapLimit = Bun__Node__MaxOldSpaceSizeBytes)
+                JSC::Options::forceRAMSize() = heapLimit;
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
@@ -464,8 +471,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         const char* disable_stop_if_necessary_timer = getenv("BUN_DISABLE_STOP_IF_NECESSARY_TIMER");
         // Keep stopIfNecessaryTimer enabled by default when either:
         // - `--smol` is passed
+        // - `--max-old-space-size` is set (the mutator must not outrun the
+        //   collector, or the heap blows through the limit between full GCs)
         // - The machine has less than 4GB of RAM
-        bool shouldDisableStopIfNecessaryTimer = !miniMode;
+        bool shouldDisableStopIfNecessaryTimer = !miniMode && !Bun__Node__MaxOldSpaceSizeBytes;
 
         if (disable_stop_if_necessary_timer) {
             const char value = disable_stop_if_necessary_timer[0];

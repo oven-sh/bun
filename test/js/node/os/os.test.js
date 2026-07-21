@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -338,5 +338,39 @@ it.skipIf(isWindows || process.getuid?.() === 0)(
     expect(err.info.code).toBe("EACCES");
     expect(err.errno).toBe(-os.constants.errno.EACCES);
     expect(err.info.errno).toBe(-os.constants.errno.EACCES);
+  },
+);
+
+it.if(isPosix && process.getuid?.() === 0)(
+  "setPriority EPERM error names uv_os_setpriority with errno -EPERM",
+  async () => {
+    // Different-uid target: run as nobody and target the root-owned parent.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const os = require("node:os");
+         try { os.setPriority(process.ppid, 0); console.log(JSON.stringify({ ok: true })); }
+         catch (e) { console.log(JSON.stringify({ syscall: e.syscall, errno: e.errno, info: e.info })); }`,
+      ],
+      env: bunEnv,
+      uid: 65534,
+      gid: 65534,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      syscall: "uv_os_setpriority",
+      errno: -os.constants.errno.EPERM,
+      info: {
+        code: "EPERM",
+        errno: -os.constants.errno.EPERM,
+        message: "operation not permitted",
+        syscall: "uv_os_setpriority",
+      },
+    });
+    expect(exitCode).toBe(0);
   },
 );

@@ -477,6 +477,23 @@ it("process.exit", () => {
   expect(stdout.toString().trim()).toBe("PASS");
 });
 
+it("process.reallyExit does not emit 'exit'", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.on("exit", c => console.log("EXIT-LISTENER fired code=" + c)); process.reallyExit(11);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(11);
+});
+
 describe.concurrent(() => {
   it.todoIf(isMacOS)("should be the node version on the host that we expect", async () => {
     const subprocess = Bun.spawn({

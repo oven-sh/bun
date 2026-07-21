@@ -3361,6 +3361,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     }
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
+    // Node's reallyExit is the raw exit that does not run 'exit' listeners.
+    // Bun__Process__exit reaches dispatchExitInternal; arm its guard here so
+    // listeners are skipped while native shutdown (profiles, cleanup hooks,
+    // SQLite close) still runs.
+    zigGlobal->processObject()->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
     // WebWorker exit path it called requests JSC termination (guarded so it's a

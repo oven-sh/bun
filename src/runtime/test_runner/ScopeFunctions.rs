@@ -203,11 +203,12 @@ fn parse_tagged_template_each(
     for row in 0..num_rows {
         let obj = JSValue::create_empty_object(global, num_cols);
         for (col, name) in columns.iter().enumerate() {
-            obj.put(global, *name, data[row * num_cols + col]);
+            // `header.slice()` is UTF-8; tag the key so C++ decodes it as UTF-8
+            // rather than Latin-1 (PutKey<&[u8]> does not).
+            obj.put(global, bun_core::ZigString::init_utf8(name), data[row * num_cols + col]);
         }
         table.put_index(global, row as u32, obj)?;
     }
-    table.ensure_still_alive();
     Ok(table)
 }
 

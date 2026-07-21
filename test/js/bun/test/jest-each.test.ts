@@ -84,12 +84,24 @@ describe("tagged template literal", () => {
     falsy.push(input);
   });
 
+  const unicode: unknown[] = [];
+  it.each`
+    café     | 名前        | 값
+    ${"one"} | ${"Alice"} | ${42}
+  `("keys non-ASCII column names correctly", row => {
+    unicode.push(row);
+    expect(row.café).toBe("one");
+    expect(row.名前).toBe("Alice");
+    expect(row.값).toBe(42);
+  });
+
   afterAll(() => {
     expect(seen).toEqual([
       { a: 1, b: 2, expected: 3 },
       { a: "x", b: "y", expected: "xy" },
     ]);
     expect(falsy).toEqual([null, undefined, 0, false, ""]);
+    expect(unicode).toEqual([{ café: "one", 名前: "Alice", 값: 42 }]);
   });
 
   it("throws on a trailing partial row", () => {

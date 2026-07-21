@@ -1996,6 +1996,7 @@ Flags:
   <cyan>--no-install<r>           Skip installation if package is not already installed
   <cyan>--verbose<r>              Enable verbose output during installation
   <cyan>--silent<r>               Suppress output during installation
+  <cyan>--minimum-release-age <blue>\\<seconds\\><r>  Only install packages published at least N seconds ago (security feature)
 
 Examples<d>:<r>
   <b><green>bunx<r> <blue>prisma<r> migrate<r>

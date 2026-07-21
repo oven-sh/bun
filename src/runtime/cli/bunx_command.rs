@@ -56,6 +56,10 @@ pub struct Options {
     /// Skip installing the package, only running the target command if its
     /// already downloaded. If its not, `bunx` exits with an error.
     pub no_install: bool,
+    /// Raw value of `--minimum-release-age=<N>`, forwarded verbatim to the
+    /// spawned `bun add` so the same validation path runs (stored as the
+    /// opaque argv slice).
+    pub minimum_release_age: Option<&'static [u8]>,
 }
 
 impl Default for Options {
@@ -68,6 +72,7 @@ impl Default for Options {
             verbose_install: false,
             silent_install: false,
             no_install: false,
+            minimum_release_age: None,
         }
     }
 }
@@ -150,6 +155,30 @@ impl Options {
                         Global::exit(1);
                     }
                     opts.specified_package = Some(package_value);
+                } else if positional == b"--minimum-release-age" {
+                    // Spaced form: `--minimum-release-age <N>`.
+                    // Stored verbatim; `bun add` re-parses and validates.
+                    i += 1;
+                    if i >= argv.len() || argv[i].as_bytes().is_empty() {
+                        Output::err_generic(
+                            "--minimum-release-age requires a value",
+                            format_args!(""),
+                        );
+                        Global::exit(1);
+                    }
+                    Self::validate_minimum_release_age(argv[i].as_bytes());
+                    opts.minimum_release_age = Some(argv[i].as_bytes());
+                } else if positional.starts_with(b"--minimum-release-age=") {
+                    let value = &positional[b"--minimum-release-age=".len()..];
+                    if value.is_empty() {
+                        Output::err_generic(
+                            "--minimum-release-age requires a value",
+                            format_args!(""),
+                        );
+                        Global::exit(1);
+                    }
+                    Self::validate_minimum_release_age(value);
+                    opts.minimum_release_age = Some(value);
                 }
             } else {
                 if !found_subcommand_name {
@@ -202,6 +231,32 @@ impl Options {
             opts.package_name = maybe_package_name.unwrap();
         }
         Ok(opts)
+    }
+
+    /// Whether `--minimum-release-age=<N>` is an active supply-chain gate.
+    /// `0` is the documented disable spelling and means "no gate"; invalid
+    /// values were already rejected by `validate_minimum_release_age`.
+    fn has_active_age_gate(&self) -> bool {
+        match self.minimum_release_age {
+            None => false,
+            Some(v) => bun_core::parse_double(v).map(|s| s > 0.0).unwrap_or(false),
+        }
+    }
+
+    /// Match `bun add`'s validation of `--minimum-release-age=<N>`: reject
+    /// non-numeric and negative values with the same message, before bunx
+    /// mutates the filesystem (the cache wipes must not run on bad values).
+    fn validate_minimum_release_age(value: &[u8]) {
+        match bun_core::parse_double(value) {
+            Ok(secs) if secs >= 0.0 => {}
+            _ => {
+                Output::err_generic(
+                    "Expected --minimum-release-age to be a positive number: {}",
+                    (BStr::new(value),),
+                );
+                Global::exit(1);
+            }
+        }
     }
 }
 
@@ -399,6 +454,10 @@ impl BunxCommand {
         tempdir_name: &[u8],
         package_name: &[u8],
         with_stale_check: bool,
+        // When true, a warm cache is unconditionally treated as stale so the
+        // spawned `bun add` re-applies `--minimum-release-age`; reached when
+        // the real bin name differs from the `initial_bin_name` guess.
+        force_stale: bool,
     ) -> crate::Result<Box<[u8]>> {
         let mut subpath = PathBuffer::uninit();
         if with_stale_check {
@@ -424,6 +483,9 @@ impl BunxCommand {
             let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
             let is_stale: bool = 'is_stale: {
+                if force_stale {
+                    break 'is_stale true;
+                }
                 #[cfg(windows)]
                 {
                     use bun_sys::windows as win;
@@ -464,6 +526,9 @@ impl BunxCommand {
             if is_stale {
                 let _ = target_package_json.close();
                 // If delete fails, oh well. Hope installation takes care of it.
+                // Under `force_stale` (age gate) this is defense in depth:
+                // the install path in `exec` also wipes the cache, since a
+                // surviving `bun.lock` would pin the previous resolution.
                 let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
                 return Err(crate::Error::NeedToInstall);
             }
@@ -497,6 +562,7 @@ impl BunxCommand {
         toplevel_fd: Fd,
         tempdir_name: &[u8],
         package_name: &[u8],
+        force_stale: bool,
     ) -> Result<Box<[u8]>, GetBinNameError> {
         debug_assert!(toplevel_fd.is_valid());
         match Self::get_bin_name_from_project_directory(transpiler, toplevel_fd, package_name) {
@@ -511,6 +577,7 @@ impl BunxCommand {
                     tempdir_name,
                     package_name,
                     true,
+                    force_stale,
                 ) {
                     Ok(v) => Ok(v),
                     Err(err2) => {
@@ -936,7 +1003,11 @@ impl BunxCommand {
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 
-        let mut do_cache_bust = update_request.version.tag == VersionTag::DistTag;
+        // An active age gate forces cache-bust: without `--no-cache --force`
+        // the spawned `bun add` would reuse the previous run's resolution,
+        // defeating the age filter's re-resolution.
+        let mut do_cache_bust =
+            update_request.version.tag == VersionTag::DistTag || opts.has_active_age_gate();
         let look_for_existing_bin = update_request.version.literal.is_empty()
             || update_request.version.tag != VersionTag::DistTag;
 
@@ -1001,7 +1072,14 @@ impl BunxCommand {
                             do_cache_bust = true;
                             break 'try_run_existing;
                         }
+                        // A warm bunx cache must not bypass an active age
+                        // gate: treat it as stale so the spawned `bun add`
+                        // re-applies the filter (`=0` disables the gate).
+                        let age_gate_forces_refresh = opts.has_active_age_gate();
                         let is_stale: bool = 'is_stale: {
+                            if age_gate_forces_refresh {
+                                break 'is_stale true;
+                            }
                             #[cfg(windows)]
                             {
                                 use bun_sys::windows as win;
@@ -1058,6 +1136,16 @@ impl BunxCommand {
                             bun_output::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
                             do_cache_bust = true;
                             if opts.no_install {
+                                // Running the stale cached binary under an
+                                // active age gate would silently bypass the
+                                // filter; refuse instead of falling through.
+                                if age_gate_forces_refresh {
+                                    Output::err_generic(
+                                        "Cannot use <b>--no-install<r> with <b>--minimum-release-age<r>: the cached binary for <b>{}<r> cannot be re-verified under the age gate without resolving a new version. Drop <b>--no-install<r> to allow re-resolution.",
+                                        (BStr::new(&update_request.name),),
+                                    );
+                                    Global::exit(1);
+                                }
                                 bun_core::warn!(
                                     "Using a stale installation of <b>{}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.",
                                     BStr::new(&update_request.name),
@@ -1096,6 +1184,10 @@ impl BunxCommand {
                         root_dir_fd,
                         bunx_cache_dir,
                         result_package_name,
+                        // Under an active age gate, treat a warm cache as
+                        // stale so packages whose real bin name differs from
+                        // the initial guess still re-resolve via `bun add`.
+                        opts.has_active_age_gate(),
                     ) {
                         Ok(package_name_for_bin) => {
                             // if we check the bin name and its actually the same, we don't need to check $PATH here again
@@ -1172,6 +1264,29 @@ impl BunxCommand {
                                         do_cache_bust = true;
                                         break 'try_run_existing;
                                     }
+
+                                    // Same guard as the `'find` branch: a hit
+                                    // under the bunx cache must not bypass an
+                                    // active age gate; force re-resolution.
+                                    if strings::has_prefix(out, bunx_cache_dir)
+                                        && opts.has_active_age_gate()
+                                    {
+                                        bun_output::scoped_log!(
+                                            bunx,
+                                            "found stale binary (age gate): {}",
+                                            BStr::new(out),
+                                        );
+                                        do_cache_bust = true;
+                                        if opts.no_install {
+                                            Output::err_generic(
+                                                "Cannot use <b>--no-install<r> with <b>--minimum-release-age<r>: the cached binary for <b>{}<r> cannot be re-verified under the age gate without resolving a new version. Drop <b>--no-install<r> to allow re-resolution.",
+                                                (BStr::new(&update_request.name),),
+                                            );
+                                            Global::exit(1);
+                                        }
+                                        break 'try_run_existing;
+                                    }
+
                                     let stored = fs.dirname_store.append_slice(out)?;
                                     Run::run_binary(
                                         ctx,
@@ -1213,6 +1328,16 @@ impl BunxCommand {
         // Which is not very helpful.
 
         if opts.no_install {
+            // `--no-install` with an active age gate is contradictory: the
+            // package cannot be verified against the gate without resolving
+            // a version. Match the matched-bin path's error message.
+            if opts.has_active_age_gate() {
+                Output::err_generic(
+                    "Cannot use <b>--no-install<r> with <b>--minimum-release-age<r>: <b>{}<r> cannot be verified against the age gate without resolving a version, which <b>--no-install<r> opts out of. Drop <b>--no-install<r> to allow re-resolution.",
+                    (BStr::new(&update_request.name),),
+                );
+                Global::exit(1);
+            }
             Output::err_generic(
                 "Could not find an existing '{}' binary to run. Stopping because --no-install was passed.",
                 format_args!("{}", BStr::new(initial_bin_name)),
@@ -1220,6 +1345,12 @@ impl BunxCommand {
             Global::exit(1);
         }
 
+        // Under an active age gate, wipe the bunx cache before re-resolving:
+        // a surviving `bun.lock` lets `bun add --no-cache --force` reuse the
+        // previous resolution for ranged specifiers, bypassing the filter.
+        if opts.has_active_age_gate() {
+            let _ = bun_sys::Dir::cwd().delete_tree(bunx_cache_dir);
+        }
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
         'create_package_json: {
@@ -1235,13 +1366,29 @@ impl BunxCommand {
             let _ = package_json.write_all(b"{}\n");
         }
 
+        // Forwarded verbatim to `bun add`, which re-parses and validates.
+        // Declared before `args` so the backing buffer outlives `args`'s
+        // borrow (locals drop in reverse declaration order).
+        let min_age_combined: Vec<u8> = match opts.minimum_release_age {
+            Some(value) => {
+                let prefix: &[u8] = b"--minimum-release-age=";
+                let mut buf = Vec::with_capacity(prefix.len() + value.len());
+                buf.extend_from_slice(prefix);
+                buf.extend_from_slice(value);
+                buf
+            }
+            None => Vec::new(),
+        };
+
         let install_args: [&[u8]; 4] = [
             bun_core::self_exe_path()?.as_bytes(),
             b"add",
             install_param.as_slice(),
             b"--no-summary",
         ];
-        let mut args: BoundedArray<&[u8], 8> =
+        // Capacity breakdown: 4 base + 2 cache-bust + 1 verbose + 1 silent
+        // + 1 minimum-release-age.
+        let mut args: BoundedArray<&[u8], 9> =
             BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
 
         if do_cache_bust {
@@ -1259,6 +1406,13 @@ impl BunxCommand {
 
         if opts.silent_install {
             args.append(b"--silent").expect("unreachable"); // upper bound is known
+        }
+
+        // `min_age_combined` was built above (before `args`); append its slice
+        // when the flag was set. `bun add` re-parses and validates the value.
+        if opts.minimum_release_age.is_some() {
+            args.append(min_age_combined.as_slice())
+                .expect("unreachable"); // upper bound is known
         }
 
         let argv_to_use = args.slice();
@@ -1432,6 +1586,10 @@ impl BunxCommand {
                 this_transpiler,
                 bunx_cache_dir,
                 result_package_name,
+                false,
+                // Post-install — the freshly installed cache was resolved
+                // under the active age filter (or its absence), no need to
+                // force stale here.
                 false,
             ) {
                 if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {

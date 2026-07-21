@@ -1300,10 +1300,14 @@ impl ServerConfig {
             return Err(JsError::Thrown);
         }
 
-        if let Some(max_request_body_size) = arg.get_truthy(global, "maxRequestBodySize")? {
-            if max_request_body_size.is_number() {
-                args.max_request_body_size = u64::try_from(max_request_body_size.to_int64().max(0))
-                    .expect("int cast") as usize;
+        if let Some(max_request_body_size) = arg.get(global, "maxRequestBodySize")? {
+            if !max_request_body_size.is_undefined_or_null() {
+                if !max_request_body_size.is_integer() || max_request_body_size.as_number() < 0.0 {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Bun.serve expects maxRequestBodySize to be a non-negative integer",
+                    )));
+                }
+                args.max_request_body_size = max_request_body_size.to_int64() as usize;
             }
         }
         if global.has_exception() {

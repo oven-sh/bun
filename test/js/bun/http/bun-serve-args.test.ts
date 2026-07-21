@@ -689,3 +689,60 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 });
+
+describe("Bun.serve maxRequestBodySize validation", () => {
+  const invalid = [-1, NaN, Infinity, -Infinity, 1.5, "5000", "1mb", {}, true];
+  for (const value of invalid) {
+    test(`rejects ${Bun.inspect(value)}`, () => {
+      expect(() => {
+        using server = serve({
+          port: 0,
+          // @ts-expect-error - Testing invalid values
+          maxRequestBodySize: value,
+          fetch() {
+            return new Response("ok");
+          },
+        });
+        server.stop();
+      }).toThrow("Bun.serve expects maxRequestBodySize to be a non-negative integer");
+    });
+  }
+
+  for (const value of [undefined, null]) {
+    test(`${value} falls back to the default`, async () => {
+      using server = serve({
+        port: 0,
+        // @ts-expect-error - Testing default fallback
+        maxRequestBodySize: value,
+        fetch: async req => new Response(String((await req.bytes()).length)),
+      });
+      const res = await fetch(server.url, { method: "POST", body: Buffer.alloc(256, "x") });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("256");
+    });
+  }
+
+  for (const value of [0, 10, 1024 * 1024 * 1024 * 16, Number.MAX_SAFE_INTEGER]) {
+    test(`accepts ${value}`, () => {
+      using server = serve({
+        port: 0,
+        maxRequestBodySize: value,
+        fetch() {
+          return new Response("ok");
+        },
+      });
+      expect(server.port).toBeGreaterThan(0);
+    });
+  }
+
+  test("valid integer is enforced", async () => {
+    using server = serve({
+      port: 0,
+      maxRequestBodySize: 10,
+      fetch: async req => new Response(String((await req.bytes()).length)),
+    });
+    const under = await fetch(server.url, { method: "POST", body: Buffer.alloc(5, "x") });
+    const over = await fetch(server.url, { method: "POST", body: Buffer.alloc(100, "x") });
+    expect({ under: under.status, over: over.status }).toEqual({ under: 200, over: 413 });
+  });
+});

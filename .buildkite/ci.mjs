@@ -1373,12 +1373,9 @@ async function getPipeline(options = {}) {
   // holds the AWS/Azure credentials). Only the MISSING ones get a bake step, so
   // the pipeline itself shows what this push builds and existing images cost
   // nothing. The table lands at the top of this job's log.
-  // If the cloud credentials aren't resolvable here (a fork PR, or ci.mjs
-  // run by hand), fail SAFE: treat every image as needing a bake. Over-
-  // emitting is harmless — machine.mjs re-checks each name up front and
-  // returns in seconds when it exists — whereas under-emitting (a false
-  // "exists") is the real danger. A genuine cloud error WITH credentials
-  // present still throws; only "no credentials" degrades.
+  // No fallback: if the credentials aren't resolvable or the cloud query
+  // fails, pipeline generation FAILS. A broken existence check must be seen
+  // and fixed, never masked by quietly baking everything (or nothing).
   let existence;
   try {
     existence = await checkImages(
@@ -1386,15 +1383,15 @@ async function getPipeline(options = {}) {
       { get: name => getSecret(name) },
     );
   } catch (error) {
-    if (!/Environment variable is missing|Secret not found/.test(String(error))) {
-      throw error;
-    }
-    console.warn(`\nImage existence check unavailable (${String(error.message ?? error).split("\n")[0]}).`);
-    console.warn("Emitting bake steps for ALL images; machine.mjs will no-op the ones that exist.");
-    existence = [...allImagePlatforms.values()].map(platform => {
-      const image = imageEntry(getImageKey(platform));
-      return { image, name: imageName(image), exists: false, detail: "unverified (no credentials)" };
-    });
+    console.error("\n" + "!".repeat(72));
+    console.error("!! CI image existence check FAILED — no pipeline was generated.");
+    console.error("!! ci.mjs must ask AWS/Azure whether each `${key}-${hash}` image exists");
+    console.error("!! before it can emit bake steps. This runs on queue=build-image and needs");
+    console.error("!! the AWS (EC2_ACCESS_KEY_ID/EC2_SECRET_ACCESS_KEY/EC2_REGION) and Azure");
+    console.error("!! (AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_SUBSCRIPTION_ID)");
+    console.error("!! buildkite secrets, plus the aws CLI. Fix the cause below; there is no fallback.");
+    console.error("!".repeat(72) + "\n");
+    throw error;
   }
   console.log("\nCI machine images (content-addressed):");
   for (const { image, name, exists, detail } of existence) {

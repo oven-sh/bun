@@ -614,6 +614,9 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // See `on_create`: each accepted named-pipe connection holds the loop
+        // on its own so `conn.unref()` is meaningful.
+        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
@@ -657,6 +660,11 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // Each accepted socket holds the event loop on its own (same as a
+        // client socket after `connect_finish`), so `conn.unref()` works and
+        // `server.unref()`/`server.close()` don't tear out live connections'
+        // hold. on_close/mark_inactive already unref this.
+        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.global_object;
@@ -806,8 +814,12 @@ impl Listener {
             Self::unlink_unix_socket_path(this);
         }
 
+        // The listener's poll_ref tracks the listening socket only; accepted
+        // sockets each have their own (see `on_create`). Drop it now so a
+        // closed server whose connections the caller unref'd lets the process
+        // exit like Node does.
+        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.active_connections.get() == 0 {
-            this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
             this.this_value.with_mut(|r| r.downgrade());
             this.strong_data
                 .with_mut(|s| s.clear_without_deallocation());

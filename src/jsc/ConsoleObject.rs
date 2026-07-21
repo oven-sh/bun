@@ -2442,7 +2442,7 @@ pub mod formatter {
                 T::GetterSetter => TagPayload::GetterSetter,
                 T::CustomGetterSetter => TagPayload::CustomGetterSetter,
 
-                T::JSAsJSONType => TagPayload::ToJSON,
+                T::JSAsJSONType => TagPayload::Object,
 
                 _ => TagPayload::JSON,
             };

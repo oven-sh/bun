@@ -9174,6 +9174,32 @@ describe.concurrent("bun-install", () => {
   });
 });
 
+it("should honor [install] dryRun from bunfig.toml", async () => {
+  using dir = tempDir("bunfig-install-dry-run", {
+    "vend/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    "vend/a/index.js": "module.exports = 1;\n",
+    "package.json": JSON.stringify({
+      name: "x",
+      dependencies: { a: "file:./vend/a" },
+    }),
+    "bunfig.toml": "[install]\ndryRun = true\n",
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(stdout).not.toContain("1 package installed");
+  expect(await readdirSorted(String(dir))).toEqual(["bunfig.toml", "package.json", "vend"]);
+  expect(exitCode).toBe(0);
+});
+
 it("rejects dependency aliases containing '..' path segments", async () => {
   await withContext(defaultOpts, async ctx => {
     const urls: string[] = [];

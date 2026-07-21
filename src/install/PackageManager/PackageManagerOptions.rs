@@ -478,6 +478,13 @@ impl Options {
                 self.enable.set(Enable::FORCE_INSTALL, true);
             }
 
+            if config.dry_run.unwrap_or(false) {
+                self.do_.set(Do::INSTALL_PACKAGES, false);
+                self.dry_run = true;
+                self.do_.set(Do::WRITE_PACKAGE_JSON, false);
+                self.do_.set(Do::SAVE_LOCKFILE, false);
+            }
+
             if config.save_yarn_lockfile.unwrap_or(false) {
                 self.do_.set(Do::SAVE_YARN_LOCK, true);
             }

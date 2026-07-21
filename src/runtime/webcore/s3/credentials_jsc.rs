@@ -245,10 +245,9 @@ pub(crate) fn get_credentials_with_options(
                 } else if timeout_value.is_number() {
                     let ms = timeout_value.as_number();
                     if ms.is_finite() && ms > 0.0 {
-                        new_credentials.options.idle_timeout_seconds = Some(
-                            (ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
-                                as core::ffi::c_uint,
-                        );
+                        new_credentials.options.idle_timeout_seconds =
+                            Some((ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
+                                as core::ffi::c_uint);
                     } else if !ms.is_finite() || timeout_value.to_int32() == 0 {
                         new_credentials.options.idle_timeout_seconds = Some(0);
                     }

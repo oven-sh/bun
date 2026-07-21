@@ -3893,10 +3893,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Ok(None);
         };
         let name = Enc::key_bytes(anchor.slice(self.input));
-        if self.anchors.get(name).is_some() {
-            // Redefinition: an alias inside this body keeps resolving to the
-            // previous definition; the post-body put overwrites afterwards.
-            return Ok(None);
+        if let Some(prev) = self.anchors.get(name) {
+            // Sibling redefinition: keep resolving to the previous closed
+            // node. Nested redefinition (prev still open) shadows instead so
+            // *name binds to the inner anchor, not the enclosing placeholder.
+            if Self::collection_ptr(prev).is_none_or(|p| !self.open_anchors.contains(&p)) {
+                return Ok(None);
+            }
         }
         let placeholder = match kind {
             AnchorPlaceholder::Array => Expr::init(E::Array::default(), loc),

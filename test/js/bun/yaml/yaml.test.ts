@@ -632,6 +632,12 @@ parent: &ref
         expect(result2.c).toBe(result2.b);
       });
 
+      test("a nested anchor redefinition shadows the still-open ancestor", () => {
+        const result = YAML.parse("&x\nchild: &x\n  ref: *x\nlater: *x\n");
+        expect(result.child.ref).toBe(result.child);
+        expect(result.later).toBe(result.child);
+      });
+
       test("a merge key can alias a fully-parsed cyclic mapping", () => {
         const result = YAML.parse("a: &a\n  self: *a\n  k: 1\nb:\n  <<: *a\n  extra: 2\n");
         expect(Object.keys(result.b).sort()).toEqual(["extra", "k", "self"]);

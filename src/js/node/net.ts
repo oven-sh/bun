@@ -153,7 +153,18 @@ const kUserUnrefed = Symbol("kUserUnrefed");
 // process._getActiveHandles() / getActiveResourcesInfo() registry. Sockets
 // and servers register while they hold a live native handle; kHandleKind
 // carries node's resource-kind string ('PipeWrap' for unix/pipe transports).
-const { registerHandle, unregisterHandle } = require("internal/active_handles");
+// Loaded on first registration, not at module scope: requiring node:net must
+// not pull in the registry (and its native count bindings) for processes
+// that never create a socket.
+let activeHandles;
+function registerHandle(handle, kind, unrefFlag) {
+  (activeHandles ??= require("internal/active_handles")).registerHandle(handle, kind, unrefFlag);
+}
+function unregisterHandle(handle) {
+  // Nothing can be registered before the module loads.
+  if (activeHandles === undefined) return;
+  activeHandles.unregisterHandle(handle);
+}
 const kHandleKind = Symbol("kHandleKind");
 const kAcceptedHandleKind = Symbol("kAcceptedHandleKind");
 // Set when pause() dropped the handle's hold on the loop, so the read paths

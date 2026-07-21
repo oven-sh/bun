@@ -8,7 +8,6 @@ test/js/bun/resolve/import-meta.test.js
 test/js/bun/util/BunObject.test.ts
 test/js/bun/util/fuzzy-wuzzy.test.ts
 test/js/web/websocket/websocket.test.js
-test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 test/js/bun/resolve/resolve.test.ts
 test/integration/vite-build/vite-build.test.ts
 test/js/third_party/astro/astro-post.test.js

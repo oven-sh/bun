@@ -1691,9 +1691,10 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
 
     if (sourceOrigin.fetcher() == nullptr && sourceOrigin.url().isEmpty()) {
         if (globalObject->dynamicImportCallback().isCallable()) {
-            return NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {});
+            RELEASE_AND_RETURN(scope, NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {}));
         }
 
+        scope.release();
         promise->reject(vm, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return promise;
     }

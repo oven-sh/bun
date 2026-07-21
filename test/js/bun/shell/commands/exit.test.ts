@@ -1,7 +1,7 @@
 import { describe } from "bun:test";
-import { createTestBuilder } from "../test_builder";
+import { bunExe, createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
-const BUN = process.argv0;
+const BUN = bunExe();
 
 describe("exit", async () => {
   TestBuilder.command`exit`.exitCode(0).runAsTest("works");
@@ -23,7 +23,9 @@ describe("exit", async () => {
     TestBuilder.command`false; exit`.exitCode(1).runAsTest("false; exit");
     TestBuilder.command`true; exit`.exitCode(0).runAsTest("true; exit");
     TestBuilder.command`false || exit`.exitCode(1).runAsTest("false || exit");
+    TestBuilder.command`true | false; exit`.exitCode(1).runAsTest("pipeline; exit");
     TestBuilder.command`${{ raw: "(exit 42); exit" }}`.exitCode(42).runAsTest("subshell; exit");
+    TestBuilder.command`${{ raw: "false; (exit)" }}`.exitCode(1).runAsTest("inherited by subshell");
     TestBuilder.command`${BUN} -e ${"process.exit(7)"}; exit`.exitCode(7).runAsTest("subprocess; exit");
     TestBuilder.command`${{ raw: "false\nexit" }}`.exitCode(1).runAsTest("across statements");
     TestBuilder.command`false; exit 3`.exitCode(3).runAsTest("explicit arg wins");

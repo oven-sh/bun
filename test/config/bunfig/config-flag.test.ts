@@ -2,10 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-// `-c` / `--config` must bind its path argument in every spelling. Previously
-// the flag was optional-value, so `--config cfg.toml` / `-c cfg.toml` left the
-// path as a positional (turning `bun install --config cfg.toml` into
-// `bun add cfg.toml`), and `-c=cfg.toml` dropped the value entirely.
+// `-c` / `--config` must bind its path argument in every spelling.
+// https://github.com/oven-sh/bun/issues/6300, https://github.com/oven-sh/bun/issues/21431
 
 async function run(cwd: string, argv: string[]) {
   await using proc = Bun.spawn({
@@ -27,7 +25,7 @@ const spellings = [
   ["-ccfg.toml"],
 ];
 
-describe("bun install --config path binding", () => {
+describe.concurrent("bun install --config path binding", () => {
   test.each(spellings)("install %p loads the named config, never treats it as a package", async (...flag) => {
     // Local 404 registry so nothing ever reaches the public network, even if
     // parsing regresses and routes the path to `bun add`.

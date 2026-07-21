@@ -1703,7 +1703,7 @@ mod draft {
             // Set x0 (return register) to -ENOSYS so callers see ENOSYS
             // and can fall back to alternative implementations.
             let regs = &raw mut (*uc).uc_mcontext.regs;
-            (*regs)[0] = (-ENOSYS) as c_ulong;
+            (*regs)[0] = (-ENOSYS) as libc::c_ulong;
         }
     }
 

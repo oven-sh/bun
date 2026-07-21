@@ -82,8 +82,11 @@ public:
 
     /* node:http server compat: whether the request currently being received on
      * this connection has exceeded server.headersTimeout / server.requestTimeout
-     * (both in milliseconds; 0 disables the respective check). */
-    bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs) const;
+     * (both in milliseconds; 0 disables the respective check). Reporting expiry
+     * also clears the per-socket bookkeeping so later sweeps see the connection
+     * as idle, like Node's ConnectionsList::Expired() which removes the parser
+     * from its active set on return. */
+    bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs);
 
     /* node:http server compat - HTTP/1.1 pipelining. Responses for requests
      * that were parsed while an earlier response on this connection was still

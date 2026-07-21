@@ -154,6 +154,54 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  test("emits 'clientError' once per stalled request when the listener keeps the socket open", async () => {
+    const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => res.end("ok"));
+    server.headersTimeout = 200;
+    server.requestTimeout = 800;
+    const fires = new Map<unknown, number>();
+    // Log-only listener: records the error but does NOT destroy the socket.
+    server.on("clientError", (err: any, socket) => {
+      expect(err.code).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      fires.set(socket, (fires.get(socket) ?? 0) + 1);
+    });
+    const port = await listen(server);
+    const clients: net.Socket[] = [];
+    const stall = async () => {
+      const c = net.connect(port, "127.0.0.1");
+      clients.push(c);
+      c.on("error", () => {});
+      c.setNoDelay(true);
+      await once(c, "connect");
+      c.write("GET / HTTP/1.1\r\nHost: a\r\n");
+    };
+    const nextDistinctSocket = () => {
+      const before = fires.size;
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const onFire = () => {
+        if (fires.size > before) {
+          server.removeListener("clientError", onFire);
+          resolve();
+        }
+      };
+      server.on("clientError", onFire);
+      return promise;
+    };
+    try {
+      // Two stalled connections opened one headersTimeout apart. By the time
+      // the second one expires, the first has been through several more
+      // sweeps with its socket still open (the listener never destroyed it).
+      await stall();
+      await nextDistinctSocket();
+      await stall();
+      await nextDistinctSocket();
+      expect([...fires.values()]).toEqual([1, 1]);
+    } finally {
+      for (const c of clients) c.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   test("headersTimeout answers 408 when there is no 'clientError' listener", async () => {
     const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => res.end("ok"));
     server.headersTimeout = 200;

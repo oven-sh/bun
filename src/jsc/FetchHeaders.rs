@@ -144,9 +144,16 @@ impl FetchHeaders {
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<NonNull<FetchHeaders>>> {
-        host_fn::from_js_host_call_generic(global, || {
-            NonNull::new(WebCore__FetchHeaders__createFromJS(global, value))
-        })
+        host_fn::from_js_host_call_owned(
+            global,
+            || NonNull::new(WebCore__FetchHeaders__createFromJS(global, value)),
+            // SAFETY: `p` came from `createFromJS` above and has not been deref'd.
+            |p| {
+                if let Some(mut p) = p {
+                    unsafe { p.as_mut() }.deref()
+                }
+            },
+        )
     }
 
     pub fn put_default(
@@ -327,9 +334,16 @@ impl FetchHeaders {
         &mut self,
         global: &JSGlobalObject,
     ) -> JsResult<Option<NonNull<FetchHeaders>>> {
-        host_fn::from_js_host_call_generic(global, || {
-            NonNull::new(WebCore__FetchHeaders__cloneThis(self, global))
-        })
+        host_fn::from_js_host_call_owned(
+            global,
+            || NonNull::new(WebCore__FetchHeaders__cloneThis(self, global)),
+            // SAFETY: `p` came from `cloneThis` above and has not been deref'd.
+            |p| {
+                if let Some(mut p) = p {
+                    unsafe { p.as_mut() }.deref()
+                }
+            },
+        )
     }
 
     pub fn deref(&mut self) {

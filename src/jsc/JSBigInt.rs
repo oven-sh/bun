@@ -73,6 +73,10 @@ impl JSBigInt {
     }
 
     pub fn to_string(&self, global: &JSGlobalObject) -> JsResult<BunString> {
-        crate::host_fn::from_js_host_call_generic(global, || JSC__JSBigInt__toString(self, global))
+        crate::host_fn::from_js_host_call_owned(
+            global,
+            || JSC__JSBigInt__toString(self, global),
+            |s| s.deref(),
+        )
     }
 }

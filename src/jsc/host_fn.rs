@@ -728,6 +728,19 @@ pub fn from_js_host_call_generic<R>(
     crate::call_check_slow(global_this, f)
 }
 
+/// [`from_js_host_call_generic`] for closures whose return owns an FFI
+/// allocation without `Drop`; `free` runs on the `Err` path. See
+/// [`crate::call_check_slow_owned`].
+#[track_caller]
+#[inline]
+pub fn from_js_host_call_owned<R>(
+    global_this: &JSGlobalObject,
+    f: impl FnOnce() -> R,
+    free: impl FnOnce(R),
+) -> Result<R, JsError> {
+    crate::call_check_slow_owned(global_this, f, free)
+}
+
 // ───────────────────────── error conversion helpers ─────────────────────────
 
 // For when bubbling up errors to functions that require a C ABI boundary

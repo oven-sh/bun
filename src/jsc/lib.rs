@@ -421,9 +421,9 @@ pub use self::exception::Exception;
 pub use self::js_type::JSType;
 pub use self::top_exception_scope::{
     ExceptionValidationScope, ExceptionValidationScopeGuard, SourceLocation, TopExceptionScope,
-    TopExceptionScopeGuard, call_check_slow, call_check_slow_at, call_false_is_throw,
-    call_false_is_throw_at, call_null_is_throw, call_null_is_throw_at, call_zero_is_throw,
-    call_zero_is_throw_at,
+    TopExceptionScopeGuard, call_check_slow, call_check_slow_at, call_check_slow_owned,
+    call_false_is_throw, call_false_is_throw_at, call_null_is_throw, call_null_is_throw_at,
+    call_zero_is_throw, call_zero_is_throw_at,
 };
 /// Generated FFI wrappers for C++ `[[ZIG_EXPORT(mode)]]` functions.
 /// Emitted by `src/codegen/cppbind.ts` into
@@ -808,8 +808,8 @@ pub use bun_core::mark_binding;
 
 pub use self::host_fn::{
     JSHostFn, JSHostFnZig, JSHostFnZigWithContext, JSHostFunctionTypeWithContext,
-    from_js_host_call, from_js_host_call_generic, host_construct_result, host_fn_result,
-    host_setter_result, to_js_host_call, to_js_host_fn, to_js_host_fn_result,
+    from_js_host_call, from_js_host_call_generic, from_js_host_call_owned, host_construct_result,
+    host_fn_result, host_setter_result, to_js_host_call, to_js_host_fn, to_js_host_fn_result,
     to_js_host_fn_with_context,
 };
 pub use self::host_object::{HostFnEntry, create_host_function_object};

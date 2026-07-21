@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1756,3 +1756,53 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
 });
+
+// Rust FFI wrappers that return an owned C++ allocation through
+// call_check_slow / from_js_host_call_generic (URL::from_js, URL::href_from_js,
+// FetchHeaders::create_from_js, FetchHeaders::clone_this, JSBigInt::to_string,
+// JSValue::serialize) used to drop the raw pointer when a termination trap
+// landed between the C++ function's own exception guard and the Rust wrapper's
+// post-call trap check. For FetchHeaders::create_from_js the final C++ guard is
+// a bare throwScope.exception() (no trap handling), so the window includes the
+// whole headers->fill() loop; a headers object with many entries keeps a
+// terminate() landing inside it reliable. Malloc=1 routes WebCore::FetchHeaders
+// through system malloc so LSan sees it; pre-existing per-thread singletons
+// (WebCore::eventNames etc.) also show up under Malloc=1, so the assertion is
+// scoped to the FetchHeaders leak stack rather than a blanket LSan check.
+test.skipIf(!isASAN || isWindows)(
+  "terminate() during an allocating FFI wrapper does not leak the allocation",
+  async () => {
+    const env = {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      Malloc: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+    };
+    // Several independent processes so one random miss does not mask a regression.
+    // Malloc=1 exposes unrelated per-thread singletons, so match only the stacks
+    // this fix covers rather than asserting on the whole LSan report.
+    const targets =
+      /WebCore__FetchHeaders__createFromJS|WebCore__FetchHeaders__cloneThis|URL__fromJS|URL__getHrefFromJS|JSC__JSBigInt__toString|Bun__serializeJSValue/;
+    const hits: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dirname, "worker-terminate-ffi-alloc-parent-fixture.js")],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      for (const line of stderr.split("\n")) if (targets.test(line)) hits.push(line.trim());
+      // Positive completion marker so a missing fixture or crash-before-LSan
+      // cannot satisfy the (otherwise purely negative) assertions; exitCode is
+      // 1 from pre-existing Malloc=1 singletons, so check stdout + signalCode.
+      expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+        stdout: "done",
+        signalCode: null,
+      });
+    }
+    expect(hits).toEqual([]);
+  },
+  180_000,
+);

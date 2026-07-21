@@ -697,6 +697,10 @@ pub fn call_null_is_throw<T>(
 /// so `simulateThrow()` is satisfied and the assertion fires on mismatch. In release
 /// builds the C++ validation machinery is compiled out: a single
 /// `Bun__RETURN_IF_EXCEPTION` FFI call after the closure (1 FFI hop instead of 3).
+///
+/// On `Err` the closure's return value is **dropped**. If `R` owns an FFI
+/// allocation with no `Drop` (raw pointer, `bun_core::String`), use
+/// [`call_check_slow_owned`] instead.
 #[inline]
 pub fn call_check_slow_at<R>(
     global: &JSGlobalObject,
@@ -731,6 +735,31 @@ pub fn call_check_slow_at<R>(
 #[inline]
 pub fn call_check_slow<R>(global: &JSGlobalObject, f: impl FnOnce() -> R) -> JsResult<R> {
     call_check_slow_at(global, SourceLocation::from_caller(), f)
+}
+
+/// [`call_check_slow`] for closures whose return owns an FFI allocation
+/// without `Drop`. If the post-call check reports an exception (including a
+/// termination trap set between C++'s own `RETURN_IF_EXCEPTION` and ours),
+/// `free` is invoked on the closure's return before the error is propagated;
+/// without it the `Err` arm drops `R` as a no-op and the allocation leaks.
+#[track_caller]
+#[inline]
+pub fn call_check_slow_owned<R>(
+    global: &JSGlobalObject,
+    f: impl FnOnce() -> R,
+    free: impl FnOnce(R),
+) -> JsResult<R> {
+    let mut slot = None;
+    let check = call_check_slow_at(global, SourceLocation::from_caller(), || slot = Some(f()));
+    // `call_check_slow_at` runs the closure exactly once on every path.
+    let r = slot.expect("call_check_slow_at ran the closure");
+    match check {
+        Ok(()) => Ok(r),
+        Err(e) => {
+            free(r);
+            Err(e)
+        }
+    }
 }
 
 /// Macro forms of the per-mode wrappers — expand [`src!`](crate::src) at the *call site* so

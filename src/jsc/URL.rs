@@ -70,12 +70,22 @@ impl URL {
     /// If it fails, the tag is marked Dead
     #[track_caller]
     pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
-        crate::call_check_slow(global, || URL__getHrefFromJS(value, global))
+        crate::call_check_slow_owned(global, || URL__getHrefFromJS(value, global), |s| s.deref())
     }
 
     #[track_caller]
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<NonNull<URL>>> {
-        crate::call_check_slow(global, || URL__fromJS(value, global)).map(NonNull::new)
+        crate::call_check_slow_owned(
+            global,
+            || URL__fromJS(value, global),
+            // SAFETY: `p` came from `URL__fromJS` above and has not been freed.
+            |p| {
+                if !p.is_null() {
+                    unsafe { URL__deinit(p) }
+                }
+            },
+        )
+        .map(NonNull::new)
     }
 
     pub fn from_utf8(input: &[u8]) -> Option<NonNull<URL>> {

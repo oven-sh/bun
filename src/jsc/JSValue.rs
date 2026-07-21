@@ -2715,9 +2715,16 @@ impl JSValue {
         if flags.for_storage {
             bits |= 1 << 1;
         }
-        let ext = host_fn::from_js_host_call_generic(global, || {
-            Bun__serializeJSValue(global, self, bits)
-        })?;
+        let ext = host_fn::from_js_host_call_owned(
+            global,
+            || Bun__serializeJSValue(global, self, bits),
+            |ext| {
+                if !ext.handle.is_null() {
+                    // SAFETY: `ext.handle` was leaked by `Bun__serializeJSValue` above.
+                    unsafe { Bun__SerializedScriptSlice__free(ext.handle) };
+                }
+            },
+        )?;
         if ext.bytes.is_null() || ext.handle.is_null() {
             return Err(JsError::Thrown);
         }

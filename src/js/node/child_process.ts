@@ -1094,6 +1094,9 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
+  #hasIpc = false;
+  #disconnected = false;
+  #pendingExit;
 
   signalCode = null;
   exitCode = null;
@@ -1110,6 +1113,17 @@ class ChildProcess extends EventEmitter {
   }
 
   #handleOnExit(exitCode, signalCode, err) {
+    // Node reads the IPC channel's EOF before it reaps the process, so
+    // 'disconnect' always precedes 'exit'. Our two notifications race, so hold
+    // 'exit' back until the channel has disconnected (it always does on exit).
+    if (this.#hasIpc && !this.#disconnected) {
+      this.#pendingExit = [exitCode, signalCode, err];
+      return;
+    }
+    this.#emitExit(exitCode, signalCode, err);
+  }
+
+  #emitExit(exitCode, signalCode, err) {
     if (signalCode) {
       this.signalCode = signalCode;
     } else {
@@ -1444,6 +1458,7 @@ class ChildProcess extends EventEmitter {
       });
 
       if (has_ipc) {
+        this.#hasIpc = true;
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
@@ -1542,7 +1557,13 @@ class ChildProcess extends EventEmitter {
       return;
     }
     $assert(!this.connected);
+    this.#disconnected = true;
     process.nextTick(() => this.emit("disconnect"));
+    const pendingExit = this.#pendingExit;
+    if (pendingExit !== undefined) {
+      this.#pendingExit = undefined;
+      process.nextTick(() => this.#emitExit(pendingExit[0], pendingExit[1], pendingExit[2]));
+    }
     process.nextTick(() => this.#maybeClose());
   }
   #disconnect() {

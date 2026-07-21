@@ -161,6 +161,55 @@ process.send("regular message");
   expect(stdout).toContain("P received regular message");
 });
 
+test("worker 'disconnect' is emitted before 'exit'", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "index.js": `
+const cluster = require("node:cluster");
+
+if (cluster.isPrimary) {
+  const order = [];
+  let pending = 2;
+  const done = () => {
+    if (--pending === 0) {
+      console.log(order.join(","));
+      process.exit(0);
+    }
+  };
+
+  const worker = cluster.fork();
+  worker.on("message", () => {
+    // The worker calls process.exit() right after sending this. Block the loop
+    // so the IPC channel EOF and the worker's exit are both observed in the
+    // same poll batch, which is the interleaving that raced.
+    Bun.sleepSync(100);
+  });
+
+  cluster.on("disconnect", () => {
+    order.push("disconnect");
+    done();
+  });
+  cluster.on("exit", (_worker, code) => {
+    order.push("exit:" + code);
+    done();
+  });
+} else {
+  process.send("bye");
+  process.exit(3);
+}
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), joinP(dir, "index.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "disconnect,exit:3", exitCode: 0 });
+  expect(stderr).not.toContain("error");
+});
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own

@@ -468,6 +468,10 @@ function parseArgs(argv: string[]): CliArgs {
     "winsysroot",
     "linuxSysroot",
     "freebsdSysroot",
+    "ohosSysroot",
+    "ohosSdkRoot",
+    "ohosCrossLibs",
+    "ohosIcuDir",
   ]);
 
   for (let i = 0; i < argv.length; i++) {

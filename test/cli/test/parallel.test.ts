@@ -2,17 +2,26 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
-  // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
-  // remaining files; otherwise one fast worker handles all three.
-  const fixture = `import {test} from "bun:test"; test("t", async () => { await Bun.sleep(200); console.log("WID="+process.env.JEST_WORKER_ID+" "+process.env.BUN_TEST_WORKER_ID); });`;
+  // Each file rendezvous-waits on a shared gate file until all three workers
+  // have started one, so worker 0 can't finish early and work-steal worker
+  // 1's file before worker 1 has booted (under ASAN, worker startup easily
+  // exceeds any fixed sleep, which is why this used to be flaky).
+  const print = `console.log("WID="+process.env.JEST_WORKER_ID+" "+process.env.BUN_TEST_WORKER_ID+" pid="+process.pid)`;
+  const fixture = `import {test} from "bun:test"; import {appendFileSync,readFileSync} from "fs";
+    test("t", async () => {
+      appendFileSync(process.env.GATE, process.pid+"\\n");
+      while (readFileSync(process.env.GATE,"utf8").trimEnd().split("\\n").length < 3) await Bun.sleep(1);
+      ${print};
+    });`;
   using dir = tempDir("parallel-worker-id", {
     "a.test.js": fixture,
     "b.test.js": fixture,
     "c.test.js": fixture,
   });
+  const gate = String(dir) + "/gate";
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=3"],
-    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", GATE: gate },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
@@ -20,17 +29,21 @@ test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const out = stdout + stderr;
   expect(out).not.toContain("WID=undefined");
-  // 1-indexed; JEST_WORKER_ID and BUN_TEST_WORKER_ID always match.
-  const seen = [...out.matchAll(/WID=(\d+) (\d+)/g)].map(m => {
+  // 1-indexed; JEST_WORKER_ID and BUN_TEST_WORKER_ID always match; each
+  // pid sees exactly one WID (stable per worker process).
+  const seen = [...out.matchAll(/WID=(\d+) (\d+) pid=(\d+)/g)].map(m => {
     expect(m[1]).toBe(m[2]);
-    return m[1];
+    return { wid: m[1], pid: m[3] };
   });
-  expect(seen.sort()).toEqual(["1", "2", "3"]);
+  expect(seen.map(s => s.wid).sort()).toEqual(["1", "2", "3"]);
+  expect(new Set(seen.map(s => s.pid)).size).toBe(3);
   expect(exitCode).toBe(0);
 
   // K<=1 serial-fallback (single file, or --parallel=1) still sets WORKER_ID=1
   // so tests can rely on it whenever --parallel is passed (matches Jest).
-  using single = tempDir("parallel-worker-id-single", { "a.test.js": fixture });
+  using single = tempDir("parallel-worker-id-single", {
+    "a.test.js": `import {test} from "bun:test"; test("t", () => { ${print}; });`,
+  });
   await using p2 = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=5"],
     env: bunEnv,

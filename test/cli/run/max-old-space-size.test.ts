@@ -90,6 +90,20 @@ test.concurrent("space-separated value of the underscore alias stays in process.
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("v8.getHeapStatistics().heap_size_limit reports the configured limit", async () => {
+  // npm and friends read heap_size_limit to back off before hitting the cap.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--max-old-space-size=256", "-e", "console.log(require('v8').getHeapStatistics().heap_size_limit)"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(String(256 * 1024 * 1024));
+  expect(stderr).not.toContain("error");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("--max-old-space-size rejects a non-numeric value", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--max-old-space-size=abc", "-e", "console.log('ran')"],

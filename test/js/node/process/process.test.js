@@ -778,6 +778,26 @@ describe.concurrent(() => {
       expect(exitCode).toBe(1);
     });
 
+    it("does not drain microtasks queued by the listener when a beforeExit listener throws", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => { throw new Error("boom"); });
+           process.on("exit", () => {
+             console.log("exit-listener");
+             queueMicrotask(() => console.log("qm-in-exit"));
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stderr).toInclude("error: boom");
+      expect(stdout).toBe("exit-listener\n");
+      expect(exitCode).toBe(1);
+    });
+
     it("does not drain process.nextTick queued by the listener on natural exit", async () => {
       await using proc = Bun.spawn({
         cmd: [

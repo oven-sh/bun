@@ -1492,7 +1492,7 @@ impl VirtualMachine {
         }
     }
 
-    pub fn on_exit(&mut self) {
+    pub fn on_exit(&mut self, natural: bool) {
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
         // idempotent.
@@ -1513,14 +1513,9 @@ impl VirtualMachine {
             }
         }
 
-        // Node drains microtasks after 'exit' only on a natural drain: not
-        // after a fatal error, and not for a worker that reached here via
-        // terminate()/process.exit() (both set requested_terminate first).
-        let natural = self.unhandled_error_counter == 0
-            && !self
-                .worker_ref()
-                .is_some_and(|w| w.has_requested_terminate());
-        ExitHandler::dispatch_on_exit(self, natural);
+        // Node drains microtasks after 'exit' only on a natural event-loop
+        // drain: callers on explicit/fatal paths pass `natural = false`.
+        ExitHandler::dispatch_on_exit(self, natural && self.unhandled_error_counter == 0);
         self.is_shutting_down = true;
 
         // Make sure we run new cleanup hooks introduced by running cleanup

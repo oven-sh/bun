@@ -1638,7 +1638,7 @@ impl Run {
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         vm.global().handle_rejected_promises();
-        vm.on_exit();
+        vm.on_exit(true);
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
             print_unhandled_version_note(vm);
@@ -1707,7 +1707,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 )]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
-    vm.on_exit();
+    vm.on_exit(false);
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
         pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);

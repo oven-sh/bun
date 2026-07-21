@@ -58,7 +58,7 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // instead to terminate the worker sooner
         worker.exit();
     } else {
-        vm.on_exit();
+        vm.on_exit(false);
         vm.global_exit();
     }
 }

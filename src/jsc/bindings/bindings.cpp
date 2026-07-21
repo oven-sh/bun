@@ -95,6 +95,7 @@
 #include "wtf/GregorianDateTime.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
+#include "JavaScriptCore/ObjectPrototype.h"
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "DOMURL.h"
@@ -2880,6 +2881,38 @@ JSC::EncodedJSValue JSC__JSValue__getDirectIndex(JSC::EncodedJSValue jsValue, JS
     return JSC::JSValue::encode(object->getDirectIndex(arg1, arg3));
 }
 
+// getDirectIndex for console.log/inspect: own indexed accessors come back as
+// their GetterSetter cell (printer renders "[Getter]") instead of being called,
+// exceptions are swallowed, and holes return the empty value.
+extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnIndexForInspect(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject, uint32_t i)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
+    if (!object) [[unlikely]]
+        return JSC::JSValue::encode(JSC::JSValue());
+
+    if (JSC::JSValue quick = object->tryGetIndexQuickly(i))
+        return JSC::JSValue::encode(quick);
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::Get);
+    bool has = object->methodTable()->getOwnPropertySlotByIndex(object, globalObject, i, slot);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    if (!has)
+        return JSC::JSValue::encode(JSC::JSValue());
+    if (slot.isAccessor())
+        return JSC::JSValue::encode(slot.getterSetter());
+    JSC::JSValue result = slot.getValue(globalObject, i);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    return JSC::JSValue::encode(result ? result : JSC::JSValue());
+}
+
 JSC::EncodedJSValue JSC__JSObject__getDirect(JSC::JSObject* arg0, JSC::JSGlobalObject* arg1,
     const ZigString* arg2)
 {
@@ -5098,6 +5131,20 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     size_t prototypeCount = 0;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // End the walk at any realm's Object.prototype / Function.prototype; an
+    // identity check against *this* realm's intrinsics would walk through a
+    // `node:vm` object's foreign-realm prototype and list its methods as own.
+    auto isTerminalPrototype = [&](JSC::JSValue proto) -> bool {
+        JSC::JSObject* protoObject = proto.getObject();
+        if (!protoObject)
+            return true;
+        if (protoObject->inherits<JSC::ObjectPrototype>() || protoObject->inherits<JSC::FunctionPrototype>())
+            return true;
+        if (protoObject->inherits<JSGlobalProxy>())
+            return uncheckedDowncast<JSGlobalProxy>(protoObject)->target() != globalObject;
+        return false;
+    };
+
     JSC::Structure* structure = object->structure();
     bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
     JSValue prototypeObject = value;
@@ -5107,7 +5154,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
             fast = false;
 
             if (JSValue proto = object->getPrototype(globalObject)) {
-                if ((structure = proto.structureOrNull())) {
+                if (!isTerminalPrototype(proto) && (structure = proto.structureOrNull())) {
                     prototypeObject = proto;
                     fast = canPerformFastPropertyEnumerationForIterationBun(structure);
                     prototypeCount = 1;
@@ -5184,7 +5231,7 @@ restart:
             if (prototypeCount++ < 5) {
 
                 if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
-                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
+                    if (!isTerminalPrototype(proto)) {
                         if ((structure = proto.structureOrNull())) {
                             prototypeObject = proto;
                             fast = canPerformFastPropertyEnumerationForIterationBun(structure);
@@ -5205,7 +5252,7 @@ restart:
 
         JSObject* iterating = prototypeObject.getObject();
 
-        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+        while (iterating && !isTerminalPrototype(iterating) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
             } else {

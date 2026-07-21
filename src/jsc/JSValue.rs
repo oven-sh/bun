@@ -2582,8 +2582,8 @@ impl JSValue {
         }
         JSBuffer__isBuffer(global, self)
     }
-    /// `JSValue.getDirectIndex` — read the `i`th indexed
-    /// own-property slot directly (no prototype walk, no getters). Returns
+    /// `JSValue.getDirectIndex` — read the `i`th indexed own property
+    /// (no prototype walk). Own indexed accessors **are** invoked. Returns
     /// the empty value for holes.
     pub fn get_direct_index(self, global: &JSGlobalObject, i: u32) -> JSValue {
         unsafe extern "C" {
@@ -2594,6 +2594,19 @@ impl JSValue {
             ) -> JSValue;
         }
         JSC__JSValue__getDirectIndex(self, global, i)
+    }
+    /// `i`th indexed own property for `Bun.inspect`: accessors come back as the
+    /// `GetterSetter` cell (printer renders `[Getter]`) instead of being called,
+    /// exceptions are swallowed, and holes return the empty value.
+    pub fn get_own_index_for_inspect(self, global: &JSGlobalObject, i: u32) -> JSValue {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__getOwnIndexForInspect(
+                this: JSValue,
+                global: &JSGlobalObject,
+                i: u32,
+            ) -> JSValue;
+        }
+        JSC__JSValue__getOwnIndexForInspect(self, global, i)
     }
     /// Smallest own present index of a `JSArray` that is `>= start`, or
     /// `None` when every index from `start` to the end of the array is a

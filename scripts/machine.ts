@@ -71,9 +71,12 @@ const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/describe-images.html
    */
   async describeImages(options = {}) {
-    const filterEntries = Object.entries(options).map(([key, value]) => `Name=${key},Values=${value}`);
-    const filters = filterEntries.length ? `--filters ${filterEntries.join(" ")}` : "";
-    const { Images } = await aws.spawn($`ec2 describe-images --owners self ${filters}`);
+    // Each `Name=…,Values=…` is its own argv element after one --filters
+    // (the $ tag spreads an array into separate arguments; a joined string
+    // would arrive as a single word and match nothing).
+    const filters = Object.entries(options).map(([key, value]) => `Name=${key},Values=${value}`);
+    const args = filters.length ? ["--filters", ...filters] : [];
+    const { Images } = await aws.spawn($`ec2 describe-images --owners self ${args}`);
     return Images.sort((a, b) => (a.CreationDate < b.CreationDate ? 1 : -1));
   },
 };

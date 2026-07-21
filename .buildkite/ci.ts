@@ -838,20 +838,15 @@ function getEnsureImageStep(platform) {
   const { os, arch, distro, release } = platform;
   const cloud = os === "windows" ? "azure" : "aws";
   // --image names the spec entry; machine.mjs computes `${key}-${hash}` from
-  // it, so the baked name can only be what the spec says. The platform flags
-  // stay for machine.mjs's launch shape (instance type, disk, base image).
+  // it, and every launch fact (base image, VM shape, disk) comes from that
+  // entry. --cloud picks the builder (aws=amazon-ebs, azure=azure-arm).
   const command = [
     "node",
     "./scripts/machine.mjs",
     "create-image",
     `--image=${getImageKey(platform)}`,
-    `--os=${os}`,
-    `--arch=${arch}`,
-    distro && `--distro=${distro}`,
-    `--release=${release}`,
     `--cloud=${cloud}`,
     "--ci",
-    "--authorized-org=oven-sh",
   ];
 
   return {

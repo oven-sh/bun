@@ -691,11 +691,12 @@ describe("Bun.serve unix socket validation", () => {
 });
 
 describe("Bun.serve maxRequestBodySize validation", () => {
-  const invalid = [-1, NaN, Infinity, -Infinity, 1.5, "5000", "1mb", {}, true];
+  const invalid = [-1, NaN, Infinity, -Infinity, 1.5, "5000", "1mb", {}, true, false];
   for (const value of invalid) {
     test(`rejects ${Bun.inspect(value)}`, () => {
-      expect(() => {
-        using server = serve({
+      let err: any;
+      try {
+        const server = serve({
           port: 0,
           // @ts-expect-error - Testing invalid values
           maxRequestBodySize: value,
@@ -704,7 +705,13 @@ describe("Bun.serve maxRequestBodySize validation", () => {
           },
         });
         server.stop();
-      }).toThrow("Bun.serve expects maxRequestBodySize to be a non-negative integer");
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining("Bun.serve expects maxRequestBodySize to be a non-negative integer"),
+      });
     });
   }
 

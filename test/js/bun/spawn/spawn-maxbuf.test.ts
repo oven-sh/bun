@@ -203,7 +203,10 @@ describe("timeout kills the process", () => {
     await proc.exited;
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
     const grandchild = parseInt(stderr.trim(), 10);
-    if (Number.isInteger(grandchild)) try { process.kill(grandchild); } catch {}
+    if (Number.isInteger(grandchild))
+      try {
+        process.kill(grandchild);
+      } catch {}
     expect({ stdout, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: "from-child\n",
       exitCode: null,

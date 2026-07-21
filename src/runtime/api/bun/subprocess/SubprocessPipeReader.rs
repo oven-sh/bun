@@ -280,11 +280,6 @@ impl PipeReader {
             unsafe { PipeReader::detach(this_ptr) };
         }
 
-        if let Some(result) = self.fill_sink(global_object) {
-            self.state = State::Done(Vec::new());
-            return Ok(result);
-        }
-
         match &self.state {
             State::Pending => {
                 // `_parent` is unused in `from_pipe`; pass the raw ptr instead
@@ -319,7 +314,7 @@ impl PipeReader {
     /// subarray over the bytes that were written. Returns `None` when no sink
     /// is attached (the normal case), the pipe is still pending, or the sink
     /// can no longer be resolved.
-    fn fill_sink(&mut self, global_this: &JSGlobalObject) -> Option<JSValue> {
+    fn fill_sink(&mut self, global_this: &JSGlobalObject) -> Option<JsResult<JSValue>> {
         if !matches!(self.state, State::Done(_)) {
             return None;
         }
@@ -335,13 +330,14 @@ impl PipeReader {
         };
         let n = done.len().min(dst.len());
         dst[..n].copy_from_slice(&done[..n]);
-        Some(
-            jsc::array_buffer::ArrayBuffer::create_subarray(global_this, value, n)
-                .unwrap_or(JSValue::UNDEFINED),
-        )
+        Some(jsc::array_buffer::ArrayBuffer::create_subarray(
+            global_this,
+            value,
+            n,
+        ))
     }
 
-    pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(result) = self.fill_sink(global_this) {
             return result;
         }
@@ -354,10 +350,10 @@ impl PipeReader {
                 // boxed slice so JS becomes the owner — same pattern as
                 // `MarkedArrayBuffer::from_string`.
                 let slice: &'static mut [u8] = Box::leak(bytes.into_boxed_slice());
-                MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
-                    .to_node_buffer(global_this)
+                Ok(MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
+                    .to_node_buffer(global_this))
             }
-            _ => JSValue::UNDEFINED,
+            _ => Ok(JSValue::UNDEFINED),
         }
     }
 

@@ -303,7 +303,7 @@ impl Readable {
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
                 Self::pipe_detach(&pipe);
-                Ok(result)
+                result
             }
             Readable::Buffer(_) => {
                 let Readable::Buffer(mut buf) = mem::replace(self, Readable::Closed) else {

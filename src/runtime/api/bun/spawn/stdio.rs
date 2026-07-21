@@ -576,13 +576,27 @@ impl Stdio {
                     array_buffer: copied,
                     held: jsc::StrongOptional::create(copied.value, global),
                 });
-            } else {
+            } else if is_sync && (i == 1 || i == 2) {
                 // stdout/stderr: hold the caller's own view so the child's
                 // output can be written into it.
                 *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
                     array_buffer,
                     held: jsc::StrongOptional::create(value, global),
                 });
+            } else {
+                let name: &[u8] = match i {
+                    1 => b"stdout",
+                    2 => b"stderr",
+                    _ => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "ArrayBufferView cannot be used for stdio[{i}] yet"
+                        )));
+                    }
+                };
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'{}' ArrayBufferView is only supported with Bun.spawnSync",
+                    bstr::BStr::new(name),
+                )));
             }
             return Ok(());
         }

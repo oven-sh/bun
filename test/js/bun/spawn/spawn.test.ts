@@ -298,6 +298,17 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
+      it("Uint8Array as stdout/stderr is rejected for async spawn", () => {
+        gcTick();
+        expect(() => spawn([bunExe(), "-e", "1"], { stdout: new Uint8Array(8) })).toThrow(
+          "'stdout' ArrayBufferView is only supported with Bun.spawnSync",
+        );
+        expect(() => spawn([bunExe(), "-e", "1"], { stderr: new Uint8Array(8) })).toThrow(
+          "'stderr' ArrayBufferView is only supported with Bun.spawnSync",
+        );
+        gcTick();
+      });
+
       it("Blob works as stdin", async () => {
         const stdinPath = join(tmpdirSync(), "stdin.txt");
         gcTick();

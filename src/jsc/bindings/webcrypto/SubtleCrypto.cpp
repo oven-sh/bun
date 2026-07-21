@@ -1109,6 +1109,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     RELEASE_AND_RETURN(scope, algorithm->importKey(format, WTF::move(keyData), *params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
 }
 
+// Keep in sync with the secret-key cases in normalizeCryptoAlgorithmParameters (Operations::ImportKey).
 static bool isSecretKeyAlgorithm(CryptoAlgorithmIdentifier identifier)
 {
     switch (identifier) {
@@ -1136,10 +1137,8 @@ ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, C
         return paramsOrException.releaseException();
     auto params = paramsOrException.releaseReturnValue();
 
-    // Node's KeyObject.prototype.toCryptoKey dispatches secret and asymmetric
-    // algorithms through separate switch statements, so a category mismatch
-    // (e.g. secret KeyObject + Ed25519) is NotSupportedError before any usage
-    // or key-data validation runs.
+    // Node dispatches secret vs. asymmetric algorithms separately, so a category
+    // mismatch is NotSupportedError before any usage/key-data validation runs.
     if (isSecretKeyAlgorithm(params->identifier) != (sourceType == CryptoKeyType::Secret))
         return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
 

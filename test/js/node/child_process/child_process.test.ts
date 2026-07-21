@@ -499,7 +499,11 @@ describe("spawn()", () => {
     // letting this flip to a pass. Draining still fills the buffer often
     // enough for a nonblocking writer to hit EAGAIN -- today `cat` dies after
     // roughly 240 KB of the 4 MB.
-    it.skipIf(isWindows).todo("a child inheriting another subprocess's stdin survives a large write", async () => {
+    // Picked rather than chained: `it.skipIf(true).todo` throws "Cannot get
+    // .todo on test.skip" at collection time, which would take down the whole
+    // file on Windows.
+    const itTodoPosix = isWindows ? it.skip : it.todo;
+    itTodoPosix("a child inheriting another subprocess's stdin survives a large write", async () => {
       const size = 4 * 1024 * 1024;
       const dir = tmpdirSync();
       const bigPath = path.join(dir, "big.txt");

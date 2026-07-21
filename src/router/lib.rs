@@ -1044,17 +1044,12 @@ impl Route {
                     name_i += 1;
                 }
 
-                let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
-                let name_len = name.len();
-
                 // NOTE: DirnameStore::append returns `&'static [u8]` (process-
                 // lifetime arena), so rebinding here drops the borrow on
                 // `route_file_buf` and avoids needing lifetime transmutes
                 // below.
                 let dirname_store = FileSystem::instance().dirname_store();
-                let public_path: &'static [u8] =
-                    dirname_store.append(public_path).expect("unreachable");
-                let name: &'static [u8] = &public_path[name_offset..][0..name_len];
+                let name: &'static [u8] = dirname_store.append(name).expect("unreachable");
                 let match_name: &'static [u8] = if has_uppercase {
                     dirname_store
                         .append_lower_case(&name[1..])

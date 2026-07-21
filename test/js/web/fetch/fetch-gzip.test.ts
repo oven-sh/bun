@@ -538,6 +538,108 @@ describe("corrupt compressed responses", () => {
     }
   });
 
+  // A close-delimited body (no Content-Length, no Transfer-Encoding) is the
+  // framing where mid-stream truncation is most likely (origin/proxy dying on
+  // a `Connection: close` response). The decompressor's end-of-stream check
+  // must run on FIN, same as it already does for the framed variants above.
+  describe("close-delimited (FIN) framing", () => {
+    const FULL = 50000;
+    const plain = Buffer.alloc(FULL, "A");
+    const truncate = (b: Buffer) => b.subarray(0, b.length >> 1);
+    const codecs: Record<string, [Buffer, string]> = {
+      gzip: [truncate(gzipSync(plain)), "ZlibError"],
+      deflate: [truncate(deflateSync(plain)), "ZlibError"],
+      br: [truncate(brotliCompressSync(plain)), "BrotliDecompressionError"],
+      zstd: [truncate(zstdCompressSync(plain)), "ZstdDecompressionError"],
+    };
+
+    for (const [encoding, [half, errorCode]] of Object.entries(codecs)) {
+      it(`${encoding}: truncated stream rejects the body read`, async () => {
+        const srv = createNetServer(sock => {
+          sock.on("error", () => {});
+          sock.once("data", () => {
+            sock.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${encoding}\r\nConnection: close\r\n\r\n`);
+            sock.end(half);
+          });
+        });
+        const port = await listen(srv);
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/`);
+          expect(res.status).toBe(200);
+          const bodyErr = await res.arrayBuffer().then(
+            ab => ({ resolved: ab.byteLength }),
+            e => e,
+          );
+          expect(bodyErr).toBeInstanceOf(Error);
+          expect((bodyErr as { code?: string }).code).toBe(errorCode);
+
+          const res2 = await fetch(`http://127.0.0.1:${port}/`);
+          const reader = res2.body!.getReader();
+          let streamErr: unknown = null;
+          try {
+            while (!(await reader.read()).done) {}
+          } catch (e) {
+            streamErr = e;
+          }
+          expect(streamErr).toBeInstanceOf(Error);
+          expect((streamErr as { code?: string }).code).toBe(errorCode);
+        } finally {
+          srv.close();
+        }
+      });
+    }
+
+    // Regression guard: a complete stream under close-delimited framing must
+    // still resolve with the full body.
+    for (const [encoding, compress] of [
+      ["gzip", gzipSync],
+      ["deflate", deflateSync],
+      ["br", brotliCompressSync],
+      ["zstd", zstdCompressSync],
+    ] as const) {
+      it(`${encoding}: complete stream resolves with the full body`, async () => {
+        const body = compress(plain);
+        const srv = createNetServer(sock => {
+          sock.on("error", () => {});
+          sock.once("data", () => {
+            sock.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${encoding}\r\nConnection: close\r\n\r\n`);
+            sock.end(body);
+          });
+        });
+        const port = await listen(srv);
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/`);
+          const buf = Buffer.from(await res.arrayBuffer());
+          expect({ status: res.status, len: buf.length, ok: buf.equals(plain) }).toEqual({
+            status: 200,
+            len: FULL,
+            ok: true,
+          });
+        } finally {
+          srv.close();
+        }
+      });
+    }
+
+    it("identity: uncompressed close-delimited body is delivered intact", async () => {
+      const body = Buffer.alloc(4096, "x");
+      const srv = createNetServer(sock => {
+        sock.on("error", () => {});
+        sock.once("data", () => {
+          sock.write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+          sock.end(body);
+        });
+      });
+      const port = await listen(srv);
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/`);
+        expect(Buffer.from(await res.arrayBuffer()).equals(body)).toBe(true);
+      } finally {
+        srv.close();
+      }
+    });
+  });
+
   it("redirect loop with a non-empty body rejects with TooManyRedirects", async () => {
     // Real-world 302s carry an HTML body, which routes the intermediate
     // head through clone_metadata(); hitting the redirect limit must still
@@ -793,6 +895,7 @@ describe("empty compressed responses", () => {
   for (const [name, write] of Object.entries({
     "chunked": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n`,
     "content-length-0": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\n\r\n`,
+    "close-delimited": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nConnection: close\r\n\r\n`,
   })) {
     it(`empty gzip body via ${name} resolves as empty`, async () => {
       // end() rather than write(): FIN the connection after the response so

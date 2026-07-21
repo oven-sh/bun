@@ -547,6 +547,12 @@ fn on_close(ctx: *mut HTTPClient) {
             match this.state.chunked_decoder._state {
                 4 | 5 => {
                     this.state.flags.received_last_chunk = true;
+                    let buffer_snap = core::mem::take(&mut this.state.get_body_buffer().list);
+                    if let Err(err) = this.state.process_body_buffer(buffer_snap, true) {
+                        this.fail(err);
+                        crate::http_thread().schedule_proxy_deref(proxy_ptr);
+                        return;
+                    }
                     // `this` dead (NLL); reborrow via `client_from_ctx` inside.
                     progress_update_for_proxy_socket(ctx, proxy_nn);
                     // Drop our temporary ref asynchronously to avoid freeing within callback
@@ -559,6 +565,12 @@ fn on_close(ctx: *mut HTTPClient) {
             && this.state.response_stage == HTTPStage::Body
         {
             this.state.flags.received_last_chunk = true;
+            let buffer_snap = core::mem::take(&mut this.state.get_body_buffer().list);
+            if let Err(err) = this.state.process_body_buffer(buffer_snap, true) {
+                this.fail(err);
+                crate::http_thread().schedule_proxy_deref(proxy_ptr);
+                return;
+            }
             // `this` dead (NLL); reborrow via `client_from_ctx` inside.
             progress_update_for_proxy_socket(ctx, proxy_nn);
             // Balance the ref we took asynchronously

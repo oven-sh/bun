@@ -2093,6 +2093,14 @@ impl<'a> HTTPClient<'a> {
                 if matches!(self.state.chunked_decoder._state, 4 | 5) {
                     // ignore failure if we are in the middle of trailer headers, since we processed all the chunks and trailers are ignored
                     self.state.flags.received_last_chunk = true;
+                    // Drive the body buffer one last time as final so the
+                    // decompressor's end-of-stream check runs (and any bytes
+                    // buffered during -2 are flushed to body_out_str).
+                    let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+                    if let Err(err) = self.state.process_body_buffer(buffer_snap, true) {
+                        self.fail(err);
+                        return;
+                    }
                     let ctx = self.get_ssl_ctx::<IS_SSL>();
                     self.progress_update::<IS_SSL>(ctx, socket);
                     return;
@@ -2103,6 +2111,15 @@ impl<'a> HTTPClient<'a> {
             {
                 // no content length informed so we are done here
                 self.state.flags.received_last_chunk = true;
+                // Close-delimited bodies were decompressed per packet with
+                // is_final_chunk=false; drive a final empty chunk so a
+                // truncated compressed stream is rejected instead of
+                // resolving with a short body.
+                let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+                if let Err(err) = self.state.process_body_buffer(buffer_snap, true) {
+                    self.fail(err);
+                    return;
+                }
                 let ctx = self.get_ssl_ctx::<IS_SSL>();
                 self.progress_update::<IS_SSL>(ctx, socket);
                 return;

@@ -589,4 +589,9 @@ impl MySQLQuery {
         // lifetime is bounded by `&self`, which owns one ref.
         unsafe { self.statement.as_mut() }
     }
+
+    #[inline]
+    pub fn get_query_string(&self) -> &BunString {
+        &self.query
+    }
 }

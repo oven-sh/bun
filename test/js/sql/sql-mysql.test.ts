@@ -191,6 +191,143 @@ if (isDockerEnabled()) {
           using sql = await db.reserve();
           await assertComputedDecimalsAreStrings(sql);
         });
+        describe("result.columns / result.statement", () => {
+          test("columns has name and type", async () => {
+            const result = await sql`select CAST(1 AS SIGNED) as id, CAST('hi' AS CHAR) as msg`;
+            expect(result.columns.map(c => c.name)).toEqual(["id", "msg"]);
+            expect(typeof result.columns[0].type).toBe("number");
+            expect(typeof result.columns[0].length).toBe("number");
+            expect(typeof result.columns[0].flags).toBe("number");
+            expect(result.columns[0].table).toBe("");
+          });
+
+          test(".values() result has columns", async () => {
+            const result = await sql`select CAST(1 AS SIGNED) as x, CAST(2 AS SIGNED) as y`.values();
+            expect(result.columns.map(c => c.name)).toEqual(["x", "y"]);
+          });
+
+          test(".simple() result has columns", async () => {
+            const result = await sql`select CAST(1 AS SIGNED) as x`.simple();
+            expect(result.columns[0].name).toBe("x");
+          });
+
+          test("columns is populated for table columns", async () => {
+            await using db = new SQL({ ...getOptions(), max: 1 });
+            using sql = await db.reserve();
+            const table = "columns_meta_" + randomUUIDv7("hex").replaceAll("-", "");
+            await sql`CREATE TEMPORARY TABLE ${sql(table)} (id INT PRIMARY KEY, name VARCHAR(50))`;
+            await sql`INSERT INTO ${sql(table)} VALUES (1, 'a')`;
+            const result = await sql`SELECT id, name FROM ${sql(table)}`;
+            expect(result.columns.map(c => c.name)).toEqual(["id", "name"]);
+            expect(result.columns[0].table).toBe(table);
+            expect(result.columns[0].type).toBe(3); // MYSQL_TYPE_LONG
+            expect(result.columns[1].type).toBe(253); // MYSQL_TYPE_VAR_STRING
+          });
+
+          test("duplicate column names are preserved in columns", async () => {
+            const result = await sql`select CAST(1 AS SIGNED) as x, CAST(2 AS SIGNED) as x`.values();
+            expect(result.columns.map(c => c.name)).toEqual(["x", "x"]);
+            expect(result[0]).toEqual([1, 2]);
+          });
+
+          test("statement has string and columns", async () => {
+            const result = await sql`select CAST(1 AS SIGNED) as x`;
+            expect(result.statement.string).toBe("select CAST(1 AS SIGNED) as x");
+            expect(result.statement.columns).toBe(result.columns);
+          });
+
+          test("long column names (>15 bytes) are owned, not aliased", async () => {
+            // ColumnDefinition41 stores name via Data.create (.owned for >15 bytes)
+            // and separately passes the .temporary reader slice to ColumnIdentifier.init
+            // so the two don't alias the same heap buffer and double-free on deinit.
+            await using db = new SQL({ ...getOptions(), max: 1 });
+            for (let i = 0; i < 5; i++) {
+              const r = await db`select CAST(1 AS SIGNED) as this_is_a_long_column_name_over_fifteen_bytes`.simple();
+              expect(r.columns[0].name).toBe("this_is_a_long_column_name_over_fifteen_bytes");
+              Bun.gc(true);
+            }
+          });
+
+          test("re-executing a prepared statement reuses the statement metadata object", async () => {
+            // The `{ string, columns }` object is cached on the prepared statement
+            // and reused across executions instead of being rebuilt per query, so
+            // repeated executions stay allocation-flat (test/regression/issue/28632).
+            await using db = new SQL({ ...getOptions(), max: 1 });
+            const r1 = await db`select ${"hello"} as msg, CAST(1 AS SIGNED) as id`;
+            const r2 = await db`select ${"hello"} as msg, CAST(1 AS SIGNED) as id`;
+            expect(r1.columns.map(c => c.name)).toEqual(["msg", "id"]);
+            expect(r2.statement).toBe(r1.statement);
+            expect(r2.columns).toBe(r1.columns);
+          });
+
+          test("prepared CALL with same-name different-type result sets reports per-set types", async () => {
+            // A prepared multi-result-set response (statement_id > 0) re-decodes
+            // column definitions into the same slots. When consecutive equal-width
+            // result sets share a column name but differ in type, the cached
+            // `{ string, columns }` metadata must still be invalidated — change
+            // detection keys on type/length/flags, not just the name, so
+            // results[1].columns[0].type must not report results[0]'s type.
+            await using db = new SQL({ ...getOptions(), max: 1 });
+            using sql = await db.reserve();
+            const proc = "p_26809_" + randomUUIDv7("hex").replaceAll("-", "");
+            await sql.unsafe(
+              `CREATE PROCEDURE ${proc}() BEGIN SELECT CAST(1 AS SIGNED) AS value; SELECT CAST('hi' AS CHAR) AS value; END`,
+            );
+            try {
+              const results = await sql`CALL ${sql(proc)}()`;
+              // MySQL appends a trailing OK result set to CALL; the two SELECTs
+              // are the first two entries.
+              expect(results[0].columns[0].name).toBe("value");
+              expect(results[1].columns[0].name).toBe("value");
+              expect(results[0].columns[0].type).toBe(8); // MYSQL_TYPE_LONGLONG
+              expect(results[1].columns[0].type).toBe(253); // MYSQL_TYPE_VAR_STRING
+            } finally {
+              await sql.unsafe(`DROP PROCEDURE IF EXISTS ${proc}`);
+            }
+          });
+
+          test("prepared CALL with all-digit aliases differing only in leading zeros reports per-set names", async () => {
+            // All-digit column aliases parse to the same ColumnIdentifier::Index
+            // (`1` and `01` both become Index(1)), so name-change detection must
+            // key on the raw bytes, not the parsed identifier, for the cached
+            // metadata to be invalidated between equal-width result sets.
+            await using db = new SQL({ ...getOptions(), max: 1 });
+            using sql = await db.reserve();
+            const proc = "p_26809z_" + randomUUIDv7("hex").replaceAll("-", "");
+            await sql.unsafe(
+              `CREATE PROCEDURE ${proc}() BEGIN SELECT CAST(1 AS SIGNED) AS \`1\`; SELECT CAST(1 AS SIGNED) AS \`01\`; END`,
+            );
+            try {
+              const results = await sql`CALL ${sql(proc)}()`;
+              expect(results[0].columns[0].name).toBe("1");
+              expect(results[1].columns[0].name).toBe("01");
+            } finally {
+              await sql.unsafe(`DROP PROCEDURE IF EXISTS ${proc}`);
+            }
+          });
+
+          test("multi-statement simple() with equal column counts gets per-result-set columns", async () => {
+            // Consecutive result sets with the same column count re-decode into the
+            // same ColumnDefinition41 slots; the cached statement metadata must be
+            // invalidated when the definitions actually change so the second result
+            // set doesn't report the first result set's columns.
+            await using db = new SQL({ ...getOptions(), max: 1 });
+            const results = await db`select 1 as first_col; select 2 as second_col`.simple();
+            expect(results).toHaveLength(2);
+            expect(results[0].columns.map(c => c.name)).toEqual(["first_col"]);
+            expect(results[1].columns.map(c => c.name)).toEqual(["second_col"]);
+          });
+
+          test("multi-statement simple(): OK-only statement after SELECT does not inherit columns", async () => {
+            // An OK-only result set (no column definitions of its own) must not
+            // report the previous result set's cached column metadata.
+            await using db = new SQL({ ...getOptions(), max: 1 });
+            const results = await db`select 1 as only_col; set @bun_26809 := 1`.simple();
+            expect(results).toHaveLength(2);
+            expect(results[0].columns.map(c => c.name)).toEqual(["only_col"]);
+            expect(results[1].columns).toEqual([]);
+          });
+        });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {
             for (let duplicated of [true, false]) {

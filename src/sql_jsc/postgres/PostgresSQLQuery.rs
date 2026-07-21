@@ -286,6 +286,71 @@ impl PostgresSQLQuery {
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
     }
 
+    /// Build the `{ string, columns: [{ name, type, table, number }, ...] }`
+    /// object exposed as `result.statement` / `result.columns` in JS. Must be
+    /// called before the next RowDescription overwrites `statement.fields` (see
+    /// PostgresSQLConnection `RowDescription` handler).
+    ///
+    /// For the extended protocol the object is built once per prepared
+    /// statement and held via a Strong reference (same policy as
+    /// `cached_structure`), so re-executions reuse it instead of re-allocating
+    /// per query; it is invalidated wherever `statement.fields` is
+    /// cleared/replaced. Simple-protocol queries are never cached: their
+    /// statement is transient and rebuilt per result set anyway, and pinning
+    /// the metadata via a Strong reference would keep large `.simple()` query
+    /// strings alive until the statement is finalized.
+    fn build_statement_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        use crate::jsc::bun_string_jsc;
+        let Some(statement) = self.statement_mut() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let use_cache = !self.flags.get().simple;
+        if use_cache {
+            if let Some(cached) = statement.cached_statement_js.get() {
+                return Ok(cached);
+            }
+        }
+        let columns = JSValue::create_empty_array(global_object, statement.fields.len())?;
+        for (i, field) in statement.fields.iter().enumerate() {
+            let col = JSValue::create_empty_object(global_object, 4);
+            col.put(
+                global_object,
+                b"name",
+                bun_string_jsc::create_utf8_for_js(global_object, field.name.slice())?,
+            );
+            col.put(
+                global_object,
+                b"type",
+                JSValue::js_number(field.type_oid as f64),
+            );
+            col.put(
+                global_object,
+                b"table",
+                JSValue::js_number(field.table_oid as f64),
+            );
+            // Wire protocol defines the column attribute number as signed Int16
+            // (system columns like ctid have negative attnums); `Short` is u16 so
+            // bitcast to match postgres.js' readInt16BE behaviour.
+            col.put(
+                global_object,
+                b"number",
+                JSValue::js_number(field.column_index as i16 as f64),
+            );
+            columns.put_index(global_object, i as u32, col)?;
+        }
+        let obj = JSValue::create_empty_object(global_object, 2);
+        obj.put(
+            global_object,
+            b"string",
+            bun_string_jsc::to_js(&self.query, global_object)?,
+        );
+        obj.put(global_object, b"columns", columns);
+        if use_cache {
+            statement.cached_statement_js.set(global_object, obj);
+        }
+        Ok(obj)
+    }
+
     pub fn on_result(
         &self,
         command_tag_str: &[u8],
@@ -330,6 +395,22 @@ impl PostgresSQLQuery {
             .unwrap();
         let event_loop = vm.event_loop_mut();
 
+        // Column metadata is only meaningful on the per-result-set callbacks
+        // (is_last=false). The final is_last=true call carries no result and by
+        // then statement.fields may have been overwritten by later result sets.
+        // If building the metadata fails (e.g. JS-heap OOM), swallow the
+        // exception and resolve without it rather than reject a query whose rows
+        // were already received.
+        let statement_js = if is_last {
+            JSValue::UNDEFINED
+        } else {
+            self.build_statement_js(global_object).unwrap_or_else(|_| {
+                let _ = global_object.try_take_exception();
+                JSValue::UNDEFINED
+            })
+        };
+        statement_js.ensure_still_alive();
+
         event_loop.run_callback(
             function,
             global_object,
@@ -347,6 +428,7 @@ impl PostgresSQLQuery {
                         .unwrap_or(JSValue::UNDEFINED)
                 },
                 JSValue::from(is_last),
+                statement_js,
             ],
         );
     }

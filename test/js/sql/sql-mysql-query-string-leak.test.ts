@@ -23,35 +23,49 @@ if (isDockerEnabled()) {
 
         const sql = new SQL({ url: process.env.MYSQL_URL, max: 1 });
 
-        // Warm up: first query allocates connection buffers, JIT, etc.
-        await sql.unsafe("select 1").simple();
-
         // Each query string is ~512 KiB and unique (so JSC can't dedupe/intern
         // them) and goes through the full create -> run -> finalize lifecycle.
         // 200 iterations x 512 KiB = ~100 MiB of string payload.
         const ITERATIONS = 200;
         const CHUNK = 512 * 1024;
 
-        Bun.gc(true);
-        const rssBefore = process.memoryUsage.rss();
-
-        for (let i = 0; i < ITERATIONS; i++) {
-          const pad = Buffer.alloc(CHUNK, 0x61 + (i % 26)).toString("latin1");
-          // Embed the bulk as a comment so the server's reply is a trivial OK
-          // regardless of content; suffix makes every string unique.
-          const q = "select 1 /* " + pad + " " + i + " */";
-          await sql.unsafe(q).simple();
-          if ((i & 15) === 15) Bun.gc(true);
+        // The label keeps every string unique across both batches.
+        async function runBatch(count, label) {
+          for (let i = 0; i < count; i++) {
+            const pad = Buffer.alloc(CHUNK, 0x61 + (i % 26)).toString("latin1");
+            // Embed the bulk as a comment so the server's reply is a trivial OK
+            // regardless of content.
+            const q = "select 1 /* " + label + " " + pad + " " + i + " */";
+            await sql.unsafe(q).simple();
+            if ((i & 15) === 15) Bun.gc(true);
+          }
         }
-
-        await sql.close({ timeout: 0 }).catch(() => {});
 
         // Give the MySQLQuery wrappers a chance to be finalized so cleanup()
         // runs and drops its (single) ref on each query string.
-        for (let i = 0; i < 8; i++) {
-          await new Promise(r => setImmediate(r));
-          Bun.gc(true);
+        async function drainFinalizers() {
+          for (let i = 0; i < 8; i++) {
+            await new Promise(r => setImmediate(r));
+            Bun.gc(true);
+          }
         }
+
+        // Warm up with the same workload so connection buffers, JIT, and the
+        // allocator high-water mark (the inter-GC peak of the transient query
+        // strings; RSS rarely shrinks back) are all established before the
+        // baseline snapshot. The measured delta then isolates *retained*
+        // strings instead of first-touch heap growth.
+        await runBatch(32, "warmup");
+        await drainFinalizers();
+
+        Bun.gc(true);
+        const rssBefore = process.memoryUsage.rss();
+
+        await runBatch(ITERATIONS, "measured");
+
+        await sql.close({ timeout: 0 }).catch(() => {});
+
+        await drainFinalizers();
 
         const rssAfter = process.memoryUsage.rss();
         const deltaMiB = (rssAfter - rssBefore) / 1024 / 1024;
@@ -85,7 +99,7 @@ if (isDockerEnabled()) {
       // there. The non-ASAN bound is the discriminating check.
       expect(parsed.deltaMiB).toBeLessThan(isASAN ? 384 : 50);
       expect(exitCode).toBe(0);
-      // 200 × 512 KiB round-trips to a real MySQL server plus ~20 Bun.gc(true)
+      // ~230 × 512 KiB round-trips to a real MySQL server plus ~30 Bun.gc(true)
       // calls in an ASAN debug subprocess can take tens of seconds; the 5s
       // default is too tight.
     }, 120_000);

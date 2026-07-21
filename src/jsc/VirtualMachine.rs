@@ -1060,9 +1060,8 @@ impl VirtualMachine {
     }
 
     /// Count of ref'd handles and outstanding tasks keeping the loop alive.
-    /// The test runner snapshots this before loading a script-style file and
-    /// drains only while the count exceeds that baseline, so a prior file's
-    /// leaked handle (or a --parallel worker's IPC pipe) is not waited on.
+    /// Snapshotted by the test runner as a per-file drain baseline so prior
+    /// leaks (or a --parallel worker's IPC pipe) are not waited on.
     pub fn active_keepalive_count(&self) -> usize {
         let el = self.event_loop_shared();
         let active = self

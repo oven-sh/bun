@@ -3237,10 +3237,9 @@ impl TestCommand {
                     }
                 }
 
-                // A file that registered no test()/describe() is a plain script:
-                // drain ref'd handles it created so late uncaught errors surface,
-                // like `bun <file>`. Handles that predate the file (prior leak,
-                // preload, --parallel worker IPC) are excluded by the baseline.
+                // A file with no test()/describe() is a plain script: drain handles
+                // it created so late errors surface (like `bun <file>`). The
+                // baseline excludes handles that predate this file.
                 if buntest.collection.root_scope.entries.is_empty() {
                     let drain_base = vm.unhandled_error_counter;
                     while drain_base == vm.unhandled_error_counter
@@ -3278,10 +3277,9 @@ impl TestCommand {
     }
 }
 
-/// Count of ref'd handles keeping the event loop alive, with JS timers counted
-/// individually (they share one loop ref, so `active_count()` alone can't tell
-/// a new timer from a prior file's). Used to scope the post-test drain to work
-/// created by the current file.
+/// Count of ref'd handles plus individual JS timers (timers share one loop
+/// ref, so `active_count()` alone can't distinguish a new timer from a prior
+/// file's). Used to scope the post-test drain to this file's work.
 fn script_keepalive_count(vm: &VirtualMachine) -> usize {
     let state = crate::jsc_hooks::runtime_state();
     let timers = if state.is_null() {

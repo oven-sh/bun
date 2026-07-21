@@ -191,6 +191,9 @@ unsafe extern "Rust" {
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
+    /// `timer::All::drain_timers`: fire every timer whose deadline has passed.
+    /// Defined in `bun_runtime::dispatch`. Link-time resolved.
+    fn __bun_drain_expired_timers(vm: *mut VirtualMachine);
     /// Tag-specific shutdown release for a queued-but-never-run task. Called
     /// from `release_queued_tasks_for_shutdown` (after `shutdown_for_exit`,
     /// before `destructOnExit`) for every entry left in `self.tasks`.
@@ -477,6 +480,24 @@ impl EventLoop {
             // valid until `run` removes it; `vm()` is the live owning VM.
             unsafe { __bun_run_wtf_timer(ptr, self.vm()) };
         }
+    }
+
+    /// Fire every timer whose deadline has already passed: libuv's timers phase.
+    ///
+    /// `auto_tick` runs it at the end of an iteration rather than the start, so
+    /// the cyclic order matches `uv_run`'s for every iteration but the first.
+    /// Callers about to enter the loop for the first time run one themselves
+    /// (after a `tick()` that evaluated the entry body), so a timer that
+    /// expired while the entry point was still running dispatches before the
+    /// `setImmediate` callbacks it queued. Task-queue work the body queued is
+    /// dispatched by that `tick()` first.
+    pub fn drain_expired_timers(&mut self) {
+        // The real `timer::All` lives in `bun_runtime` (cycle), so the body
+        // dispatches through `__bun_drain_expired_timers` (link-time extern).
+        let vm = self.vm();
+        // SAFETY: `vm` is the live owning VM; the definer no-ops when this
+        // thread has no `RuntimeState` (bun_jsc unit tests).
+        unsafe { __bun_drain_expired_timers(vm) };
     }
 
     pub fn tick_concurrent_with_count(&mut self) -> usize {

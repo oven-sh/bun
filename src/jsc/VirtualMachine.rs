@@ -2470,6 +2470,7 @@ impl VirtualMachine {
         if self.is_watcher_enabled() {
             // accessed here (no overlapping `&mut EventLoop`).
             self.event_loop_mut().perform_gc();
+            self.run_entry_point_body(self.pending_internal_promise.unwrap_or(promise));
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -2493,10 +2494,38 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
+            self.run_entry_point_body(promise);
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))
+    }
+
+    /// Run the entry point's synchronous body with a full tick, then the timers
+    /// phase.
+    ///
+    /// `tick()` evaluates the module body (on the microtask queue) and reports
+    /// rejections exactly as the wait loop would, so nothing about exception or
+    /// unhandled-rejection handling changes. It does dispatch the task queue, so
+    /// a port message or I/O completion the body queued still runs before the
+    /// timers phase; `setImmediate` callbacks wait in the immediate queue, which
+    /// `auto_tick` drains, so the timers phase runs ahead of them. `uv_run`
+    /// opens with `uv__run_timers`.
+    fn run_entry_point_body(&mut self, evaluation: *mut JSInternalPromise) {
+        // `tick()`'s tail reports rejections and bumps `unhandled_error_counter`
+        // at exactly the pre-existing point, so reading it afterwards is a pure
+        // read. Snapshot: the test-runner call sites reuse the VM across files.
+        let unhandled_before = self.unhandled_error_counter;
+        self.tick();
+        // SAFETY: `evaluation` is a live JSC heap cell returned by
+        // `reload_entry_point*` and kept alive by the module loader. A body that
+        // threw rejects it, and a body that left an unhandled rejection bumped
+        // the counter; neither reaches a timers phase in Node.
+        let threw = crate::JSPromise::status_ptr(evaluation) == crate::js_promise::Status::Rejected;
+        if threw || self.unhandled_error_counter > unhandled_before {
+            return;
+        }
+        self.event_loop_mut().drain_expired_timers();
     }
 
     /// Drain pending tasks/microtasks if the event loop is not currently
@@ -4637,6 +4666,12 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point(entry_path)?;
         self.event_loop_mut().perform_gc();
+        // Deliberately not `run_entry_point_body`: a worker's body has to evaluate
+        // inside the termination-aware wait below, which stops before the next
+        // `tick()` once `terminate()` lands. Evaluating it on the microtask queue
+        // instead lets a `tick()` start with the termination exception already
+        // pending, and its first task dispatch trips `scope.assertNoException()`.
+        // `web_worker.rs` runs the timers phase before it enters the loop.
         self.event_loop_mut()
             .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
@@ -4657,6 +4692,7 @@ impl VirtualMachine {
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
             self.event_loop_mut().perform_gc();
+            self.run_entry_point_body(self.pending_internal_promise.unwrap_or(promise));
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -4680,6 +4716,7 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
+            self.run_entry_point_body(promise);
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 

@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -244,4 +244,108 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")]).toRun();
+});
+
+describe.concurrent("an already-expired timer runs before the first check phase", () => {
+  // Block well past the 1ms deadline so the timer is unambiguously expired by
+  // the time the event loop is entered. libuv opens every `uv_run` iteration
+  // with the timers phase, so the timer runs before the `setImmediate` queued
+  // next to it. Task-queue work such as a MessagePort self-post or a completed
+  // fs read is dispatched by the entry tick before the timers phase.
+  const blockPastTheDeadline = `const start = Date.now(); while (Date.now() - start < 10) {}`;
+
+  test.concurrent("before setImmediate", async () => {
+    using dir = tempDir("timers-phase-order", {
+      "index.js": `
+        const order = [];
+        process.on("exit", () => console.log(JSON.stringify(order)));
+        setTimeout(() => order.push("timeout"), 1);
+        setImmediate(() => order.push("immediate"));
+        ${blockPastTheDeadline}
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
+    expect(stdout.trim()).toBe(JSON.stringify(["timeout", "immediate"]));
+    expect(exitCode).toBe(0);
+  });
+
+  test("inside a worker", async () => {
+    const worker = new Worker(new URL("timers-phase-order-worker-fixture.js", import.meta.url).href);
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    worker.onmessage = event => resolve(event.data);
+    worker.onerror = reject;
+
+    try {
+      expect(await promise).toEqual(["timeout", "immediate"]);
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  test("inside a test file, same as under `bun run`", async () => {
+    using dir = tempDir("timers-phase-order-test", {
+      "order.test.js": `
+        const { test, expect } = require("bun:test");
+        const order = [];
+        setTimeout(() => order.push("timeout"), 1);
+        setImmediate(() => order.push("immediate"));
+        ${blockPastTheDeadline}
+        test("the expired timer ran first", () => {
+          console.log("order=" + JSON.stringify(order));
+          expect(order).toEqual(["timeout", "immediate"]);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "order.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
+    expect(stdout).toContain(`order=${JSON.stringify(["timeout", "immediate"])}`);
+    expect(exitCode).toBe(0);
+  });
+
+  // An entry point that throws rejects the module promise and exits without
+  // entering the loop, as Node does; the timer never fires.
+  test.concurrent("but not when the entry point throws", async () => {
+    using dir = tempDir("timers-phase-order-throw", {
+      "index.js": `
+        setTimeout(() => console.log("timer fired"), 1);
+        ${blockPastTheDeadline}
+        throw new Error("boom");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("boom");
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
 });

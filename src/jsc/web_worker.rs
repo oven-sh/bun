@@ -1165,6 +1165,19 @@ impl WebWorker {
             let _ = vm.global().vm().run_gc(false);
         }
 
+        // `uv_run` opens with `uv__run_timers`, so a timer that expired while the
+        // worker's entrypoint ran synchronously is due before the `setImmediate`
+        // callbacks it queued alongside it. Only `setImmediate` is reordered
+        // here: a MessagePort or fs completion the body queued dispatches inside
+        // the `tick()` of the wait above, the same as `--preload`. The two guards
+        // match the `is_event_loop_alive()` check below, so the entrypoint never
+        // fires a timer on a path that otherwise exits: skip once `terminate()`
+        // has landed (firing a callback would re-enter JS with the termination
+        // exception pending), and skip when the body left an unhandled error.
+        if !self.has_requested_terminate() && vm.unhandled_error_counter == 0 {
+            vm.event_loop_mut().drain_expired_timers();
+        }
+
         // Always do a first tick so we call CppTask without delay after
         // dispatchOnline.
         vm.as_mut().tick();

@@ -929,6 +929,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
         );
 
+        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+            && matches!(e_.target.data, Data::ESpecial(E::Special::HotEnabled))
+        {
+            e_.optional_chain = None;
+        }
+
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
                 let name = p.load_name_from_ref(private.ref_);
@@ -1423,6 +1429,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
+
+        // `import.meta.hot?.accept()` should be treated like a direct
+        // `import.meta.hot.accept()` in development. `import.meta.hot` is
+        // always defined when HMR is enabled, so the `?.` guard is a no-op
+        // and would otherwise prevent `maybe_rewrite_property_access` from
+        // lowering the access to the HMR module member, leaving the
+        // throwing `indirectHot` proxy in place.
+        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+            && matches!(e_.target.data, Data::ESpecial(E::Special::HotEnabled))
+        {
+            e_.optional_chain = None;
+        }
 
         // 'require.resolve' -> .e_require_resolve_call_target
         if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {

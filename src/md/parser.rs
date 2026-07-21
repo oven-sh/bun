@@ -422,8 +422,7 @@ impl<'a> Parser<'a> {
     //
     // ref_defs.rs — impl Parser:
     //   normalize_label, lookup_ref_def, parse_ref_def,
-    //   skip_ref_def_whitespace, parse_ref_def_dest, parse_ref_def_title,
-    //   build_ref_def_hashtable
+    //   skip_ref_def_whitespace, parse_ref_def_dest, parse_ref_def_title
 }
 
 // Silence unused-import warnings for the sibling modules referenced only in

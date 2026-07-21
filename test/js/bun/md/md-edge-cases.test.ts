@@ -1136,6 +1136,82 @@ describe("pathological reference definition inputs", () => {
         '<p><a href="/url" title="title">text</a></p>\n',
     );
   });
+
+  // Setext headings consume leading reference definitions before the underline
+  // is applied (consume_ref_defs_from_current_block). Duplicate labels in that
+  // run must still obey first-definition-wins and must not leak into the
+  // heading content.
+  test("duplicate reference definitions before a setext heading resolve to the first definition", () => {
+    const defs = Array.from({ length: 5 }, () => '[dup]: /u "t"').join("\n");
+    expect(Markdown.html(defs + "\nhello\n===\n\n[dup]\n")).toBe(
+      '<h1>hello</h1>\n<p><a href="/u" title="t">dup</a></p>\n',
+    );
+
+    expect(Markdown.html("[a]: /first\n[a]: /second\nheading\n===\n\n[a]\n")).toBe(
+      '<h1>heading</h1>\n<p><a href="/first">a</a></p>\n',
+    );
+
+    // A run of definitions that consumes every content line leaves only the
+    // underline, which becomes a paragraph rather than an empty heading.
+    expect(Markdown.html("[a]: /x\n[a]: /y\n===\n\n[a]\n")).toBe('<p>===</p>\n<p><a href="/x">a</a></p>\n');
+  });
+});
+
+// ============================================================================
+// CommonMark 4.7: "When there are multiple matching link reference definitions,
+// the first is used." Definitions are collected as each block closes, so the
+// block a definition lives in must not change which one wins.
+// ============================================================================
+
+describe("reference definition precedence across block kinds", () => {
+  // Paragraph definitions used to be collected in a pass that ran after the
+  // whole document was parsed, while setext-heading definitions were collected
+  // during parsing. That let a setext definition claim a label before an
+  // earlier paragraph definition was ever looked at.
+  test("an earlier paragraph definition beats a later setext-heading definition", () => {
+    expect(Markdown.html("[a]: /first\n\n[a]: /second\nh\n===\n\n[a]\n")).toBe(
+      '<h1>h</h1>\n<p><a href="/first">a</a></p>\n',
+    );
+
+    // Same document order, but the duplicate sits in a setext block that is
+    // nothing but definitions, so only the underline survives as a paragraph.
+    expect(Markdown.html("[a]: /first\n\n[a]: /second\n===\n\n[a]\n")).toBe(
+      '<p>===</p>\n<p><a href="/first">a</a></p>\n',
+    );
+
+    // A definition inside a block quote is still a document-level definition.
+    expect(Markdown.html("> [a]: /first\n\n[a]: /second\nh\n===\n\n[a]\n")).toBe(
+      '<blockquote>\n</blockquote>\n<h1>h</h1>\n<p><a href="/first">a</a></p>\n',
+    );
+  });
+
+  test("an earlier setext-heading definition beats a later paragraph definition", () => {
+    expect(Markdown.html("[a]: /first\nh\n===\n\n[a]: /second\n\n[a]\n")).toBe(
+      '<h1>h</h1>\n<p><a href="/first">a</a></p>\n',
+    );
+  });
+
+  test("a paragraph definition between two setext-heading definitions keeps document order", () => {
+    expect(Markdown.html("[a]: /1\nh1\n===\n\n[a]: /2\n\n[a]: /3\nh3\n===\n\n[a]\n")).toBe(
+      '<h1>h1</h1>\n<h1>h3</h1>\n<p><a href="/1">a</a></p>\n',
+    );
+
+    expect(Markdown.html("[a]: /1\n\n[a]: /2\nh2\n===\n\n[a]: /3\n\n[a]\n")).toBe(
+      '<h1>h2</h1>\n<p><a href="/1">a</a></p>\n',
+    );
+  });
+
+  // A paragraph consumed entirely by definitions renders as nothing, not as an
+  // empty <p></p>.
+  test("a paragraph that is only reference definitions emits no markup", () => {
+    expect(Markdown.html("[a]: /x\n")).toBe("");
+    expect(Markdown.html("[a]: /x\n\nhi\n")).toBe("<p>hi</p>\n");
+    expect(Markdown.html("[a]: /x\n\n[b]: /y\n\n[a] [b]\n")).toBe('<p><a href="/x">a</a> <a href="/y">b</a></p>\n');
+
+    // Definitions followed by ordinary text in the same paragraph: the
+    // definition lines are dropped, the rest still renders.
+    expect(Markdown.html("[a]: /x\ntext here\n\n[a]\n")).toBe('<p>text here</p>\n<p><a href="/x">a</a></p>\n');
+  });
 });
 
 // ============================================================================

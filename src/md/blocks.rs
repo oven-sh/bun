@@ -30,9 +30,6 @@ impl Parser<'_> {
 
         self.end_current_block()?;
 
-        // Build ref def hashtable
-        self.build_ref_def_hashtable()?;
-
         // Process all blocks
         self.leave_child_containers(0)?;
         self.process_all_blocks()?;
@@ -871,14 +868,18 @@ impl Parser<'_> {
         if let Some(cb_off) = self.current_block {
             // Capture the header fields, drop the &mut borrow, then access
             // other &self fields.
-            let (is_setext, hdr_n_lines) = {
+            let (takes_ref_defs, hdr_n_lines) = {
                 let hdr = self.get_block_header_at(cb_off);
-                (
-                    hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0,
-                    hdr.n_lines,
-                )
+                let is_setext =
+                    hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0;
+                (hdr.block_type == BlockType::P || is_setext, hdr.n_lines)
             };
-            if is_setext
+            // Paragraphs and setext headings both yield their leading ref defs here,
+            // as the block closes, so definitions are stored in document order and the
+            // first definition of a label wins (CommonMark 4.7). Deferring either kind
+            // to a pass over the finished blocks lets the kind that ran first claim the
+            // label no matter where it sits in the document.
+            if takes_ref_defs
                 && hdr_n_lines > 0
                 && self.current_block_lines.len() > 0
                 && self.current_block_lines[0].beg < self.size
@@ -900,10 +901,8 @@ impl Parser<'_> {
                     hdr.block_type = BlockType::P;
                     hdr.flags &= !types::BLOCK_SETEXT_HEADER;
                     return Ok(()); // Don't close the block!
-                } else {
-                    // All lines consumed (shouldn't normally happen)
-                    hdr.flags |= types::BLOCK_REF_DEF_ONLY;
                 }
+                // n_lines == 0: consume_ref_defs_from_current_block flagged the block.
             }
 
             // Write accumulated lines to block_bytes
@@ -953,13 +952,7 @@ impl Parser<'_> {
                 break;
             };
 
-            // Capture borrowed result fields before &mut self calls.
-            let raw_label: Box<[u8]> = Box::from(result.label);
-            let dest_dupe: Box<[u8]> = Box::from(result.dest);
-            let title_dupe: Box<[u8]> = Box::from(result.title);
-            let end_pos = result.end_pos;
-
-            let norm_label = self.normalize_label(&raw_label);
+            let norm_label = self.normalize_label(result.label);
             if norm_label.is_empty() {
                 break;
             }
@@ -968,6 +961,9 @@ impl Parser<'_> {
             let label = norm_label.into_boxed_slice();
             if !self.ref_def_labels.contains(&label) {
                 let _ = self.ref_def_labels.insert(&label);
+                // Dupe dest and title since they point into self.buffer which gets reused
+                let dest_dupe: Box<[u8]> = Box::from(result.dest);
+                let title_dupe: Box<[u8]> = Box::from(result.title);
                 self.ref_defs.push(crate::ref_defs::RefDef {
                     label,
                     dest: dest_dupe,
@@ -976,16 +972,18 @@ impl Parser<'_> {
             }
 
             let mut newlines: u32 = 0;
-            for &mc in &merged[pos..end_pos] {
+            for &mc in &merged[pos..result.end_pos] {
                 if mc == b'\n' {
                     newlines += 1;
                 }
             }
-            if end_pos >= merged.len() && (end_pos == pos || merged[end_pos - 1] != b'\n') {
+            if result.end_pos >= merged.len()
+                && (result.end_pos == pos || merged[result.end_pos - 1] != b'\n')
+            {
                 newlines += 1;
             }
             lines_consumed += newlines;
-            pos = end_pos;
+            pos = result.end_pos;
         }
 
         // Restore buffer for reuse.
@@ -995,9 +993,12 @@ impl Parser<'_> {
             if let Some(cb_off) = self.current_block {
                 let hdr_n_lines = self.get_block_header_at(cb_off).n_lines;
                 if lines_consumed >= hdr_n_lines {
-                    // All lines consumed
+                    // Nothing but ref defs: the block renders as nothing at all. Leaving
+                    // it empty instead would still emit its opening and closing tags.
                     self.current_block_lines.clear();
-                    self.get_block_header_at(cb_off).n_lines = 0;
+                    let hdr = self.get_block_header_at(cb_off);
+                    hdr.n_lines = 0;
+                    hdr.flags |= types::BLOCK_REF_DEF_ONLY;
                 } else {
                     // Remove first lines_consumed lines
                     let total = self.current_block_lines.len();

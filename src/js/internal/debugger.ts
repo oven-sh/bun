@@ -243,7 +243,15 @@ class Debugger {
         websocket: this.#websocket,
       });
 
-      this.#url!.hostname = server.hostname;
+      // Bun.serve walks every getaddrinfo result for `hostname`, so if [::1]:port is held it silently
+      // binds 127.0.0.1:port. server.hostname echoes the requested name; print the bound address instead
+      // so the banner URL routes to this process rather than whoever holds the other loopback family.
+      const addr = (server as { address?: { address?: string; family?: string } }).address;
+      if (addr && typeof addr === "object" && typeof addr.address === "string" && addr.address) {
+        this.#url!.hostname = addr.family === "IPv6" ? `[${addr.address}]` : addr.address;
+      } else {
+        this.#url!.hostname = server.hostname;
+      }
       this.#url!.port = `${server.port}`;
       return;
     }

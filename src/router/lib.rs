@@ -708,8 +708,7 @@ impl<'a> RouteLoader<'a> {
                 index_id = Some(i);
             }
 
-            let (filepath, match_name) =
-                (route.abs_path.as_bytes(), route.match_name.as_bytes());
+            let (filepath, match_name) = (route.abs_path.as_bytes(), route.match_name.as_bytes());
             route_list.push(RouteIndex {
                 name: route.name,
                 filepath,
@@ -1033,44 +1032,43 @@ impl Route {
             // DirnameStore (process-lifetime arena → `&'static`), so the
             // post-if bindings are 'static and the route_file_buf borrow is
             // dropped before the abs-path block below needs it mutably.
-            let (name, match_name): (&'static [u8], &'static [u8]) =
-                if !name.is_empty() {
-                    validation_result = match Pattern::validate(&name[1..], log) {
-                        Some(v) => v,
-                        None => return None,
-                    };
-
-                    let mut name_i: usize = 0;
-                    while !has_uppercase && name_i < public_path.len() {
-                        has_uppercase = public_path[name_i] >= b'A' && public_path[name_i] <= b'Z';
-                        name_i += 1;
-                    }
-
-                    let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
-                    let name_len = name.len();
-
-                    // NOTE: DirnameStore::append returns `&'static [u8]` (process-
-                    // lifetime arena), so rebinding here drops the borrow on
-                    // `route_file_buf` and avoids needing lifetime transmutes
-                    // below.
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
-                    let name: &'static [u8] = &public_path[name_offset..][0..name_len];
-                    let match_name: &'static [u8] = if has_uppercase {
-                        dirname_store
-                            .append_lower_case(&name[1..])
-                            .expect("unreachable")
-                    } else {
-                        &name[1..]
-                    };
-
-                    debug_assert!(match_name[0] != b'/');
-                    debug_assert!(name[0] == b'/');
-                    (name, match_name)
-                } else {
-                    (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
+            let (name, match_name): (&'static [u8], &'static [u8]) = if !name.is_empty() {
+                validation_result = match Pattern::validate(&name[1..], log) {
+                    Some(v) => v,
+                    None => return None,
                 };
+
+                let mut name_i: usize = 0;
+                while !has_uppercase && name_i < public_path.len() {
+                    has_uppercase = public_path[name_i] >= b'A' && public_path[name_i] <= b'Z';
+                    name_i += 1;
+                }
+
+                let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
+                let name_len = name.len();
+
+                // NOTE: DirnameStore::append returns `&'static [u8]` (process-
+                // lifetime arena), so rebinding here drops the borrow on
+                // `route_file_buf` and avoids needing lifetime transmutes
+                // below.
+                let dirname_store = FileSystem::instance().dirname_store();
+                let public_path: &'static [u8] =
+                    dirname_store.append(public_path).expect("unreachable");
+                let name: &'static [u8] = &public_path[name_offset..][0..name_len];
+                let match_name: &'static [u8] = if has_uppercase {
+                    dirname_store
+                        .append_lower_case(&name[1..])
+                        .expect("unreachable")
+                } else {
+                    &name[1..]
+                };
+
+                debug_assert!(match_name[0] != b'/');
+                debug_assert!(name[0] == b'/');
+                (name, match_name)
+            } else {
+                (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
+            };
 
             if abs_path_str.is_empty() {
                 // The reads of `cache().fd` and the `set_abs_path` write below

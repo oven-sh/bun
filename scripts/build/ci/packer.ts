@@ -1,22 +1,138 @@
-// Packer template generation for Windows CI images.
+// Packer template generation for CI images (both platforms).
 //
-// Windows images are baked with Packer's azure-arm builder (VM create,
-// WinRM provisioning, sysprep, gallery capture). The template is generated
-// as JSON at bake time from the image's spec entry — the base image, bake VM
-// size, disk, gallery destination, and the 27 replication regions are all
-// facts on WindowsImage — so there is no checked-in .pkr.hcl to drift.
+// Every CI image is baked by Packer, and its template is generated as JSON
+// at bake time from the image's spec entry — base image, bake VM shape,
+// destination — so there is no checked-in .pkr.hcl to drift. Facts come
+// from the spec; the provisioner SEQUENCE is code and lives here.
 //
-// The provisioner sequence is code, and lives here:
-//   1. download the pinned node, upload the bootstrap sources
-//   2. run `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`
-//   3. upload agent.mjs and install it as a service
-//   4. reboot (VS Build Tools / Windows Update leftovers), then sysprep last
+// Linux (amazon-ebs): resolve the FLOATING base AMI glob (newest match),
+// spot pricing, SSH shell provisioning: fetch the pinned node, run
+// `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`, install the
+// agent service, then Packer stops the VM and registers the AMI. Packer
+// owns the temp keypair / security group / instance lifecycle, including
+// cleanup on failure.
+//
+// Windows (azure-arm): VM create, WinRM provisioning: fetch node, run
+// bootstrap.ts, install the agent service, reboot, then sysprep last, and
+// publish to the Compute Gallery.
 //
 // Packer accepts JSON templates natively (packer build template.pkr.json).
 
 import { nodejsDownload, nodejsFolderName } from "./artifacts.ts";
 import { windowsAgentEntry } from "./components/paths.ts";
-import type { WindowsImage } from "./types.ts";
+import { LINUX_REMOTE_ROOT, linuxBootstrapCommand } from "./delivery.ts";
+import { packer } from "./spec.ts";
+import type { LinuxImage, WindowsImage } from "./types.ts";
+
+export type LinuxPackerTemplateInput = {
+  image: LinuxImage;
+  /** Exact AMI name (from naming.ts): `${key}-${hash}`. */
+  imageName: string;
+  /** Git ref the bootstrap clones for the prefetch caches. */
+  repoRef: string;
+  /** Local path of the directory holding bootstrap.ts + its modules
+   * (uploaded to the VM under the delivery root). */
+  bootstrapDir: string;
+  /** Local path of the esbuild-bundled agent.mjs (uploaded to the VM). */
+  agentPath: string;
+  aws: {
+    /** Region to bake in (a runtime/deployment fact, from EC2_REGION). */
+    region: string;
+  };
+};
+
+/**
+ * The complete Packer JSON template for one Linux image bake (amazon-ebs).
+ * The base AMI is resolved by Packer at bake time from the spec's owner +
+ * name glob (source_ami_filter, newest wins) — the same FLOATING lookup the
+ * spec describes, done by Packer instead of by hand.
+ */
+export function linuxPackerTemplate(input: LinuxPackerTemplateInput): Record<string, unknown> {
+  const { image, imageName, repoRef, bootstrapDir, agentPath, aws } = input;
+  const { base, bake } = image;
+
+  const source: Record<string, unknown> = {
+    region: aws.region,
+    // Resolve the newest AMI matching the spec's glob from its owner — the
+    // FLOATING base image, exactly as the spec describes it.
+    source_ami_filter: {
+      filters: {
+        name: base.nameGlob,
+        "root-device-type": "ebs",
+        "virtualization-type": "hvm",
+      },
+      owners: [base.owner],
+      most_recent: true,
+    },
+    ami_name: imageName,
+    // Spot for the bake VM (a fraction of on-demand). "auto" tracks the
+    // current price; the bake tolerates interruption by simply failing the
+    // step, which the next push retries.
+    spot_price: "auto",
+    instance_type: bake.instanceType,
+    ssh_username: base.sshUsername,
+    // Root volume sized for the bake (toolchains, caches); the AMI keeps it.
+    launch_block_device_mappings: [
+      {
+        device_name: "/dev/xvda",
+        volume_size: bake.diskSizeGb,
+        volume_type: "gp3",
+        delete_on_termination: true,
+      },
+    ],
+    ami_description: `Bun CI image ${imageName} (baked from scripts/build/ci)`,
+    tags: {
+      Name: imageName,
+      os: "linux",
+      arch: image.arch,
+      distro: image.distro,
+      "image-name": imageName,
+    },
+    // Robobun launches runners from this AMI by name.
+    snapshot_tags: { Name: imageName },
+  };
+
+  return {
+    packer: {
+      required_plugins: {
+        amazon: {
+          source: "github.com/hashicorp/amazon",
+          version: `>= ${packer.amazonPluginVersion}`,
+        },
+      },
+    },
+    source: { "amazon-ebs": { linux: source } },
+    build: {
+      sources: ["source.amazon-ebs.linux"],
+      provisioner: hclProvisioners([
+        // Step 1: upload the bootstrap sources into the delivery root.
+        {
+          type: "file",
+          source: `${bootstrapDir}/`,
+          destination: LINUX_REMOTE_ROOT,
+        },
+        // Step 2: fetch the pinned node and run bootstrap.ts. The delivery
+        // shim carries no facts — it reads them from the image entry.
+        {
+          type: "shell",
+          inline: [linuxBootstrapCommand(image, { ci: true, repoRef })],
+        },
+        // Step 3: upload the bundled agent and install it as a service so
+        // the runner registers on boot (agent.mjs `install` registers itself
+        // and reads its config from EC2 tags).
+        {
+          type: "file",
+          source: agentPath,
+          destination: `${LINUX_REMOTE_ROOT}/agent.mjs`,
+        },
+        {
+          type: "shell",
+          inline: [`sudo -n -- node ${LINUX_REMOTE_ROOT}/agent.mjs install`],
+        },
+      ]),
+    },
+  };
+}
 
 export type PackerTemplateInput = {
   image: WindowsImage;
@@ -123,7 +239,7 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
       required_plugins: {
         azure: {
           source: "github.com/hashicorp/azure",
-          version: `= ${gallery.packerAzurePluginVersion}`,
+          version: `= ${packer.azurePluginVersion}`,
         },
       },
     },

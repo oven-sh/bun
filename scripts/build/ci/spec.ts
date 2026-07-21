@@ -53,6 +53,15 @@
  */
 export const epoch = 1;
 
+
+/** Packer, which bakes every CI image (Linux via amazon-ebs, Windows via
+ * azure-arm). One tool, so its pins are shared facts. Bumping these does
+ * not change what is ON any image, so hashes are unaffected. */
+export const packer = {
+  version: "1.15.0",
+  amazonPluginVersion: "1.3.9",
+  azurePluginVersion: "2.5.0",
+} as const;
 import type {
   AgeSpec,
   Arch,
@@ -392,18 +401,26 @@ const alpinePackages = (arch: Arch): LinuxPackages => ({
 });
 
 const debianAmi = (arch: Arch): LinuxImageBase["base"] => ({
-  ownerAlias: "amazon",
+  owner: "amazon",
   nameGlob: `debian-13-${arch === "aarch64" ? "arm64" : "amd64"}-*`,
+  sshUsername: "admin",
 });
 
 const ubuntuAmi = (release: string, arch: Arch): LinuxImageBase["base"] => ({
-  ownerAlias: "099720109477",
+  // Canonical's AWS account id.
+  owner: "099720109477",
   nameGlob: `ubuntu/images/hvm-ssd*/ubuntu-*-${release}-${arch === "aarch64" ? "arm64" : "amd64"}-server-*`,
+  sshUsername: "ubuntu",
 });
 
 const alpineAmi = (arch: Arch): LinuxImageBase["base"] => ({
-  ownerAlias: "538276064493",
+  // Alpine's official AWS account id.
+  owner: "538276064493",
   nameGlob: `alpine-${alpineRelease}.*-${arch === "aarch64" ? "aarch64" : "x86_64"}-uefi-cloudinit-*`,
+  // The cloudinit alpine AMIs are logged into as root (the existing bake
+  // has always connected as root; alpine's stock cloud-init user is not
+  // present on this AMI family).
+  sshUsername: "root",
 });
 
 const linuxBake = (arch: Arch): LinuxImageBase["bake"] => ({
@@ -460,8 +477,6 @@ const azureGalleryCommon: WindowsImageBase["gallery"] = {
   resourceGroup: "BUN-CI",
   imageVersion: "1.0.0",
   storageAccountType: "Premium_LRS",
-  packerVersion: "1.15.0",
-  packerAzurePluginVersion: "2.5.0",
   replicationRegions: [
     null,
     "australiaeast",
@@ -608,6 +623,11 @@ const linuxBuildHostComponents = [
 ] as const;
 
 /** The install sequence every windows image shares. */
+/** The install sequence every windows image shares. visual-studio
+ * precedes rust and pdb-addr2line: cargo (and rustc's msvc target) link
+ * through the MSVC linker and Windows SDK libraries that Visual Studio
+ * Build Tools installs — pdb-addr2line's `cargo install` cannot link
+ * without them. */
 const windowsCommonComponents = [
   "optimize-windows",
   "scoop",
@@ -617,9 +637,9 @@ const windowsCommonComponents = [
   "bun",
   "curl-h3",
   "ccache",
+  "visual-studio",
   "rust",
   "pdb-addr2line",
-  "visual-studio",
   "intel-sde",
   "buildkite-agent",
   "prefetch",

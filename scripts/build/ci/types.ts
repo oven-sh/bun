@@ -152,7 +152,11 @@ export type LinuxImageBase = {
   readonly abi: LinuxAbi;
   readonly cloud: "aws";
   /** FLOATING: the newest AMI matching this glob at bake time. */
-  readonly base: { readonly ownerAlias: string; readonly nameGlob: string };
+  /** The FLOATING base AMI: newest AMI matching nameGlob owned by owner (an
+   * AWS owner alias like "amazon" or an owner account ID). sshUsername is
+   * the login the base image expects — a per-distro fact, stated here rather
+   * than inferred from the AMI name. */
+  readonly base: { readonly owner: string; readonly nameGlob: string; readonly sshUsername: string };
   /** The bake VM only runs bootstrap; runner instance types live in
    * ci.mjs. */
   readonly bake: { readonly instanceType: string; readonly diskSizeGb: number };
@@ -296,8 +300,6 @@ export type WindowsImageBase = {
     readonly resourceGroup: string;
     readonly imageVersion: string;
     readonly storageAccountType: string;
-    readonly packerVersion: string;
-    readonly packerAzurePluginVersion: string;
     readonly replicationRegions: readonly (string | null)[];
   };
   readonly nodejs: NodejsSpec;

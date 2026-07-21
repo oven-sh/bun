@@ -456,7 +456,10 @@ it("deeply nested Proxy chain does not crash", () => {
   expect(exitCode).toBe(0);
 });
 
-it("deeply nested non-cyclic jsx throws RangeError, not segfault", () => {
+it("deeply nested non-cyclic jsx does not segfault", () => {
+  // Stack size and release-build frame size vary by platform, so a fixed depth
+  // may or may not overflow: accept either a clean RangeError or successful
+  // completion. The regression was SIGSEGV.
   const { exitCode, stdout, signalCode } = Bun.spawnSync({
     cmd: [
       bunExe(),
@@ -465,7 +468,7 @@ it("deeply nested non-cyclic jsx throws RangeError, not segfault", () => {
         let el = { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null };
         for (let i = 0; i < 20000; i++)
           el = { $$typeof: Symbol.for("react.element"), type: "div", props: { children: el }, key: null };
-        try { Bun.inspect(el); console.log("no throw"); }
+        try { Bun.inspect(el); console.log("ok"); }
         catch (e) { console.log(e.constructor.name); }
       `,
     ],
@@ -473,7 +476,7 @@ it("deeply nested non-cyclic jsx throws RangeError, not segfault", () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(stdout.toString().trim()).toBe("RangeError");
+  expect(["RangeError", "ok"]).toContain(stdout.toString().trim());
   expect(signalCode).toBeFalsy();
   expect(exitCode).toBe(0);
 });

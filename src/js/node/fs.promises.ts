@@ -1558,9 +1558,9 @@ function throwEBADFIfNecessary(fn: string, fd) {
     );
   }
   if (fd === -1) {
-    const err: any = new Error("Bad file descriptor");
+    // eslint-disable-next-line no-restricted-syntax
+    const err: any = new Error("file closed");
     err.code = "EBADF";
-    err.name = "SystemError";
     err.syscall = fn;
     throw err;
   }

@@ -734,11 +734,7 @@ ecp_nistz256_ord_sqr_mont_adx  [ADX, BMI2]
 ecp_nistz256_select_w5_avx2    [AVX, AVX2]
 ecp_nistz256_select_w7_avx2    [AVX, AVX2]
 ecp_nistz256_sqr_mont_adx      [ADX, BMI2]
-# rsaz_1024_gather5_avx2 is the last global in rsaz-avx2-win.asm; when lld-link
-# lays aesni-gcm-x86_64-win.asm right after it, the file-initial local label
-# _aesni_ctr32_ghash_6x (no PUBLIC record) bleeds into this symbol's PDB range.
-# Both are OPENSSL_ia32cap_P-gated; ceiling widened to cover the bleed.
-rsaz_1024_gather5_avx2         [AES, AVX, AVX2, MOVBE, PCLMULQDQ]
+rsaz_1024_gather5_avx2         [AVX, AVX2]
 rsaz_1024_mul_avx2             [AVX, AVX2]
 rsaz_1024_scatter5_avx2        [AVX, AVX2]
 rsaz_1024_sqr_avx2             [AVX, AVX2]

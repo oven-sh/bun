@@ -167,8 +167,8 @@ const buildPlatforms = [
   // as macOS above. There is no native Windows build lane: the Windows fleet
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
-  // release ships. Both stay non-LTO: arm64 has no -lto WebKit prebuilt, and
-  // x64 baseline has no -baseline-lto one (the -lto tarball is haswell).
+  // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
+  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
@@ -395,8 +395,9 @@ function getCppAgent(platform, options) {
  */
 function getLinkBunAgent(platform, options) {
   return getEc2Agent(buildHostPlatform, options, {
-    // Full LTO with libbun_rust.a as bitcode peaks >31 GiB on aarch64; xlarge OOMs.
-    // ASAN's -Zbuild-std cargo pass doubles the IR, so size that lane for cores.
+    // rust-and-link runs cargo (~200 crates) then ThinLTO-links the full graph
+    // on one box; r8g.xlarge is too tight. ASAN's -Zbuild-std cargo pass
+    // doubles the IR, so size that lane for cores.
     instanceType: platform.profile === "asan" ? "r8g.4xlarge" : "r8g.2xlarge",
   });
 }

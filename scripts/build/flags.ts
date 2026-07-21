@@ -485,14 +485,13 @@ export const globalFlags: Flag[] = [
     desc: "Thin link-time optimization (clang-cl)",
   },
   {
-    // Darwin only. On COFF (windows), WPD drops vtable symbols that
-    // associative COMDAT sections still name as their parent and the LTO
-    // codegen aborts ("Associative COMDAT symbol '??_7...' does not exist").
-    // On ELF (linux), index-only WPD with the WebKit -lto prebuilt mixed in
-    // devirtualizes JSC typed-array element reads wrong (Uint8Array values
-    // come back sign-extended as if Int8Array); disabled until root-caused.
+    // Unix only (not windows): on COFF, whole-program vtable opt drops
+    // vtable symbols that associative COMDAT sections still name as their
+    // parent and the LTO codegen aborts ("Associative COMDAT symbol
+    // '??_7...' does not exist"). The WebKit windows-amd64-lto prebuilt is
+    // built without it for the same reason.
     flag: ["-fforce-emit-vtables", "-fwhole-program-vtables"],
-    when: c => c.darwin && c.lto,
+    when: c => c.unix && c.lto,
     lang: "cxx",
     desc: "Enable devirtualization across whole program (LTO only)",
   },
@@ -841,14 +840,14 @@ export const linkerFlags: Flag[] = [
     // only fires for classes explicitly annotated [[clang::lto_visibility]],
     // i.e. never. A static executable that only dlopens C-ABI addons (NAPI)
     // satisfies the whole-program assumption. ld64.lld has no named option
-    // for this; -mllvm reaches the underlying cl::opt directly. Darwin only
-    // (see the compile-side -fwhole-program-vtables entry for why not linux).
+    // for this; -mllvm reaches the underlying cl::opt directly. Darwin only:
+    // linux is on full LTO where this was never enabled.
     flag: ["-Wl,-mllvm,-whole-program-visibility"],
     when: c => c.darwin && c.lto,
     desc: "Enable index-based whole-program devirtualization at link time",
   },
   {
-    flag: c => (c.darwin ? ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"] : ["-flto=thin"]),
+    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
     when: c => c.unix && c.lto,
     desc: "LTO at link time (matches compile-side -flto=thin)",
   },

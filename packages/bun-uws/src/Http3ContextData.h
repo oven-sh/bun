@@ -14,6 +14,9 @@ struct Http3ContextData {
         Http3Request *httpRequest;
     };
     HttpRouter<RouterData> router;
+    /* Gate for the auto 100-continue; mirrors HttpContextData. UINT64_MAX =
+     * unlimited; 0 is a real limit. */
+    uint64_t maxRequestBodySize = UINT64_MAX;
 };
 
 }

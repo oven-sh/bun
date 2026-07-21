@@ -52,6 +52,10 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
+void uws_h3_app_set_max_request_body_size(uws_h3_app_t* app, uint64_t max_request_body_size)
+{
+    ((H3App*)app)->setMaxRequestBodySize(max_request_body_size);
+}
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
     struct us_bun_socket_context_options_t options)

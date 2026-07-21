@@ -112,12 +112,17 @@ Callsites are `bun+0xRVA`; resolve any of them by hand with
 These fell out of proving the tool. They are starting points for you to
 confirm or dismiss — the instrument reported them, nobody triaged them:
 
-- `NtDeviceIoControlFile` faulted (`STATUS_INSUFFICIENT_RESOURCES`) at libuv's
-  `uv__msafd_poll` (socket poll setup): bun's event loop **hangs indefinitely**
-  (confirmed 3/3 standalone, still hung at 80s). Hang stacks show the main
-  thread parked in `uv__poll` (IOCP wait) under `uv_run` <- `us_loop_run` <-
-  `WindowsLoop::tick_with_timeout` — waiting for a completion that never
-  arrives. Reproduce from the sweep report's schedule line.
+- Socket poll setup: fault `NtCreateFile` at libuv's `uv__msafd_poll` (the
+  AFD-device open for fast-poll) during `http-serve-and-fetch`, or
+  `NtDeviceIoControlFile` in the UDP setup path during `udp-roundtrip`: bun
+  **hangs indefinitely** (confirmed 3/3 standalone, still hung at 60s). The
+  stack digest shows the main thread parked in `NtRemoveIoCompletionEx` <-
+  `GetQueuedCompletionStatusEx` <- `uv__poll` <- `uv_run` <- `us_loop_run`
+  — the event loop waiting for a completion that never comes because the
+  setup failure was swallowed. The status differential is the lead: at that
+  same callsite `STATUS_ACCESS_DENIED` / `STATUS_SHARING_VIOLATION` finish at
+  ~29.6s (some timeout path covers them) while `STATUS_OBJECT_NAME_NOT_FOUND`
+  hangs forever — an error path exists but doesn't cover every status.
 - `mangle:short` on a file read: kernel read 100 bytes, we reported 50, and
   `readFileSync` returned 50 with exit 0 and no error — the short count taken
   as final (silent truncation). Whether `readFile` should loop on a short read

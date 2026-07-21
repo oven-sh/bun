@@ -192,6 +192,7 @@ pub struct Switch {
 ///    import defaultItem, {item1, item2} from 'path'
 ///    import defaultItem, * as ns from 'path'
 ///    import defer * as ns from 'path'
+///    import source defaultItem from 'path'
 ///
 /// Many parts are optional and can be combined in different ways. The only
 /// restriction is that you cannot have both a clause and a star namespace.
@@ -208,10 +209,11 @@ pub struct Import {
     pub star_name_loc: crate::Loc,     // = Loc::EMPTY
     pub import_record_index: u32,
     pub is_single_line: bool, // = false
-    /// "import defer * as ns from 'path'" — the TC39 Deferred Module Evaluation
-    /// proposal. Only valid with a namespace import (`star_name_loc` is set,
-    /// `default_name`/`items` are empty).
-    pub phase_defer: bool, // = false
+    /// TC39 import phase. `Defer` is only valid with a namespace import
+    /// (`star_name_loc` is set, `default_name`/`items` are empty); `Source`
+    /// is only valid with a default binding (`default_name` is set,
+    /// `star_name_loc` is empty, `items` are empty).
+    pub phase: crate::ImportPhase, // = Evaluation
 }
 
 impl Default for Import {
@@ -223,7 +225,7 @@ impl Default for Import {
             star_name_loc: crate::Loc::EMPTY,
             import_record_index: u32::MAX,
             is_single_line: false,
-            phase_defer: false,
+            phase: crate::ImportPhase::Evaluation,
         }
     }
 }

@@ -252,6 +252,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
                     //   import * as X from 'mod'   -> var X = await import('mod')
                     //   import 'mod'              -> await import('mod')
+                    //   import source X from 'mod' -> var X = await import.source('mod')
                     let path_str: &'static [u8] = self.import_records.items()
                         [import_data.import_record_index as usize]
                         .path
@@ -268,6 +269,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             expr: str_expr,
                             options: Expr::EMPTY,
                             import_record_index: u32::MAX,
+                            phase: import_data.phase,
                         },
                         stmt.loc,
                     );
@@ -276,7 +278,19 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
                     let import_items: &[bun_ast::ClauseItem] = import_data.items.slice();
 
-                    if !import_data.star_name_loc.is_empty() {
+                    // Bindings that receive the awaited import expression
+                    // as-is: a namespace import, or a source phase import
+                    // (awaiting the lowered `import.source()` already yields
+                    // the module source — there is no `.default` unwrap).
+                    let direct_binding = if import_data.phase == bun_ast::ImportPhase::Source {
+                        import_data.default_name.map(|name| name.ref_)
+                    } else if !import_data.star_name_loc.is_empty() {
+                        Some(import_data.namespace_ref)
+                    } else {
+                        None
+                    };
+
+                    if let Some(binding_ref) = direct_binding {
                         // import * as X from 'mod' -> var X = await import('mod')
                         hoisted_stmts.push(self.s(
                             S::Local {
@@ -285,9 +299,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                     bump,
                                     Binding::alloc(
                                         bump,
-                                        B::Identifier {
-                                            r#ref: import_data.namespace_ref,
-                                        },
+                                        B::Identifier { r#ref: binding_ref },
                                         stmt.loc,
                                     ),
                                 ),
@@ -297,7 +309,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         ));
                         let left = self.new_expr(
                             E::Identifier {
-                                ref_: import_data.namespace_ref,
+                                ref_: binding_ref,
                                 ..Default::default()
                             },
                             stmt.loc,

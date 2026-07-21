@@ -43,6 +43,11 @@
 
 #include "BunProcess.h"
 
+#include <JavaScriptCore/JSWebAssemblyCompileError.h>
+#include <JavaScriptCore/JSWebAssemblyModule.h>
+#include <JavaScriptCore/WasmCapabilities.h>
+#include <JavaScriptCore/WasmModule.h>
+
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
@@ -964,12 +969,31 @@ static JSValue fetchESMSourceCode(
 
     bool wasModuleMock = false;
 
+    // TC39 source phase imports are lowered by the printer onto
+    // `with { type: "webassembly" }`. Neither builtin modules nor virtual
+    // modules (mock.module / build.module, whose loader whitelist cannot
+    // produce wasm bytes) have a module source, so reject those requests
+    // here rather than silently serving the evaluation-phase module. The
+    // transpile path produces the same error for file-backed non-wasm
+    // modules.
+    const bool isSourcePhase = typeAttribute && !typeAttribute->isEmpty()
+        && typeAttribute->toWTFString(BunString::ZeroCopy) == "webassembly"_s;
+    const auto rejectSourcePhase = [&]() -> JSValue {
+        auto message = makeString(
+            "Source phase import of \""_s,
+            specifier->toWTFString(BunString::ZeroCopy),
+            "\" failed: only WebAssembly modules have a module source"_s);
+        RELEASE_AND_RETURN(scope, reject(createTypeError(globalObject, message)));
+    };
+
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
         JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
+            if (isSourcePhase) [[unlikely]]
+                return rejectSourcePhase();
             RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
         }
     }
@@ -981,6 +1005,9 @@ static JSValue fetchESMSourceCode(
             (void)scope.tryClearException();
             RELEASE_AND_RETURN(scope, reject(exception));
         }
+
+        if (isSourcePhase) [[unlikely]]
+            return rejectSourcePhase();
 
         // This can happen if it's a `bun build --compile`'d CommonJS file
         if (res->result.value.isCommonJSModule) {
@@ -1050,6 +1077,8 @@ static JSValue fetchESMSourceCode(
         JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
+            if (isSourcePhase) [[unlikely]]
+                return rejectSourcePhase();
             RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
         }
     }
@@ -1205,6 +1234,36 @@ JSValue fetchESMSourceCodeAsync(
 {
     return fetchESMSourceCode<true>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
 }
+}
+
+// Synchronously compile WebAssembly bytes into a `WebAssembly.Module` — the
+// module source object a TC39 source phase import (`import source` /
+// `import.source()`) evaluates to. Called from the Rust module loader's
+// `.wasm` source-phase path; equivalent to `new WebAssembly.Module(bytes)`
+// without the copy into a JS ArrayBuffer first.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__createJSWebAssemblyModuleFromBytes(Zig::GlobalObject* globalObject, const uint8_t* bytes, size_t length)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!JSC::Wasm::isSupported()) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "WebAssembly is not supported in this environment"_s);
+        return {};
+    }
+
+    WTF::Vector<uint8_t> buffer;
+    if (!buffer.tryAppend(std::span { bytes, length })) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    auto result = JSC::Wasm::Module::validateSync(vm, WTF::move(buffer));
+    if (!result.has_value()) [[unlikely]] {
+        throwException(globalObject, scope, JSC::createJSWebAssemblyCompileError(globalObject, vm, result.error()));
+        return {};
+    }
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSWebAssemblyModule::create(vm, globalObject->webAssemblyModuleStructure(), WTF::move(result.value()))));
 }
 
 using namespace Bun;

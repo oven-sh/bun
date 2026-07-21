@@ -3234,7 +3234,7 @@ pub use ast_result::{
     TopLevelSymbolToParts, TsEnumsMap,
 };
 pub use import_record::{
-    Flags as ImportRecordFlags, ImportRecord, PrintMode as ImportRecordPrintMode,
+    Flags as ImportRecordFlags, ImportPhase, ImportRecord, PrintMode as ImportRecordPrintMode,
     Tag as ImportRecordTag,
 };
 pub use loader::{Loader, LoaderHashTable, LoaderOptional, SideEffects};

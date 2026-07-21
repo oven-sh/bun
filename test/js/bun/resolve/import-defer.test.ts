@@ -366,6 +366,54 @@ describe.concurrent("import defer", () => {
       expect(stderr.toLowerCase()).toContain("error");
     });
 
+    test("import defer is not over-rejected by a bunfig [macros] remap on the specifier", async () => {
+      // bunfig `[macros]` remapping is only consumed for default and
+      // named bindings, never star bindings, so `import defer * as ns`
+      // of a package with a `[macros]` entry must keep working.
+      const { stdout, stderr, exitCode } = await run({
+        "bunfig.toml": `[macros]\n"pkg" = { "debounce" = "./macro-impl.ts" }\n`,
+        "macro-impl.ts": `export default () => "x";`,
+        "node_modules/pkg/package.json": `{"name":"pkg","main":"index.js"}`,
+        "node_modules/pkg/index.js": `exports.a = 1;`,
+        "main.js": `
+          import defer * as ns from "pkg";
+          console.log("a:", ns.a);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout.split("\n").filter(Boolean)).toEqual(["a: 1"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      ["with { type: 'macro' }", `import defer * as ns from "./m.js" with { type: "macro" };`],
+      ["macro: prefix", `import defer * as ns from "macro:./m.js";`],
+    ])("import defer combined with a macro import (%s) is an error", async (_label, code) => {
+      // A macro import is a compile-time binding; there is no module
+      // evaluation to defer. Reject with a clear error instead of
+      // silently registering a namespace macro ref.
+      const { stderr, exitCode } = await run({
+        "main.js": code + `\nconsole.log(ns);`,
+        "m.js": `export const x = 1;`,
+      });
+      expect(stderr).toContain('"import defer" cannot be combined with a macro import');
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("import defer from 'bun:bundle' is an error", async () => {
+      // The `bun:bundle` fast path drops the statement before the phase is
+      // consulted; reject rather than leave the namespace binding
+      // undeclared.
+      const { stderr, exitCode } = await run({
+        "main.js": `
+          import defer * as ns from "bun:bundle";
+          console.log(ns);
+        `,
+      });
+      expect(stderr).toContain('"import defer" cannot be used with "bun:bundle"');
+      expect(exitCode).not.toBe(0);
+    });
+
     test("'export import defer * as ns' is a syntax error", async () => {
       // `export import` in TypeScript is the import-equals form
       // (`export import X = ...`); `export import defer * as` matches no

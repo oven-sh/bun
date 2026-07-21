@@ -2714,6 +2714,7 @@ impl Data {
                     expr: el.expr.deep_clone_no_detach(bump)?,
                     options: el.options.deep_clone_no_detach(bump)?,
                     import_record_index: el.import_record_index,
+                    phase: el.phase,
                 });
                 Ok(Data::EImport(StoreRef::from_bump(item)))
             }

@@ -1245,6 +1245,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // TODO: import assertions
                     // path.assertions
                 );
+                // `export * from` requests the module at evaluation phase —
+                // reject it if this file also imports the same specifier at
+                // source phase (see check_source_phase_conflict).
+                p.check_source_phase_conflict(import_record_index)?;
 
                 if path.is_macro {
                     p.log().add_error(
@@ -1319,6 +1323,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
+                    // `export { ... } from` requests the module at evaluation
+                    // phase — reject it if this file also imports the same
+                    // specifier at source phase (see
+                    // check_source_phase_conflict).
+                    p.check_source_phase_conflict(import_record_index)?;
                     let path_name = fs::PathName::init(parsed_path.text);
                     let namespace_ref = {
                         use std::io::Write as _;
@@ -1544,7 +1553,77 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         namespace_ref: p.store_name_in_ref(p.lexer.identifier),
                         star_name_loc: p.lexer.loc(),
                         import_record_index: u32::MAX,
-                        phase_defer: true,
+                        phase: bun_ast::ImportPhase::Defer,
+                        ..Default::default()
+                    };
+                    p.lexer.expect(T::TIdentifier)?;
+                    p.lexer.expect_contextual_keyword(b"from")?;
+
+                    let path = p.parse_path()?;
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return p.process_import_statement(stmt, path, loc, false);
+                }
+
+                // "import source mod from 'path'"
+                //
+                // https://tc39.es/proposal-source-phase-imports/
+                //
+                // `source` is only a phase keyword when followed by an
+                // ImportedBinding that is itself followed by `from`. In every
+                // other position (`import source from 'x'`,
+                // `import source, {x} from 'y'`) it is an ordinary default
+                // binding named `source`. The only ambiguous case is
+                // `import source from ...`: one more token of lookahead
+                // decides between a default import named `source`
+                // (`import source from 'x'`) and a source phase import whose
+                // binding is named `from` (`import source from from 'x'`).
+                // Compare the raw token so `sourc\u0065` is not treated as
+                // the phase keyword.
+                //
+                // `opts.is_export` rules out `export import source ...`
+                // (only reachable via the TypeScript `export import foo = bar`
+                // re-entry) so it falls through to the import-equals handler
+                // and errors there.
+                if default_name_raw == b"source"
+                    && p.lexer.token == T::TIdentifier
+                    && !opts.is_export
+                    && (!p.lexer.is_contextual_keyword(b"from") || {
+                        let snapshot = p.lexer.snapshot();
+                        p.lexer.next()?;
+                        let binding_is_named_from = p.lexer.is_contextual_keyword(b"from");
+                        p.lexer.restore(&snapshot);
+                        binding_is_named_from
+                    })
+                {
+                    // Same scope restriction as `import defaultItem from 'path'`:
+                    // ESM import declarations are only valid at module scope
+                    // (or inside a TypeScript `declare namespace`).
+                    if !opts.is_module_scope
+                        && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                    {
+                        p.lexer.unexpected()?;
+                        return Err(err!("SyntaxError"));
+                    }
+                    // The bundler has no representation for a module source:
+                    // inlining the record would bind the asset path string
+                    // instead of a `WebAssembly.Module`. Reject it rather
+                    // than silently produce the wrong value.
+                    if p.options.bundle {
+                        p.log().add_range_error(
+                            Some(p.source),
+                            js_lexer::range_of_identifier(p.source, loc),
+                            b"\"import source\" is not supported when bundling",
+                        );
+                        return Err(err!("SyntaxError"));
+                    }
+                    stmt = S::Import {
+                        namespace_ref: Ref::NONE,
+                        import_record_index: u32::MAX,
+                        default_name: Some(LocRef {
+                            loc: p.lexer.loc(),
+                            ref_: p.store_name_in_ref(p.lexer.identifier)?,
+                        }),
+                        phase: bun_ast::ImportPhase::Source,
                         ..Default::default()
                     };
                     p.lexer.expect(T::TIdentifier)?;

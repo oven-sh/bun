@@ -215,9 +215,10 @@ pub fn strip(elf: &mut Vec<u8>) -> Result<bool, SignError> {
 /// Inject a 4KB placeholder .codesign section.
 /// Returns (new_elf_bytes, cs_section_file_offset).
 fn inject_codesign_section(elf: &[u8]) -> Result<(Vec<u8>, u64), SignError> {
-    let (e_shoff, e_shnum, e_shstrndx) = parse_header(elf)?;
+    let (e_shoff, e_shnum, e_shstrndx, e_shentsize) = parse_header(elf)?;
+    let entsz = e_shentsize as usize;
 
-    let shstr_e = e_shoff as usize + e_shstrndx as usize * 64;
+    let shstr_e = e_shoff as usize + e_shstrndx as usize * entsz;
     let shstr_off = read_u64(elf, shstr_e + 24);
     let shstr_sz = read_u64(elf, shstr_e + 32);
     if shstr_off + shstr_sz > elf.len() as u64 {
@@ -225,12 +226,12 @@ fn inject_codesign_section(elf: &[u8]) -> Result<(Vec<u8>, u64), SignError> {
     }
 
     // cs section offset: max of all existing section ends, rounded up to PAGE
-    let mut cur_end = e_shoff + e_shnum as u64 * 64;
+    let mut cur_end = e_shoff + e_shnum as u64 * entsz as u64;
     for i in 0..e_shnum as usize {
-        let e = e_shoff as usize + i * 64;
-        let sh_type = read_u32(elf, e + 4);
-        let off = read_u64(elf, e + 24);
-        let sz = if sh_type == 8 { 0 } else { read_u64(elf, e + 32) }; // SHT_NOBITS
+        let entry = sh_entry(elf, e_shoff as usize, i, entsz);
+        let sh_type = read_u32(entry, 4);
+        let off = read_u64(entry, 24);
+        let sz = if sh_type == 8 { 0 } else { read_u64(entry, 32) }; // SHT_NOBITS
         if off + sz > cur_end {
             cur_end = off + sz;
         }
@@ -246,7 +247,7 @@ fn inject_codesign_section(elf: &[u8]) -> Result<(Vec<u8>, u64), SignError> {
     let new_shstr_off = cs_off + PAGE as u64;
     let new_sht_off = align_up(new_shstr_off + new_shstr.len() as u64, 8);
     let new_shnum = e_shnum + 1;
-    let new_total = new_sht_off as usize + new_shnum as usize * 64;
+    let new_total = new_sht_off as usize + new_shnum as usize * entsz;
 
     let mut buf = vec![0u8; new_total];
     // 1) original content (may be shorter than cs_off)
@@ -257,10 +258,11 @@ fn inject_codesign_section(elf: &[u8]) -> Result<(Vec<u8>, u64), SignError> {
     buf[new_shstr_off as usize..new_shstr_off as usize + new_shstr.len()]
         .copy_from_slice(&new_shstr);
     // 4) old SHT at new position
-    buf[new_sht_off as usize..new_sht_off as usize + e_shnum as usize * 64]
-        .copy_from_slice(&elf[e_shoff as usize..e_shoff as usize + e_shnum as usize * 64]);
+    let old_sht_bytes = e_shnum as usize * entsz;
+    buf[new_sht_off as usize..new_sht_off as usize + old_sht_bytes]
+        .copy_from_slice(&elf[e_shoff as usize..e_shoff as usize + old_sht_bytes]);
     // 5) new .codesign SHT entry
-    let cs_e = new_sht_off as usize + e_shnum as usize * 64;
+    let cs_e = new_sht_off as usize + e_shnum as usize * entsz;
     buf[cs_e..cs_e + 4].copy_from_slice(&cs_shname.to_le_bytes()); // sh_name
     buf[cs_e + 4..cs_e + 8].copy_from_slice(&1u32.to_le_bytes()); // sh_type = SHT_PROGBITS
     // sh_flags, sh_addr = 0
@@ -268,7 +270,7 @@ fn inject_codesign_section(elf: &[u8]) -> Result<(Vec<u8>, u64), SignError> {
     buf[cs_e + 32..cs_e + 40].copy_from_slice(&(PAGE as u64).to_le_bytes()); // sh_size
     buf[cs_e + 48..cs_e + 56].copy_from_slice(&(PAGE as u64).to_le_bytes()); // sh_addralign
     // 6) update shstrtab entry in new SHT
-    let shstr_e_new = new_sht_off as usize + e_shstrndx as usize * 64;
+    let shstr_e_new = new_sht_off as usize + e_shstrndx as usize * entsz;
     buf[shstr_e_new + 24..shstr_e_new + 32].copy_from_slice(&new_shstr_off.to_le_bytes());
     buf[shstr_e_new + 32..shstr_e_new + 40]
         .copy_from_slice(&(new_shstr.len() as u64).to_le_bytes());

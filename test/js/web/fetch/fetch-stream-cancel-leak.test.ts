@@ -164,21 +164,23 @@ test("response.body.cancel() on a never-read body aborts the underlying fetch", 
           },
         });
         const res = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+        const deadline = performance.now() + 3000;
         // Let the server start pushing so the client has buffered bytes it never asked for.
-        while (pulls === 0) await Bun.sleep(1);
+        while (pulls === 0 && performance.now() < deadline) await Bun.sleep(1);
         const before = pulls;
         await res.body.cancel(new Error("nope"));
         // Poll for quiescence: once cancel has reached the transport, pulls stop growing.
         // Bail early if pulls run away so the failing case reports instead of timing out.
         let last = pulls;
         let stable = 0;
-        while (stable < 5 && pulls - before < 2000) {
+        while (stable < 5 && pulls - before < 2000 && performance.now() < deadline) {
           await Bun.sleep(10);
           if (pulls === last) stable++;
           else { stable = 0; last = pulls; }
         }
         const after = pulls - before;
-        console.log(JSON.stringify({ after, aborted }));
+        const timedOut = performance.now() >= deadline;
+        console.log(JSON.stringify({ after, aborted, timedOut }));
         server.stop(true);
         process.exit(0);
       `,
@@ -189,10 +191,10 @@ test("response.body.cancel() on a never-read body aborts the underlying fetch", 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const { after, aborted } = JSON.parse(stdout.trim());
+  const { after, aborted, timedOut } = JSON.parse(stdout.trim());
   // When the cancel reaches the fetch tasklet the server sees the abort and pulls stop
   // within a bounded window. Without the fix the client keeps draining and `after`
   // grows into the thousands (the poll loop above never stabilizes).
-  expect({ aborted, afterBounded: after < 200 }).toEqual({ aborted: true, afterBounded: true });
+  expect({ aborted, afterBounded: after < 200, timedOut }).toEqual({ aborted: true, afterBounded: true, timedOut: false });
   expect(exitCode).toBe(0);
 });

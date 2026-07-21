@@ -796,13 +796,13 @@ pub fn js_assert_settings(
 ) -> JsResult<JSValue> {
     let args_list = callframe.arguments_old::<1>();
     if args_list.len < 1 {
-        return Err(global_object.throw(format_args!("Expected settings to be a object")));
+        return Err(global_object.throw(format_args!("Expected settings to be an object")));
     }
 
     if args_list.len > 0 && !args_list.ptr[0].is_empty_or_undefined_or_null() {
         let options = args_list.ptr[0];
         if !options.is_object() {
-            return Err(global_object.throw(format_args!("Expected settings to be a object")));
+            return Err(global_object.throw(format_args!("Expected settings to be an object")));
         }
 
         if let Some(header_table_size) = options.get(global_object, "headerTableSize")? {
@@ -942,7 +942,7 @@ pub fn js_get_packed_settings(
         let options = args_list.ptr[0];
 
         if !options.is_object() {
-            return Err(global_object.throw(format_args!("Expected settings to be a object")));
+            return Err(global_object.throw(format_args!("Expected settings to be an object")));
         }
 
         if let Some(header_table_size) = options.get(global_object, "headerTableSize")? {
@@ -6347,7 +6347,7 @@ impl H2FrameParser {
         options: JSValue,
     ) -> JsResult<()> {
         if options.is_empty_or_undefined_or_null() || !options.is_object() {
-            return Err(global_object.throw(format_args!("Expected settings to be a object")));
+            return Err(global_object.throw(format_args!("Expected settings to be an object")));
         }
 
         // R-2: read-modify-write the `Cell<FullSettingsPayload>` via a local copy.

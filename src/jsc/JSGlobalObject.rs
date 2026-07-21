@@ -81,6 +81,32 @@ impl core::fmt::Debug for GlobalRef {
     }
 }
 
+/// "a" or "an" for the given noun. Deliberately treats only a/e/i/o as vowel
+/// onsets so that "u"-initial type names like "Uint8Array"/"URL" take "a".
+#[inline]
+const fn indefinite_article_for(noun: &str) -> &'static str {
+    match noun.as_bytes() {
+        [b'a' | b'A' | b'e' | b'E' | b'i' | b'I' | b'o' | b'O', ..] => "an",
+        _ => "a",
+    }
+}
+// The function returns one of exactly two literals, so len() distinguishes them
+// (`&str == &str` is not const-evaluable without `feature(const_trait_impl)`).
+const _: () = {
+    assert!(indefinite_article_for("array").len() == 2);
+    assert!(indefinite_article_for("element").len() == 2);
+    assert!(indefinite_article_for("integer").len() == 2);
+    assert!(indefinite_article_for("object").len() == 2);
+    assert!(indefinite_article_for("Array").len() == 2);
+    assert!(indefinite_article_for("Error").len() == 2);
+    assert!(indefinite_article_for("Iterable").len() == 2);
+    assert!(indefinite_article_for("Object").len() == 2);
+    assert!(indefinite_article_for("string").len() == 1);
+    assert!(indefinite_article_for("Uint8Array").len() == 1);
+    assert!(indefinite_article_for("URL").len() == 1);
+    assert!(indefinite_article_for("").len() == 1);
+};
+
 impl JSGlobalObject {
     /// Alias of the macro-provided [`as_mut_ptr`](Self::as_mut_ptr) kept for
     /// call-site readability where mutation is not the intent.
@@ -281,7 +307,7 @@ impl JSGlobalObject {
         }
     }
 
-    /// "Expected {field} to be a {typename} for '{name}'."
+    /// "Expected {field} to be a/an {typename} for '{name}'."
     pub fn create_invalid_argument_type(
         &self,
         name_: &'static str,
@@ -290,7 +316,13 @@ impl JSGlobalObject {
     ) -> JSValue {
         self.err(
             JscError::INVALID_ARG_TYPE,
-            format_args!("Expected {} to be a {} for '{}'.", field, typename, name_),
+            format_args!(
+                "Expected {} to be {} {} for '{}'.",
+                field,
+                indefinite_article_for(typename),
+                typename,
+                name_
+            ),
         )
         .to_js()
     }
@@ -299,7 +331,7 @@ impl JSGlobalObject {
         Ok(value.into())
     }
 
-    /// "Expected {field} to be a {typename} for '{name}'."
+    /// "Expected {field} to be a/an {typename} for '{name}'."
     pub fn throw_invalid_argument_type(
         &self,
         name_: &'static str,

@@ -183,6 +183,25 @@ test.each(bad)("color(%s, 'css') === null", input => {
   expect(color(input)).toBeNull();
 });
 
+describe("ERR_INVALID_ARG_TYPE message uses the right indefinite article", () => {
+  // All four flow through the shared JSGlobalObject::create_invalid_argument_type helper.
+  test("an integer", () => {
+    expect(() => color({ r: "x" as any, g: 0, b: 0 })).toThrow("Expected r to be an integer for 'color'.");
+  });
+  test("an array", () => {
+    expect(() => expect({}).toContainAllKeys("nope" as any)).toThrow(
+      "Expected expected to be an array for 'toContainAllKeys'.",
+    );
+  });
+  test("an object", () => {
+    // options validation throws before the destination path is ever touched.
+    expect(() => Bun.write("unused-path", "x", "nope" as any)).toThrow("Expected options to be an object for 'write'.");
+  });
+  test("a string (consonant onset unchanged)", () => {
+    expect(() => color("red", 123 as any)).toThrow("Expected format to be a string for 'color'.");
+  });
+});
+
 test("invalid format string lists the accepted values", () => {
   let message!: string;
   try {

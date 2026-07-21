@@ -50,6 +50,8 @@ export async function removePaths(...paths: string[]): Promise<void> {
  */
 export async function removeTreeRobustly(path: string): Promise<void> {
   log(`removing tree ${path} (rmdir /s /q)`);
+  // Best-effort cleanup: a locked leftover in a scratch clone must not
+  // fail the bake; sysprep wipes the temp tree regardless.
   await run(["cmd", "/c", `rmdir /s /q "${path}"`], { allowFailure: true });
 }
 

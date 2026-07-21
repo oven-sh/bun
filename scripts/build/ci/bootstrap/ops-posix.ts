@@ -170,9 +170,12 @@ export async function enableService(name: string, options: { start: boolean }): 
   log(`enabling service ${name} at boot (${init ?? "no init system"})${options.start ? " and starting it" : ""}`);
   if (init === "systemd") {
     await sudo(["systemctl", "enable", name]);
+    // Best-effort start: a unit that needs a reboot (or first-boot state)
+    // to come up still gets enabled; the image bakes it either way.
     if (options.start) await sudo(["systemctl", "start", name], { allowFailure: true });
   } else if (init === "openrc") {
     await sudo(["rc-update", "add", name, "default"]);
+    // (same best-effort start as the systemd branch above)
     if (options.start) await sudo(["rc-service", name, "start"], { allowFailure: true });
   } else {
     warn(`no init system found; ${name} not enabled`);
@@ -203,6 +206,7 @@ export async function maskUnit(name: string): Promise<void> {
 
 export async function reloadServiceManager(): Promise<void> {
   if (initSystem() !== "systemd") return;
+  // Best-effort: a reload failure means only that new units apply on boot.
   await sudo(["systemctl", "daemon-reload"], { allowFailure: true });
 }
 

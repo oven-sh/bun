@@ -2035,6 +2035,42 @@ describe("HTTP Server Security Tests - Advanced", () => {
     });
   });
 
+  describe("statusMessage wire bytes", () => {
+    // Read raw response bytes as latin1 so U+0080..U+00FF map 1:1 to bytes.
+    const sendRequestLatin1 = (message: string) => {
+      return new Promise<string>((resolve, reject) => {
+        const client = connect(port, "127.0.0.1");
+        let response = "";
+        client.setEncoding("latin1");
+        client.on("data", chunk => (response += chunk));
+        client.on("error", reject);
+        client.on("end", () => resolve(response));
+        client.write(message);
+      });
+    };
+
+    test("writeHead(200, '') writes an empty reason phrase", async () => {
+      server.on("request", (req, res) => {
+        res.writeHead(200, "");
+        res.end("x");
+      });
+      const response = await sendRequestLatin1("GET / HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n");
+      expect(response.split("\r\n")[0]).toBe("HTTP/1.1 200 ");
+    });
+
+    test("writeHead(200, 'Ünïcödé') writes latin1 obs-text", async () => {
+      server.on("request", (req, res) => {
+        res.writeHead(200, "Ünïcödé");
+        res.end("x");
+      });
+      const response = await sendRequestLatin1("GET / HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n");
+      const statusLine = response.split("\r\n")[0];
+      const phraseBytes = [...statusLine.slice(13)].map(c => c.charCodeAt(0));
+      // Node.js latin1 encoding of "Ünïcödé": one byte per code unit.
+      expect(phraseBytes).toEqual([0xdc, 0x6e, 0xef, 0x63, 0xf6, 0x64, 0xe9]);
+    });
+  });
+
   test("Server should not crash in clientError is emitted when calling destroy", async () => {
     // A Host-less request is NOT a client error in Node: parserOnIncoming answers
     // it with 400 itself. An invalid method is what reaches 'clientError'.

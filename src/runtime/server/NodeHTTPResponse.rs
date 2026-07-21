@@ -921,13 +921,26 @@ impl NodeHTTPResponse {
         // 2×ref + 2×deref FFI (OwnedString + ZigStringSlice::WTF); instead hold
         // the +1 from `to_bun_string` in an `OwnedString` and borrow the bytes
         // without the inner ref bump.
+        //
+        // Node.js writes the status line with 'latin1' encoding (lib/_http_outgoing.js
+        // _storeHeader), so the reason-phrase bytes are the JS string's code units
+        // (RFC 9112 obs-text), not its UTF-8 encoding. For an 8-bit WTFStringImpl that
+        // is `latin1()` directly; a 16-bit backing (rare here: checkInvalidHeaderChar
+        // rejects > U+00FF) narrows via `copy_u16_into_u8`.
+        let has_status_message = !status_message_value.is_undefined();
         let status_message_str;
-        let status_message_slice;
-        let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
+        let mut status_message_heap;
+        let status_message_bytes: &[u8] = if has_status_message {
             status_message_str =
                 bun_core::OwnedString::new(status_message_value.to_bun_string(global_object)?);
-            status_message_slice = status_message_str.to_utf8_without_ref();
-            status_message_slice.slice()
+            if status_message_str.is_8bit() {
+                status_message_str.latin1()
+            } else {
+                let utf16 = status_message_str.utf16();
+                status_message_heap = vec![0u8; utf16.len()];
+                bun_core::strings::copy_u16_into_u8(&mut status_message_heap, utf16);
+                &status_message_heap
+            }
         } else {
             &[]
         };
@@ -959,7 +972,7 @@ impl NodeHTTPResponse {
 
         let wrote_head_ok;
         'do_it: {
-            if status_message_bytes.is_empty() {
+            if !has_status_message {
                 if let Some(status_message) =
                     HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))
                 {
@@ -975,7 +988,7 @@ impl NodeHTTPResponse {
                 }
             }
 
-            let message: &[u8] = if !status_message_bytes.is_empty() {
+            let message: &[u8] = if has_status_message {
                 status_message_bytes
             } else {
                 b"HM"

@@ -1191,24 +1191,6 @@ export function isBuildManual() {
 }
 
 /**
- * @param {string} [os]
- * @returns {number}
- */
-export function getBootstrapVersion(os) {
-  const scriptPath = join(
-    import.meta.dirname,
-    os === "windows" || (!os && isWindows) ? "bootstrap.ps1" : "bootstrap.sh",
-  );
-  const scriptContent = readFile(scriptPath, { cache: true });
-  const match = /# Version: (\d+)/.exec(scriptContent);
-  if (match) {
-    const [, version] = match;
-    return parseInt(version);
-  }
-  return 0;
-}
-
-/**
  * @typedef {object} BuildArtifact
  * @property {string} [job]
  * @property {string} filename

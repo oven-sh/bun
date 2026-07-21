@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
 import { azure } from "./azure.mjs";
+import { packerDownload } from "./build/ci/artifacts.ts";
+import { BOOTSTRAP_SOURCE_DIRS, LINUX_REMOTE_ROOT, linuxBootstrapCommand } from "./build/ci/delivery.ts";
+import { imageEntry, imageKey } from "./build/ci/naming.ts";
+import { windowsPackerTemplate } from "./build/ci/packer.ts";
 import { docker } from "./docker.mjs";
 import { tart } from "./tart.mjs";
 import {
@@ -14,9 +18,7 @@ import {
   copyFile,
   curlSafe,
   escapePowershell,
-  getBootstrapVersion,
   getBranch,
-  getBuildNumber,
   getGithubApiUrl,
   getGithubUrl,
   getSecret,
@@ -228,6 +230,10 @@ const aws = {
   async createImage(options) {
     const flags = aws.getFlags(options);
 
+    // Image names are content-addressed (`${key}-${hash}`), so a name that
+    // already exists is the SAME recipe already baked — by another branch or
+    // a retried job. Reuse it; never deregister (that would break every
+    // branch already pointing at the name).
     /** @type {string | undefined} */
     let existingImageId;
 
@@ -249,9 +255,8 @@ const aws = {
       return ImageId;
     }
 
-    await aws.spawn($`ec2 deregister-image --image-id ${existingImageId}`);
-    const { ImageId } = await aws.spawn($`ec2 create-image ${flags}`);
-    return ImageId;
+    console.log(`[aws] image "${options["name"]}" already exists (${existingImageId}); reusing it`);
+    return existingImageId;
   },
 
   /**
@@ -359,42 +364,15 @@ const aws = {
    * @returns {Promise<AwsImage>}
    */
   async getBaseImage(options) {
+    // The base AMI is a fact on the image's spec entry (FLOATING: the newest
+    // AMI matching the glob at bake time). CI bakes only spec'd images; ad-hoc
+    // `ssh` sessions of other distros must pass --image-id explicitly.
     const { os, arch, distro, release } = options;
-
-    let name, owner;
-    if (os === "linux") {
-      if (!distro || distro === "debian") {
-        owner = "amazon";
-        name = `debian-${release || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-*`;
-      } else if (distro === "ubuntu") {
-        owner = "099720109477";
-        name = `ubuntu/images/hvm-ssd*/ubuntu-*-${release || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-server-*`;
-      } else if (distro === "amazonlinux") {
-        owner = "amazon";
-        if (release === "1" && arch === "x64") {
-          name = `amzn-ami-2018.03.*`;
-        } else if (release === "2") {
-          name = `amzn2-ami-hvm-*-${arch === "aarch64" ? "arm64" : "x86_64"}-gp2`;
-        } else {
-          name = `al${release || "*"}-ami-*-${arch === "aarch64" ? "arm64" : "x86_64"}`;
-        }
-      } else if (distro === "alpine") {
-        owner = "538276064493";
-        name = `alpine-${release || "*"}.*-${arch === "aarch64" ? "aarch64" : "x86_64"}-uefi-cloudinit-*`;
-      } else if (distro === "centos") {
-        owner = "aws-marketplace";
-        name = `CentOS-Stream-ec2-${release || "*"}-*.${arch === "aarch64" ? "aarch64" : "x86_64"}-*`;
-      }
-    } else if (os === "windows") {
-      if (!distro || distro === "server") {
-        owner = "amazon";
-        name = `Windows_Server-${release || "*"}-English-Full-Base-*`;
-      }
+    const entry = imageEntry(imageEntryKey(options));
+    if (entry.os !== "linux") {
+      throw new Error(`getBaseImage: ${entry.key} is not a linux/AWS image`);
     }
-
-    if (!name) {
-      throw new Error(`Unsupported platform: ${inspect(options)}`);
-    }
+    const { ownerAlias: owner, nameGlob: name } = entry.base;
 
     const baseImages = await aws.describeImages({
       "state": "available",
@@ -804,26 +782,17 @@ function getWindowsStartupScript(cloudInit) {
 }
 
 /**
+ * Root disk size: an explicit --disk-size-gb wins; otherwise the bake shape
+ * on the image's spec entry (linux 100GB, windows 150GB today).
  * @param {MachineOptions} options
  * @returns {number}
  */
 export function getDiskSize(options) {
-  const { os, diskSizeGb } = options;
-
+  const { diskSizeGb } = options;
   if (diskSizeGb) {
     return diskSizeGb;
   }
-
-  // After Visual Studio and dependencies are installed,
-  // there is ~50GB of used disk space.
-  if (os === "windows") {
-    return 60;
-  }
-
-  // 40 was enough before the prefetch cache. x64 has ~2× the WebKit variants
-  // (baseline) so its prefetch layer is large enough that `docker buildx
-  // --load`'s export+import doubling needs real headroom.
-  return 100;
+  return imageEntry(imageEntryKey(options)).bake.diskSizeGb;
 }
 
 /**
@@ -963,6 +932,9 @@ async function spawnScp(options) {
 
   const command = ["scp", "-o", "StrictHostKeyChecking=no"];
   command.push("-O"); // use SCP instead of SFTP
+  if (statSync(resolve(source)).isDirectory()) {
+    command.push("-r"); // upload the tree (bootstrap sources)
+  }
   if (!password) {
     command.push("-o", "BatchMode=yes");
   }
@@ -1052,6 +1024,17 @@ function getRdpFile(hostname, username) {
  * @property {string} name
  * @property {(options: MachineOptions) => Promise<Machine>} createMachine
  */
+
+/**
+ * The spec image key for machine.mjs's platform flags (os/arch/distro/
+ * release), so an ad-hoc `ssh` or a create-image without --image-name
+ * still resolves to a spec entry.
+ * @param {MachineOptions} options
+ */
+function imageEntryKey(options) {
+  const { os, arch, distro, release } = options;
+  return imageKey(distro === undefined ? { os, arch, release } : { os, arch, release, distro });
+}
 
 function getCloud(name) {
   switch (name) {
@@ -1148,52 +1131,69 @@ async function getAzureToken(tenantId, clientId, clientSecret) {
  * This eliminates all the Azure Run Command issues (output truncation, x64 emulation,
  * PATH not refreshing, stderr false positives, quote escaping).
  */
-async function buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath }) {
+/**
+ * Build a Windows CI image with Packer (Azure only). Packer handles VM
+ * creation, WinRM provisioning, sysprep, and gallery capture. Everything
+ * that varies — base image, bake VM, disk, gallery destination, replication
+ * regions, the pinned node, the bootstrap command — comes from the image's
+ * spec entry via scripts/build/ci/packer.ts, which renders the template as
+ * JSON in memory (no checked-in .pkr.hcl).
+ *
+ * @param {object} options
+ * @param {string} options.imageName exact gallery image definition name (`${key}-${hash}`)
+ * @param {"x64" | "aarch64"} options.arch
+ * @param {boolean} options.ci
+ * @param {string} options.repoRef
+ * @param {string} options.agentPath esbuild-bundled agent.mjs
+ * @param {string} options.bootstrapDir directory holding scripts/build/ci
+ */
+async function buildWindowsImageWithPacker({ imageName, arch, ci, repoRef, agentPath, bootstrapDir }) {
   const { getSecret } = await import("./utils.mjs");
-
-  // Determine Packer template
-  const templateName = arch === "aarch64" ? "windows-arm64" : "windows-x64";
-  const templateDir = resolve(import.meta.dirname, "packer");
-  const templateFile = join(templateDir, `${templateName}.pkr.hcl`);
-
-  if (!existsSync(templateFile)) {
-    throw new Error(`Packer template not found: ${templateFile}`);
+  const key = imageName.replace(/-[0-9a-f]{16}$/, "");
+  const image = imageEntry(key);
+  if (image.os !== "windows") {
+    throw new Error(`buildWindowsImageWithPacker: ${key} is not a windows image entry`);
   }
 
-  // Get Azure credentials from Buildkite secrets
+  // Azure credentials from Buildkite secrets. The gallery name/location live
+  // in the spec (image.gallery); the resource group and where Packer puts
+  // its temporary build resources come from the CI secrets.
   const clientId = await getSecret("AZURE_CLIENT_ID");
   const clientSecret = await getSecret("AZURE_CLIENT_SECRET");
   const subscriptionId = await getSecret("AZURE_SUBSCRIPTION_ID");
   const tenantId = await getSecret("AZURE_TENANT_ID");
   const resourceGroup = await getSecret("AZURE_RESOURCE_GROUP");
-  const location = (await getSecret("AZURE_LOCATION")) || "eastus2";
-  const galleryName = (await getSecret("AZURE_GALLERY_NAME")) || "bunCIGallery2";
 
-  // Image naming must match getImageName() in ci.mjs:
-  //   [publish images] / normal CI: "windows-x64-2019-v13"
-  //   [build images]:               "windows-x64-2019-build-37194"
-  const imageKey = arch === "aarch64" ? "windows-aarch64-11" : "windows-x64-2019";
-  const imageDefName =
-    command === "publish-image"
-      ? `${imageKey}-v${getBootstrapVersion(os)}`
-      : ci
-        ? `${imageKey}-build-${getBuildNumber()}`
-        : `${imageKey}-build-draft-${Date.now()}`;
-  const galleryArch = arch === "aarch64" ? "Arm64" : "x64";
-  console.log(`[packer] Ensuring gallery image definition: ${imageDefName}`);
-  const galleryPath = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}`;
+  const galleryPath = `/subscriptions/${subscriptionId}/resourceGroups/${image.gallery.resourceGroup}/providers/Microsoft.Compute/galleries/${image.gallery.name}/images/${imageName}`;
   const token = await getAzureToken(tenantId, clientId, clientSecret);
+
+  // Idempotent by name: if this exact `${key}-${hash}` version already exists
+  // (another branch with the same spec, or a retried bake), reuse it. Same
+  // hash = same recipe, so nothing to redo.
+  const versionPath = `${galleryPath}/versions/${image.gallery.imageVersion}`;
+  const existing = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (existing.ok) {
+    const body = await existing.json().catch(() => ({}));
+    if (body?.properties?.provisioningState === "Succeeded") {
+      console.log(`[packer] ${imageName} already exists and Succeeded; reusing (nothing to bake)`);
+      return;
+    }
+  }
+
+  console.log(`[packer] Ensuring gallery image definition: ${imageName}`);
   const defResponse = await fetch(`https://management.azure.com${galleryPath}?api-version=2024-03-03`, {
     method: "PUT",
     headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      location: location,
+      location: image.gallery.location,
       properties: {
         osType: "Windows",
         osState: "Generalized",
         hyperVGeneration: "V2",
-        architecture: galleryArch,
-        identifier: { publisher: "bun", offer: `${os}-${arch}-ci`, sku: imageDefName },
+        architecture: arch === "aarch64" ? "Arm64" : "x64",
+        identifier: { publisher: "bun", offer: `windows-${arch}-ci`, sku: key },
         features: [
           { name: "DiskControllerTypes", value: "SCSI, NVMe" },
           { name: "SecurityType", value: "TrustedLaunch" },
@@ -1205,85 +1205,41 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     throw new Error(`Failed to create gallery image definition: ${defResponse.status} ${await defResponse.text()}`);
   }
 
-  // Packer's azure-arm shared_image_gallery_destination always writes
-  // image_version 1.0.0 and 409s if it already exists, so a re-run of
-  // [publish images] would fail on every Windows variant that already
-  // succeeded. Match the AWS path's deregister-then-recreate.
-  // CAUTION: unlike the AWS path (which only deregisters after the new
-  // create-image collides), this deletes the live version BEFORE Packer
-  // has produced a replacement. If this job is canceled or dies mid-bake,
-  // CI is left with no Windows image until a publish run completes.
-  const versionPath = `${galleryPath}/versions/1.0.0`;
-  const existing = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
-    headers: { Authorization: `Bearer ${token}` },
+  // Render the Packer template from the spec entry.
+  const packerBin = await ensurePacker(image.gallery.packerVersion);
+  const template = windowsPackerTemplate({
+    image,
+    imageName,
+    repoRef,
+    bootstrapDir,
+    agentPath,
+    azure: {
+      clientId,
+      clientSecret,
+      subscriptionId,
+      tenantId,
+      resourceGroup,
+      // Dedicated build RG so Packer's 4-core bake VMs don't contend with
+      // robobun CI runners for the runner quota.
+      buildResourceGroup: `${resourceGroup}-PACKER`,
+      location: image.gallery.location,
+    },
   });
-  if (existing.ok) {
-    console.log(`[packer] Deleting existing gallery image version 1.0.0 of ${imageDefName} before re-publish`);
-    const del = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (del.status === 202) {
-      const op = del.headers.get("Azure-AsyncOperation") ?? del.headers.get("Location");
-      for (let i = 0; op && i < 120; i++) {
-        await new Promise(r => setTimeout(r, 10_000));
-        const poll = await fetch(op, { headers: { Authorization: `Bearer ${token}` } });
-        const body = await poll.json().catch(() => ({}));
-        if (body.status === "Succeeded") break;
-        if (body.status === "Failed") throw new Error(`Delete of ${versionPath} failed: ${JSON.stringify(body)}`);
-      }
-    } else if (!del.ok && del.status !== 404) {
-      throw new Error(`Failed to delete existing gallery image version: ${del.status} ${await del.text()}`);
-    }
-  }
+  const templateDir = mkdtempSync(join(tmpdir(), "packer-"));
+  const templatePath = join(templateDir, `${key}.pkr.json`);
+  writeFileSync(templatePath, JSON.stringify(template, null, 2));
+  console.log(`[packer] Template: ${templatePath}`);
 
-  // Install Packer if not available
-  const packerBin = await ensurePacker();
-
-  // Initialize plugins
   console.log("[packer] Initializing plugins...");
-  await spawnSafe([packerBin, "init", templateDir], { stdio: "inherit" });
+  await spawnSafe([packerBin, "init", templatePath], { stdio: "inherit" });
 
-  // Build the image
-  console.log(`[packer] Building ${templateName} image: ${imageDefName}`);
-  const packerArgs = [
-    packerBin,
-    "build",
-    "-only",
-    `azure-arm.${templateName}`,
-    "-var",
-    `client_id=${clientId}`,
-    "-var",
-    `client_secret=${clientSecret}`,
-    "-var",
-    `subscription_id=${subscriptionId}`,
-    "-var",
-    `tenant_id=${tenantId}`,
-    "-var",
-    // Dedicated build RG in southcentralus so Packer's 4-core bake VMs don't
-    // contend with robobun CI runners for the eastus2 Ddsv6/Dpdsv6 quota.
-    `resource_group=${resourceGroup}-PACKER`,
-    "-var",
-    `gallery_resource_group=${resourceGroup}`,
-    "-var",
-    `location=${location}`,
-    "-var",
-    `gallery_name=${galleryName}`,
-    "-var",
-    `image_name=${imageDefName}`,
-    "-var",
-    `bootstrap_script=${bootstrapPath}`,
-    "-var",
-    `agent_script=${agentPath}`,
-    "-var",
-    `repo_ref=${/^[\w./-]+$/.test(getBranch() ?? "") ? getBranch() : "main"}`,
-    templateDir,
-  ];
+  console.log(`[packer] Building ${imageName}`);
+  const packerArgs = [packerBin, "build", templatePath];
 
-  // Packer's azure-arm builder cleans up its temp pkr* resources on SIGINT/SIGTERM, but only
-  // if the signal actually reaches the packer process and it is given time to finish the Azure
-  // deletes. spawnSafe() does not forward signals, so a Buildkite cancel would orphan the whole
-  // VM/NIC/IP/disk/vnet/NSG/keyvault stack in the build RG. Spawn directly and forward.
+  // Packer's azure-arm builder cleans up its temp pkr* resources on
+  // SIGINT/SIGTERM, but only if the signal reaches the packer process and
+  // it has time to finish the Azure deletes. Spawn directly and forward, or
+  // a Buildkite cancel orphans the VM/NIC/IP/disk/vnet/NSG/keyvault stack.
   const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), {
     stdio: "inherit",
     env: {
@@ -1313,13 +1269,15 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
   }
 
-  console.log(`[packer] Image built successfully: ${imageDefName}`);
+  console.log(`[packer] Image built successfully: ${imageName}`);
 }
 
 /**
- * Download and install Packer if not already available.
+ * Download and install Packer if not already available, at the version the
+ * spec pins for the gallery being built.
+ * @param {string} version
  */
-async function ensurePacker() {
+async function ensurePacker(version) {
   // Check if packer is already in PATH
   const packerPath = which("packer");
   if (packerPath) {
@@ -1333,13 +1291,12 @@ async function ensurePacker() {
     return localPacker;
   }
 
-  // Download Packer
-  const version = "1.15.0";
-  const platform = process.platform === "win32" ? "windows" : process.platform;
-  const packerArch = process.arch === "arm64" ? "arm64" : "amd64";
-  const url = `https://releases.hashicorp.com/packer/${version}/packer_${version}_${platform}_${packerArch}.zip`;
+  // Download Packer (URL derived from the spec-pinned version)
+  const hostOs = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux";
+  const hostArch = process.arch === "arm64" ? "aarch64" : "x64";
+  const { url } = packerDownload(version, hostOs, hostArch);
 
-  console.log(`[packer] Downloading Packer ${version}...`);
+  console.log(`[packer] Downloading Packer ${version} from ${url}...`);
   const zipPath = join(tmpdir(), "packer.zip");
 
   const response = await fetch(url);
@@ -1362,9 +1319,9 @@ async function main() {
   });
 
   const [command] = positionals;
-  if (!/^(ssh|create-image|publish-image)$/.test(command)) {
+  if (!/^(ssh|create-image)$/.test(command)) {
     const scriptPath = relative(process.cwd(), fileURLToPath(import.meta.url));
-    throw new Error(`Usage: ./${scriptPath} [ssh|create-image|publish-image] [options]`);
+    throw new Error(`Usage: ./${scriptPath} [ssh|create-image] [options]`);
   }
 
   const { values: args } = parseArgs({
@@ -1448,35 +1405,35 @@ async function main() {
     userData: args["user-data"] ? readFile(args["user-data"]) : undefined,
   };
 
-  let { detached, bootstrap, ci, os, arch, distro, release, features } = options;
+  let { detached, bootstrap, ci, os, arch, distro, release } = options;
 
-  let name = `${os}-${arch}-${(release || "").replace(/\./g, "")}`;
+  // The image being baked (create-image) or booted (ssh): the spec entry
+  // named by --image-name, or resolved from --os/--arch/--distro/--release.
+  // The image name (`${key}-${hash}`) comes with the entry via ci.mjs's
+  // --image-name; there are no version numbers or build-number suffixes.
+  const imageName = args["image-name"];
 
-  if (distro) {
-    name += `-${distro}`;
-  }
+  // Tell bootstrap which ref of the repo to shallow-clone for the prefetch
+  // caches — the dep version pins live in scripts/build/deps/ and aren't
+  // uploaded with bootstrap. Pinning to the triggering branch means a PR
+  // that bumps a dep also bakes the new tarball into the image it builds.
+  // The value reaches a remote shell, so reject anything outside the
+  // git-ref character set rather than try to quote it. A non-matching branch
+  // (or no branch detected) falls back to main.
+  const branch = getBranch();
+  const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
 
-  if (distro === "alpine") {
-    name += `-musl`;
-  }
-
-  if (features?.length) {
-    name += `-with-${features.join("-")}`;
-  }
-
-  let bootstrapPath, agentPath, dockerfilePath;
+  let bootstrapDir, agentPath;
   if (bootstrap) {
-    bootstrapPath = resolve(
-      import.meta.dirname,
-      os === "windows"
-        ? "bootstrap.ps1"
-        : features?.includes("docker")
-          ? "../.buildkite/Dockerfile-bootstrap.sh"
-          : "bootstrap.sh",
-    );
-    if (!existsSync(bootstrapPath)) {
-      throw new Error(`Script not found: ${bootstrapPath}`);
+    // The bootstrap sources uploaded to every bake VM: bootstrap.ts + its
+    // modules + the spec, laid out at their repo-relative paths.
+    // Named to match LINUX_REMOTE_ROOT's basename so `scp -r` of this
+    // directory into the remote parent lands it exactly at the root.
+    bootstrapDir = join(mkdtempSync(join(tmpdir(), "bootstrap-")), basename(LINUX_REMOTE_ROOT));
+    for (const dir of BOOTSTRAP_SOURCE_DIRS) {
+      cpSync(resolve(import.meta.dirname, "..", dir), join(bootstrapDir, dir), { recursive: true });
     }
+    console.log("Bootstrap sources:", bootstrapDir);
     if (ci) {
       const npx = which("bunx") || which("npx");
       if (!npx) {
@@ -1487,20 +1444,15 @@ async function main() {
       agentPath = join(tmpPath, "agent.mjs");
       await spawnSafe($`${npx} esbuild ${entryPath} --bundle --platform=node --format=esm --outfile=${agentPath}`);
     }
-
-    if (features?.includes("docker")) {
-      dockerfilePath = resolve(import.meta.dirname, "../.buildkite/Dockerfile");
-
-      if (!existsSync(dockerfilePath)) {
-        throw new Error(`Dockerfile not found: ${dockerfilePath}`);
-      }
-    }
   }
 
   // Use Packer for Windows Azure image builds — it handles VM creation,
   // bootstrap, sysprep, and gallery capture via WinRM (no Run Command hacks).
-  if (args["cloud"] === "azure" && os === "windows" && (command === "create-image" || command === "publish-image")) {
-    await buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath });
+  if (args["cloud"] === "azure" && os === "windows" && command === "create-image") {
+    if (!imageName) {
+      throw new Error("create-image for windows requires --image-name (ci.mjs passes the spec-derived name)");
+    }
+    await buildWindowsImageWithPacker({ imageName, arch, ci, repoRef, agentPath, bootstrapDir });
     return;
   }
 
@@ -1582,85 +1534,36 @@ async function main() {
       await machine.spawnSafe(command, { stdio: "inherit" });
     });
 
-    if (bootstrapPath) {
-      // Tell bootstrap which ref of the repo to shallow-clone for
-      // prefetch_build_deps — the dep version pins live in scripts/build/deps/
-      // and aren't uploaded with bootstrap. Pinning to the triggering branch
-      // means a PR that bumps a dep also bakes the new tarball into the image
-      // it builds.
-      //
-      // The value reaches a remote shell, so reject anything outside the
-      // git-ref character set rather than try to quote it. A non-matching
-      // branch (or no branch detected) just falls back to main; the prefetch
-      // cache becomes a partial hit, which is fine.
-      const branch = getBranch();
-      const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
+    if (bootstrapDir) {
       if (os === "windows") {
-        const remotePath = "C:\\Windows\\Temp\\bootstrap.ps1";
-        const args = ci ? ["-CI"] : [];
-        await startGroup("Running bootstrap...", async () => {
-          await machine.upload(bootstrapPath, remotePath);
-          // Set $env: in the SAME process that runs the script — a separate
-          // Machine-scope registry write wouldn't reach this session's env.
-          // repoRef is already validated against /^[\w./-]+$/ above, so the
-          // single-quoted literal can't break out.
-          await machine.spawnSafe(
-            ["powershell", "-Command", `$env:BUN_BOOTSTRAP_REPO_REF='${repoRef}'; & '${remotePath}' ${args.join(" ")}`],
-            { stdio: "inherit" },
-          );
-        });
-      } else {
-        if (!features?.includes("docker")) {
-          const remotePath = "/tmp/bootstrap.sh";
-          const args = ci ? ["--ci"] : [];
-          for (const feature of features || []) {
-            args.push(`--${feature}`);
-          }
-          await startGroup("Running bootstrap...", async () => {
-            await machine.upload(bootstrapPath, remotePath);
-            await machine.spawnSafe(["env", `BUN_BOOTSTRAP_REPO_REF=${repoRef}`, "sh", remotePath, ...args], {
-              stdio: "inherit",
-            });
-          });
-        } else if (dockerfilePath) {
-          const remotePath = "/tmp/bootstrap.sh";
-
-          await startGroup("Running Docker bootstrap...", async () => {
-            await machine.upload(bootstrapPath, remotePath);
-            console.log("Uploaded bootstrap.sh");
-            await machine.upload(dockerfilePath, "/tmp/Dockerfile");
-            console.log("Uploaded Dockerfile");
-            await machine.upload(agentPath, "/tmp/agent.mjs");
-            console.log("Uploaded agent.mjs");
-            agentPath = "";
-            bootstrapPath = "";
-            await machine.spawnSafe(["sudo", "env", `BUN_BOOTSTRAP_REPO_REF=${repoRef}`, "bash", remotePath], {
-              stdio: "inherit",
-              cwd: "/tmp",
-            });
-          });
-        }
+        // Windows CI images bake through Packer above; a raw AWS windows
+        // machine (ssh command) is provisioned by hand.
+        throw new Error("Windows bootstrap runs through the Packer path (create-image --cloud=azure)");
       }
+      // The image entry the bootstrap builds: from --image-name (CI) or
+      // resolved from the platform flags (ad-hoc create-image / ssh).
+      const entry = imageEntry(imageName ? imageName.replace(/-[0-9a-f]{16}$/, "") : imageEntryKey(options));
+      await startGroup("Uploading bootstrap sources...", async () => {
+        // bootstrapDir's basename matches LINUX_REMOTE_ROOT's, so `scp -r`
+        // of the directory into the parent lands it exactly at the root.
+        await machine.spawnSafe(["rm", "-rf", LINUX_REMOTE_ROOT]);
+        await machine.upload(bootstrapDir, dirname(LINUX_REMOTE_ROOT));
+        await machine.spawnSafe(["ls", "-R", LINUX_REMOTE_ROOT]);
+      });
+      await startGroup("Running bootstrap...", async () => {
+        // Renders: fetch the spec-pinned node, then `node bootstrap.ts`.
+        const script = linuxBootstrapCommand(entry, { ci, repoRef });
+        await machine.spawnSafe(["sh", "-c", script], { stdio: "inherit" });
+      });
     }
 
+    // Windows agents are installed inside the Packer bake (packer.ts). For
+    // linux, upload the bundled agent to the spec'd path and run its
+    // `install` command to write the systemd/openrc unit.
     if (agentPath) {
-      if (os === "windows") {
-        const remotePath = "C:\\buildkite-agent\\agent.mjs";
-        await startGroup("Installing agent...", async () => {
-          await machine.upload(agentPath, remotePath);
-          if (cloud.name === "docker" || features?.includes("docker")) {
-            return;
-          }
-          // Refresh PATH from registry before running agent.mjs — bootstrap added
-          // buildkite-agent to PATH but Azure Run Command sessions have stale PATH.
-          const cmd = `$env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User'); C:\\Scoop\\apps\\nodejs\\current\\node.exe ${remotePath} install`;
-          await machine.spawnSafe(["powershell", "-NoProfile", "-Command", cmd], {
-            stdio: "inherit",
-          });
-        });
-      } else {
+      {
         const tmpPath = "/tmp/agent.mjs";
-        const remotePath = "/var/lib/buildkite-agent/agent.mjs";
+        const remotePath = imageEntry(imageEntryKey(options)).paths.buildkiteAgentPath;
         await startGroup("Installing agent...", async () => {
           await machine.upload(agentPath, tmpPath);
           const command = [];
@@ -1674,30 +1577,18 @@ async function main() {
           if (cloud.name === "docker") {
             return;
           }
-          {
-            const { stdout } = await machine.spawn(["node", "-v"]);
-            const version = parseInt(stdout.trim().replace(/^v/, ""));
-            if (isNaN(version) || version < 20) {
-              command.push("bun");
-            } else {
-              command.push("node");
-            }
-          }
+          // Bootstrap installed the spec-pinned node; the agent runs under it.
+          command.push("node");
           await machine.spawnSafe([...command, remotePath, "install"], { stdio: "inherit" });
         });
       }
     }
 
-    if (command === "create-image" || command === "publish-image") {
-      let suffix;
-      if (command === "publish-image") {
-        suffix = `v${getBootstrapVersion(os)}`;
-      } else if (isCI) {
-        suffix = `build-${getBuildNumber()}`;
-      } else {
-        suffix = `draft-${Date.now()}`;
-      }
-      const label = `${name}-${suffix}`;
+    if (command === "create-image") {
+      // Content-addressed: the image name is the spec-derived `${key}-${hash}`
+      // ci.mjs passed as --image-name. There are no version numbers or
+      // build-number suffixes; an ad-hoc local bake gets a draft name.
+      const label = imageName || `${imageEntryKey(options)}-draft-${Date.now()}`;
       await startGroup("Creating image...", async () => {
         console.log("Creating image:", label);
         const result = await machine.snapshot(label);

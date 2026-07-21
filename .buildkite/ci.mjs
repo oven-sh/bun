@@ -6,8 +6,8 @@
  */
 
 import { join } from "node:path";
+import { imageKey, imageName } from "../scripts/build/ci/naming.ts";
 import {
-  getBootstrapVersion,
   getBuildkiteEmoji,
   getBuildMetadata,
   getBuildNumber,
@@ -231,29 +231,15 @@ function getPlatformLabel(platform) {
 }
 
 /**
+ * The spec image key for a platform. Cross-compiled targets and FreeBSD
+ * build on a linux host image (the build host cross-compiles everything),
+ * so their host OS is linux; native test platforms map to their own entry.
+ * See scripts/build/ci/naming.ts.
  * @param {Platform} platform
  * @returns {string}
  */
 function getImageKey(platform) {
-  const { os, arch, distro, release, features, abi, crossCompile } = platform;
-  // Cross-compiled targets (Android, FreeBSD, macOS-cross) build from a Linux
-  // host image — bootstrap.sh installs the NDK / base.txz sysroot on it (the
-  // macOS SDK is fetched by the build itself). No separate image is baked.
-  const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
-  const version = release.replace(/\./g, "");
-  let key = `${hostOs}-${arch}-${version}`;
-  if (distro) {
-    key += `-${distro}`;
-  }
-  if (features?.length) {
-    key += `-with-${features.join("-")}`;
-  }
-
-  if (abi && abi !== "android") {
-    key += `-${abi}`;
-  }
-
-  return key;
+  return imageKey(platform);
 }
 
 /**
@@ -266,29 +252,16 @@ function getImageLabel(platform) {
 }
 
 /**
+ * The image a platform's jobs run on: the content-addressed name
+ * `${key}-${hash}` from scripts/build/ci (the hash covers the image's
+ * spec entry + its resolved downloads). robobun launches machines by
+ * this exact name. There are no version numbers or build-number tags:
+ * changing the spec re-bakes automatically (see the images group below).
  * @param {Platform} platform
- * @param {PipelineOptions} options
  * @returns {string}
  */
-function getImageName(platform, options) {
-  const { os, distro, crossCompile } = platform;
-  const { buildImages, publishImages, imageFilter } = options;
-
-  const name = getImageKey(platform);
-
-  // Cross-compiled targets (and FreeBSD) build on a Linux host image (see
-  // getImageKey) — both the [build images] filter below and the published
-  // image tag should be judged by the host, not the target. Windows-cross
-  // would otherwise miss the freshly-baked linux image on a
-  // "[build linux images]" run, and pick up bootstrap.ps1's version for a
-  // linux image tag that doesn't exist.
-  const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
-
-  if (buildImages && !publishImages && (!imageFilter || hostOs === imageFilter || distro === imageFilter)) {
-    return `${name}-build-${getBuildNumber()}`;
-  }
-
-  return `${name}-v${getBootstrapVersion(hostOs)}`;
+function getImageName(platform) {
+  return imageName(getImageKey(platform));
 }
 
 /**
@@ -343,7 +316,6 @@ function getPriority() {
  * @property {string} instanceType
  * @property {number} cpuCount
  * @property {number} threadsPerCore
- * @property {boolean} dryRun
  */
 
 /**
@@ -764,7 +736,6 @@ function getVerifyBaselineStep(platform, options) {
  * @typedef {Object} TestOptions
  * @property {string} [buildId]
  * @property {string[]} [testFiles]
- * @property {boolean} [dryRun]
  */
 
 /**
@@ -834,57 +805,43 @@ function getTestBunStep(platform, options, testOptions = {}) {
  * CI image lifecycle
  * ------------------
  * Build/test agents boot from pre-baked cloud images (AWS AMIs for Linux,
- * Azure Shared Image Gallery for Windows). The image a job requests is
- * `${getImageKey(platform)}-v${N}`, where N is the `# Version:` comment at the
- * top of scripts/bootstrap.sh (Linux) or scripts/bootstrap.ps1 (Windows).
+ * Azure gallery images for Windows). Every image is content-addressed:
+ * it is named `${key}-${hash}`, where the hash covers the image's entry
+ * in scripts/build/ci/spec.ts plus its resolved downloads. Each run
+ * emits one "ensure image" step per needed image; `machine.mjs
+ * create-image` is idempotent by exact name — it bakes only when that
+ * name doesn't exist yet and returns immediately when it does.
  *
- * To change what's installed on a CI machine:
- *
- *   1. Edit bootstrap.sh / bootstrap.ps1 and bump its `# Version:` line.
- *   2. Open a PR whose **commit subject** contains `[build images]` (or
- *      `[build linux images]` / `[build windows images]` to scope it). This
- *      bakes throwaway `…-build-<buildNumber>` images and runs the full
- *      build+test pipeline against them so you can verify the change.
- *   3. Once green, amend/force-push the subject to `[publish images]` (or the
- *      scoped variant). This bakes the real `…-vN` images that normal CI will
- *      pick up. Publishing replaces the live tag in place — for Windows it
- *      deletes the existing gallery version before the new one finishes — so
- *      don't cancel a publish run mid-bake.
- *   4. Merge the PR **after** the publish run is green. By then the `…-vN`
- *      images already exist, so the post-merge `main` build runs immediately
- *      instead of everyone waiting 2-3 h on a bake.
- *
- * These tags are ignored on `main` — image bakes happen on the PR only.
+ * To change what's installed on a CI machine: edit the fact in spec.ts
+ * (or the URL construction in scripts/build/ci/artifacts.ts). The hash
+ * changes, so this branch bakes the new images once and every later push
+ * — including main after merge, which computes the same hash — reuses
+ * them. There is no commit-message tag and no version to bump; see
+ * scripts/build/ci/README.md.
  *
  * @param {Platform} platform
- * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildImageStep(platform, options) {
-  const { os, arch, distro, release, features } = platform;
-  const { publishImages } = options;
-  const action = publishImages ? "publish-image" : "create-image";
-
+function getEnsureImageStep(platform) {
+  const { os, arch, distro, release } = platform;
   const cloud = os === "windows" ? "azure" : "aws";
   const command = [
     "node",
     "./scripts/machine.mjs",
-    action,
+    "create-image",
     `--os=${os}`,
     `--arch=${arch}`,
     distro && `--distro=${distro}`,
     `--release=${release}`,
     `--cloud=${cloud}`,
+    `--image-name=${getImageName(platform)}`,
     "--ci",
     "--authorized-org=oven-sh",
   ];
-  for (const feature of features || []) {
-    command.push(`--feature=${feature}`);
-  }
 
   return {
-    key: `${getImageKey(platform)}-build-image`,
-    label: `${getImageLabel(platform)} - build-image`,
+    key: `${getImageKey(platform)}-ensure-image`,
+    label: `${getImageLabel(platform)} - ensure image`,
     agents: {
       queue: "build-image",
     },
@@ -1098,9 +1055,7 @@ function getReleaseStep(releasePlatforms, options, { signed = false, testStepKey
  * @property {string | boolean} [skipSizeCheck]
  * @property {string | boolean} [forceBuilds]
  * @property {string | boolean} [forceTests]
- * @property {string | boolean} [buildImages]
  * @property {string | boolean} [signWindows]
- * @property {string | boolean} [publishImages]
  * @property {number} [canary]
  * @property {Platform[]} [buildPlatforms]
  * @property {Platform[]} [testPlatforms]
@@ -1265,22 +1220,6 @@ function getOptionsStep() {
         hint: "If specified, only run test paths that include the list of strings (e.g. 'test/js', 'test/cli/hot/watch.ts')",
         required: false,
       },
-      {
-        key: "build-images",
-        select: "Do you want to re-build the base images?",
-        hint: "This can take 2-3 hours to complete, only do so if you've tested locally",
-        required: false,
-        default: "false",
-        options: booleanOptions,
-      },
-      {
-        key: "publish-images",
-        select: "Do you want to re-build and publish the base images?",
-        hint: "This can take 2-3 hours to complete, only do so if you've tested locally",
-        required: false,
-        default: "false",
-        options: booleanOptions,
-      },
     ],
   };
 }
@@ -1343,8 +1282,6 @@ async function getPipelineOptions() {
       skipBuilds: parseBoolean(options["skip-builds"]),
       forceBuilds: parseBoolean(options["force-builds"]),
       skipTests: parseBoolean(options["skip-tests"]),
-      buildImages: parseBoolean(options["build-images"]),
-      publishImages: parseBoolean(options["publish-images"]),
       testFiles: parseArray(options["test-files"]),
       buildPlatforms: buildPlatformKeys?.length
         ? buildPlatformKeys.flatMap(key => buildProfiles.map(profile => ({ ...buildPlatformsMap.get(key), profile })))
@@ -1352,7 +1289,6 @@ async function getPipelineOptions() {
       testPlatforms: testPlatformKeys?.length
         ? testPlatformKeys.flatMap(key => buildProfiles.map(profile => ({ ...testPlatformsMap.get(key), profile })))
         : Array.from(testPlatformsMap.values()),
-      dryRun: parseBoolean(options["dry-run"]),
     };
   }
 
@@ -1377,22 +1313,6 @@ async function getPipelineOptions() {
     !parseBoolean(getEnv("RELEASE", false) || "false") &&
     !/\[(release|build release|release build)\]/i.test(commitMessage);
 
-  let buildImages = parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i);
-  let publishImages = parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i);
-  let imageFilter = (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase();
-
-  // Image bake/publish is meant to happen on the PR; the squash-merge commit
-  // subject often still carries the [publish images] tag, which would re-run
-  // the multi-hour bake on main and (because publish replaces the live image
-  // tag) briefly delete the images CI runs on. Ignore the tag on main and run
-  // a normal build instead.
-  if (isMainBranch() && (buildImages || publishImages)) {
-    console.log(`Ignoring [${publishImages || buildImages}] on main branch — images are built and published from PRs.`);
-    buildImages = false;
-    publishImages = false;
-    imageFilter = undefined;
-  }
-
   return {
     canary: isCanary ? canary : 0,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
@@ -1401,10 +1321,6 @@ async function getPipelineOptions() {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    buildImages,
-    dryRun: parseOption(/\[(dry run)\]/i),
-    publishImages,
-    imageFilter,
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1429,33 +1345,29 @@ async function getPipeline(options = {}) {
     return;
   }
 
-  const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages, imageFilter } = options;
+  const { buildPlatforms = [], testPlatforms = [] } = options;
   // Every build lane runs on buildHostPlatform (see getCppAgent/getLinkBunAgent),
-  // so the build-image set is exactly {buildHostPlatform} ∪ testPlatforms' native
+  // so the image set is exactly {buildHostPlatform} ∪ testPlatforms' native
   // images — buildPlatforms entries encode TARGET os/arch/abi, not a host image.
+  // The set is unconditional: every run ensures its (content-addressed) images
+  // exist, and the ensure step is a no-op when the name is already there.
   const imagePlatforms = new Map(
-    buildImages || publishImages
-      ? [buildHostPlatform, ...testPlatforms]
-          // darwin: no cloud images (bare-metal test fleet only).
-          .filter(({ os }) => os !== "darwin")
-          .filter(({ os, distro }) => !imageFilter || os === imageFilter || distro === imageFilter)
-          .map(platform => [getImageKey(platform), platform])
-      : [],
+    [buildHostPlatform, ...testPlatforms]
+      // darwin: no cloud images (bare-metal test fleet only).
+      .filter(({ os }) => os !== "darwin")
+      .map(platform => [getImageKey(platform), platform]),
   );
 
   /** @type {Step[]} */
   const steps = [];
 
-  if (imagePlatforms.size) {
-    steps.push({
-      key: "build-images",
-      group: getBuildkiteEmoji("aws"),
-      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform, options)),
-    });
-  }
+  steps.push({
+    key: "ensure-images",
+    group: getBuildkiteEmoji("aws"),
+    steps: [...imagePlatforms.values()].map(platform => getEnsureImageStep(platform)),
+  });
 
-  let { skipBuilds, forceBuilds, dryRun } = options;
-  dryRun = dryRun || !!buildImages;
+  let { skipBuilds, forceBuilds } = options;
 
   /** @type {string | undefined} */
   let buildId;
@@ -1483,7 +1395,7 @@ async function getPipeline(options = {}) {
         const imageKey = getImageKey(buildHostPlatform);
         const dependsOn = [];
         if (imagePlatforms.has(imageKey)) {
-          dependsOn.push(`${imageKey}-build-image`);
+          dependsOn.push(`${imageKey}-ensure-image`);
         }
 
         const steps = [];
@@ -1496,7 +1408,7 @@ async function getPipeline(options = {}) {
           // on the step itself so build-cpp/build-bun don't wait for it.
           const verifyImageKey = getImageKey(getVerifyBaselineHost(target));
           const verifyDeps =
-            verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
+            verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-ensure-image`] : [];
           steps.push(getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps));
         }
 
@@ -1528,7 +1440,7 @@ async function getPipeline(options = {}) {
           // Test shards run on their native platform image; on [build images]
           // runs they must wait for that freshly-baked image before starting.
           const imageKey = getImageKey(target);
-          const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
+          const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-ensure-image`] : [];
           return getStepWithDependsOn(
             {
               key: getPlatformKey(target),
@@ -1560,7 +1472,7 @@ async function getPipeline(options = {}) {
       steps.push(
         getStepWithDependsOn(
           getWindowsSignStep(windowsPlatforms, options),
-          imagePlatforms.has("windows-x64-2019") ? "windows-x64-2019-build-image" : undefined,
+          imagePlatforms.has("windows-x64-2019") ? "windows-x64-2019-ensure-image" : undefined,
         ),
       );
     }

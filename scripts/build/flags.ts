@@ -340,22 +340,6 @@ export const globalFlags: Flag[] = [
     desc: "Skip static destructors at exit (clang-cl syntax)",
   },
   {
-    // WTF's discipline: statics reachable from multiple threads are
-    // main-thread-first-touched or std::once-guarded (JSC/WebKit build with
-    // -fno-threadsafe-statics upstream). Drops the guard sequence clang
-    // emits around every function-local static's initialization.
-    flag: "-fno-threadsafe-statics",
-    when: c => c.unix,
-    lang: "cxx",
-    desc: "No init guards on function-local statics (WTF init discipline)",
-  },
-  {
-    flag: ["/Zc:threadSafeInit-", "/Zc:tlsGuards-"],
-    when: c => c.windows,
-    lang: "cxx",
-    desc: "No init guards on function-local / thread_local statics (MSVC syntax)",
-  },
-  {
     flag: "-fno-rtti",
     when: c => c.unix,
     desc: "Disable RTTI (no dynamic_cast/typeid)",

@@ -255,8 +255,8 @@ use crate::const_str_eq;
 /// without `'static` and is the same source that `Field::ty` comes from.
 /// `TypeKind::type_id()` returns the same `TypeId` that `Field::ty` provides.
 #[inline(always)]
-fn type_id_of<F: ?Sized>() -> TypeId {
-    TypeInfo::of::<F>().kind.type_id()
+const fn type_id_of<F: ?Sized>() -> TypeId {
+    const { core::intrinsics::type_id::<F>() }
 }
 
 /// Reflected fields of `T` (struct only). Panics at const-eval for non-structs.
@@ -296,7 +296,7 @@ const fn align_sort_key(size: usize, struct_align: usize) -> usize {
         return 1;
     }
     // Largest power of two dividing `size`.
-    let pow2 = size & size.wrapping_neg();
+    let pow2 = size.isolate_lowest_one();
     if pow2 < struct_align {
         pow2
     } else {
@@ -345,9 +345,10 @@ impl<T> Reflected<T> {
         let mut i = 0;
         while i < n {
             let f = &fields[i];
-            let size = f.ty
-                .size()
-                .expect("MultiArrayList: field type must be Sized");
+            let size = match f.ty.size() {
+                Some(s) => s,
+                None => panic!("MultiArrayList: field type must be Sized"),
+            };
             let align = align_sort_key(size, struct_align);
             out[i] = FieldMeta {
                 size,

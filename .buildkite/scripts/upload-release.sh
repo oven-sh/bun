@@ -296,14 +296,10 @@ function create_release() {
     bun-linux-aarch64-profile.zip
     bun-linux-x64.zip
     bun-linux-x64-profile.zip
-    bun-linux-x64-baseline.zip
-    bun-linux-x64-baseline-profile.zip
     bun-linux-aarch64-musl.zip
     bun-linux-aarch64-musl-profile.zip
     bun-linux-x64-musl.zip
     bun-linux-x64-musl-profile.zip
-    bun-linux-x64-musl-baseline.zip
-    bun-linux-x64-musl-baseline-profile.zip
     bun-linux-aarch64-android.zip
     bun-linux-aarch64-android-profile.zip
     bun-linux-x64-android.zip
@@ -314,15 +310,48 @@ function create_release() {
     bun-freebsd-x64-profile.zip
     bun-windows-x64.zip
     bun-windows-x64-profile.zip
-    bun-windows-x64-baseline.zip
-    bun-windows-x64-baseline-profile.zip
     bun-windows-aarch64.zip
     bun-windows-aarch64-profile.zip
   )
 
-  function upload_artifact() {
+  # x64 ships one nehalem binary under the plain name. Re-zip it under the
+  # historical `-baseline` name (inner dir renamed) so older `bun upgrade`
+  # clients that still request `-baseline` extract correctly.
+  function alias_baseline_artifact() {
     local artifact="$1"
-    download_buildkite_artifact "$artifact"
+    case "$artifact" in
+      bun-darwin-x64.zip)              echo "bun-darwin-x64-baseline.zip" ;;
+      bun-darwin-x64-profile.zip)      echo "bun-darwin-x64-baseline-profile.zip" ;;
+      bun-linux-x64.zip)               echo "bun-linux-x64-baseline.zip" ;;
+      bun-linux-x64-profile.zip)       echo "bun-linux-x64-baseline-profile.zip" ;;
+      bun-linux-x64-musl.zip)          echo "bun-linux-x64-musl-baseline.zip" ;;
+      bun-linux-x64-musl-profile.zip)  echo "bun-linux-x64-musl-baseline-profile.zip" ;;
+      bun-windows-x64.zip)             echo "bun-windows-x64-baseline.zip" ;;
+      bun-windows-x64-profile.zip)     echo "bun-windows-x64-baseline-profile.zip" ;;
+      *)                               echo "" ;;
+    esac
+  }
+
+  command -v unzip &> /dev/null || package_manager_install unzip
+  command -v zip &> /dev/null || package_manager_install zip
+
+  # Repack `$src_zip` (inner dir = basename of $src_zip) as `$dst_zip` with the
+  # inner dir renamed to match `$dst_zip`'s basename. Works in a fresh mktemp
+  # dir so a caller-CWD change can't collide with the extracted names.
+  function rezip_as() {
+    local src_zip="$1" dst_zip="$2"
+    local src_dir="${src_zip%.zip}" dst_dir="${dst_zip%.zip}"
+    local abs_src="$PWD/$src_zip" abs_dst="$PWD/$dst_zip"
+    local work; work="$(mktemp -d)"
+    run_command unzip -q -d "$work" "$abs_src"
+    run_command mv "$work/$src_dir" "$work/$dst_dir"
+    run_command rm -f "$abs_dst"
+    (cd "$work" && run_command zip -rq "$abs_dst" "$dst_dir")
+    run_command rm -rf "$work"
+  }
+
+  function upload_one() {
+    local artifact="$1"
     if [ "$tag" == "canary" ]; then
       upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$artifact" &
     else
@@ -331,6 +360,17 @@ function create_release() {
     upload_s3_file "releases/$tag" "$artifact" &
     upload_github_asset "$tag" "$artifact" &
     wait
+  }
+
+  function upload_artifact() {
+    local artifact="$1"
+    download_buildkite_artifact "$artifact"
+    upload_one "$artifact"
+    local alias="$(alias_baseline_artifact "$artifact")"
+    if [ -n "$alias" ]; then
+      rezip_as "$artifact" "$alias"
+      upload_one "$alias"
+    fi
   }
 
   for artifact in "${artifacts[@]}"; do

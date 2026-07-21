@@ -954,7 +954,7 @@ bitflags::bitflags! {
 
 impl ColorFallbackKind {
     pub fn lowest(self) -> ColorFallbackKind {
-        ColorFallbackKind::from_bits_truncate(self.bits() & self.bits().wrapping_neg())
+        ColorFallbackKind::from_bits_truncate(self.bits().isolate_lowest_one())
     }
 
     pub fn highest(self) -> ColorFallbackKind {

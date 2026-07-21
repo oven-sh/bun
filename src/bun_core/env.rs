@@ -53,9 +53,6 @@ pub const CI_ASSERT: bool =
 pub const SHOW_CRASH_TRACE: bool = IS_DEBUG || IS_TEST || ENABLE_ASAN;
 
 pub const REPORTED_NODEJS_VERSION: &str = build_options::REPORTED_NODEJS_VERSION;
-pub const BASELINE: bool = build_options::BASELINE;
-/// Only `BASELINE` gates SIMD.
-pub const ENABLE_SIMD: bool = !BASELINE;
 pub const GIT_SHA: &str = build_options::SHA;
 pub const GIT_SHA_SHORT: &str = if !build_options::SHA.is_empty() {
     const_str_slice(build_options::SHA, 0, 9)

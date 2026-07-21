@@ -240,12 +240,12 @@ impl SSABuilder {
     }
 
     fn fix_incomplete_phis(&mut self, block_id: BlockId, env: &mut Environment) {
-        let incomplete_phis: Vec<IncompletePhi> = self.states[block_id.0 as usize]
-            .as_mut()
-            .unwrap()
-            .incomplete_phis
-            .drain(..)
-            .collect();
+        let incomplete_phis: Vec<IncompletePhi> = core::mem::take(
+            &mut self.states[block_id.0 as usize]
+                .as_mut()
+                .unwrap()
+                .incomplete_phis,
+        );
         for phi in &incomplete_phis {
             self.add_phi(block_id, &phi.old_place, &phi.new_place, env);
         }

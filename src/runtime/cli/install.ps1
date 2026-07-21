@@ -89,11 +89,11 @@ function Get-Env {
   $EnvRegisterKey.GetValue($Key, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
 }
 
-# The installation of bun is it's own function so that in the unlikely case the $IsBaseline check fails, we can do a recursive call.
-# There are also lots of sanity checks out of fear of anti-virus software or other weird Windows things happening.
+# There are lots of sanity checks out of fear of anti-virus software or other weird Windows things happening.
 function Install-Bun {
   param(
     [string]$Version,
+    # Kept for back-compat with callers; x64 ships one (nehalem) binary now.
     [bool]$ForceBaseline = $False
   );
 
@@ -107,6 +107,8 @@ function Install-Bun {
 
   $IsARM64 = $Arch -eq "ARM64"
   $BunArch = if ($IsARM64) { "aarch64" } else { "x64" }
+  # Current x64 releases ship one nehalem binary, but a pinned $Version may
+  # predate that. Probe AVX2 on x64; new releases alias the -baseline name.
   $IsBaseline = $false
   if (-not $IsARM64) {
     $IsBaseline = $ForceBaseline
@@ -205,7 +207,7 @@ function Install-Bun {
   $BunRevision = "$(& "${BunBin}\bun.exe" --revision)"
   if ($LASTEXITCODE -eq 1073741795) { # STATUS_ILLEGAL_INSTRUCTION
     if ($IsBaseline) {
-      Write-Output "Install Failed - bun.exe (baseline) is not compatible with your CPU.`n"
+      Write-Output "Install Failed - bun.exe is not compatible with your CPU (requires SSE4.2 / Nehalem or later).`n"
       Write-Output "Please open a GitHub issue with your CPU model:`nhttps://github.com/oven-sh/bun/issues/new/choose`n"
       return 1
     }

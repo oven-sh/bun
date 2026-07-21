@@ -22,25 +22,6 @@
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
-#if CPU(X86_64) && !OS(WINDOWS)
-extern "C" void bun_warn_avx_missing(const char* url)
-{
-    __builtin_cpu_init();
-    if (__builtin_cpu_supports("avx")) {
-        return;
-    }
-
-    static constexpr const char* str = "warn: CPU lacks AVX support, strange crashes may occur. Reinstall Bun or use *-baseline build:\n  ";
-    const size_t len = strlen(str);
-
-    char buf[512];
-    strcpy(buf, str);
-    strcpy(buf + len, url);
-    strcpy(buf + len + strlen(url), "\n\0");
-    [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, strlen(buf));
-}
-#endif
-
 // Error condition is encoded as max int32_t.
 // The only error in this function is ESRCH (no process found)
 extern "C" int32_t get_process_priority(int32_t pid)

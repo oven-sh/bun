@@ -392,8 +392,8 @@ impl core::fmt::Display for AltNameIp<'_> {
         match self.0 {
             [a, b, c, d] => write!(f, "{a}.{b}.{c}.{d}"),
             octets if octets.len() == 16 => {
-                for (i, pair) in octets.chunks_exact(2).enumerate() {
-                    let group = u16::from_be_bytes([pair[0], pair[1]]);
+                for (i, pair) in octets.as_chunks::<2>().0.iter().enumerate() {
+                    let group = u16::from_be_bytes(*pair);
                     if i > 0 {
                         f.write_str(":")?;
                     }

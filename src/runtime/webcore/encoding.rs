@@ -811,8 +811,8 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
             // directly into a `Vec<u8>` so we never depend on an allocator-
             // layout-dependent `Vec<u16> → Vec<u8>` header reinterpret.
             let mut to = vec![0u8; len * 2];
-            for (out, &b) in to.chunks_exact_mut(2).zip(input_slice) {
-                out.copy_from_slice(&u16::from(b).to_ne_bytes());
+            for (out, &b) in to.as_chunks_mut::<2>().0.iter_mut().zip(input_slice) {
+                *out = u16::from(b).to_ne_bytes();
             }
             to
         }

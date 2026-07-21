@@ -497,7 +497,7 @@ pub const os_display: &str = if cfg!(target_os = "android") {
     env::OS.display_string()
 };
 
-// Bun v1.0.0 (Linux x64 baseline)
+// Bun v1.0.0 (Linux x64)
 // Bun v1.0.0-debug (Linux x64)
 // Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
 pub const unhandled_error_bun_version_string: &str = concatcp!(
@@ -511,7 +511,7 @@ pub const unhandled_error_bun_version_string: &str = concatcp!(
     os_display,
     " ",
     arch_name,
-    if env::BASELINE { " baseline)" } else { ")" },
+    ")",
 );
 
 pub const arch_name: &str = if cfg!(target_arch = "x86_64") {
@@ -624,6 +624,7 @@ pub(crate) fn is_exiting() -> bool {
 // args and are `noreturn`/kernel-validated — no memory-safety preconditions,
 // so `safe fn` discharges the link-time proof and the call sites are plain
 // calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
+#[allow(suspicious_runtime_symbol_definitions)] // signatures are ABI-identical; `safe fn` is intentional (above)
 unsafe extern "C" {
     #[link_name = "abort"]
     safe fn libc_abort() -> !;

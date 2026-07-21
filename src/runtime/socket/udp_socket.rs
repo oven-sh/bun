@@ -2289,7 +2289,7 @@ pub fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
 
         // Numeric literals only — the JS layer resolves names before calling.
         let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
-        let socklen: libc::socklen_t;
+
         // SAFETY: storage is large enough for sockaddr_in; src is NUL-terminated.
         let addr4 = unsafe { &mut *std::ptr::from_mut(&mut storage).cast::<sockaddr_in>() };
         // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in_addr-sized storage.
@@ -2300,10 +2300,10 @@ pub fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
                 (&raw mut addr4.addr).cast::<c_void>(),
             )
         };
-        if parsed_v4 == 1 {
+        let socklen: libc::socklen_t = if parsed_v4 == 1 {
             addr4.family = inet::AF_INET as inet::sa_family_t;
             addr4.port = htons(port);
-            socklen = size_of::<sockaddr_in>() as libc::socklen_t;
+            size_of::<sockaddr_in>() as libc::socklen_t
         } else {
             // SAFETY: storage is large enough for sockaddr_in6.
             let addr6 = unsafe { &mut *std::ptr::from_mut(&mut storage).cast::<sockaddr_in6>() };
@@ -2326,8 +2326,8 @@ pub fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
             }
             addr6.family = inet::AF_INET6 as inet::sa_family_t;
             addr6.port = htons(port);
-            socklen = size_of::<sockaddr_in6>() as libc::socklen_t;
-        }
+            size_of::<sockaddr_in6>() as libc::socklen_t
+        };
 
         // IPV6_V6ONLY, SO_REUSEADDR/SO_REUSEPORT and bind(2) go through bsd.c
         // so this doesn't fork its platform gate.

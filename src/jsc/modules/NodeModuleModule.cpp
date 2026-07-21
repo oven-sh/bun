@@ -866,7 +866,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRegister, (JSGlobalObject * globalObject, JSC
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, BunString* outDirectory, BunString* outMessage);
+extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, int32_t portable, BunString* outDirectory, BunString* outMessage);
 extern "C" BunString Bun__NodeCompileCache__getDir();
 extern "C" void Bun__NodeCompileCache__flush();
 
@@ -880,9 +880,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     // Accepts `undefined`, a string, or `{ directory?, portable? }`.
     JSValue options = callFrame->argument(0);
     JSValue directoryValue = options;
+    int32_t portable = -1; // -1 = unspecified, Rust falls back to the env var
     if (options.isObject() && !options.isCallable()) {
-        directoryValue = options.getObject()->get(globalObject, JSC::Identifier::fromString(vm, "directory"_s));
+        auto* optionsObject = options.getObject();
+        directoryValue = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "directory"_s));
         RETURN_IF_EXCEPTION(scope, {});
+        JSValue portableValue = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "portable"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!portableValue.isUndefined()) {
+            portable = portableValue.toBoolean(globalObject) ? 1 : 0;
+        }
     }
 
     WTF::String directory;
@@ -899,7 +906,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     BunString outDirectory = { BunStringTag::Empty, {} };
     BunString outMessage = { BunStringTag::Empty, {} };
     int32_t status = Bun__NodeCompileCache__enable(
-        directory.isNull() ? nullptr : &directoryStr, &outDirectory, &outMessage);
+        directory.isNull() ? nullptr : &directoryStr, portable, &outDirectory, &outMessage);
 
     auto* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "status"_s), JSC::jsNumber(status));

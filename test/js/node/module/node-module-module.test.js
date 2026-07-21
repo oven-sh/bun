@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -64,21 +64,48 @@ describe.concurrent("node-module-module", () => {
       }),
     ).toThrow(new RangeError("portable boom"));
     expect(order).toEqual(["directory", "portable"]);
-    // Valid shapes: string | {directory?, portable?} | undefined.
-    for (const ok of [
-      undefined,
-      "/tmp/cache",
-      {},
-      [],
-      Object.create(null),
-      { directory: "/tmp/cache" },
-      { directory: undefined },
-    ]) {
-      expect(Module.enableCompileCache(ok)).toEqual({
-        status: Module.constants.compileCacheStatus.FAILED,
-        message: expect.any(String),
-      });
-    }
+  });
+
+  test("module.enableCompileCache accepts valid shapes", async () => {
+    // Run in a child so enabling the cache doesn't affect this test process.
+    using dir = tempDir("compile-cache-shapes", {});
+    const cacheDir = JSON.stringify(path.join(String(dir), "cc"));
+    // Valid shapes: string | {directory?, portable?} | undefined. The first
+    // call enables the cache; the rest report ALREADY_ENABLED.
+    const code = `
+      const Module = require("module");
+      const { ENABLED, ALREADY_ENABLED } = Module.constants.compileCacheStatus;
+      const shapes = [
+        ${cacheDir},
+        undefined,
+        {},
+        [],
+        Object.create(null),
+        { directory: ${cacheDir} },
+        { directory: undefined },
+      ];
+      for (const shape of shapes) {
+        const r = Module.enableCompileCache(shape);
+        if (r.status !== ENABLED && r.status !== ALREADY_ENABLED) {
+          console.error("unexpected status", r.status, JSON.stringify(r));
+          process.exit(1);
+        }
+        if (typeof r.directory !== "string") {
+          console.error("missing directory", JSON.stringify(r));
+          process.exit(1);
+        }
+      }
+      console.log("shapes-ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("shapes-ok");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("native module functions are not constructors", () => {

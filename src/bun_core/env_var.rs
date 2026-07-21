@@ -145,6 +145,7 @@ new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
 // exactly "1" (lib/internal/process/pre_execution.js).
 new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});
 new!(pub NODE_COMPILE_CACHE: string, "NODE_COMPILE_CACHE", {});
+new!(pub NODE_COMPILE_CACHE_PORTABLE: string, "NODE_COMPILE_CACHE_PORTABLE", {});
 new!(pub NODE_DEBUG_NATIVE: string, "NODE_DEBUG_NATIVE", {});
 new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The

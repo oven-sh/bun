@@ -33,6 +33,9 @@ struct CacheState {
     /// returns and where entries live.
     dir: Box<[u8]>,
     dir_handle: sys::Dir,
+    /// Portable mode: keys use paths relative to `dir`, so the cache
+    /// survives moving the tree (NODE_COMPILE_CACHE_PORTABLE / {portable}).
+    portable: bool,
     entries: HashMap<u32, Entry, IdentityContext<u32>>,
 }
 
@@ -178,6 +181,25 @@ fn cache_key(filename: &[u8], is_cjs: bool) -> u32 {
     Wyhash::hash(Wyhash::hash(0, &type_byte), filename) as u32
 }
 
+/// Portable mode keys on the path relative to the cache dir (Node parity).
+/// Falls back to absolute keys when no relative form exists (e.g. different
+/// Windows drives, where `relative` returns `to` unchanged — Node parity).
+fn key_for(state: &CacheState, filename: &[u8], is_cjs: bool) -> u32 {
+    if state.portable {
+        // Thread-local scratch result: consumed before any other resolve call.
+        let rel = bun_paths::resolve_path::relative(&state.dir, filename);
+        if !rel.is_empty() && !bun_paths::is_absolute(rel) {
+            cclog!(
+                "[compile cache] using relative path {} from {}\n",
+                String::from_utf8_lossy(rel),
+                String::from_utf8_lossy(&state.dir)
+            );
+            return cache_key(rel, is_cjs);
+        }
+    }
+    cache_key(filename, is_cjs)
+}
+
 /// `v<bun version>-<arch>-<revision>-<uid>`, mirroring Node's
 /// `$VERSION-$ARCH-$CACHE_VERSION_TAG-$UID` shape. The revision changes with
 /// every Bun build, so a stale JSC bytecode format can never be loaded.
@@ -214,6 +236,11 @@ pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::Relaxed) == 2
 }
 
+/// `NODE_COMPILE_CACHE_PORTABLE=1` (exact match, like Node).
+fn portable_from_env() -> bool {
+    env_var::NODE_COMPILE_CACHE_PORTABLE::get() == Some(b"1")
+}
+
 /// One-time env-driven initialization; called from the module fetch path.
 /// Cheap after the first call.
 pub fn init_from_env_once() {
@@ -226,7 +253,7 @@ pub fn init_from_env_once() {
                 ENABLED.store(1, Ordering::Relaxed);
                 return;
             }
-            let _ = enable_with_dir(dir);
+            let _ = enable_with_dir(dir, portable_from_env());
         } else {
             ENABLED.store(1, Ordering::Relaxed);
         }
@@ -250,9 +277,10 @@ fn init_logging_once() {
     ONCE.call_once(init_logging);
 }
 
-/// `module.enableCompileCache(dir?)`. `None` resolves the default directory
-/// (env `NODE_COMPILE_CACHE`, else `<tmpdir>/node-compile-cache`) like Node.
-pub fn enable(explicit_dir: Option<&[u8]>) -> EnableResult {
+/// `module.enableCompileCache(dir | {directory, portable})`. `None` values
+/// resolve like Node: dir from `NODE_COMPILE_CACHE` else the tmpdir default;
+/// portable from `NODE_COMPILE_CACHE_PORTABLE=1`.
+pub fn enable(explicit_dir: Option<&[u8]>, portable: Option<bool>) -> EnableResult {
     init_logging_once();
     if env_var::NODE_DISABLE_COMPILE_CACHE::get().is_some() {
         cclog!("[compile cache] Disabled by NODE_DISABLE_COMPILE_CACHE.\n");
@@ -290,7 +318,7 @@ pub fn enable(explicit_dir: Option<&[u8]>) -> EnableResult {
             }
         },
     };
-    enable_with_dir(dir)
+    enable_with_dir(dir, portable.unwrap_or_else(portable_from_env))
 }
 
 /// Node's `GetTempDir` order: TMPDIR -> TMP -> TEMP -> /tmp on POSIX
@@ -318,7 +346,7 @@ fn platform_tmp_dir() -> &'static [u8] {
     }
 }
 
-fn enable_with_dir(dir: &[u8]) -> EnableResult {
+fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
     let tag = version_tag();
 
     // Resolve `dir` to an absolute path against the process cwd.
@@ -400,9 +428,21 @@ fn enable_with_dir(dir: &[u8]) -> EnableResult {
                 message: None,
             };
         }
+        let mut tagged = tagged;
+        if portable {
+            // Resolve symlinks (e.g. macOS /var -> /private/var) so relative
+            // keys match Bun's realpath'd module paths.
+            let mut z_buf = bun_core::PathBuffer::uninit();
+            let mut real_buf = bun_core::PathBuffer::uninit();
+            let tagged_z = bun_paths::resolve_path::z(&tagged, &mut z_buf);
+            if let Ok(real) = sys::realpath(tagged_z, &mut real_buf) {
+                tagged = real.to_vec();
+            }
+        }
         *state = Some(CacheState {
             dir: tagged.into_boxed_slice(),
             dir_handle,
+            portable,
             entries: HashMap::new(),
         });
         ENABLED.store(2, Ordering::Relaxed);
@@ -439,11 +479,11 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
     let Ok(code_size) = u32::try_from(code.len()) else {
         return None;
     };
-    let key = cache_key(filename, is_cjs);
     let code_hash = hash32(code);
 
     let mut guard = STATE.lock();
     let state = guard.as_mut()?;
+    let key = key_for(state, filename, is_cjs);
 
     if let Some(entry) = state.entries.get(&key) {
         if entry.code_hash == code_hash && entry.code_size == code_size {
@@ -495,9 +535,9 @@ pub fn note_parse_failure(filename: &[u8], is_cjs: bool) {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return;
     }
-    let key = cache_key(filename, is_cjs);
     let mut guard = STATE.lock();
     let Some(state) = guard.as_mut() else { return };
+    let key = key_for(state, filename, is_cjs);
     if state.entries.contains_key(&key) {
         return;
     }
@@ -899,13 +939,15 @@ pub fn persist_at_exit() {
 /// `dir` is null or a live `BunString`; both out-params are valid for write.
 pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
     dir: *const BunString,
+    // -1 = not specified (fall back to NODE_COMPILE_CACHE_PORTABLE).
+    portable: i32,
     out_directory: *mut BunString,
     out_message: *mut BunString,
 ) -> i32 {
     // SAFETY: C++ passes null or a live BunString plus valid out-params.
     let dir_utf8 = unsafe { dir.as_ref() }.map(|d| d.to_utf8());
     let dir_slice = dir_utf8.as_ref().map(|d| d.slice());
-    let result = enable(dir_slice);
+    let result = enable(dir_slice, if portable < 0 { None } else { Some(portable != 0) });
     if let Some(directory) = result.directory {
         // SAFETY: out-param is valid for write per fn contract.
         unsafe { *out_directory = BunString::clone_utf8(&directory) };

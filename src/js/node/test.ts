@@ -590,12 +590,17 @@ function republishChildEvent(
   const isVerdict = type === "test:pass" || type === "test:fail";
   if (isVerdict || type === "test:complete") {
     const isSuite = data.type === "suite";
-    if (isVerdict) {
-      // node's parent renumbers top-level entries across files (runner.js).
-      if (data.nesting === 0) {
+    // node's parent renumbers top-level entries across files (runner.js).
+    // complete arrives before its verdict, so peek (don't increment) there.
+    if (data.nesting === 0) {
+      if (isVerdict) {
         counts.topLevel++;
         data.testNumber = counts.topLevel;
+      } else {
+        data.testNumber = counts.topLevel + 1;
       }
+    }
+    if (isVerdict) {
       // node counts a suite in `suites` and stops there: a skipped or todo
       // suite never lands in skipped/todo/passed/tests (countCompletedTest).
       if (isSuite) counts.suites++;
@@ -3256,10 +3261,12 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
 
     const durationMs = roundDurationMs(performance.now() - started);
     // counts.topLevel covers both the republished entries and the failed-import
-    // file nodes emitted above (root.reportedCount only the former).
+    // file nodes emitted above (root.reportedCount only the former). Emitted
+    // directly so it carries no data.file, matching runFiles and the adjacent
+    // run-level summary (the sink would stamp the stale activeRunFile on it).
     const { topLevel } = counts;
     if (topLevel > 0) {
-      standaloneSink("test:plan", { __proto__: null, nesting: 0, count: topLevel });
+      reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: topLevel });
     }
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {

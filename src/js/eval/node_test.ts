@@ -305,6 +305,27 @@ async function main() {
 
   debug("run options: %o", runOptions);
 
+  // Resolve every reporter before run() spawns anything: node awaits
+  // setupTestReporters() during bootstrap, and resolving after runFiles has
+  // already spawned means a failed import process.exit(7)s with an orphaned
+  // child. Also closes the truncated-stream race (the first pipe starts the
+  // Readable flowing while a later custom reporter's import() is still pending).
+  let resolved: unknown[];
+  try {
+    resolved = await Promise.all(reporterNames.map(resolveReporter));
+  } catch (err) {
+    // node's main is ESM: a reporter that can't be set up leaves the
+    // top-level await unfinished, which exits with code 7. inspect() keeps
+    // the error's `code` visible, like node's fatal printer.
+    console.error(require("node:util").inspect(err));
+    process.exit(7);
+  }
+
+  // runFiles honors opts.signal; aborting it kills the current child before a
+  // mid-stream reporter error triggers process.exit(7).
+  const abortController = new AbortController();
+  runOptions.signal = abortController.signal;
+
   let stream;
   try {
     stream = run(runOptions);
@@ -321,20 +342,6 @@ async function main() {
     if (data.file === undefined) success = data.success;
   });
 
-  // Resolve every reporter before piping any copy: runFiles is already running
-  // in the background, and once the first stream.pipe() starts it flowing, a
-  // custom reporter's await import() yields with events draining only to the
-  // earlier copies. Node awaits setupTestReporters() during bootstrap.
-  let resolved: unknown[];
-  try {
-    resolved = await Promise.all(reporterNames.map(resolveReporter));
-  } catch (err) {
-    // node's main is ESM: a reporter that can't be set up leaves the
-    // top-level await unfinished, which exits with code 7. inspect() keeps
-    // the error's `code` visible, like node's fatal printer.
-    console.error(require("node:util").inspect(err));
-    process.exit(7);
-  }
   const reporterPromises: Promise<void>[] = [];
   for (let i = 0; i < resolved.length; i++) {
     const destination = destinationFor(destinationNames[i]);
@@ -350,6 +357,7 @@ async function main() {
     await Promise.all(reporterPromises);
   } catch (err) {
     // A reporter that errors mid-stream: node's unfinished-TLA exit code.
+    abortController.abort();
     console.error((err as Error)?.stack ?? err);
     process.exit(7);
   }

@@ -588,6 +588,19 @@ extern "C" void BunDebugger__willHotReload()
     });
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionStopWaitingForConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto targetId = static_cast<ScriptExecutionContextIdentifier>(callFrame->argument(0).toUInt32(globalObject));
+    // Posted to the inspected VM's thread: clears wait_for_connection and
+    // unrefs poll_ref so --inspect-wait/--inspect-brk stops blocking when the
+    // inspector failed to listen.
+    ScriptExecutionContext::ensureOnContextThread(targetId, [](ScriptExecutionContext&) {
+        waitingForConnection = false;
+        Debugger__didConnect();
+    });
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* debuggerGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);
@@ -642,6 +655,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("disconnect"_s), jsFunctionDisconnect, ImplementationVisibility::Public));
     arguments.append(jsBoolean(isAutomatic));
     arguments.append(jsBoolean(isUrlServer));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String(), jsFunctionStopWaitingForConnection, ImplementationVisibility::Public));
 
     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
     scope.assertNoException();

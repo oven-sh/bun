@@ -104,6 +104,7 @@ export default function (
   close: () => void,
   isAutomatic: boolean,
   urlIsServer: boolean,
+  stopWaitingForConnection: (executionContextId: number) => void,
 ): void {
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
@@ -116,6 +117,8 @@ export default function (
   } catch (error) {
     // Match Node.js: a failure to bind the inspector address is a warning, not fatal.
     console.error(`Failed to start inspector: ${error && (error as any).message ? (error as any).message : error}`);
+    // Release --inspect-wait/--inspect-brk on the inspected VM so user code runs.
+    stopWaitingForConnection(executionContextId);
     return;
   }
 

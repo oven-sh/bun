@@ -578,16 +578,14 @@ impl DateTime {
         // MySQL in permissive sql_mode can store zero / partial-zero dates like
         // "0000-00-00" or "2024-00-15" and send them over the binary protocol.
         // WTF::GregorianDateTime would silently wrap month=0 to December of the
-        // prior year, so validate here and surface NaN instead — matching the
-        // Invalid Date the text path produces via from_text().
-        if self.month < 1
-            || self.month > 12
-            || self.day < 1
-            || self.day > days_in_month(self.year, self.month)
-            || self.hour > 23
-            || self.minute > 59
-            || self.second > 59
-        {
+        // prior year, so surface NaN for those instead — matching the Invalid
+        // Date the text path produces via from_text().
+        //
+        // Over-range components are deliberately NOT rejected here: with
+        // ALLOW_INVALID_DATES MySQL stores day-of-month 1..31 regardless of the
+        // actual month length (e.g. 2024-02-30), and GregorianDateTime
+        // normalizes those the same way Date.UTC does.
+        if self.month < 1 || self.day < 1 {
             return Ok(f64::NAN);
         }
         // from_unix_timestamp() breaks a Date's UTC epoch into Y/M/D h:m:s with

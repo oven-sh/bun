@@ -191,29 +191,26 @@ describe("timeout kills the process", () => {
   // may still hold the write end. Reading stdout/stderr after `proc.exited`
   // must not wait for that grandchild to exit; Bun closes its read end and
   // delivers whatever was buffered (same as `spawnSync`).
-  test.skipIf(isWindows)(
-    "Bun.spawn stdout does not hang when a grandchild outlives the timeout",
-    async () => {
-      // `sh` starts fast enough that the background `sleep` is running before
-      // the timeout fires even under a debug build; the signal is delivered
-      // to `sh` alone, so `sleep` survives holding the pipe's write end.
-      await using proc = Bun.spawn({
-        cmd: ["sh", "-c", "echo from-child; sleep 60 & read _"],
-        env: bunEnv,
-        timeout: 200,
-        killSignal: "SIGTERM",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      await proc.exited;
-      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-      expect({ stdout, stderr, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
-        stdout: "from-child\n",
-        stderr: "",
-        exitCode: null,
-        signalCode: "SIGTERM",
-      });
-    },
-  );
+  test.skipIf(isWindows)("Bun.spawn stdout does not hang when a grandchild outlives the timeout", async () => {
+    // `sh` starts fast enough that the background `sleep` is running before
+    // the timeout fires even under a debug build; the signal is delivered
+    // to `sh` alone, so `sleep` survives holding the pipe's write end.
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", "echo from-child; sleep 60 & read _"],
+      env: bunEnv,
+      timeout: 200,
+      killSignal: "SIGTERM",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    await proc.exited;
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+    expect({ stdout, stderr, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "from-child\n",
+      stderr: "",
+      exitCode: null,
+      signalCode: "SIGTERM",
+    });
+  });
 
   test("Bun.spawnSync", () => {
     const timeStart = Date.now();

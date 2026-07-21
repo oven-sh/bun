@@ -684,6 +684,73 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     expect(result.done).toBe(true);
   });
 
+  it("canceling a direct stream invokes the source's cancel() callback", async () => {
+    // reader.cancel(): controller materialized
+    {
+      let reason;
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          c.write("hello");
+          c.flush();
+        },
+        cancel(r) {
+          reason = r;
+        },
+      });
+      const reader = rs.getReader();
+      await reader.read();
+      await reader.cancel("bye");
+      expect(reason).toBe("bye");
+    }
+    // stream.cancel() before any reader: controller not yet materialized
+    {
+      let reason;
+      const rs = new ReadableStream({
+        type: "direct",
+        pull() {},
+        cancel(r) {
+          reason = r;
+        },
+      });
+      await rs.cancel("early");
+      expect(reason).toBe("early");
+    }
+    // the cancel promise chains onto the source's returned promise
+    {
+      const order = [];
+      const rs = new ReadableStream({
+        type: "direct",
+        pull() {},
+        async cancel() {
+          await Promise.resolve();
+          order.push("source");
+        },
+      });
+      await rs.cancel();
+      order.push("awaited");
+      expect(order).toEqual(["source", "awaited"]);
+    }
+  });
+
+  it("a direct stream's controller.write() throws after reader.cancel()", async () => {
+    let capturedController;
+    const rs = new ReadableStream({
+      type: "direct",
+      pull(c) {
+        capturedController = c;
+        c.write("a");
+        c.flush();
+      },
+    });
+    const reader = rs.getReader();
+    await reader.read();
+    await reader.cancel();
+    expect(() => capturedController.write("b")).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "ReadableStreamDirectController is now closed" }),
+    );
+  });
+
   it("releasing a direct stream's reader during an async pull does not crash close", async () => {
     const rs = new ReadableStream({
       type: "direct",

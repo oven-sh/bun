@@ -2220,16 +2220,29 @@ describe("open with a numeric flag boxed as a double", () => {
     async flag => {
       using dir = tempDir("fs-flags-negative", { "f.txt": "x" });
       const file = join(String(dir), "f.txt");
+      // The exact errno is platform-dependent, but it must be a syscall error
+      // (.syscall === 'open'), not an argument-validation TypeError/RangeError.
+      const expectSyscallError = (err: any) => {
+        expect(err).not.toBeInstanceOf(TypeError);
+        expect(err).not.toBeInstanceOf(RangeError);
+        expect(err?.syscall).toBe("open");
+      };
 
-      expect(() => openSync(file, flag)).toThrow();
+      let err: any;
+      try {
+        closeSync(openSync(file, flag));
+      } catch (e) {
+        err = e;
+      }
+      expectSyscallError(err);
 
       const { promise, resolve } = Promise.withResolvers<[any, any]>();
-      fs.open(file, flag, (err, fd) => resolve([err, fd]));
-      const [err, fd] = await promise;
+      fs.open(file, flag, (e, fd) => resolve([e, fd]));
+      const [cbErr, fd] = await promise;
       if (fd != null) closeSync(fd);
-      expect(err).toBeTruthy();
+      expectSyscallError(cbErr);
 
-      await expect(promises.open(file, flag)).rejects.toThrow();
+      await expect(promises.open(file, flag)).rejects.toMatchObject({ syscall: "open" });
     },
   );
 });

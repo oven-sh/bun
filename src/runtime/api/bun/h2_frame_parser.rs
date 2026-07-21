@@ -2716,11 +2716,12 @@ impl H2FrameParser {
 
         if emit_error {
             if rst_code != ErrorCode::NO_ERROR {
-                self.dispatch_with_2_extra(
+                self.dispatch_with_3_extra(
                     JSH2FrameParser::Gc::onError,
                     JSValue::js_number(rst_code.0 as f64),
                     JSValue::js_number(self.last_stream_id.get() as f64),
                     chunk,
+                    JSValue::js_number(rst_code.0 as f64),
                 );
             }
             self.dispatch_with_extra(
@@ -5830,7 +5831,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
     }
 
-    fn on_error(&self, lib_error_code: i32, _last: u32, debug: &[u8]) {
+    fn on_error(&self, lib_error_code: i32, sent_code: u32, _last: u32, debug: &[u8]) {
         // The engine detected a connection error and already wrote the GOAWAY: surface it to JS
         // as the negative nghttp2-style library error code (the JS handler builds node's
         // NghttpError from it: code ERR_HTTP2_ERROR, message nghttp2_strerror), then the end
@@ -5843,11 +5844,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             .to_js(debug, &g)
             .unwrap_or(JSValue::UNDEFINED);
         if lib_error_code != 0 {
-            self.dispatch_with_2_extra(
+            self.dispatch_with_3_extra(
                 JSH2FrameParser::Gc::onError,
                 JSValue::js_number(lib_error_code as f64),
                 JSValue::js_number(self.last_stream_id.get() as f64),
                 chunk,
+                JSValue::js_number(sent_code as f64),
             );
         }
         self.dispatch_with_extra(

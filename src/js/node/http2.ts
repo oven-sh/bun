@@ -4227,8 +4227,20 @@ class ServerHttp2Session extends Http2Session {
         }
       }
     },
-    error(self: ServerHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
+    error(
+      self: ServerHttp2Session,
+      errorCode: number | string,
+      lastStreamId: number,
+      opaqueData: Buffer,
+      sentGoawayCode?: number,
+    ) {
       if (!self) return;
+      // When the native layer already put a GOAWAY on the wire it tells us the code it sent;
+      // record it so destroy() does not re-announce the error with a different code (RFC 9113
+      // 6.8: receivers act on the most recently received GOAWAY).
+      if (typeof sentGoawayCode === "number") {
+        self[kGoawaySent] = sentGoawayCode;
+      }
       if (errorCode === "ERR_HTTP2_TOO_MANY_INVALID_FRAMES") {
         self.destroy($ERR_HTTP2_TOO_MANY_INVALID_FRAMES());
         return;
@@ -4237,7 +4249,7 @@ class ServerHttp2Session extends Http2Session {
       // detected; node surfaces those as NghttpError (code ERR_HTTP2_ERROR) via
       // onSessionInternalError.
       if (typeof errorCode === "number" && errorCode < 0) {
-        self.destroy(new NghttpError(errorCode));
+        self.destroy(new NghttpError(errorCode), sentGoawayCode);
         return;
       }
       self.destroy(errorCode as number);
@@ -4664,7 +4676,7 @@ class ServerHttp2Session extends Http2Session {
     // ('goaway' event) while in-flight streams are still allowed to finish. The session is only
     // destroyed once there is nothing in flight, and never before the GOAWAY had a chance to leave.
     this.goaway(constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
-    this[kGoawaySent] = true;
+    this[kGoawaySent] = constants.NGHTTP2_NO_ERROR;
     this.#parser?.flush?.();
     if (this.#connections === 0) {
       setImmediate(destroyIfNotDestroyedNT, this);
@@ -4713,11 +4725,17 @@ class ServerHttp2Session extends Http2Session {
       this.#closed = true;
       this.#connected = false;
       if (socket) {
-        if (!this[kGoawaySent] || code) {
-          // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-          // and double-fires the peer's 'goaway' event. An error code is new information, though:
-          // a destroy(err) after close() must still put the error GOAWAY on the wire.
-          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+        const prevSent = this[kGoawaySent];
+        const goawayCode = code || constants.NGHTTP2_NO_ERROR;
+        if (
+          prevSent === undefined ||
+          (prevSent === constants.NGHTTP2_NO_ERROR && goawayCode !== constants.NGHTTP2_NO_ERROR)
+        ) {
+          // Send when none sent yet, or to escalate close()'s NO_ERROR to an error code. Never
+          // re-announce once an error GOAWAY is on the wire: node's nghttp2_session_terminate_session
+          // is a no-op once terminated, so the peer observes exactly the engine's specific code.
+          this.goaway(goawayCode, 0, Buffer.alloc(0));
+          this[kGoawaySent] = goawayCode;
         }
         if (error) {
           // node's finishSessionClose destroys the socket when the session dies
@@ -5183,8 +5201,20 @@ class ClientHttp2Session extends Http2Session {
         }
       }
     },
-    error(self: ClientHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
+    error(
+      self: ClientHttp2Session,
+      errorCode: number | string,
+      lastStreamId: number,
+      opaqueData: Buffer,
+      sentGoawayCode?: number,
+    ) {
       if (!self) return;
+      // When the native layer already put a GOAWAY on the wire it tells us the code it sent;
+      // record it so destroy() does not re-announce the error with a different code (RFC 9113
+      // 6.8: receivers act on the most recently received GOAWAY).
+      if (typeof sentGoawayCode === "number") {
+        self[kGoawaySent] = sentGoawayCode;
+      }
       // The native parser reports the maxSessionInvalidFrames violation with a string code
       // (it is a JS-level error, not an HTTP/2 error code). A negative numeric code is an
       // nghttp2-style library error for a violation our own engine detected; node surfaces
@@ -5195,7 +5225,7 @@ class ClientHttp2Session extends Http2Session {
           : typeof errorCode === "number" && errorCode < 0
             ? new NghttpError(errorCode)
             : sessionErrorFromCodeNamed(errorCode as number);
-      self.destroy(error_instance);
+      self.destroy(error_instance, sentGoawayCode);
     },
 
     wantTrailers: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream) => {
@@ -5671,7 +5701,7 @@ class ClientHttp2Session extends Http2Session {
     // ('goaway' event) while in-flight streams are still allowed to finish. The session is only
     // destroyed once there is nothing in flight, and never before the GOAWAY had a chance to leave.
     this.goaway(constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
-    this[kGoawaySent] = true;
+    this[kGoawaySent] = constants.NGHTTP2_NO_ERROR;
     this.#parser?.flush?.();
     // Requests queued while the socket is still connecting count as in-flight too: they are
     // rejected with ERR_HTTP2_GOAWAY_SESSION from #onConnect (node's requestOnConnect), not
@@ -5750,11 +5780,17 @@ class ClientHttp2Session extends Http2Session {
         }
       }
       if (socket) {
-        if (!this[kGoawaySent] || code) {
-          // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-          // and double-fires the peer's 'goaway' event. An error code is new information, though:
-          // a destroy(err) after close() must still put the error GOAWAY on the wire.
-          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+        const prevSent = this[kGoawaySent];
+        const goawayCode = code || constants.NGHTTP2_NO_ERROR;
+        if (
+          prevSent === undefined ||
+          (prevSent === constants.NGHTTP2_NO_ERROR && goawayCode !== constants.NGHTTP2_NO_ERROR)
+        ) {
+          // Send when none sent yet, or to escalate close()'s NO_ERROR to an error code. Never
+          // re-announce once an error GOAWAY is on the wire: node's nghttp2_session_terminate_session
+          // is a no-op once terminated, so the peer observes exactly the engine's specific code.
+          this.goaway(goawayCode, 0, Buffer.alloc(0));
+          this[kGoawaySent] = goawayCode;
         }
         if (error) {
           // See the client session: end first, destroy a tick later (node's

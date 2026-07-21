@@ -116,10 +116,11 @@ const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 /// ownership cycle.
 pub trait Sink {
     fn write(&self, bytes: &[u8]) -> WriteResult;
-    /// A locally-detected connection error: the GOAWAY (when one applies) is already on the wire.
-    /// `lib_error_code` is the negative nghttp2-style library error code (`wire::lib_error`) the
-    /// embedder maps to node's NghttpError.
-    fn on_error(&self, lib_error_code: i32, last_stream_id: u32, debug: &[u8]);
+    /// A locally-detected connection error: the GOAWAY is already on the wire. `lib_error_code` is
+    /// the negative nghttp2-style library error code (`wire::lib_error`) the embedder maps to
+    /// node's NghttpError; `sent_code` is the HTTP/2 error code carried by that GOAWAY, so the
+    /// embedder can record it and not re-announce the error with a different code.
+    fn on_error(&self, lib_error_code: i32, sent_code: u32, last_stream_id: u32, debug: &[u8]);
     fn on_local_settings(&self, settings: &Settings);
     fn on_remote_settings(&self, settings: &Settings);
     fn on_ping(&self, payload: &[u8], is_ack: bool);
@@ -386,7 +387,7 @@ impl Connection {
         payload.extend_from_slice(debug);
         self.write_frame(sink, FrameType::GoAway, 0, 0, &payload);
         let last = self.last_stream_id;
-        sink.on_error(lib_code, last, debug);
+        sink.on_error(lib_code, code.as_u32(), last, debug);
     }
 
     /// Connection error with the generic NGHTTP2_ERR_PROTO library code — the same thing node
@@ -1997,7 +1998,7 @@ mod tests {
             self.out.borrow_mut().extend_from_slice(bytes);
             WriteResult::Sent
         }
-        fn on_error(&self, lib_code: i32, _l: u32, _d: &[u8]) {
+        fn on_error(&self, lib_code: i32, _sent: u32, _l: u32, _d: &[u8]) {
             // send_go_away() reports through on_error; record it so the _is_goaway tests can assert.
             self.local_error.set(Some(lib_code));
         }

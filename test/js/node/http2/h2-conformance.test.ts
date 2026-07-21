@@ -422,6 +422,56 @@ describe("frame size limit (checklist §4.2)", () => {
   });
 });
 
+// RFC 9113 §6.8: receivers act on the most recently received GOAWAY, so a second GOAWAY carrying a
+// different error code overrides what the peer observes. Node sends exactly one on a connection
+// error (nghttp2_session_terminate_session is a no-op once terminated).
+describe("connection-error GOAWAY is sent once with the specific code (RFC 9113 §5.4.1, §6.8)", () => {
+  async function collectGoawayCodes(send: (c: RawH2) => void): Promise<number[]> {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      send(c);
+      await c.waitForGoaway();
+      await c.waitClosed();
+      return c.frames.filter(f => f.type === FrameType.GOAWAY).map(goawayErrorCode);
+    } finally {
+      c.destroy();
+    }
+  }
+
+  test.each([
+    [
+      "DATA on stream 0 -> PROTOCOL_ERROR",
+      ErrorCode.PROTOCOL_ERROR,
+      (c: RawH2) => c.sendFrame(FrameType.DATA, 0, 0, Buffer.from("x")),
+    ],
+    [
+      "PING with length != 8 -> FRAME_SIZE_ERROR",
+      ErrorCode.FRAME_SIZE_ERROR,
+      (c: RawH2) => c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(5)),
+    ],
+  ] as const)("%s (matches node)", async (_name, expected, send) => {
+    // Node parity: nghttp2 writes the specific GOAWAY and enters terminated state, so the
+    // destroy()->terminate_session that follows is a no-op and exactly this one frame is sent.
+    expect(await collectGoawayCodes(send)).toEqual([expected]);
+  });
+
+  test("INITIAL_WINDOW_SIZE overflow -> FLOW_CONTROL_ERROR (RFC-correct; node sends INTERNAL_ERROR)", async () => {
+    // Deliberate node divergence: nghttp2 returns fatal NGHTTP2_ERR_FLOW_CONTROL (-524) here
+    // without terminating, so node's destroy() writes only INTERNAL_ERROR. Bun's engine writes
+    // the RFC 9113 6.5.2 FLOW_CONTROL_ERROR itself and destroy() does not override it.
+    const codes = await collectGoawayCodes(c => {
+      const b = Buffer.alloc(6);
+      b.writeUInt16BE(0x4, 0);
+      b.writeUInt32BE(0x80000000, 2);
+      c.sendFrame(FrameType.SETTINGS, 0, 0, b);
+    });
+    expect(codes).toEqual([ErrorCode.FLOW_CONTROL_ERROR]);
+  });
+});
+
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`
 // client and asserts the client's wire behavior (push stream states, SETTINGS ack ordering).
 

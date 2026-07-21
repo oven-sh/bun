@@ -1052,10 +1052,26 @@ impl<'a> Parser<'a> {
                     }
 
                     js_ast::StmtData::SClass(class) => {
-                        // Move class export statements to the top of the file if we can
-                        // This automatically resolves some cyclical import issues
+                        // Move class statements to the top of the file if we can.
+                        // This automatically resolves some cyclical import issues.
                         // https://github.com/kysely-org/kysely/issues/412
-                        let should_move = !p.options.bundle && class.class.can_be_moved();
+                        //
+                        // Skip the move when an earlier top-level statement already
+                        // references the class name. Earlier statements have been
+                        // visited by the time we reach this one, so the symbol's
+                        // `use_count_estimate` reflects those references. Moving the
+                        // declaration above such a use would erase its TDZ.
+                        let used_before_decl = match class.class.class_name {
+                            Some(name) => {
+                                p.symbols.as_slice()[name.ref_.inner_index() as usize]
+                                    .use_count_estimate
+                                    > 0
+                            }
+                            None => false,
+                        };
+                        let should_move = !p.options.bundle
+                            && !used_before_decl
+                            && class.class.can_be_moved();
 
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
@@ -1069,7 +1085,31 @@ impl<'a> Parser<'a> {
                         // We move export default statements when we can
                         // This automatically resolves some cyclical import issues in packages like luxon
                         // https://github.com/oven-sh/bun/issues/1961
-                        let should_move = !p.options.bundle && value.can_be_moved();
+                        //
+                        // As with `SClass` above, a named default class stays put if
+                        // an earlier statement references the name so its TDZ is
+                        // preserved. Functions are hoisted, so they are unaffected.
+                        let class_name_ref = match &value.value {
+                            js_ast::StmtOrExpr::Stmt(s) => match &s.data {
+                                js_ast::StmtData::SClass(c) => {
+                                    c.class.class_name.map(|name| name.ref_)
+                                }
+                                _ => None,
+                            },
+                            // A class *expression* name is only visible inside the
+                            // class body; module-scope TDZ does not apply to it.
+                            js_ast::StmtOrExpr::Expr(_) => None,
+                        };
+                        let used_before_decl = match class_name_ref {
+                            Some(ref_) => {
+                                p.symbols.as_slice()[ref_.inner_index() as usize]
+                                    .use_count_estimate
+                                    > 0
+                            }
+                            None => false,
+                        };
+                        let should_move =
+                            !p.options.bundle && !used_before_decl && value.can_be_moved();
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
 

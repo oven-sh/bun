@@ -252,3 +252,80 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// The runtime transpiler hoists top-level class declarations that are safe to
+// move (to help with certain cyclic-import cases). That move must not jump over
+// an earlier statement that references the class binding, or the temporal dead
+// zone disappears and `bun run` accepts code that the bundled output / Node
+// reject.
+describe("top-level class declaration TDZ", () => {
+  const tdzFixture = (decl: string) => /* js */ `
+    const out = [];
+    try {
+      out.push("typeof=" + typeof K);
+      out.push("constructed=" + new K().constructor.name);
+    } catch (e) {
+      out.push("ERR=" + e.constructor.name);
+    }
+    ${decl}
+    out.push("after=" + typeof K);
+    console.log(out.join(" | "));
+  `;
+
+  async function run(files: Record<string, string>, entry: string) {
+    using dir = tempDir("runtime-transpiler-class-tdz", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    ["class K { m() {} }", "class declaration"],
+    ["export class K { m() {} }", "exported class declaration"],
+    ["export default class K { m() {} }", "export default named class"],
+  ])("preserved for a %s referenced before its declaration (%s)", async decl => {
+    const { stdout, stderr, exitCode } = await run({ "index.mjs": tdzFixture(decl) }, "index.mjs");
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ERR=ReferenceError | after=function");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("preserved for a CommonJS top-level class declaration", async () => {
+    const { stdout, stderr, exitCode } = await run({ "index.cjs": tdzFixture("class K { m() {} }") }, "index.cjs");
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ERR=ReferenceError | after=function");
+    expect(exitCode).toBe(0);
+  });
+
+  // When nothing before the declaration references the class, the runtime
+  // transpiler still hoists it. Checking the `--target=bun` output asserts
+  // that this change did not disable the cyclic-import workaround wholesale.
+  test.concurrent("still hoisted when no earlier statement references it", async () => {
+    using dir = tempDir("runtime-transpiler-class-hoist", {
+      "index.mjs": /* js */ `
+        const unrelated = 1;
+        export class A { m() { return "A"; } }
+        console.log(new A().m(), unrelated);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--target=bun", "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The class declaration was moved ahead of `const unrelated`.
+    expect(stdout.indexOf("class A")).toBeGreaterThanOrEqual(0);
+    expect(stdout.indexOf("class A")).toBeLessThan(stdout.indexOf("unrelated = 1"));
+    expect(exitCode).toBe(0);
+  });
+});

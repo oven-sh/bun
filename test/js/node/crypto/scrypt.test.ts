@@ -73,9 +73,7 @@ test("scryptSync derives from the password bytes at call time when a String-obje
   }
 
   const got = crypto.scryptSync(pw, new DetachingSalt(saltStr) as any, 16, { N: 1024 }).toString("hex");
-  const expected = crypto
-    .scryptSync(Buffer.alloc(size, 0x41), saltStr, 16, { N: 1024 })
-    .toString("hex");
+  const expected = crypto.scryptSync(Buffer.alloc(size, 0x41), saltStr, 16, { N: 1024 }).toString("hex");
 
   expect(got).toBe(expected);
 });

@@ -307,6 +307,7 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     // is not drained.
     if (drainMicrotasks && !vm.hasTerminationRequest()) {
         vm.drainMicrotasks();
+        defaultGlobalObject(globalObject)->handleRejectedPromises();
     }
 }
 

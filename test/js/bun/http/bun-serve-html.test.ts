@@ -955,7 +955,10 @@ test("development: {hmr: false} bundle log reports elapsed time in ms", async ()
 
   expect({
     status: result.status,
-    order: reportedMs >= result.elapsed / 10 ? "ok" : `reported ${reportedMs}ms, fetch took ${result.elapsed}ms`,
+    order:
+      reportedMs >= result.elapsed / 10 && reportedMs <= result.elapsed * 10
+        ? "ok"
+        : `reported ${reportedMs}ms, fetch took ${result.elapsed}ms`,
   }).toEqual({ status: 200, order: "ok" });
   expect(exitCode).toBe(0);
 });

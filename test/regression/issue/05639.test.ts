@@ -29,17 +29,21 @@ test("inspector listen failure warns but does not kill the app", async () => {
   // the warning or process exit (the old behavior: process.exit(1)).
   let stderr = "";
   const decoder = new TextDecoder();
-  for await (const chunk of proc.stderr as ReadableStream<Uint8Array>) {
-    stderr += decoder.decode(chunk);
-    if (stderr.includes("Failed to start inspector")) break;
-    if (proc.exitCode !== null) break;
+  const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
+  while (!stderr.includes("Failed to start inspector") && proc.exitCode === null) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    stderr += decoder.decode(value);
   }
 
-  // Close stdin so the child can exit cleanly, then drain whatever remains.
+  // Close stdin so the child can exit cleanly, then drain the rest of stderr.
   proc.stdin.end();
-  for await (const chunk of proc.stderr as ReadableStream<Uint8Array>) {
-    stderr += decoder.decode(chunk);
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    stderr += decoder.decode(value);
   }
+  reader.releaseLock();
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toContain("user code ran");

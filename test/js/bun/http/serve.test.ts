@@ -2865,7 +2865,6 @@ it.concurrent(
     // must remain in effect. Without validation, NaN became 0 and cleared
     // the timeout, so the hung handler was never reaped.
     const reaped = await Promise.race([promise, Bun.sleep(12000).then(() => false)]);
-    connection.end();
     expect(reaped).toBe(true);
   },
   20_000,

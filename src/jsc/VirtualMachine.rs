@@ -6016,7 +6016,6 @@ impl VirtualMachine {
                     only_non_index_properties: true,
                 },
             )?;
-            let longest_name = iterator.get_longest_property_name().min(10);
             let mut is_first_property = true;
             while let Some(field) = iterator.next()? {
                 let value = iterator.value;
@@ -6077,9 +6076,7 @@ impl VirtualMachine {
                     };
                     let formatter = &mut *restore.f;
 
-                    let pad_left = longest_name.saturating_sub(field.length());
                     is_first_property = false;
-                    splat_space(writer, pad_left as u64)?;
                     pretty_write!(writer, " {}<r><d>:<r> ", field)?;
 
                     if allow_side_effects && global_ref.has_exception() {

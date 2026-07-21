@@ -2330,6 +2330,11 @@ declare module "bun" {
   type MacroMap = Record<string, Record<string, string>>;
 
   /**
+   * The value an export may be replaced with by {@link TranspilerOptions.exports}.
+   */
+  type ExportReplacement = string | number | boolean | null | undefined;
+
+  /**
    * Hash a string or array buffer using Wyhash
    *
    * This is not a cryptographic hash function.
@@ -2465,8 +2470,32 @@ declare module "bun" {
     autoImportJSX?: boolean;
     allowBunRuntime?: boolean;
     exports?: {
+      /**
+       * Names of exports to remove, matched against the *exported* name.
+       *
+       * For `export { q as QA }`, that is `"QA"` and not the local `"q"`.
+       *
+       * Any exported name works here, including string-named exports such as
+       * `export { q as "a-b" }`.
+       */
       eliminate?: string[];
-      replace?: Record<string, string>;
+      /**
+       * Exports to replace, keyed on the *exported* name.
+       *
+       * For `export { q as QA }`, that is `"QA"` and not the local `"q"`.
+       *
+       * A `[name, value]` pair exports `value` under `name` instead, so
+       * `{ getStaticProps: ["__N_SSG", true] }` turns an exported
+       * `getStaticProps` into `export var __N_SSG = true`.
+       *
+       * Keys, and the `name` of a pair, have to be valid ECMAScript
+       * identifiers; anything else throws. That is narrower than `eliminate`,
+       * so `export { q as "a-b" }` can only be eliminated. A replacement is
+       * emitted as `export var <name>`, which a reserved word cannot spell:
+       * `{ default: 1 }` replaces `export default x` but leaves
+       * `export { x as default }` untouched.
+       */
+      replace?: Record<string, ExportReplacement | [string, ExportReplacement]>;
     };
     treeShaking?: boolean;
     trimUnusedImports?: boolean;

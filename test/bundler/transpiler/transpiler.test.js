@@ -1927,6 +1927,179 @@ export default class {
     });
   });
 
+  describe("exports.eliminate and exports.replace match the exported name", () => {
+    const transform = (code, exports) =>
+      new Bun.Transpiler({ loader: "ts", exports })
+        .transformSync(code)
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean)
+        .join("\n");
+
+    it("eliminates a renamed export clause by its exported name", () => {
+      expect(transform(`const q = 1; export { q as QA };`, { eliminate: ["QA"] })).toBe(`const q = 1;`);
+    });
+
+    it("does not eliminate a renamed export clause by its local name", () => {
+      expect(transform(`const q = 1; export { q as QA };`, { eliminate: ["q"] })).toBe(
+        `const q = 1;\nexport { q as QA };`,
+      );
+    });
+
+    it("eliminates a renamed re-export clause by its exported name", () => {
+      expect(transform(`export { rr as RR } from "./dep";`, { eliminate: ["RR"] })).toBe(`export {  } from "./dep";`);
+      expect(transform(`export { rr as RR } from "./dep";`, { eliminate: ["rr"] })).toBe(
+        `export { rr as RR } from "./dep";`,
+      );
+    });
+
+    it("eliminates an unrenamed export clause", () => {
+      expect(transform(`const foo = 1; export { foo };`, { eliminate: ["foo"] })).toBe(`const foo = 1;`);
+    });
+
+    it("eliminates `export { q as default }` by the exported name", () => {
+      expect(transform(`const q = 1; export { q as default };`, { eliminate: ["default"] })).toBe(`const q = 1;`);
+    });
+
+    it("eliminates a string-named export clause", () => {
+      expect(transform(`const q = 1; export { q as "a-b" };`, { eliminate: ["a-b"] })).toBe(`const q = 1;`);
+    });
+
+    it("replaces a renamed export clause under its exported name", () => {
+      expect(transform(`var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
+        `var q = 1;\nexport var QA = 9;`,
+      );
+      expect(transform(`var q = 1; export { q as QA };`, { replace: { QA: ["INJ", true] } })).toBe(
+        `var q = 1;\nexport var INJ = true;`,
+      );
+    });
+
+    it("replaces a renamed re-export clause under its exported name", () => {
+      expect(transform(`export { rr as RR } from "./dep";`, { replace: { RR: 9 } })).toBe(
+        `export var RR = 9;\nexport {  } from "./dep";`,
+      );
+      expect(transform(`export { rr as RR } from "./dep";`, { replace: { RR: ["INJ", true] } })).toBe(
+        `export var INJ = true;\nexport {  } from "./dep";`,
+      );
+    });
+
+    // A re-export has no local binding to reuse, so `Replace` has to declare the
+    // alias even when the clause does not rename it.
+    it("replaces an unrenamed re-export clause", () => {
+      expect(transform(`export { RR } from "./dep";`, { replace: { RR: 9 } })).toBe(
+        `export var RR = 9;\nexport {  } from "./dep";`,
+      );
+      expect(transform(`export { RR } from "./dep";`, { replace: { RR: ["INJ", true] } })).toBe(
+        `export var INJ = true;\nexport {  } from "./dep";`,
+      );
+      expect(transform(`export { RR } from "./dep";`, { eliminate: ["RR"] })).toBe(`export {  } from "./dep";`);
+    });
+
+    it("replaces an unrenamed re-export whose exported name is also a local var", () => {
+      expect(transform(`var RR = 5; export { RR } from "./dep";`, { replace: { RR: 9 } })).toBe(
+        `var RR = 5;\nexport var RR = 9;\nexport {  } from "./dep";`,
+      );
+    });
+
+    // The collision rules apply whether or not the clause renames the export.
+    it.each([
+      [`const foo = 1;`, `const foo = 1;`],
+      [`let foo = 1;`, `let foo = 1;`],
+      [`class foo {}`, `class foo {\n}`],
+      [`import { foo } from "./d";`, `import { foo } from "./d";`],
+    ])("leaves an unrenamed export colliding with `%s` alone", (decl, printed) => {
+      expect(transform(`${decl} export { foo };`, { replace: { foo: 9 } })).toBe(`${printed}\nexport { foo };`);
+    });
+
+    it("replaces an unrenamed export clause", () => {
+      expect(transform(`function foo() {} export { foo };`, { replace: { foo: 9 } })).toBe(
+        `function foo() {}\nexport var foo = 9;`,
+      );
+      expect(transform(`var foo = 1; export { foo };`, { replace: { foo: 9 } })).toBe(
+        `var foo = 1;\nexport var foo = 9;`,
+      );
+    });
+
+    it("replaces a renamed export whose exported name is also a local var", () => {
+      expect(transform(`var QA = 5; var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
+        `var QA = 5;\nvar q = 1;\nexport var QA = 9;`,
+      );
+      expect(transform(`function QA() {} var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
+        `function QA() {}\nvar q = 1;\nexport var QA = 9;`,
+      );
+    });
+
+    // An unbound name is not a declaration, so the injected `var` still binds it.
+    it("replaces a renamed export whose exported name is unbound", () => {
+      expect(transform(`console.log(QA); var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
+        `console.log(QA);\nvar q = 1;\nexport var QA = 9;`,
+      );
+    });
+
+    // TypeScript merges a `var` into an import rather than refusing it, but then
+    // both bind the name and `scan_imports` rejects the file.
+    it("leaves a renamed export colliding with an import alone", () => {
+      expect(
+        transform(`import { QA } from "./d"; console.log(QA); var q = 1; export { q as QA };`, {
+          replace: { QA: 9 },
+        }),
+      ).toBe(`import { QA } from "./d";\nconsole.log(QA);\nvar q = 1;\nexport { q as QA };`);
+    });
+
+    // The injected `export var QA` merges with a `var`, but a lexical binding of
+    // the same name cannot, and the source never declared QA twice.
+    it.each([
+      [`const QA = 5;`, `const QA = 5;`],
+      [`let QA = 5;`, `let QA = 5;`],
+      [`class QA {}`, `class QA {\n}`],
+    ])("leaves a renamed export colliding with `%s` alone", (decl, printed) => {
+      expect(transform(`${decl} var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
+        `${printed}\nvar q = 1;\nexport { q as QA };`,
+      );
+    });
+
+    // `export var default = ...` / `export var await = ...` are syntax errors, so a
+    // `replace` entry keyed on a reserved word has no binding to emit.
+    it.each(["default", "class", "let", "eval", "await"])(
+      "leaves `export { q as %s }` alone when replacing",
+      keyword => {
+        expect(transform(`var q = 1; export { q as ${keyword} };`, { replace: { [keyword]: 9 } })).toBe(
+          `var q = 1;\nexport { q as ${keyword} };`,
+        );
+      },
+    );
+
+    it.each(["default", "class", "let", "eval", "await"])(
+      "leaves a renamed re-export of `%s` alone when replacing",
+      keyword => {
+        expect(transform(`export { rr as ${keyword} } from "./d";`, { replace: { [keyword]: 9 } })).toBe(
+          `export { rr as ${keyword} } from "./d";`,
+        );
+      },
+    );
+
+    // A re-export carries the reserved word as its exported name even without `as`.
+    it.each(["default", "class", "let", "eval", "await"])(
+      "leaves an unrenamed re-export of `%s` alone when replacing",
+      keyword => {
+        expect(transform(`export { ${keyword} } from "./d";`, { replace: { [keyword]: 9 } })).toBe(
+          `export { ${keyword} } from "./d";`,
+        );
+      },
+    );
+
+    it("still eliminates exports named with a reserved word", () => {
+      expect(transform(`const q = 1; export { q as class };`, { eliminate: ["class"] })).toBe(`const q = 1;`);
+      expect(transform(`export { default } from "./d";`, { eliminate: ["default"] })).toBe(`export {  } from "./d";`);
+    });
+
+    it("rejects a non-identifier exports.replace key", () => {
+      expect(() => new Bun.Transpiler({ loader: "ts", exports: { replace: { "a-b": 9 } } })).toThrow(
+        `"a-b" is not a valid ECMAScript identifier`,
+      );
+    });
+  });
+
   const bunTranspiler = new Bun.Transpiler({
     loader: "tsx",
     define: {

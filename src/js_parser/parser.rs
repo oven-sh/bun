@@ -1323,6 +1323,19 @@ pub(crate) fn is_eval_or_arguments(name: &[u8]) -> bool {
     name == b"eval" || name == b"arguments"
 }
 
+/// Whether `name` can spell a `BindingIdentifier` in strict-mode code. Class
+/// bodies and modules are always strict, so reserved words ("default", "let",
+/// "await", …), `eval`/`arguments`, and non-identifier strings are all syntax
+/// errors when used as a binding there.
+#[inline]
+pub(crate) fn can_be_binding_identifier(name: &[u8]) -> bool {
+    js_lexer::is_identifier(name)
+        && js_lexer::keyword(name).is_none()
+        && !js_lexer::is_strict_mode_reserved_word(name)
+        && name != b"await"
+        && !is_eval_or_arguments(name)
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct PrependTempRefsOpts {
     pub fn_body_loc: Option<bun_ast::Loc>,

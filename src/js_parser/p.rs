@@ -26,8 +26,8 @@ use crate::{
     JSXImport, JSXTransformType, Jest, LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState,
     ParseStatementOptions, ParsedPath, PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap,
     RuntimeImports, ScopeOrder, ScopeOrderList, SideEffects, StrictModeFeature, StringBoolMap,
-    Substitution, TempRef, ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments,
-    options, statement_cares_about_scope,
+    Substitution, TempRef, ThenCatchChain, TransposeState, WrapMode, can_be_binding_identifier, fs,
+    is_eval_or_arguments, options, statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -6228,6 +6228,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn is_export_to_eliminate(&self, r#ref: Ref) -> bool {
         let symbol_name = self.load_name_from_ref(r#ref);
         self.options.features.replace_exports.contains(symbol_name)
+    }
+
+    /// Whether a `var` named `name` can share this scope with whatever already
+    /// binds it. `can_merge_symbol_kinds` answers that for declarations, and
+    /// keeps this in step with what `declare_symbol` goes on to decide.
+    fn can_declare_hoisted(&self, name: &[u8]) -> bool {
+        let hash = js_ast::Scope::get_member_hash(name);
+        let Some(member) = self.current_scope.get_member_with_hash(name, hash) else {
+            return true;
+        };
+        let existing = self.symbols[member.ref_.inner_index() as usize].kind;
+        // TypeScript merges a `var` into an import rather than refusing it, since
+        // the import may be type-only. The two still bind the same name, and
+        // `scan_imports` reports that once the import is used as a value.
+        if existing == js_ast::symbol::Kind::Import {
+            return false;
+        }
+        !matches!(
+            js_ast::Scope::can_merge_symbol_kinds::<TYPESCRIPT>(
+                self.current_scope.kind,
+                existing,
+                js_ast::symbol::Kind::Hoisted,
+            ),
+            js_ast::scope::SymbolMergeResult::Forbidden
+        )
+    }
+
+    /// The ref `inject_replacement_export` should bind for a clause item whose
+    /// exported name is `alias`. `None` means the replacement has no legal
+    /// spelling here, so the caller keeps the clause item untouched.
+    pub fn replacement_export_ref(
+        &mut self,
+        replacement: &crate::parser::Runtime::ReplaceableExport,
+        alias: &'a [u8],
+        local_name: &'a [u8],
+        alias_loc: bun_ast::Loc,
+        local_ref: Ref,
+    ) -> Result<Option<Ref>, bun_core::Error> {
+        // `Delete` drops the item and `Inject` names its own binding, so neither
+        // cares what the alias spells.
+        if !replacement.is_replace() {
+            return Ok(Some(local_ref));
+        }
+        // `Replace` prints `export var <alias> = value`, so the alias has to spell
+        // a binding, and that binding has to be able to share the scope with
+        // whatever already holds the name, renamed or not.
+        if !can_be_binding_identifier(alias) || !self.can_declare_hoisted(alias) {
+            return Ok(None);
+        }
+        // Reusing the local binding only works when there is one. A re-export
+        // has no local symbol, just the parse-time name ref.
+        if alias == local_name && local_ref.is_symbol() {
+            return Ok(Some(local_ref));
+        }
+        Ok(Some(self.declare_symbol(
+            js_ast::symbol::Kind::Hoisted,
+            alias_loc,
+            alias,
+        )?))
     }
 
     pub fn inject_replacement_export(

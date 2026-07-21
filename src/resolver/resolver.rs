@@ -4814,7 +4814,8 @@ impl<'a> Resolver<'a> {
                 // because we want the output to always be deterministic
                 let plen = i32::try_from(prefix.len()).expect("int cast");
                 let slen = i32::try_from(suffix.len()).expect("int cast");
-                if path.starts_with(prefix)
+                if path.len() >= prefix.len() + suffix.len()
+                    && path.starts_with(prefix)
                     && path.ends_with(suffix)
                     && (plen > longest_match_prefix_length
                         || (plen == longest_match_prefix_length

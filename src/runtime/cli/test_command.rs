@@ -3248,8 +3248,9 @@ impl TestCommand {
                     let drain_base = vm.unhandled_error_counter;
                     // Bound by the default test timeout so a handle created by a
                     // prior file's unref'd callback can't hang the run forever.
-                    let deadline = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
-                        .add_ms(i64::from(reporter.jest.default_timeout_ms));
+                    let deadline =
+                        bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
+                            .add_ms(i64::from(reporter.jest.default_timeout_ms));
                     while drain_base == vm.unhandled_error_counter
                         && script_keepalive_count(vm) > 0
                         && bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)

@@ -1688,35 +1688,22 @@ mod draft {
     }
 
     #[cfg(target_env = "ohos")]
-    extern "C" fn handle_sigsys_posix(_sig: c_int, info: *mut libc::siginfo_t, _ctx: *mut c_void) {
-        // OHOS seccomp blocked a syscall. The si_call_addr field tells us
-        // which instruction was interrupted. Log the syscall info to stderr
-        // (async-signal-safe output), then re-raise with SIG_DFL so the
-        // default disposition (core dump) still fires.
-        let syscall = unsafe { (*info).si_addr() as usize };
-        // Async-signal-safe hex syscall number to stderr
-        const PREFIX: &[u8] = b"\n*** SIGSYS (blocked syscall #";
-        const SUFFIX: &[u8] = b") ***\n";
+    extern "C" fn handle_sigsys_posix(_sig: c_int, _info: *mut libc::siginfo_t, ctx: *mut c_void) {
+        // OHOS seccomp blocked a syscall. Skip the SVC instruction and
+        // return -ENOSYS so the caller sees a recoverable error instead of
+        // being killed with SIGSYS. This mirrors what Android's bionic libc
+        // does internally.
+        const ENOSYS: i64 = 38;
+        let uc = ctx as *mut libc::ucontext_t;
         unsafe {
-            let _ = libc::write(libc::STDERR_FILENO, PREFIX.as_ptr().cast(), PREFIX.len());
-            let mut tmp = [0u8; 20];
-            let mut n = syscall;
-            let mut i = tmp.len();
-            loop {
-                i -= 1;
-                tmp[i] = b"0123456789abcdef"[n & 0xf] as u8;
-                n >>= 4;
-                if n == 0 { break; }
-            }
-            let _ = libc::write(libc::STDERR_FILENO, tmp[i..].as_ptr().cast(), tmp.len() - i);
-            let _ = libc::write(libc::STDERR_FILENO, SUFFIX.as_ptr().cast(), SUFFIX.len());
-        }
-        // Restore default SIGSYS disposition and re-raise
-        unsafe {
-            let mut dfl: libc::sigaction = bun_core::ffi::zeroed();
-            dfl.sa_sigaction = libc::SIG_DFL;
-            let _ = libc::sigaction(libc::SIGSYS, &raw const dfl, core::ptr::null_mut());
-            let _ = libc::raise(libc::SIGSYS);
+            // Advance PC past the SVC #0 instruction (4 bytes on aarch64)
+            // so execution continues after the blocked syscall.
+            let pc = &raw mut (*uc).uc_mcontext.pc;
+            *pc = (*pc).wrapping_add(4);
+            // Set x0 (return register) to -ENOSYS so callers see ENOSYS
+            // and can fall back to alternative implementations.
+            let regs = &raw mut (*uc).uc_mcontext.regs;
+            (*regs)[0] = (-ENOSYS) as c_ulong;
         }
     }
 

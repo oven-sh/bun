@@ -127,7 +127,7 @@ describe.each([
   ["array", "[a]", "throw a;"],
   ["array", "[a]", "Promise.reject(a);"],
   ["Proxy", "new Proxy(a,{})", "throw a;"],
-])("%s / %s", (_, wrap, stmt) => {
+])("%s / %s / %s", (_, wrap, stmt) => {
   test.concurrent("native error printer survives a deeply nested thrown value", async () => {
     const src = `
       let a = {};

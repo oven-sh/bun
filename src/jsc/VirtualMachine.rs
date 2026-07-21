@@ -4901,7 +4901,19 @@ impl VirtualMachine {
             // `getDirect` (own data prop, nothrow); `for_each` may throw, in
             // which case the error is swallowed.
             let errors = value.get_errors_property(global_ref);
+            if formatter.depth <= formatter.max_depth {
+                let writer = &mut *ctx.writer;
+                let _ = writer.write_all(b"\n");
+                let _ = formatter.write_indent(writer);
+                let _ = writer.write_all(b"[errors]: [");
+            }
             let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
+            if formatter.depth <= formatter.max_depth {
+                let writer = &mut *ctx.writer;
+                let _ = writer.write_all(b"\n");
+                let _ = formatter.write_indent(writer);
+                let _ = writer.write_all(b"]");
+            }
             return;
         }
 

@@ -9,6 +9,8 @@
 
 #include "wtf/Assertions.h"
 
+extern "C" void io_darwin_close_machport(mach_port_t port);
+
 extern "C" mach_port_t io_darwin_create_machport(int32_t fd,
     void* wakeup_buffer_,
     size_t nbytes)
@@ -25,6 +27,7 @@ extern "C" mach_port_t io_darwin_create_machport(int32_t fd,
     // Insert a send right into the port since we also use this to send
     kr = mach_port_insert_right(self, port, port, MACH_MSG_TYPE_MAKE_SEND);
     if (kr != KERN_SUCCESS) [[unlikely]] {
+        mach_port_mod_refs(self, port, MACH_PORT_RIGHT_RECEIVE, -1);
         return 0;
     }
 
@@ -36,6 +39,7 @@ extern "C" mach_port_t io_darwin_create_machport(int32_t fd,
         MACH_PORT_LIMITS_INFO_COUNT);
 
     if (kr != KERN_SUCCESS) [[unlikely]] {
+        io_darwin_close_machport(port);
         return 0;
     }
 
@@ -56,6 +60,7 @@ extern "C" mach_port_t io_darwin_create_machport(int32_t fd,
                 continue;
             }
 
+            io_darwin_close_machport(port);
             return 0;
         }
 
@@ -119,7 +124,11 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker)
 
 extern "C" void io_darwin_close_machport(mach_port_t port)
 {
-    mach_port_deallocate(mach_task_self(), port);
+    mach_port_t self = mach_task_self();
+    // io_darwin_create_machport allocates a receive right and inserts a send
+    // right; release both so the port name is freed.
+    mach_port_deallocate(self, port);
+    mach_port_mod_refs(self, port, MACH_PORT_RIGHT_RECEIVE, -1);
 }
 
 #else

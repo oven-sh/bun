@@ -470,14 +470,24 @@ impl ReadFile {
         })
     }
 
-    pub fn wait_for_readable(&mut self) {
+    /// Returns `false` if the IO request loop's lazy init failed; in that case
+    /// `errno`/`system_error` have been recorded and nothing was registered,
+    /// so the caller should fall through to its own `on_finish()` path.
+    #[must_use]
+    pub fn wait_for_readable(&mut self) -> bool {
         bloblog!("ReadFile.waitForReadable");
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_readable);
         if !self.io_request.scheduled {
-            io::IoRequestLoop::schedule(&mut self.io_request);
+            if let Err(err) = io::IoRequestLoop::schedule(&mut self.io_request) {
+                self.close_after_io = false;
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+                return false;
+            }
         }
+        true
     }
 
     /// Returns a raw `(ptr, len)` into either `stack_buffer` or
@@ -776,8 +786,10 @@ impl ReadFile {
         // readable.
         if self.could_block {
             if bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
-                self.wait_for_readable();
-                return;
+                if self.wait_for_readable() {
+                    return;
+                }
+                // schedule failed: errno is set, do_read_loop bails to on_finish
             }
         }
 
@@ -884,9 +896,11 @@ impl ReadFile {
                             }
                         }
                         self.read_eof = false;
-                        self.wait_for_readable();
-
-                        return;
+                        if self.wait_for_readable() {
+                            return;
+                        }
+                        // schedule failed: errno is set, fall through to on_finish below
+                        break;
                     }
 
                     // There can be more to read

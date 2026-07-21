@@ -141,7 +141,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
     RETURN_IF_EXCEPTION(scope, );
 
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
-    moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
+    moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     globalObject->putDirect(vm, WebCore::builtinNames(vm).requirePublicName(), requireFunction, 0);
     globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);

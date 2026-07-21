@@ -67,6 +67,7 @@
 
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/CustomGetterSetter.h>
 #include "ZigSourceProvider.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
@@ -142,7 +143,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         RETURN_IF_EXCEPTION(scope, );
         requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
         RETURN_IF_EXCEPTION(scope, );
-        moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
+        moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, static_cast<unsigned>(PropertyAttribute::DontEnum));
         RETURN_IF_EXCEPTION(scope, );
         moduleObject->hasEvaluated = true;
     };
@@ -686,12 +687,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
 JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-    if (thisObject->m_overriddenCompile) {
+    if (thisObject && thisObject->m_overriddenCompile) {
         return JSValue::encode(thisObject->m_overriddenCompile.get());
     }
+    // `Module.prototype._compile` is read with the prototype as receiver; still return the function.
     return JSValue::encode(defaultGlobalObject(globalObject)->modulePrototypeUnderscoreCompileFunction());
 }
 
@@ -768,15 +767,12 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     return JSValue::encode(jsUndefined());
 }
 
+// id/path/filename/loaded/children/paths live as own CustomValue properties on
+// each instance (see JSCommonJSModule::finishCreation) so that
+// Object.keys/{...spread}/for...in see them, matching Node.js.
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "_compile"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterUnderscoreCompile, setterUnderscoreCompile } },
-    { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
-    { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
-    { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
-    { "loaded"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterLoaded, setterLoaded } },
     { "parent"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterParent, setterParent } },
-    { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
-    { "paths"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPaths, setterPaths } },
 };
 
 class JSCommonJSModulePrototype final : public JSC::JSNonFinalObject {
@@ -846,6 +842,14 @@ void JSCommonJSModule::finishCreation(JSC::VM& vm, const JSC::SourceCode& source
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     this->sourceCode = sourceCode;
+
+    auto& builtinNames = WebCore::builtinNames(vm);
+    putDirectCustomAccessor(vm, vm.propertyNames->id, CustomGetterSetter::create(vm, getterId, setterId), 0);
+    putDirectCustomAccessor(vm, builtinNames.pathPublicName(), CustomGetterSetter::create(vm, getterPath, setterPath), 0);
+    putDirectCustomAccessor(vm, builtinNames.filenamePublicName(), CustomGetterSetter::create(vm, getterFilename, setterFilename), 0);
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "loaded"_s), CustomGetterSetter::create(vm, getterLoaded, setterLoaded), 0);
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "children"_s), CustomGetterSetter::create(vm, getterChildren, setterChildren), 0);
+    putDirectCustomAccessor(vm, builtinNames.pathsPublicName(), CustomGetterSetter::create(vm, getterPaths, setterPaths), 0);
 }
 
 JSC::Structure* JSCommonJSModule::createStructure(

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -239,6 +239,98 @@ describe.concurrent("node-module-module", () => {
     expect(req).toBe(module.require);
     expect(fn).toBe(filename);
     expect(dn).toBe(path.dirname(filename));
+  });
+
+  test("require.cache entries have Node's own enumerable properties and Module prototype", async () => {
+    using dir = tempDir("module-cache-shape", {
+      "a.cjs": "exports.v = 1;\n",
+      "b.cjs": "require('./a.cjs');\n",
+    });
+    const script = `
+      const path = require("node:path");
+      const { Module } = require("node:module");
+      const d = ${JSON.stringify(String(dir))};
+      const bPath = path.join(d, "b.cjs");
+      require(bPath);
+      const en = require.cache[bPath];
+      const forIn = [];
+      for (const k in en) forIn.push(k);
+      const descriptors = {};
+      for (const k of ["id", "path", "filename", "loaded", "children", "paths", "exports"]) {
+        const desc = Object.getOwnPropertyDescriptor(en, k);
+        descriptors[k] = desc ? { hasValue: "value" in desc, enumerable: desc.enumerable, writable: desc.writable, configurable: desc.configurable } : null;
+      }
+      console.log(JSON.stringify({
+        ownKeys: Object.keys(en).sort(),
+        spreadKeys: Object.keys({ ...en }).sort(),
+        forInHasChildren: forIn.includes("children"),
+        forInHasId: forIn.includes("id"),
+        spreadHasRequire: Object.keys({ ...en }).includes("require"),
+        jsonKeys: Object.keys(JSON.parse(JSON.stringify(en))).sort(),
+        instanceofModule: en instanceof Module,
+        ctorIsModule: en.constructor === Module,
+        protoIsModuleProto: Object.getPrototypeOf(en) === Module.prototype,
+        accessStillWorks: { id: en.id === bPath, children: en.children.length, loaded: en.loaded },
+        descriptors,
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const result = JSON.parse(stdout);
+    const expectedKeys = ["children", "exports", "filename", "id", "loaded", "path", "paths"];
+    const expectedDesc = { hasValue: true, enumerable: true, writable: true, configurable: true };
+    expect(result).toEqual({
+      ownKeys: expectedKeys,
+      spreadKeys: expectedKeys,
+      forInHasChildren: true,
+      forInHasId: true,
+      spreadHasRequire: false,
+      jsonKeys: expectedKeys,
+      instanceofModule: true,
+      ctorIsModule: true,
+      protoIsModuleProto: true,
+      accessStillWorks: { id: true, children: 1, loaded: true },
+      descriptors: {
+        id: expectedDesc,
+        path: expectedDesc,
+        filename: expectedDesc,
+        loaded: expectedDesc,
+        children: expectedDesc,
+        paths: expectedDesc,
+        exports: expectedDesc,
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("new Module() has Node's own enumerable properties", () => {
+    const m = new Module("xyz");
+    expect(m instanceof Module).toBe(true);
+    expect(m.constructor).toBe(Module);
+    expect(Object.getPrototypeOf(m)).toBe(Module.prototype);
+    const keys = Object.keys(m).sort();
+    for (const k of ["id", "path", "filename", "loaded", "children", "exports"]) {
+      expect(keys).toContain(k);
+      const d = Object.getOwnPropertyDescriptor(m, k);
+      expect({ key: k, hasValue: "value" in d, enumerable: d.enumerable }).toEqual({
+        key: k,
+        hasValue: true,
+        enumerable: true,
+      });
+    }
+    expect({ ...m }.id).toBe("xyz");
+  });
+
+  test("Module.prototype._compile is the shared function when read off the prototype", () => {
+    expect(typeof Module.prototype._compile).toBe("function");
+    expect(typeof Module.prototype.require).toBe("function");
+    const m = new Module("x");
+    expect(m._compile).toBe(Module.prototype._compile);
   });
 
   test("Module._extensions", () => {

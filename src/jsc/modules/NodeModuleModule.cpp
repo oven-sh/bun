@@ -765,20 +765,12 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     return true;
 }
 
-static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
+static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleConstructor)
 {
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-
-    prototype->putDirectCustomAccessor(
-        vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
-        JSC::CustomGetterSetter::create(vm, getterRequireFunction,
-            setterRequireFunction),
-        0);
-
-    prototype->putDirect(vm, Identifier::fromString(vm, "_compile"_s), globalObject->modulePrototypeUnderscoreCompileFunction());
-
-    return prototype;
+    auto* globalObject = defaultGlobalObject(moduleConstructor->globalObject());
+    // Return the real JSCommonJSModule prototype so `instanceof Module` works.
+    // `constructor` and `require` are installed in m_nodeModuleConstructor.initLater.
+    return globalObject->CommonJSModuleObjectStructure()->storedPrototypeObject();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1086,8 +1078,15 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
 {
     globalObject->m_nodeModuleConstructor.initLater(
         [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            JSObject* moduleConstructor = JSModuleConstructor::create(
-                init.vm, static_cast<Zig::GlobalObject*>(init.owner));
+            auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
+            JSObject* moduleConstructor = JSModuleConstructor::create(init.vm, globalObject);
+            auto* prototype = globalObject->CommonJSModuleObjectStructure()->storedPrototypeObject();
+            prototype->putDirect(init.vm, init.vm.propertyNames->constructor, moduleConstructor,
+                static_cast<unsigned>(PropertyAttribute::DontEnum));
+            prototype->putDirectCustomAccessor(init.vm,
+                WebCore::clientData(init.vm)->builtinNames().requirePublicName(),
+                JSC::CustomGetterSetter::create(init.vm, getterRequireFunction, setterRequireFunction),
+                0);
             init.set(moduleConstructor);
         });
 

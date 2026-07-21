@@ -85,6 +85,14 @@ impl BlobOrStringOrBuffer {
         }
     }
 
+    /// See [`StringOrBuffer::refresh_buffer`].
+    #[inline]
+    pub fn refresh_buffer(&mut self, global: &JSGlobalObject) {
+        if let Self::StringOrBuffer(sob) = self {
+            sob.refresh_buffer(global);
+        }
+    }
+
     pub fn protect(&self) {
         match self {
             Self::StringOrBuffer(sob) => sob.protect(),
@@ -257,6 +265,22 @@ impl StringOrBuffer {
             Self::ThreadsafeString(str) => str.slice(),
             Self::EncodedSlice(str) => str.slice(),
             Self::Buffer(str) => str.slice(),
+        }
+    }
+
+    /// Re-snapshot the `Buffer` variant's backing `ArrayBuffer` from its
+    /// underlying `JSValue`. Call after coercing a later argument whose
+    /// `toString`/`valueOf` may have detached the backing store.
+    #[inline]
+    pub fn refresh_buffer(&mut self, global: &JSGlobalObject) {
+        if let Self::Buffer(buf) = self {
+            if let Some(fresh) = buf.buffer.value.as_array_buffer(global) {
+                buf.buffer = fresh;
+            } else {
+                buf.buffer.ptr = core::ptr::null_mut();
+                buf.buffer.len = 0;
+                buf.buffer.byte_len = 0;
+            }
         }
     }
 }

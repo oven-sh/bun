@@ -351,27 +351,9 @@ pub(crate) fn bun_random_uuid_v5(
     let name_value = arguments.ptr[0];
     let namespace_value = arguments.ptr[1];
 
-    // `bun_core::ZigStringSlice` is a borrow-or-own UTF-8 slice.
-    let name: bun_core::ZigStringSlice = 'brk: {
-        if name_value.is_string() {
-            let name_str = bun_core::OwnedString::new(name_value.to_bun_string(global)?);
-            let result = name_str.to_utf8();
-
-            break 'brk result;
-        } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
-            let bytes: &[u8] = array_buffer.byte_slice();
-            break 'brk bun_core::ZigStringSlice::from_utf8_never_free(bytes);
-        } else {
-            return Err(global
-                .err(
-                    bun_jsc::ErrorCode::INVALID_ARG_TYPE,
-                    format_args!("The \"name\" argument must be of type string or BufferSource"),
-                )
-                .throw());
-        }
-    };
-    // `defer name.deinit()` — Utf8Slice's Drop handles cleanup.
-
+    // Decode `namespace` first: its `to_bun_string` can call a boxed String's
+    // `toString`, which may detach `name`'s backing ArrayBuffer. `namespace`
+    // is copied to a local `[u8; 16]`, so it's safe against the reverse.
     let namespace: [u8; 16] = 'brk: {
         if namespace_value.is_string() {
             let namespace_str = bun_core::OwnedString::new(namespace_value.to_bun_string(global)?);
@@ -419,6 +401,27 @@ pub(crate) fn bun_random_uuid_v5(
             )
             .throw());
     };
+
+    // `bun_core::ZigStringSlice` is a borrow-or-own UTF-8 slice.
+    let name: bun_core::ZigStringSlice = 'brk: {
+        if name_value.is_string() {
+            let name_str = bun_core::OwnedString::new(name_value.to_bun_string(global)?);
+            let result = name_str.to_utf8();
+
+            break 'brk result;
+        } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
+            let bytes: &[u8] = array_buffer.byte_slice();
+            break 'brk bun_core::ZigStringSlice::from_utf8_never_free(bytes);
+        } else {
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::INVALID_ARG_TYPE,
+                    format_args!("The \"name\" argument must be of type string or BufferSource"),
+                )
+                .throw());
+        }
+    };
+    // `defer name.deinit()` — Utf8Slice's Drop handles cleanup.
 
     let uuid = UUID5::init(&namespace, name.slice());
 

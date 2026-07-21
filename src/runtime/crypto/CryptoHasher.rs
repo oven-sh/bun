@@ -265,7 +265,7 @@ impl CryptoHasher {
         };
 
         // Node.BlobOrStringOrBuffer
-        let input = {
+        let mut input = {
             let Some(arg) = next_eat() else {
                 return Err(
                     global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
@@ -295,6 +295,10 @@ impl CryptoHasher {
             },
             None => None,
         };
+
+        // `StringOrBuffer::from_js` above may call a boxed String's `toString`,
+        // which can detach `input`'s backing ArrayBuffer (use-after-free).
+        input.refresh_buffer(global);
 
         Self::hash_(global, algorithm, &input, output)
     }
@@ -1236,7 +1240,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         };
 
         // Node.BlobOrStringOrBuffer
-        let input = {
+        let mut input = {
             let Some(arg) = next_eat() else {
                 return Err(
                     global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
@@ -1266,6 +1270,10 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             },
             None => None,
         };
+
+        // `StringOrBuffer::from_js` above may call a boxed String's `toString`,
+        // which can detach `input`'s backing ArrayBuffer (use-after-free).
+        input.refresh_buffer(global);
 
         Self::hash_(global, &input, output)
     }

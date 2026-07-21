@@ -1,6 +1,60 @@
 import { describe, expect, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 
+describe("input buffer detached by output argument's toString", () => {
+  // A boxed String's `toString` runs during output-encoding coercion. If the
+  // input buffer's slice was snapshotted before that, detaching it here leaves
+  // the hasher reading freed memory. After the fix, the input is re-snapshotted
+  // as detached (length 0), so the result is the digest of the empty input.
+  const N = 1 << 16;
+  const keep: Uint8Array[] = [];
+  const mk = () => Buffer.from(new ArrayBuffer(N)).fill(0x41);
+  const evilEncoding = (victim: Buffer, s: string) =>
+    Object.assign(new String(s), {
+      toString() {
+        victim.buffer.transfer(0);
+        for (let i = 0; i < 8; i++) keep.push(new Uint8Array(N).fill(0x5a));
+        return s;
+      },
+    }) as string;
+
+  test("Bun.CryptoHasher.hash", () => {
+    const b = mk();
+    const got = Bun.CryptoHasher.hash("sha256", b, evilEncoding(b, "hex"));
+    expect(b.byteLength).toBe(0);
+    expect(got).toBe(Bun.CryptoHasher.hash("sha256", new Uint8Array(0), "hex"));
+  });
+
+  test("Bun.SHA256.hash", () => {
+    const b = mk();
+    const got = Bun.SHA256.hash(b, evilEncoding(b, "hex"));
+    expect(b.byteLength).toBe(0);
+    expect(got).toBe(Bun.SHA256.hash(new Uint8Array(0), "hex"));
+  });
+
+  test("Bun.sha", () => {
+    const b = mk();
+    const got = Bun.sha(b, evilEncoding(b, "hex"));
+    expect(b.byteLength).toBe(0);
+    expect(got).toBe(Bun.sha(new Uint8Array(0), "hex"));
+  });
+
+  test("Bun.CryptoHasher.hash (output=Uint8Array, input=String object)", () => {
+    // Reverse direction stays safe: input is a boxed String whose toString
+    // detaches the output buffer before it is snapshotted. The output buffer
+    // is captured as detached (length 0) and a length check throws.
+    const out = Buffer.from(new ArrayBuffer(32));
+    const evilInput = Object.assign(new String("A"), {
+      toString() {
+        out.buffer.transfer(0);
+        return "A";
+      },
+    });
+    expect(() => Bun.CryptoHasher.hash("sha256", evilInput as unknown as string, out)).toThrow();
+    expect(out.byteLength).toBe(0);
+  });
+});
+
 test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => Bun.SHA1.hash(Bun.file(import.meta.path))).toThrow();
   expect(() => Bun.CryptoHasher.hash("sha1", Bun.file(import.meta.path))).toThrow();

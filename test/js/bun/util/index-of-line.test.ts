@@ -85,6 +85,26 @@ test("indexOfLine is linear on large input with a non-ASCII byte", async () => {
   expect(proc.signalCode).toBeNull();
 }, 60_000);
 
+test("indexOfLine coerces offset before snapshotting the buffer", () => {
+  // `offset.valueOf()` can detach the buffer. Before the fix, the stale
+  // snapshot was scanned (reading freed memory); now the buffer is captured
+  // after coercion and seen as detached (length 0) so the result is -1.
+  const N = 1 << 16;
+  const keep: Uint8Array[] = [];
+  const b = Buffer.from(new ArrayBuffer(N)).fill(0x41);
+  b[100] = 0x0a;
+  const evilOffset = {
+    valueOf() {
+      b.buffer.transfer(0);
+      for (let i = 0; i < 8; i++) keep.push(new Uint8Array(N).fill(0x0a));
+      return 0;
+    },
+  };
+  const got = indexOfLine(b, evilOffset as unknown as number);
+  expect(b.byteLength).toBe(0);
+  expect(got).toBe(-1);
+});
+
 test("indexOfLine skips multi-byte sequences correctly", () => {
   // ascii prefix, multi-byte char, ascii, newline
   const buf = Buffer.from("abé d\n");

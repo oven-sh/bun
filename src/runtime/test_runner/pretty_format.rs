@@ -504,7 +504,10 @@ impl Tag {
 
     #[inline]
     pub const fn can_have_circular_references(self) -> bool {
-        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::JSX)
+        matches!(
+            self,
+            Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::JSX | Tag::Event
+        )
     }
 }
 

@@ -565,20 +565,22 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = test_.get(b"rerunEach") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    if self.ctx.test_options.retry != 0 {
+                    if test_.get(b"retry").is_some() {
                         self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
                         return Ok(());
                     }
+                    self.ctx.test_options.retry = 0;
                     self.ctx.test_options.repeat_count =
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
                 if let Some(expr) = test_.get(b"retry") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    if self.ctx.test_options.repeat_count != 0 {
+                    if test_.get(b"rerunEach").is_some() {
                         self.add_error(expr.loc, b"\"retry\" cannot be used with \"rerunEach\"")?;
                         return Ok(());
                     }
+                    self.ctx.test_options.repeat_count = 0;
                     self.ctx.test_options.retry =
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
@@ -1588,6 +1590,7 @@ impl<'a> Parser<'a> {
             };
             // TODO: accept entire config object.
             self.ctx.args.serve_plugins = plugins;
+            self.ctx.args.bunfig_path = Box::<[u8]>::from(self.source.path.text);
         }
 
         if let Some(hmr) = serve_obj.get(b"hmr") {
@@ -1621,7 +1624,6 @@ impl<'a> Parser<'a> {
         if let Some(expr) = serve_obj.get(b"define") {
             self.ctx.args.serve_define = Some(self.parse_define_map(&expr)?);
         }
-        self.ctx.args.bunfig_path = Box::<[u8]>::from(self.source.path.text);
 
         if let Some(public_path) = serve_obj.get(b"publicPath") {
             if let Some(v) = public_path.as_string(self.bump) {

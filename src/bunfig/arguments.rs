@@ -101,6 +101,13 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
     }
     ctx.has_loaded_global_config = true;
 
+    // A compiled standalone executable never reads the end user's
+    // `~/.bunfig.toml`; the `autoloadBunfig` compile flag only opts into
+    // the cwd-local `bunfig.toml`.
+    if StandaloneModuleGraph::get().is_some() {
+        return Ok(());
+    }
+
     let mut config_buf = PathBuffer::uninit();
     if let Some(path) = get_home_config_path(&mut config_buf) {
         load_bunfig(cmd, true, path, ctx)?;

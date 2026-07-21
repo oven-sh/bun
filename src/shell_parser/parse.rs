@@ -2864,6 +2864,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             if self.in_subshell == Some(SubShellKind::Backtick) {
                                 self.break_word_operator()?;
+                                if self.chars.state == CharState::Double {
+                                    self.add_error(b"Unclosed double quote");
+                                }
                                 if let Some(toktag) = self.last_tok_tag() {
                                     if toktag != TokenTag::Delimit {
                                         self.tokens.push(Token::Delimit);

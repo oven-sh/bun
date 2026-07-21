@@ -739,6 +739,13 @@ describe("lex shell", () => {
       TestBuilder.command`${{ raw: `echo $(echo "hi` }}`
         .error("Unclosed double quote\nUnclosed command substitution")
         .runAsTest("inside command substitution");
+      TestBuilder.command`${{ raw: 'echo `echo "hi`' }}`
+        .error("Unclosed double quote")
+        .runAsTest("inside backtick substitution");
+      TestBuilder.command`${{ raw: "echo `echo 'hi`" }}`
+        .error("Unclosed single quote\nUnclosed command substitution")
+        .runAsTest("single quote inside backtick substitution");
+      TestBuilder.command`${{ raw: 'echo `echo "hi"`' }}`.stdout("hi\n").runAsTest("closed quote inside backtick ok");
       TestBuilder.command`${{ raw: `echo "hi"` }}`.stdout("hi\n").runAsTest("closed double quote ok");
       TestBuilder.command`${{ raw: `echo 'hi'` }}`.stdout("hi\n").runAsTest("closed single quote ok");
       TestBuilder.command`echo ${'"'}`.stdout('"\n').runAsTest("interpolated quote is data");

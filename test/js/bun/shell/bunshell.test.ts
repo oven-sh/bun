@@ -8,7 +8,16 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunExe,
+  isMusl,
+  isPosix,
+  isWindows,
+  runWithErrorPromise,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -1400,6 +1409,72 @@ describe("deno_task", () => {
       .runAsTest("last exit code 2");
 
     TestBuilder.command`echo hi | ${BUN} -e 'process.exit(69)'`.exitCode(69).stdout("").runAsTest("last exit code 3");
+
+    // A pipeline whose socketpair() allocation hits RLIMIT_NOFILE should
+    // surface as `bun: Too many open files\n` on stderr with exit code 1,
+    // not as a thrown JS error that rejects the Bun.$ promise. On musl,
+    // `adjust_ulimit()` re-raises NOFILE to 163840 when running as root, so
+    // the EMFILE never fires.
+    test.if(isPosix && !(isMusl && isRoot))(
+      "pipe setup EMFILE writes to stderr and resolves with exit 1 (quiet)",
+      async () => {
+        const script = `
+          const cats = new Array(100).fill("cat").join(" | ");
+          const r = await Bun.$({ raw: ["echo a | " + cats] }).nothrow().quiet();
+          console.log(JSON.stringify({
+            exitCode: r.exitCode,
+            stdout: r.stdout.toString(),
+            stderr: r.stderr.toString(),
+          }));
+        `;
+        await using proc = Bun.spawn({
+          cmd: ["/bin/sh", "-c", `ulimit -n 128 && exec "$@"`, "--", bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect({ stdout: stdout.trim(), exitCode }).toEqual({
+          stdout: JSON.stringify({ exitCode: 1, stdout: "", stderr: "bun: Too many open files\n" }),
+          exitCode: 0,
+        });
+      },
+    );
+
+    test.if(isPosix && !(isMusl && isRoot))(
+      "pipe setup EMFILE writes to stderr and resolves with exit 1 (fd stderr)",
+      async () => {
+        // Without `.quiet()`, the pipeline's stderr is an `OutKind::Fd`
+        // IOWriter wrapping the process's inherited fd 2; this drives
+        // `write_failing_error` through `WaitingWriteErr` → IOWriter enqueue
+        // → `on_io_writer_chunk`.
+        const script = `
+          const cats = new Array(100).fill("cat").join(" | ");
+          const r = await Bun.$({ raw: ["echo a | " + cats] }).nothrow();
+          console.log(JSON.stringify({
+            exitCode: r.exitCode,
+            stdout: r.stdout.toString(),
+            stderr: r.stderr.toString(),
+          }));
+        `;
+        await using proc = Bun.spawn({
+          cmd: ["/bin/sh", "-c", `ulimit -n 128 && exec "$@"`, "--", bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // The error is written both to the real fd (outer stderr) and teed
+        // into the captured buffer (r.stderr).
+        expect(stderr).toContain("bun: Too many open files\n");
+        expect(stderr).not.toContain("error:");
+        expect({ stdout: stdout.trim(), exitCode }).toEqual({
+          stdout: JSON.stringify({ exitCode: 1, stdout: "", stderr: "bun: Too many open files\n" }),
+          exitCode: 0,
+        });
+      },
+    );
 
     describe("pipeline stack behavior", () => {
       // Test deep pipeline chains to stress the stack implementation

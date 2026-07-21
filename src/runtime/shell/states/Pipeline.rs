@@ -143,13 +143,14 @@ impl Pipeline {
                             closefd(p[0]);
                             closefd(p[1]);
                         }
-                        // Leave `StartingCmds` so `drain_pipelines` doesn't
-                        // re-enter `next_starting` and retry the failing
-                        // syscall in a loop; stay suspended until the error
-                        // write completes.
-                        interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
-                        interp.throw(ShellErr::new_sys(&e));
-                        return Yield::failed();
+                        let sys = e.to_shell_system_error();
+                        let y = Self::write_failing_error(
+                            interp,
+                            this,
+                            format_args!("bun: {}\n", sys.message),
+                        );
+                        sys.deref();
+                        return y;
                     }
                 }
             }
@@ -226,12 +227,10 @@ impl Pipeline {
         } {
             Ok(d) => d,
             Err(e) => {
-                // On dupe failure,
-                // close the pipe ends not yet wrapped in an IOReader/IOWriter,
-                // deref `cmd_io`, transition to `.waiting_write_err`, and
-                // suspend. Without the state transition `drain_pipelines`
-                // would re-enter at the same `idx`, re-wrapping the same fds
-                // in fresh IOReader/IOWriter each iteration.
+                // Drop `child_io` and close the pipe ends not yet wrapped in
+                // an IOReader/IOWriter; the state transition below (out of
+                // `StartingCmds`) keeps `drain_pipelines` from re-entering at
+                // the same `idx` and re-wrapping the same fds.
                 drop(child_io);
                 {
                     let me = interp.as_pipeline_mut(this);
@@ -244,10 +243,34 @@ impl Pipeline {
                             closefd(p[1]);
                         }
                     }
-                    me.state = PipelineState::WaitingWriteErr;
                 }
-                interp.throw(ShellErr::new_sys(&e));
-                return Yield::failed();
+                // The Rust port starts children as it inits them, so at
+                // `cmd_idx > 0` children `0..cmd_idx` are already running and
+                // may be blocked on stdin. Completing the pipeline would free
+                // it while those children still hold it as their parent;
+                // waiting for them risks hanging if the head never reads. The
+                // Zig reference inits all children before starting any, so it
+                // never has running children here. Until `next_starting` is
+                // restructured to match, keep the pre-port behavior for this
+                // narrow window: throw and let the promise reject.
+                if cmd_idx > 0 {
+                    interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
+                    interp.throw(ShellErr::new_sys(&e));
+                    return Yield::failed();
+                }
+                // `cmd_idx == 0`: no children started. Account for every slot
+                // so `write_failing_error` transitions straight to `Done{1}`.
+                {
+                    let me = interp.as_pipeline_mut(this);
+                    if let Some(cmds) = me.cmds.as_mut() {
+                        me.exited_count = cmds.len() as u32;
+                    }
+                }
+                let sys = e.to_shell_system_error();
+                let y =
+                    Self::write_failing_error(interp, this, format_args!("bun: {}\n", sys.message));
+                sys.deref();
+                return y;
             }
         };
 
@@ -268,25 +291,109 @@ impl Pipeline {
         interp.start_node(child)
     }
 
-    /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: throw on write failure, otherwise finish the
-    /// pipeline with exit code 1.
+    /// Write an error message to the pipeline's stderr and finish with exit 1.
+    /// For `.fd` stderr enqueues an async write (holding `WaitingWriteErr`
+    /// only during `enqueue()` as a re-entrancy guard, then flipping to
+    /// `Pending` for async resumption by `on_io_writer_chunk`); otherwise
+    /// appends to the captured stderr buffer and transitions to `Done { 1 }`.
+    ///
+    /// Callers must guarantee no pipeline children are running: completion
+    /// bubbles `child_done(parent, this, 1)` and frees this node.
+    fn write_failing_error(
+        interp: &Interpreter,
+        this: NodeId,
+        args: core::fmt::Arguments<'_>,
+    ) -> Yield {
+        use std::io::Write as _;
+        let mut buf = Vec::new();
+        let _ = buf.write_fmt(args);
+        if let OutKind::Fd(fd) = &interp.as_pipeline(this).io.stderr {
+            let writer = std::sync::Arc::clone(&fd.writer);
+            let captured = fd.captured;
+            // Mark the in-flight `enqueue()` so a re-entrant
+            // `on_io_writer_chunk` (via `IOWriter::on_error`) defers driving
+            // completion to this outer frame.
+            interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
+            let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
+            let y = writer.enqueue(child, captured, &buf);
+            // `IOWriter::on_error` dispatches `on_io_writer_chunk` via a
+            // re-entrant `run_yield` when the write fails synchronously inside
+            // `enqueue` (e.g. `__start()` returns an error). Driving completion
+            // from that inner trampoline frame would free this node while the
+            // outer frame still has it on `pipeline_stack`. `on_io_writer_chunk`
+            // detects the in-flight enqueue via `WaitingWriteErr` and only
+            // transitions to `Done{1}` without driving; steer the outer frame
+            // to completion here instead.
+            if matches!(interp.as_pipeline(this).state, PipelineState::Done { .. }) {
+                return Yield::Next(this);
+            }
+            // Armed for async completion: `on_io_writer_chunk` may now drive.
+            interp.as_pipeline_mut(this).state = PipelineState::Pending;
+            return y;
+        }
+        if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
+            // SAFETY: single trampoline frame; no other borrow of the env's
+            // (or its parent's) stderr buffer is live.
+            let stderr = unsafe {
+                interp
+                    .as_pipeline_mut(this)
+                    .base
+                    .shell_mut()
+                    .buffered_stderr_mut()
+            };
+            stderr.extend_from_slice(&buf);
+        }
+        Self::finish_failing_error(interp, this)
+    }
+
+    /// Common tail for `write_failing_error`'s synchronous path and
+    /// `on_io_writer_chunk`: route through `Done { 1 }` + `Yield::Next(this)`
+    /// so the trampoline removes this node from `pipeline_stack` before
+    /// `next()` bubbles `child_done(parent, this, 1)` and frees it.
+    fn finish_failing_error(interp: &Interpreter, this: NodeId) -> Yield {
+        let me = interp.as_pipeline_mut(this);
+        debug_assert!(
+            me.cmds
+                .as_ref()
+                .is_none_or(|c| me.exited_count >= c.len() as u32),
+            "write_failing_error reached with running children"
+        );
+        me.state = PipelineState::Done { exit_code: 1 };
+        Yield::Next(this)
+    }
+
+    /// IOWriter completion callback for the error message enqueued in
+    /// `write_failing_error`: finish the pipeline with exit code 1. Only
+    /// reached from `write_failing_error`, whose callers guarantee no children
+    /// are running; a write failure here is error-on-error and is dropped so
+    /// the pipeline still completes.
     pub fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        debug_assert!(matches!(
+        if let Some(e) = err {
+            e.deref();
+        }
+        // `WaitingWriteErr` means `write_failing_error` is still inside
+        // `IOWriter::enqueue` and this callback fired via a re-entrant
+        // `run_yield` from `IOWriter::on_error`. Driving completion here would
+        // free this node while the outer trampoline frame still has it on
+        // `pipeline_stack`; transition to `Done` without driving and let
+        // `write_failing_error` return `Yield::Next(this)` to the outer frame.
+        if matches!(
             interp.as_pipeline(this).state,
             PipelineState::WaitingWriteErr
-        ));
-        if let Some(e) = err {
-            interp.throw(ShellErr::from_system(e));
-            return Yield::failed();
+        ) {
+            interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code: 1 };
+            return Yield::done();
         }
-        let parent = interp.as_pipeline(this).base.parent;
-        interp.child_done(parent, this, 1)
+        debug_assert!(matches!(
+            interp.as_pipeline(this).state,
+            PipelineState::Pending
+        ));
+        Self::finish_failing_error(interp, this)
     }
 
     pub fn child_done(

@@ -833,27 +833,13 @@ mod _impl {
     pub(crate) fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
         #[cfg(windows)]
         {
-            let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
-            // SAFETY: valid buffer
-            if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
-                let str = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
+            let mut name_buffer: [u16; 256] = [0; 256];
+            if let Some(name) = windows::gethostname_w(&mut name_buffer) {
+                let str = BunString::clone_utf16(name);
                 let js = str.to_js(global);
                 str.deref();
                 return js;
             }
-
-            let mut result: windows::ws2_32::WSADATA = bun_core::ffi::zeroed();
-            // SAFETY: valid out-pointer
-            if unsafe { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
-                // SAFETY: valid buffer
-                if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
-                    let y = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
-                    let js = y.to_js(global);
-                    y.deref();
-                    return js;
-                }
-            }
-
             return Ok(ZigString::init(b"unknown").with_encoding().to_js(global));
         }
         #[cfg(not(windows))]
@@ -1730,11 +1716,4 @@ fn parse_u64(s: &[u8]) -> crate::Result<u64> {
 #[inline]
 fn parse_u32(s: &[u8]) -> crate::Result<u32> {
     bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
-}
-
-#[cfg(windows)]
-#[inline]
-fn slice_to_nul_u16(buf: &[u16]) -> &[u16] {
-    let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    &buf[..nul]
 }

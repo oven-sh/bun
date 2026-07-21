@@ -588,6 +588,7 @@ impl Interpreter {
                 __cwd: cwd_arr,
                 cwd_fd,
                 async_pids: SmolList::default(),
+                start_instant: std::time::Instant::now(),
             }),
             root_io: JsCell::new(IO {
                 stdin: crate::shell::io::InKind::Fd(stdin_reader),
@@ -1793,6 +1794,9 @@ pub struct ShellExecEnv {
     pub __cwd: Vec<u8>,
     pub cwd_fd: Fd,
     pub async_pids: SmolList<PidT, 4>,
+    /// For `$SECONDS`. Copied (not reset) by `dupe_for_subshell` so a subshell
+    /// sees the parent's elapsed time, matching bash.
+    pub start_instant: std::time::Instant,
 }
 
 pub enum Bufio {
@@ -1958,6 +1962,7 @@ impl ShellExecEnv {
             __cwd: self.__cwd.clone(),
             cwd_fd: dupedfd,
             async_pids: SmolList::default(),
+            start_instant: self.start_instant,
         });
         Ok(bun_core::heap::into_raw(duped))
     }
@@ -2166,6 +2171,89 @@ impl ShellExecEnv {
                     b""
                 })
             })
+    }
+
+    /// Fallback for bash's dynamic / auto-initialized shell variables when
+    /// `label` was not found in `shell_env` or `export_env`. Appends the
+    /// expansion to `out`; an unknown name appends nothing. A user assignment
+    /// (which lands in one of the env maps) therefore shadows these.
+    pub fn append_special_var(&self, label: &[u8], out: &mut Vec<u8>) {
+        use std::io::Write as _;
+        match label {
+            b"RANDOM" => {
+                // bash: 15-bit value, fresh on every reference.
+                let n = (bun_core::fast_random() & 0x7fff) as u32;
+                let _ = write!(out, "{n}");
+            }
+            b"SECONDS" => {
+                let secs = self.start_instant.elapsed().as_secs();
+                let _ = write!(out, "{secs}");
+            }
+            b"IFS" => out.extend_from_slice(b" \t\n"),
+            b"SHLVL" => out.push(b'1'),
+            b"LINENO" => out.push(b'0'),
+            b"OSTYPE" => out.extend_from_slice(bash_ostype()),
+            b"HOSTNAME" => append_hostname(out),
+            #[cfg(unix)]
+            b"UID" => {
+                let _ = write!(out, "{}", bun_sys::c::getuid());
+            }
+            #[cfg(unix)]
+            b"EUID" => {
+                let _ = write!(out, "{}", bun_sys::c::geteuid());
+            }
+            #[cfg(unix)]
+            b"GROUPS" => {
+                let _ = write!(out, "{}", bun_sys::c::getgid());
+            }
+            #[cfg(unix)]
+            b"PPID" => {
+                // SAFETY: getppid has no preconditions and never fails.
+                let _ = write!(out, "{}", unsafe { libc::getppid() });
+            }
+            #[cfg(windows)]
+            b"PPID" => {
+                // SAFETY: uv_os_getppid has no preconditions.
+                let _ = write!(out, "{}", unsafe { bun_libuv_sys::uv_os_getppid() });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// bash's `$OSTYPE` for the host target. bash derives this from
+/// `config.guess`; these are the strings scripts match against.
+const fn bash_ostype() -> &'static [u8] {
+    if cfg!(target_os = "macos") {
+        b"darwin"
+    } else if cfg!(target_os = "android") {
+        b"linux-android"
+    } else if cfg!(target_env = "musl") {
+        b"linux-musl"
+    } else if cfg!(target_os = "linux") {
+        b"linux-gnu"
+    } else if cfg!(target_os = "freebsd") {
+        b"freebsd"
+    } else if cfg!(windows) {
+        b"msys"
+    } else {
+        b"unknown"
+    }
+}
+
+#[cfg(unix)]
+fn append_hostname(out: &mut Vec<u8>) {
+    let mut buf = [0u8; 256];
+    if bun_sys::posix::gethostname(&mut buf).is_ok() {
+        out.extend_from_slice(bun_core::slice_to_nul(&buf));
+    }
+}
+
+#[cfg(windows)]
+fn append_hostname(out: &mut Vec<u8>) {
+    let mut buf = [0u16; 256];
+    if let Some(name) = bun_sys::windows::gethostname_w(&mut buf) {
+        bun_core::strings::to_utf8_append_to_list(out, name);
     }
 }
 

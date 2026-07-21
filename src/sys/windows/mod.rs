@@ -3433,6 +3433,30 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
 
 pub use bun_windows_sys::externs::GetHostNameW;
 
+/// `GetHostNameW` with the `WSAStartup` retry it needs when winsock hasn't
+/// been initialized yet. Returns the hostname slice (without the trailing
+/// NUL) on success.
+pub fn gethostname_w(buf: &mut [u16]) -> Option<&[u16]> {
+    // `namelen` counts WCHARs including the NUL; MSDN bounds the result at
+    // 256, so both callers pass `[u16; 256]`.
+    let cap = core::ffi::c_int::try_from(buf.len()).ok()?;
+    // SAFETY: `buf` is valid for `cap` writes.
+    let mut rc = unsafe { GetHostNameW(buf.as_mut_ptr(), cap) };
+    if rc != 0 {
+        let mut wsa: ws2_32::WSADATA = bun_core::ffi::zeroed();
+        // SAFETY: valid out-pointer.
+        if unsafe { ws2_32::WSAStartup(0x202, &mut wsa) } == 0 {
+            // SAFETY: as above.
+            rc = unsafe { GetHostNameW(buf.as_mut_ptr(), cap) };
+        }
+    }
+    if rc != 0 {
+        return None;
+    }
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    Some(&buf[..end])
+}
+
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
 pub use bun_windows_sys::externs::GetTempPathW;
 

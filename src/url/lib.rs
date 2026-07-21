@@ -900,7 +900,6 @@ pub struct QueryStringMap {
     slice: *const [u8],
     pub buffer: Vec<u8>,
     pub list: ParamList,
-    pub name_count: Option<usize>,
 }
 
 impl Clone for QueryStringMap {
@@ -925,13 +924,12 @@ impl Clone for QueryStringMap {
             slice,
             buffer,
             list: self.list.clone(),
-            name_count: self.name_count,
         }
     }
 }
 
 impl QueryStringMap {
-    pub fn get_name_count(&mut self) -> usize {
+    pub fn get_name_count(&self) -> usize {
         self.list.len()
     }
 
@@ -1084,7 +1082,6 @@ impl QueryStringMap {
             list,
             buffer: buf,
             slice: slice_ptr,
-            name_count: None,
         }))
     }
 
@@ -1138,7 +1135,6 @@ impl QueryStringMap {
                 buffer: Vec::new(),
                 // `slice` borrows the caller's query_string; lifetime not tracked here
                 slice: std::ptr::from_ref::<[u8]>(query_string),
-                name_count: None,
             }));
         }
 
@@ -1203,7 +1199,6 @@ impl QueryStringMap {
             list,
             buffer: buf,
             slice: slice_ptr,
-            name_count: None,
         }))
     }
 }

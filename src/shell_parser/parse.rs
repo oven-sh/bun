@@ -586,8 +586,8 @@ pub mod ast {
             const STDOUT        = 1 << 1;
             const STDERR        = 1 << 2;
             const APPEND        = 1 << 3;
-            /// 1>&2 === stdout=true and duplicate_out=true
-            /// 2>&1 === stderr=true and duplicate_out=true
+            /// 2>&1 === stdout=true and duplicate_out=true
+            /// 1>&2 === stderr=true and duplicate_out=true
             const DUPLICATE_OUT = 1 << 4;
         }
     }

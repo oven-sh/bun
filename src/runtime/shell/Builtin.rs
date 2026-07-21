@@ -799,8 +799,8 @@ impl Builtin {
                 }
             }
             None if redirect.duplicate_out() => {
-                // `2>&1` (stderr=true,dup_out=true) → stderr := stdout
-                // `1>&2` (stdout=true,dup_out=true) → stdout := stderr
+                // `2>&1` (stdout=true,dup_out=true) → stderr := stdout
+                // `1>&2` (stderr=true,dup_out=true) → stdout := stderr
                 let me = Self::of_mut(interp, cmd);
                 if redirect.stdout() {
                     me.stderr = me.stdout.dup_ref();

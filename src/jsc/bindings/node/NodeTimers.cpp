@@ -10,21 +10,20 @@ namespace Bun {
 using namespace JSC;
 
 // Forward a schedule/clear event to the async_hooks timer dispatch. Costs one
-// flag load + branch when async_hooks id tracking was never enabled.
-static bool emitTimerEventIfNeeded(JSC::JSGlobalObject* globalObject, AsyncHooksTimerEvent event, JSC::EncodedJSValue encodedTimer)
+// flag load + branch when async_hooks id tracking was never enabled. Can
+// leave an exception pending (termination/OOM from the dispatch); the caller
+// checks with its own throw scope.
+static void emitTimerEventIfNeeded(JSC::JSGlobalObject* globalObject, AsyncHooksTimerEvent event, JSC::EncodedJSValue encodedTimer)
 {
     auto* global = defaultGlobalObject(globalObject);
     if (!global->asyncHooksTimerHooksEnabled) [[likely]]
-        return true;
+        return;
     JSC::JSValue timer = JSC::JSValue::decode(encodedTimer);
     // Non-objects can reach here via clearTimeout(number/undefined); the JS
     // record map is keyed by timer object, so skip the dispatch round trip.
     if (timer.isEmpty() || !timer.isObject()) [[unlikely]]
-        return true;
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        return;
     emitAsyncHooksTimerEvent(global, event, timer);
-    RETURN_IF_EXCEPTION(scope, false);
-    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
@@ -82,8 +81,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
 
     JSC::EncodedJSValue timer = Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
     RETURN_IF_EXCEPTION(scope, {});
-    if (!emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::InitTimeout, timer)) [[unlikely]]
-        return {};
+    emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::InitTimeout, timer);
+    RETURN_IF_EXCEPTION(scope, {});
     return timer;
 }
 
@@ -143,8 +142,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
 
     JSC::EncodedJSValue timer = Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
     RETURN_IF_EXCEPTION(scope, {});
-    if (!emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::InitInterval, timer)) [[unlikely]]
-        return {};
+    emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::InitInterval, timer);
+    RETURN_IF_EXCEPTION(scope, {});
     return timer;
 }
 
@@ -193,8 +192,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
 
     JSC::EncodedJSValue timer = Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments));
     RETURN_IF_EXCEPTION(scope, {});
-    if (!emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::InitImmediate, timer)) [[unlikely]]
-        return {};
+    emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::InitImmediate, timer);
+    RETURN_IF_EXCEPTION(scope, {});
     return timer;
 }
 
@@ -220,8 +219,8 @@ JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::EncodedJSValue result = Bun__Timer__clearImmediate(globalObject, JSC::JSValue::encode(timer_or_num));
     RETURN_IF_EXCEPTION(scope, {});
-    if (!emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::Cleared, JSC::JSValue::encode(timer_or_num))) [[unlikely]]
-        return {};
+    emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::Cleared, JSC::JSValue::encode(timer_or_num));
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 
@@ -247,8 +246,8 @@ JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::EncodedJSValue result = Bun__Timer__clearInterval(globalObject, JSC::JSValue::encode(timer_or_num));
     RETURN_IF_EXCEPTION(scope, {});
-    if (!emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::Cleared, JSC::JSValue::encode(timer_or_num))) [[unlikely]]
-        return {};
+    emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::Cleared, JSC::JSValue::encode(timer_or_num));
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 
@@ -274,8 +273,8 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::EncodedJSValue result = Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(timer_or_num));
     RETURN_IF_EXCEPTION(scope, {});
-    if (!emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::Cleared, JSC::JSValue::encode(timer_or_num))) [[unlikely]]
-        return {};
+    emitTimerEventIfNeeded(globalObject, AsyncHooksTimerEvent::Cleared, JSC::JSValue::encode(timer_or_num));
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 

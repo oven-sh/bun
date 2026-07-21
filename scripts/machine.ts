@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import { cpSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,36 +92,6 @@ const aws = {
  */
 
 /**
- * @param {CloudInit} cloudInit
- * @returns {string}
- */
-export function getUserData(cloudInit) {
-  const { os, userData } = cloudInit;
-
-  // For Windows, use PowerShell script
-  if (os === "windows") {
-    return getWindowsStartupScript(cloudInit);
-  }
-
-  // For Linux, just set up SSH access
-  return getCloudInit(cloudInit);
-}
-
-/**
- * Root disk size: an explicit --disk-size-gb wins; otherwise the bake shape
- * on the image's spec entry (linux 100GB, windows 150GB today).
- * @param {MachineOptions} options
- * @returns {number}
- */
-export function getDiskSize(options) {
-  const { diskSizeGb } = options;
-  if (diskSizeGb) {
-    return diskSizeGb;
-  }
-  return options.imageEntry.bake.diskSizeGb;
-}
-
-/**
  * @typedef SshKey
  * @property {string} [privatePath]
  * @property {string} [publicPath]
@@ -151,79 +121,6 @@ export function getDiskSize(options) {
  */
 
 /**
- * @param {ScpOptions} options
- * @returns {Promise<void>}
- */
-async function spawnScp(options) {
-  const { hostname, port, username, identityPaths, password, source, destination, retries = 3 } = options;
-  await waitForPort({ hostname, port: port || 22 });
-
-  const command = ["scp", "-o", "StrictHostKeyChecking=no"];
-  command.push("-O"); // use SCP instead of SFTP
-  if (statSync(resolve(source)).isDirectory()) {
-    command.push("-r"); // upload the tree (bootstrap sources)
-  }
-  if (!password) {
-    command.push("-o", "BatchMode=yes");
-  }
-  if (port) {
-    command.push("-P", port);
-  }
-  if (password) {
-    const sshPass = which("sshpass", { required: true });
-    command.unshift(sshPass, "-p", password);
-  } else if (identityPaths) {
-    command.push(...identityPaths.flatMap(path => ["-i", path]));
-  }
-  command.push(resolve(source));
-  if (username) {
-    command.push(`${username}@${hostname}:${destination}`);
-  } else {
-    command.push(`${hostname}:${destination}`);
-  }
-
-  let cause;
-  for (let i = 0; i < retries; i++) {
-    const result = await spawn(command, { stdio: "inherit" });
-    const { exitCode, stderr } = result;
-    if (exitCode === 0) {
-      return;
-    }
-
-    cause = stderr.trim() || undefined;
-    if (/(bad configuration option)|(no such file or directory)/i.test(stderr)) {
-      break;
-    }
-    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
-  }
-
-  throw new Error(`SCP failed: ${source} -> ${username}@${hostname}:${destination}`, { cause });
-}
-
-/**
- * @param {string} passwordData
- * @param {string} privateKeyPath
- * @returns {string}
- */
-function decryptPassword(passwordData, privateKeyPath) {
-  const name = basename(privateKeyPath, extname(privateKeyPath));
-  const tmpPemPath = mkdtemp("pem-", `${name}.pem`);
-  try {
-    copyFile(privateKeyPath, tmpPemPath, { mode: 0o600 });
-    spawnSyncSafe(["ssh-keygen", "-p", "-m", "PEM", "-f", tmpPemPath, "-N", ""]);
-    const { stdout } = spawnSyncSafe(
-      ["openssl", "pkeyutl", "-decrypt", "-inkey", tmpPemPath, "-pkeyopt", "rsa_padding_mode:pkcs1"],
-      {
-        stdin: Buffer.from(passwordData, "base64"),
-      },
-    );
-    return stdout.trim();
-  } finally {
-    rm(tmpPemPath);
-  }
-}
-
-/**
  * @typedef RdpCredentials
  * @property {string} hostname
  * @property {string} username
@@ -235,20 +132,6 @@ function decryptPassword(passwordData, privateKeyPath) {
  * @property {string} name
  * @property {(options: MachineOptions) => Promise<Machine>} createMachine
  */
-
-function getCloud(name) {
-  switch (name) {
-    case "docker":
-      return docker;
-    case "aws":
-      return aws;
-    case "azure":
-      return azure;
-    case "tart":
-      return tart;
-  }
-  throw new Error(`Unsupported cloud: ${name}`);
-}
 
 /**
  * @typedef {"linux" | "darwin" | "windows"} Os

@@ -3,7 +3,6 @@
 // two steps in order — the manager install, then the packages — because the
 // packages step depends on the manager and nothing sits between them.
 
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import * as win from "../bootstrap/ops-windows.ts";
 import { download, invalidateChildPath, log, mode, scratchDir } from "../bootstrap/runtime.ts";
@@ -68,11 +67,15 @@ $ErrorActionPreference = $prev`,
             }
             // Git for Windows ships Unix tools (cat, head, tail, ...) in usr\bin;
             // Cygwin binaries live at <scoop>\apps\cygwin\current\root\bin.
+            // Both git and cygwin are in scoopCommonPackages on every windows
+            // image, so these dirs exist after the install above — a missing
+            // one means the install failed, which should surface, not be
+            // silently left off PATH.
             for (const dir of [
               `${image.scoop.root}\\apps\\git\\current\\usr\\bin`,
               `${image.scoop.root}\\apps\\cygwin\\current\\root\\bin`,
             ]) {
-              if (existsSync(dir) || mode.dryRun) await win.addToMachinePath(dir);
+              await win.addToMachinePath(dir);
             }
             if (ci) {
               await win.powershellScript({

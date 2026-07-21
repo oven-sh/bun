@@ -893,6 +893,86 @@ describe("parse", () => {
     });
   });
 
+  // A legacy patch that both deletes a line whose content begins with "-- a/" and uses
+  // "--- a/<path>" as the next-file separator. The parser must distinguish the two by hunk
+  // line counts instead of retrying the whole file in a second legacy-mode pass.
+  test("parses old-style patches whose hunks delete lines beginning with '-- a/'", () => {
+    const patch =
+      "--- a/first.txt\n" +
+      "+++ b/first.txt\n" +
+      "@@ -1,2 +1,1 @@\n" +
+      "--- a/foo\n" +
+      " bar\n" +
+      "--- a/second.txt\n" +
+      "+++ b/second.txt\n" +
+      "@@ -1,1 +1,1 @@\n" +
+      "-x\n" +
+      "+y\n";
+
+    expect(removeCapacity(JSON.parse(parse(patch)))).toEqual({
+      "parts": {
+        "items": [
+          {
+            "file_patch": {
+              "path": "first.txt",
+              "hunks": {
+                "items": [
+                  {
+                    "header": { "original": { "start": 1, "len": 2 }, "patched": { "start": 1, "len": 1 } },
+                    "parts": {
+                      "items": [
+                        {
+                          "type": "deletion",
+                          "lines": { "items": ["-- a/foo"] },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "context",
+                          "lines": { "items": ["bar"] },
+                          "no_newline_at_end_of_file": false,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              "before_hash": null,
+              "after_hash": null,
+            },
+          },
+          {
+            "file_patch": {
+              "path": "second.txt",
+              "hunks": {
+                "items": [
+                  {
+                    "header": { "original": { "start": 1, "len": 1 }, "patched": { "start": 1, "len": 1 } },
+                    "parts": {
+                      "items": [
+                        {
+                          "type": "deletion",
+                          "lines": { "items": ["x"] },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "insertion",
+                          "lines": { "items": ["y"] },
+                          "no_newline_at_end_of_file": false,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              "before_hash": null,
+              "after_hash": null,
+            },
+          },
+        ],
+      },
+    });
+  });
+
   // After stripping the "index " prefix the remainder can itself start with "index ",
   // which used to trip a bogus debug assertion in parse_diff_hashes.
   test("does not crash when an index line repeats the 'index ' prefix", () => {

@@ -897,26 +897,7 @@ pub enum ParseErr {
 /// NOTE: the returned `PatchFile` struct will contain pointers to original file text so make sure to not deallocate `file`
 pub fn parse_patch_file(file: &[u8]) -> Result<PatchFile<'_>, ParseErr> {
     let mut lines_parser = PatchLinesParser::default();
-
-    'brk: {
-        match lines_parser.parse(file, ParseOpts::default()) {
-            Ok(()) => break 'brk,
-            Err(err) => {
-                // TODO: the parser can be refactored to remove this as it is a hacky workaround, like detecting while parsing if legacy diffs are used
-                if err == ParseErr::hunk_header_integrity_check_failed {
-                    lines_parser.reset();
-                    lines_parser.parse(
-                        file,
-                        ParseOpts {
-                            support_legacy_diffs: true,
-                        },
-                    )?;
-                    break 'brk;
-                }
-                return Err(err);
-            }
-        }
-    }
+    lines_parser.parse(file)?;
 
     // reshaped for borrowck — take ownership of result vec instead of slicing.
     let mut files = mem::take(&mut lines_parser.result);
@@ -1157,25 +1138,8 @@ enum HunkLineType {
     Pragma,
 }
 
-#[derive(Default, Clone, Copy)]
-struct ParseOpts {
-    support_legacy_diffs: bool,
-}
-
 impl<'a> PatchLinesParser<'a> {
-    // Drop handles freeing; `reset()` handles the retain-capacity case.
-
-    fn reset(&mut self) {
-        // reshaped for borrowck — take result vec, clear it, reinit self.
-        let mut result = mem::take(&mut self.result);
-        result.clear();
-        *self = Self {
-            result,
-            ..Default::default()
-        };
-    }
-
-    pub(crate) fn parse(&mut self, file_: &'a [u8], opts: ParseOpts) -> Result<(), ParseErr> {
+    pub(crate) fn parse(&mut self, file_: &'a [u8]) -> Result<(), ParseErr> {
         if file_.is_empty() {
             return Ok(());
         }
@@ -1264,7 +1228,10 @@ impl<'a> PatchLinesParser<'a> {
                     }
                 }
                 ParserState::ParsingHunks => {
-                    if opts.support_legacy_diffs && line.starts_with(b"--- a/") {
+                    // Legacy (non `diff --git`) patches delimit files with `--- a/<path>`,
+                    // which also matches a deletion line. It is a new file header only when
+                    // the current hunk already has exactly the line counts its `@@` header declared.
+                    if line.starts_with(b"--- a/") && self.current_hunk_is_complete() {
                         self.state = ParserState::ParsingHeader;
                         self.commit_file_patch();
                         lines.back();
@@ -1380,6 +1347,32 @@ impl<'a> PatchLinesParser<'a> {
         self.current_file_patch.nullify_empty_strings();
         let fp = mem::take(&mut self.current_file_patch);
         self.result.push(fp);
+    }
+
+    /// `verify_integrity()` for the hunk still being parsed, including the
+    /// not-yet-committed `current_hunk_mutation_part`.
+    fn current_hunk_is_complete(&self) -> bool {
+        let Some(hunk) = &self.current_hunk else {
+            return false;
+        };
+        let mut original: usize = 0;
+        let mut patched: usize = 0;
+        let mut tally = |part: &PatchMutationPart<'_>| match part.ty {
+            PartType::Context => {
+                original += part.lines.len();
+                patched += part.lines.len();
+            }
+            PartType::Insertion => patched += part.lines.len(),
+            PartType::Deletion => original += part.lines.len(),
+        };
+        for part in &hunk.parts {
+            tally(part);
+        }
+        if let Some(part) = &self.current_hunk_mutation_part {
+            tally(part);
+        }
+        original == hunk.header.original.len as usize
+            && patched == hunk.header.patched.len as usize
     }
 }
 

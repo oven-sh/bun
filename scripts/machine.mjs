@@ -1443,6 +1443,14 @@ async function main() {
   };
 
   let { detached, bootstrap, ci, os, arch, distro, release } = options;
+  // There is no live-Windows bootstrap: Windows images bake through the
+  // Packer path (create-image --cloud=azure). An `ssh` of a Windows spec
+  // image gives you the base machine, so bootstrap is off rather than a
+  // default that could only fail.
+  if (os === "windows" && command === "ssh") {
+    if (bootstrap) console.log("Windows machines are not bootstrapped by ssh (Packer bakes them); connecting to the base image.");
+    bootstrap = false;
+  }
 
   // create-image bakes options.imageEntry (from --image). The image name is
   // COMPUTED from the entry (`${key}-${hash}`) — never taken from the command
@@ -1586,11 +1594,8 @@ async function main() {
     });
 
     if (bootstrapDir) {
-      if (os === "windows") {
-        // Windows CI images bake through Packer above; a raw AWS windows
-        // machine (ssh command) is provisioned by hand.
-        throw new Error("Windows bootstrap runs through the Packer path (create-image --cloud=azure)");
-      }
+      // (Windows never reaches here: main turns bootstrap off for it — the
+      // Packer path bakes Windows images.)
       // The image entry the bootstrap builds (resolved from --image in main).
       const entry = options.imageEntry;
       await startGroup("Uploading bootstrap sources...", async () => {

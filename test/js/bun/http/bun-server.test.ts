@@ -956,7 +956,7 @@ test("server wrapper survives GC while a websocket is connected and is collected
         await drain(baseline);
         const afterStop = serverCount();
 
-        console.log(JSON.stringify({ baseline, whileConnected, afterStop, closeCode: ws.readyState }));
+        console.log(JSON.stringify({ baseline, whileConnected, afterStop }));
         process.exit(0);
       `,
     ],

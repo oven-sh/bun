@@ -1628,8 +1628,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        let listener = self.listener.take();
-        if listener.is_none() {
+        let Some(listener) = self.listener.take() else {
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
                 self.notify_inspector_server_stopped();
@@ -1642,8 +1641,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 self.terminate_app();
             }
             return;
-        }
-        let listener = listener.unwrap();
+        };
 
         if !SSL {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
@@ -1686,6 +1684,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn end_all_websockets_going_away(&mut self) {
         if !self.has_active_web_sockets() {
+            return;
+        }
+        // node:http `Server#close()` must leave upgraded sockets to the user
+        // (Node only stops accepting and closes idle keep-alives); the `ws`
+        // shim tracks its own `clients` set for the user to drain.
+        if !self.config.on_node_http_request.is_empty() {
             return;
         }
         let Some(app) = self.app else { return };

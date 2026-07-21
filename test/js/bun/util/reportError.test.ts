@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
@@ -121,4 +121,31 @@ test("native error printer handles lone surrogates in message and stack frame na
   // Printer must not have crashed: normal uncaught-error exit (1), no signal.
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
+});
+
+// The uncaught-exception printer constructs its own Formatter. Before this fix
+// it left `stack_check` at the always-passes default, so formatting a deeply
+// nested non-Error value recursed until the native stack overflowed (SIGSEGV).
+describe.each(["throw a;", "Promise.reject(a);"])("%s", stmt => {
+  test.concurrent("native error printer survives a deeply nested thrown value", async () => {
+    const src = `
+      let a = [];
+      for (let i = 0; i < 50000; i++) a = [a];
+      try { console.log(a); } catch (e) { console.error("control:" + e.constructor.name); }
+      ${stmt}
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    // console.log of the same value is guarded (throws RangeError); the
+    // uncaught-exception printer must be at least as safe.
+    expect(stderr).toContain("control:RangeError");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
 });

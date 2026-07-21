@@ -67,6 +67,25 @@ test.concurrent("--max-old-space-size does not kill the process when a worker ex
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("space-separated value of the underscore alias stays in process.execArgv", async () => {
+  using dir = tempDir("max-old-space-size-execargv", {
+    "main.js": `console.log(JSON.stringify(process.execArgv));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--max_old_space_size", "256", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The value must be kept with the flag, or children spawned with the default
+  // execArgv (worker_threads, child_process.fork) consume the script as the value.
+  expect(stdout.trim()).toBe('["--max_old_space_size","256"]');
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("--max-old-space-size rejects a non-numeric value", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--max-old-space-size=abc", "-e", "console.log('ran')"],

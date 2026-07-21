@@ -178,8 +178,9 @@ private:
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
     WeakHashSet<JSVMClientDataClient> m_clients;
 
-    // Enforces --max-old-space-size. Registered with the heap in create(),
-    // unregistered in ~JSVMClientData (which ~VM runs while `heap` is alive).
+    // Enforces --max-old-space-size. Registered with the heap by
+    // enforceMaxOldSpaceSize() (main thread VM only), unregistered in
+    // ~JSVMClientData (which ~VM runs while `heap` is alive).
     std::unique_ptr<Bun::HeapSizeLimitObserver> m_heapSizeLimitObserver;
 };
 

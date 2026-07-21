@@ -41,6 +41,8 @@ namespace Bun {
 // under the limit, fail fast with Node's fatal OOM message and exit code
 // instead of letting the process grow until the OS kills it.
 class HeapSizeLimitObserver final : public JSC::HeapObserver {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(HeapSizeLimitObserver);
+
 public:
     HeapSizeLimitObserver(JSC::Heap& heap, size_t limit)
         : m_heap(heap)
@@ -145,7 +147,7 @@ void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
 void JSVMClientData::enforceMaxOldSpaceSize(VM& vm, size_t limitBytes)
 {
     ASSERT(!m_heapSizeLimitObserver);
-    m_heapSizeLimitObserver = std::make_unique<Bun::HeapSizeLimitObserver>(vm.heap, limitBytes);
+    m_heapSizeLimitObserver = makeUnique<Bun::HeapSizeLimitObserver>(vm.heap, limitBytes);
     vm.heap.addObserver(m_heapSizeLimitObserver.get());
 }
 

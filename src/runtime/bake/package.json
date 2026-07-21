@@ -1,5 +1,7 @@
 {
-  "sideEffects": ["./debug.ts"],
+  "sideEffects": [
+    "./debug.ts"
+  ],
   "type": "module",
   "imports": {
     "#stack-trace": {

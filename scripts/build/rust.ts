@@ -412,6 +412,13 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // `-Cllvm-args=-addrsig` sets the same LLVM module flag clang's `-faddrsig`
   // does. Harmless on Apple ld64 (ignores the section).
   rustflags.push("-Cllvm-args=-addrsig");
+  // Reuse an upstream crate's monomorphization instead of re-instantiating
+  // it locally. rustc defaults this on only at opt-level 0/1/s/z: at O2/O3 a
+  // shared generic is an out-of-line upstream symbol the caller can't
+  // inline. Cross-language ThinLTO re-imports and inlines any callee under
+  // the import threshold at link time, so here it only dedups the large
+  // bodies nobody inlines. Nightly-only; the pinned toolchain is nightly.
+  rustflags.push("-Zshare-generics=y");
   // Match the C++ side's CPU target (`cpuTargetFlags` in flags.ts) so Rust
   // codegen sees the same ISA. rustc's `-C target-cpu=` takes LLVM CPU names
   // (same vocabulary as clang's `-march=`/`-mcpu=`), so the mapping is 1:1.

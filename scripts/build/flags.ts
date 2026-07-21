@@ -840,11 +840,19 @@ export const linkerFlags: Flag[] = [
     // only fires for classes explicitly annotated [[clang::lto_visibility]],
     // i.e. never. A static executable that only dlopens C-ABI addons (NAPI)
     // satisfies the whole-program assumption. ld64.lld has no named option
-    // for this; -mllvm reaches the underlying cl::opt directly. Darwin only:
-    // linux is on full LTO where this was never enabled.
+    // for this; -mllvm reaches the underlying cl::opt directly.
     flag: ["-Wl,-mllvm,-whole-program-visibility"],
     when: c => c.darwin && c.lto,
     desc: "Enable index-based whole-program devirtualization at link time",
+  },
+  {
+    // ELF spelling of the entry above. The WebKit -lto prebuilts carry the
+    // !type/!vcall_visibility metadata (built with -fwhole-program-vtables),
+    // so this upgrades JSC/WTF's exported classes to hidden LTO visibility
+    // and lets WPD fire on them, not just on our -fvisibility=hidden classes.
+    flag: ["-Wl,--lto-whole-program-visibility"],
+    when: c => c.unix && !c.darwin && c.lto,
+    desc: "Enable index-based whole-program devirtualization at link time (lld ELF)",
   },
   {
     flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],

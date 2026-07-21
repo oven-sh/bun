@@ -2206,6 +2206,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
     }
 }
 
+#[derive(Clone, Copy)]
 enum ReqOrSaved {
     Req(*mut Request), // FFI: uws C request ptr from handler callback
     Aborted,

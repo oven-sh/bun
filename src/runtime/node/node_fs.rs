@@ -6089,13 +6089,13 @@ impl NodeFS {
     pub fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
         let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();
-        // Node rejects an empty prefix with EINVAL. Without this, the bare
-        // six-X template would create a random-named directory in cwd.
+        // Node rejects an empty prefix with EINVAL (its snprintf builds a
+        // five-X template here); otherwise we'd create a random dir in cwd.
         if prefix_slice.is_empty() {
             return Err(sys::Error {
                 errno: SystemErrno::EINVAL as _,
                 syscall: sys::Tag::mkdtemp,
-                path: [b'X'; 6].into(),
+                path: [b'X'; 5].into(),
                 ..Default::default()
             });
         }

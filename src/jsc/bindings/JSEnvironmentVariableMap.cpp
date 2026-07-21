@@ -588,8 +588,13 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     }
 
     String keyStr = String(uid);
-    if (SharedEnvStore::normalizeKey(keyStr) == "TZ"_s)
+    String normalized = SharedEnvStore::normalizeKey(keyStr);
+    if (normalized == "TZ"_s)
         applyTZFromString(globalObject, String());
+    else if (normalized == "NODE_TLS_REJECT_UNAUTHORIZED"_s)
+        applyTLSRejectFromString(globalObject, String());
+    else if (normalized == "BUN_CONFIG_VERBOSE_FETCH"_s)
+        applyVerboseFetchFromString(globalObject, String());
     syncWindowsEnv(store, keyStr, nullptr);
     store->remove(keyStr);
     // Also drop any own property the Base fallback installed (accessor descriptors).
@@ -968,10 +973,10 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
     for (size_t j = 0; j < proxyVarCount; j++) {
-        // Known limitation: `delete process.env.NO_PROXY` removes the accessor
-        // without calling the setter, leaving the native env map stale (same as TZ).
-        // Use `process.env.NO_PROXY = ""` to unset. DontDelete would throw in
-        // strict mode, so we leave it deletable and document the gap.
+        // Known limitation: `delete process.env.NO_PROXY` leaves the native env
+        // map stale. JSProcessEnv::deleteProperty reinstalls TZ / TLS / verbose
+        // accessors but there is no unset for the Zig env map, so proxy vars are
+        // not covered. Use `process.env.NO_PROXY = ""` to unset.
         unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;
         if (!hasProxyVar[j]) {
             attrs |= JSC::PropertyAttribute::DontEnum;

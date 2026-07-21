@@ -529,13 +529,14 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunSt
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
     arguments.append(path->transferToJS(globalObject));
-    RETURN_IF_EXCEPTION(scope, void());
-    arguments.append(namespaceString->transferToJS(globalObject));
-    RETURN_IF_EXCEPTION(scope, void());
-    arguments.append(JSC::jsNumber(defaultLoaderId));
-    arguments.append(JSC::jsBoolean(isServerSide));
+    if (!scope.exception()) [[likely]]
+        arguments.append(namespaceString->transferToJS(globalObject));
+    if (!scope.exception()) [[likely]] {
+        arguments.append(JSC::jsNumber(defaultLoaderId));
+        arguments.append(JSC::jsBoolean(isServerSide));
 
-    call(globalObject, function, callData, plugin, arguments);
+        call(globalObject, function, callData, plugin, arguments);
+    }
 
     if (scope.exception()) [[unlikely]] {
         auto exception = scope.exception();
@@ -567,15 +568,16 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bu
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(path->transferToJS(globalObject));
-    RETURN_IF_EXCEPTION(scope, void());
-    arguments.append(namespaceString->transferToJS(globalObject));
-    RETURN_IF_EXCEPTION(scope, void());
-    arguments.append(importer->transferToJS(globalObject));
-    RETURN_IF_EXCEPTION(scope, void());
-    arguments.append(WRAP_BUNDLER_PLUGIN(context));
-    arguments.append(JSC::jsNumber(kindId));
+    if (!scope.exception()) [[likely]]
+        arguments.append(namespaceString->transferToJS(globalObject));
+    if (!scope.exception()) [[likely]]
+        arguments.append(importer->transferToJS(globalObject));
+    if (!scope.exception()) [[likely]] {
+        arguments.append(WRAP_BUNDLER_PLUGIN(context));
+        arguments.append(JSC::jsNumber(kindId));
 
-    call(globalObject, function, callData, plugin, arguments);
+        call(globalObject, function, callData, plugin, arguments);
+    }
 
     if (scope.exception()) [[unlikely]] {
         auto exception = JSValue(scope.exception());

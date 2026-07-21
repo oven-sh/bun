@@ -115,16 +115,9 @@ pub fn load_config_path(
     // lookup so the dead arm is still a single branch.
     if cmd.read_global_config() {
         if let Err(err) = load_global_bunfig(cmd, ctx) {
-            if auto_loaded {
-                return Ok(());
-            }
-
-            bun_core::pretty_errorln!(
-                "{}\nreading global config \"{}\"",
-                err,
-                BStr::new(config_path.as_bytes()),
-            );
-            Global::exit(1);
+            // A malformed global config is reported the same way `load_config`
+            // would; swallowing it here would also skip the local load below.
+            report_bunfig_load_failure(ctx.log, err);
         }
     }
 

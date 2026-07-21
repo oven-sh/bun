@@ -1841,35 +1841,41 @@ pub fn init(
 
     initialize_store();
 
-    if let Some(data_dir) = bun_core::env_var::XDG_CONFIG_HOME
-        .get()
-        .or_else(|| bun_core::env_var::HOME.get())
-    {
-        let mut buf = PathBuffer::uninit();
+    let install_ref = ctx.install.get_or_insert_with(|| {
+        // `Api::BunInstall` derives `Default` (all fields `None`/empty).
+        // Own via `Box` — never `Box::leak`.
+        Box::new(Api::BunInstall::default())
+    });
+    let npmrc_local = ZBox::from_bytes(b".npmrc");
+    let mut buf = PathBuffer::uninit();
+    // `$XDG_CONFIG_HOME/.npmrc` if it exists, else `$HOME/.npmrc`.
+    let global_npmrc_len = {
         let parts = [b"./.npmrc" as &[u8]];
-
-        let install_ref = ctx.install.get_or_insert_with(|| {
-            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
-            // Own via `Box` — never `Box::leak`.
-            Box::new(Api::BunInstall::default())
-        });
-        let npmrc_local = ZBox::from_bytes(b".npmrc");
+        let mut len = 0usize;
+        if let Some(data_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
+            let p = resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut buf, &parts);
+            if bun_sys::exists_z(p) {
+                len = p.len();
+            }
+        }
+        if len == 0 {
+            if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
+                len = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+                    home_dir, &mut buf, &parts,
+                )
+                .len();
+            }
+        }
+        len
+    };
+    if global_npmrc_len > 0 {
         ini::load_npmrc_config(
             &mut **install_ref,
             env,
             true,
-            &[
-                resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut buf, &parts),
-                &*npmrc_local,
-            ],
+            &[ZStr::from_buf(&buf[..], global_npmrc_len), &*npmrc_local],
         );
     } else {
-        let install_ref = ctx.install.get_or_insert_with(|| {
-            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
-            // Own via `Box` — never `Box::leak`.
-            Box::new(Api::BunInstall::default())
-        });
-        let npmrc_local = ZBox::from_bytes(b".npmrc");
         ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]);
     }
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());

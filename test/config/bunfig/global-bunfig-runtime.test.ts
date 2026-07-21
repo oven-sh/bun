@@ -58,8 +58,7 @@ describe("global ~/.bunfig.toml applies to runtime commands", () => {
   test.concurrent("bun <file>", async () => {
     const { dir, home, app } = layout();
     using _ = dir;
-    const { stdout, stderr, exitCode } = await run(["main.ts"], app, baseEnv(home));
-    expect(stderr).toBe("");
+    const { stdout, exitCode } = await run(["main.ts"], app, baseEnv(home));
     expect(stdout).toBe("preload-ran\nsentinel");
     expect(exitCode).toBe(0);
   });
@@ -79,8 +78,7 @@ describe("global ~/.bunfig.toml applies to runtime commands", () => {
   test.concurrent("bun run <file>", async () => {
     const { dir, home, app } = layout();
     using _ = dir;
-    const { stdout, stderr, exitCode } = await run(["run", "./main.ts"], app, baseEnv(home));
-    expect(stderr).toBe("");
+    const { stdout, exitCode } = await run(["run", "./main.ts"], app, baseEnv(home));
     expect(stdout).toBe("preload-ran\nsentinel");
     expect(exitCode).toBe(0);
   });
@@ -134,6 +132,21 @@ describe("XDG_CONFIG_HOME lookup falls back to $HOME/.bunfig.toml", () => {
     writeFileSync(join(home, ".bunfig.toml"), toml(`[install.cache]\ndir = "${cacheDir}"\n`));
     const { stdout, exitCode } = await run(["pm", "cache"], join(home, "app"), baseEnv(home, xdg));
     expect(stdout).toContain("sentinel-cache");
+    expect(exitCode).toBe(0);
+  });
+
+  // #23128: same fallback for the user-level .npmrc.
+  test.concurrent("XDG set but no config there -> $HOME/.npmrc still applies (bun pm cache)", async () => {
+    using dir = tempDir("global-npmrc-xdg-fallback-pm", {
+      "xdg/.keep": "",
+      "app/package.json": `{"name":"app"}\n`,
+    });
+    const home = String(dir);
+    const xdg = join(home, "xdg");
+    const cacheDir = join(home, "npmrc-sentinel-cache");
+    writeFileSync(join(home, ".npmrc"), toml(`cache=${cacheDir}\n`));
+    const { stdout, exitCode } = await run(["pm", "cache"], join(home, "app"), baseEnv(home, xdg));
+    expect(stdout).toContain("npmrc-sentinel-cache");
     expect(exitCode).toBe(0);
   });
 

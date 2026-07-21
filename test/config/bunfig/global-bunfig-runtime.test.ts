@@ -165,4 +165,19 @@ describe("XDG_CONFIG_HOME lookup falls back to $HOME/.bunfig.toml", () => {
     expect(stdout).toBe("xdg");
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("XDG .npmrc present -> it wins over $HOME/.npmrc", async () => {
+    using dir = tempDir("global-npmrc-xdg-wins", {
+      "app/package.json": `{"name":"app"}\n`,
+    });
+    const home = String(dir);
+    const xdg = join(home, "xdg");
+    mkdirSync(xdg, { recursive: true });
+    writeFileSync(join(home, ".npmrc"), toml(`cache=${join(home, "npmrc-home-cache")}\n`));
+    writeFileSync(join(xdg, ".npmrc"), toml(`cache=${join(home, "npmrc-xdg-cache")}\n`));
+    const { stdout, exitCode } = await run(["pm", "cache"], join(home, "app"), baseEnv(home, xdg));
+    expect(stdout).toContain("npmrc-xdg-cache");
+    expect(stdout).not.toContain("npmrc-home-cache");
+    expect(exitCode).toBe(0);
+  });
 });

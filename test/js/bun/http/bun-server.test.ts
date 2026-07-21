@@ -876,11 +876,9 @@ test("late keep-alive request to a node:http server after close() dispatches whi
 });
 
 test("server wrapper survives GC while a websocket is connected and is collected after stop()", async () => {
-  // The previous test exercises the one-tick HTTP keep-alive race; this one
-  // covers the websocket case. While a websocket is connected (listener still
-  // open) the wrapper must survive GC even with no user-held `server`
-  // binding; once stop() runs (which now also ends open websockets with 1001)
-  // deinit_if_we_can downgrades js_value and the wrapper becomes collectable.
+  // Wrapper must survive GC while a ws is connected with no user-held
+  // `server` binding; stop() ends the ws and downgrades js_value so the
+  // wrapper becomes collectable.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2190,11 +2188,9 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         const echoed = Promise.withResolvers();
         const closed = Promise.withResolvers();
 
-        // Scope server so the only strong root while the ws is open is the
-        // native side (listener + ServerWebSocket). Assign client directly to
-        // the outer var rather than returning it — returning keeps the async
-        // frame's scope (which contains server) alive via the resolved-value
-        // chain in JSC.
+        // Scope server so only the native side roots it while the ws is open.
+        // Assign client to the outer var (returning it would keep the async
+        // frame's scope, which contains server, alive via the resolved value).
         let client;
         let serverRef;
         await (async () => {
@@ -2592,11 +2588,8 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         const closed = Promise.withResolvers();
         let ws;
         let serverRef;
-        // Scope server so the module-level frame holds no strong reference to
-        // the wrapper when message(ws) runs; after ws.close() + stop()
-        // downgrade js_value, the wrapper must have zero roots for Bun.gc to
-        // reach wsOnError. A WeakRef lets the handler call stop() without
-        // itself rooting the wrapper.
+        // Scope server so nothing roots the wrapper when message(ws) runs;
+        // a WeakRef lets the handler call stop() without itself rooting it.
         await (async () => {
           const server = Bun.serve({
             port: 0, hostname: "127.0.0.1",

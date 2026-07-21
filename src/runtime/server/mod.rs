@@ -1693,13 +1693,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         }
         let Some(app) = self.app else { return };
-        // `end()` fires the close handler synchronously; its `on_close` defer
-        // calls `on_websocket_closed`, which would dispatch `deinit_if_we_can`
-        // through a fresh `&mut NewServer` while this frame still holds
-        // `&mut self`. Hold the re-entrance guard across the drain so the
-        // nested call early-returns; `stop()` runs the idle pass afterwards.
-        // Save/restore so a nested `server.stop(true)` from a close handler
-        // cannot clear the outer frame's guard.
+        // `end()` fires close handlers synchronously; hold (and save/restore)
+        // the re-entrance guard so nested `deinit_if_we_can` / `stop(true)`
+        // early-return instead of running under this frame's `&mut self`.
         let prev = self.deinit_running.replace(true);
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         bun_opaque::opaque_deref_mut(app).end_all_websockets(1001, b"Server closed");
@@ -1722,10 +1718,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             bun_opaque::opaque_deref_mut(app).close();
             self.deinit_running.set(prev);
         }
-        // Only clear after the drain — `on_close` defers reach
-        // `on_websocket_closed` through `handler.server`, so wiping it
-        // earlier would strand the live-socket count and the idle pass
-        // would never see it drained.
+        // Clear only after the drain: `on_close` defers reach
+        // `on_websocket_closed` via `handler.server`, so wiping it earlier
+        // would strand the live-socket count.
         if let Some(ws) = self.config.websocket.as_mut() {
             ws.handler.server = None;
         }

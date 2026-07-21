@@ -1742,7 +1742,7 @@ describe("server.stop() with open WebSockets", () => {
       expect(srv.pendingWebSockets).toBe(4);
       await srv.stop(false);
       await Promise.all(clientCloses);
-      expect({ pendingWebSockets: srv.pendingWebSockets, serverCodes: serverCodes.sort() }).toEqual({
+      expect({ pendingWebSockets: srv.pendingWebSockets, serverCodes: serverCodes.sort((a, b) => a - b) }).toEqual({
         pendingWebSockets: 0,
         serverCodes: [1001, 1006, 1006, 1006],
       });

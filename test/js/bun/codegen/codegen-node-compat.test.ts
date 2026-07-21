@@ -1,12 +1,12 @@
 // Verifies src/codegen/* runs under Node (with type stripping) and contains no
 // Bun-only APIs. Before the esbuild port these scripts used Bun.build,
 // Bun.Transpiler, Bun.file, import.meta.require, etc.
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { spawnSync } from "node:child_process";
 import { globSync, readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import path from "node:path";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 const codegenDir = path.join(repoRoot, "src", "codegen");
@@ -32,7 +32,9 @@ describe("codegen sources are Bun-API free", () => {
   // legitimately references Bun globals; node-loader.ts guards its dynamic
   // import with a runtime check.
   const allow = new Set(["client-js.ts", "node-loader.ts"]);
-  const files = globSync("**/*.ts", { cwd: codegenDir }).filter(f => !f.endsWith(".d.ts") && !allow.has(path.basename(f)));
+  const files = globSync("**/*.ts", { cwd: codegenDir }).filter(
+    f => !f.endsWith(".d.ts") && !allow.has(path.basename(f)),
+  );
 
   test("no Bun.* / bun:* / import.meta.{dir,main,require} references", () => {
     expect(files.length).toBeGreaterThan(15);

@@ -1134,13 +1134,14 @@ ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, C
         return paramsOrException.releaseException();
     auto params = paramsOrException.releaseReturnValue();
 
+    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(state, keyUsagesValue);
+    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+
     // Node dispatches secret vs. asymmetric algorithms separately, so a category
     // mismatch is NotSupportedError before any usage/key-data validation runs.
     if (isSecretKeyAlgorithm(params->identifier) != (sourceType == CryptoKeyType::Secret))
         return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
 
-    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(state, keyUsagesValue);
-    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 

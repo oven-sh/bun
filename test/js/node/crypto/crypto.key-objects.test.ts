@@ -1966,6 +1966,11 @@ describe("KeyObject.prototype.toCryptoKey", () => {
       );
     });
 
+    test("invalid usage takes precedence over key type category mismatch", () => {
+      // keyUsages conversion runs before the secret/asymmetric category switch.
+      expect(() => secret.toCryptoKey("Ed25519", true, ["bogus-usage" as any])).toThrow(TypeError);
+    });
+
     test("error message matches subtle.importKey for the same input", async () => {
       const fn = () => createSecretKey(Buffer.alloc(20)).toCryptoKey("AES-GCM", true, ["encrypt"]);
       const asyncErr = await subtle.importKey("raw", Buffer.alloc(20), "AES-GCM", true, ["encrypt"]).then(

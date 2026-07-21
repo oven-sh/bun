@@ -159,9 +159,7 @@ const kUserUnrefed = Symbol("kUserUnrefed");
 // held the loop (a wrapped duplex with no fd) would pin the process.
 const kPausedUnref = Symbol("kPausedUnref");
 const kOnreadDeliver = Symbol("kOnreadDeliver");
-function rethrowOnreadError(err) {
-  throw err;
-}
+function noop() {}
 function onUpgradeAttachedWrite(chunk, encoding, callback, onClose) {
   this.off("close", onClose);
   this._write(chunk, encoding, callback);
@@ -1732,9 +1730,10 @@ function Socket(options?) {
           }
         }
       } catch (e) {
-        // The native data dispatch would otherwise turn this into a socket
-        // 'error'; rethrow so it escapes uncaught the way node's does.
-        process.nextTick(rethrowOnreadError, e);
+        // The native data dispatch would otherwise route a throw to the
+        // socket error handler; hand it to the uncaught-exception path
+        // synchronously the way node's bare call does.
+        reportError(e);
       }
     };
     // when the onread option is specified we use a different handlers object
@@ -4056,8 +4055,6 @@ function initSocketHandle(self) {
     handle[owner_symbol] = self;
   }
 }
-
-function noop() {}
 
 // Node's handle.close(callback) takes a completion callback; userland code
 // intercepts close on `socket._handle` and invokes it, so always pass one.

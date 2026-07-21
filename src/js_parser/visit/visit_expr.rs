@@ -891,6 +891,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
+        // Check defines for a computed string-literal property access, e.g.
+        // `process.env["NODE_ENV"]`. This mirrors `e_dot`: it must not depend on
+        // minification, because the `a["b"]` => `a.b` rewrite below is gated on
+        // `minify_syntax` and cannot be the only route into the define lookup.
+        // `E::Index` has no side-effect flags, so only substitution and the
+        // `--drop` flag apply here.
+        let defines = p.define;
+        if let Some(mut s) = e_.index.data.e_string() {
+            if s.is_utf8() {
+                if let Some(parts) = defines.dots.get(s.slice(p.arena)) {
+                    for define in parts.as_slice() {
+                        if p.is_dot_define_match(expr, &define.parts) {
+                            if in_.assign_target == js_ast::AssignTarget::None {
+                                if !define.data.valueless() {
+                                    *e = p.value_for_define(
+                                        expr.loc,
+                                        in_.assign_target,
+                                        is_delete_target,
+                                        &define.data,
+                                    );
+                                    return;
+                                }
+
+                                if define.data.method_call_must_be_replaced_with_undefined()
+                                    && in_
+                                        .property_access_for_method_call_maybe_should_replace_with_undefined
+                                {
+                                    p.method_call_must_be_replaced_with_undefined = true;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         // "a['b']" => "a.b"
         if p.options.features.minify_syntax {
             if let Some(mut s) = e_.index.data.e_string() {
@@ -921,10 +958,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
+        // Propagate the `--drop` flag through the target like `e_dot` does, so
+        // `--drop=a.b` also removes `a.b["c"]()`.
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
                 has_chain_parent,
+                property_access_for_method_call_maybe_should_replace_with_undefined: in_
+                    .property_access_for_method_call_maybe_should_replace_with_undefined,
                 ..Default::default()
             },
         );
@@ -1009,7 +1050,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
             _ => {
+                // The target visit above may have set this for the enclosing
+                // `e_call` to consume. Hide it across the index visit so a call
+                // nested in the index does not consume it instead.
+                let method_call_must_be_replaced_with_undefined =
+                    core::mem::replace(&mut p.method_call_must_be_replaced_with_undefined, false);
                 p.visit_expr(&mut e_.index);
+                p.method_call_must_be_replaced_with_undefined =
+                    method_call_must_be_replaced_with_undefined;
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {

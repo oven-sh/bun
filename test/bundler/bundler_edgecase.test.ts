@@ -192,6 +192,23 @@ describe("bundler", () => {
       NODE_ENV: "development",
     },
   });
+  // The bracket spelling must inline the same way as the dot spelling, and
+  // must not depend on --minify folding `a["b"]` into `a.b` first.
+  itBundled("edgecase/NodeEnvComputedPropertyAccess", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.NODE_ENV);
+        capture(process.env["NODE_ENV"]);
+        capture(process["env"].NODE_ENV);
+        capture(process["env"]["NODE_ENV"]);
+      `,
+    },
+    target: "browser",
+    capture: ['"development"', '"development"', '"development"', '"development"'],
+    env: {
+      NODE_ENV: "development",
+    },
+  });
 
   itBundled("edgecase/StarExternal", {
     files: {

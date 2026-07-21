@@ -2911,6 +2911,24 @@ console.log(resolve.length)
       expectPrinted_("Math.log('hi')", 'console.error("hi")');
     });
 
+    // A computed string-literal member access must be substituted the same way
+    // as the dot form, without requiring --minify.
+    it("define matches computed string-literal member access", () => {
+      expectPrinted_(`export default process.env.NODE_ENV;`, `export default "development"`);
+      expectPrinted_(`export default process.env["NODE_ENV"];`, `export default "development"`);
+      expectPrinted_(`export default process["env"].NODE_ENV;`, `export default "development"`);
+      expectPrinted_(`export default process["env"]["NODE_ENV"];`, `export default "development"`);
+      expectPrinted_(`hello["earth"]('hi')`, 'hello.mars("hi")');
+      expectPrinted_(`Math["log"]('hi')`, 'console.error("hi")');
+
+      // Assignment targets are never substituted, same as the dot form.
+      expectPrinted_(`process.env["NODE_ENV"] = 1`, `process.env["NODE_ENV"] = 1`);
+
+      // Non-literal and non-matching computed keys are left alone.
+      expectPrinted_(`export default process.env[NODE_ENV];`, `export default process.env[NODE_ENV]`);
+      expectPrinted_(`export default process.env["OTHER"];`, `export default process.env["OTHER"]`);
+    });
+
     it("jsx symbol should work", () => {
       expectBunPrinted_(`var x = jsx; export default x;`, "var x = jsx;\nexport default x");
     });

@@ -3977,16 +3977,24 @@ function initOriginSet(session: Http2Session) {
     }
     let originString = `https://${hostName}`;
     if (socket.remotePort != null) originString += `:${socket.remotePort}`;
+    // node: originSet.add(getURLOrigin(originString)) - the WHATWG serialized origin (strips the
+    // default https port and ASCII-normalizes the host), so it compares equal to URL#origin.
+    try {
+      originString = new URL(originString).origin;
+    } catch {}
     originSet.add(originString);
   }
   return originSet;
 }
 function removeOriginFromSet(session: Http2Session, stream: ClientHttp2Stream) {
   const originSet = session[bunHTTP2OriginSet];
-  const origin = `https://${stream.authority}`;
-  if (originSet && origin) {
-    originSet.delete(origin);
-  }
+  if (!originSet) return;
+  let origin = `https://${stream.authority}`;
+  // The set is keyed on serialized origins (see initOriginSet); normalize the delete key too.
+  try {
+    origin = new URL(origin).origin;
+  } catch {}
+  originSet.delete(origin);
 }
 class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
@@ -4489,9 +4497,8 @@ class ServerHttp2Session extends Http2Session {
   }
 
   get originSet() {
-    if (this.encrypted) {
-      return Array.from(initOriginSet(this));
-    }
+    if (!this.encrypted || this.destroyed) return undefined;
+    return Array.from(initOriginSet(this));
   }
 
   get alpnProtocol() {
@@ -4928,7 +4935,8 @@ class ClientHttp2Session extends Http2Session {
     maxHeaderListSize: 65535,
     maxHeaderSize: 65535,
   };
-  #encrypted: boolean = false;
+  // node: undefined until the session socket has connected, then true for TLSSocket, false otherwise.
+  #encrypted: boolean | undefined = undefined;
   #pendingSettingsAck: boolean = true;
   // Count of SETTINGS frames sent that the peer has not yet ACKed (the initial connection
   // SETTINGS counts as the first). node destroys the session with
@@ -5293,9 +5301,8 @@ class ClientHttp2Session extends Http2Session {
   }
 
   get originSet() {
-    if (this.encrypted) {
-      return Array.from(initOriginSet(this));
-    }
+    if (!this.encrypted || this.destroyed) return undefined;
+    return Array.from(initOriginSet(this));
   }
   get alpnProtocol() {
     return this.#alpnProtocol;
@@ -5304,6 +5311,9 @@ class ClientHttp2Session extends Http2Session {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
     this.#connected = true;
+    // node sets kEncrypted/kAlpnProtocol on ready; until then they read undefined, which is also
+    // what gates the originSet getter so it cannot seed from an unconnected socket.
+    this.#encrypted = socket instanceof TLSSocket;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
       // client must check alpnProtocol
@@ -5634,7 +5644,6 @@ class ClientHttp2Session extends Http2Session {
       );
       this[bunHTTP2Socket] = socket;
     }
-    this.#encrypted = socket instanceof TLSSocket;
     const nativeSocket = socket._handle;
     this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
 

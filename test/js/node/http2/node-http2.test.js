@@ -852,10 +852,11 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             client.on("error", reject);
             expect(client.connecting).toBeTrue();
             expect(client.alpnProtocol).toBeUndefined();
-            expect(client.encrypted).toBeTrue();
+            // node: encrypted and originSet are undefined until the session socket has connected.
+            expect(client.encrypted).toBeUndefined();
             expect(client.closed).toBeFalse();
             expect(client.destroyed).toBeFalse();
-            expect(client.originSet.length).toBe(1);
+            expect(client.originSet).toBeUndefined();
             expect(client.pendingSettingsAck).toBeTrue();
             assertSettings(client.localSettings);
             expect(client.remoteSettings).toBeNull();
@@ -3374,6 +3375,93 @@ it("http2 allowHTTP1 fallback writes no terminating chunk after a keep-alive HEA
   } finally {
     server.close();
   }
+});
+
+describe("http2 client session originSet", () => {
+  async function withSecureServer(fn) {
+    const server = http2.createSecureServer(TLS_CERT);
+    server.on("stream", s => {
+      s.on("error", () => {});
+      s.respond({ ":status": 200 });
+      s.end("ok");
+    });
+    server.on("session", ss => ss.on("error", () => {}));
+    const { promise: listening, resolve: onListen, reject: onListenErr } = Promise.withResolvers();
+    server.on("error", onListenErr);
+    server.listen(0, "127.0.0.1", onListen);
+    await listening;
+    try {
+      await fn(server.address().port);
+    } finally {
+      server.close();
+    }
+  }
+
+  // node: encrypted is undefined until the socket connects and originSet keys off it; reading
+  // originSet while connecting must not seed (and permanently cache) a bogus origin derived from
+  // an unconnected socket. The seed itself is the WHATWG serialized origin (getURLOrigin), so a
+  // mixed-case servername is lowercased and the default https port would be stripped.
+  it.each([
+    ["IP literal", "127.0.0.1", undefined, "https://127.0.0.1"],
+    ["hostname", "localhost", undefined, "https://localhost"],
+    ["mixed-case servername", "127.0.0.1", "LocalHost", "https://localhost"],
+  ])(
+    "is undefined before connect and seeded from the connected socket (%s)",
+    async (_label, host, servername, origin) => {
+      await withSecureServer(async port => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const url = `https://${host}:${port}`;
+        const client = http2.connect(url, servername ? { ...TLS_OPTIONS, servername } : TLS_OPTIONS);
+        client.on("error", reject);
+        client.on("close", () => reject(new Error("closed before connect")));
+        const beforeConnect = { encrypted: client.encrypted, originSet: client.originSet };
+        client.on("connect", () => {
+          client.removeAllListeners("close");
+          resolve({ encrypted: client.encrypted, originSet: client.originSet });
+        });
+        const onConnect = await promise;
+        client.destroy();
+        expect({
+          beforeConnect,
+          onConnect,
+          afterDestroy: { destroyed: client.destroyed, originSet: client.originSet },
+        }).toEqual({
+          beforeConnect: { encrypted: undefined, originSet: undefined },
+          onConnect: { encrypted: true, originSet: [`${origin}:${port}`] },
+          afterDestroy: { destroyed: true, originSet: undefined },
+        });
+        // http2-wrapper (got, crawlee) compares originSet[0] against URL#origin of the connect URL.
+        if (!servername) expect(onConnect.originSet[0]).toBe(new URL(url).origin);
+      });
+    },
+  );
+
+  it("is undefined before connect and false for plaintext after connect", async () => {
+    const server = http2.createServer();
+    server.on("stream", s => {
+      s.respond({ ":status": 200 });
+      s.end("ok");
+    });
+    const { promise: listening, resolve: onListen, reject: onListenErr } = Promise.withResolvers();
+    server.on("error", onListenErr);
+    server.listen(0, "127.0.0.1", onListen);
+    await listening;
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      client.on("error", reject);
+      const before = { encrypted: client.encrypted, originSet: client.originSet };
+      client.on("connect", () => resolve({ encrypted: client.encrypted, originSet: client.originSet }));
+      const after = await promise;
+      client.destroy();
+      expect({ before, after }).toEqual({
+        before: { encrypted: undefined, originSet: undefined },
+        after: { encrypted: false, originSet: undefined },
+      });
+    } finally {
+      server.close();
+    }
+  });
 });
 
 it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited response when the user removed it", async () => {

@@ -86,6 +86,7 @@ async function runAndCount(env: Record<string, string | undefined>): Promise<num
     stdout: "pipe",
     stderr: "pipe",
   });
+  const stderrP = proc.stderr.text();
   let line: string | undefined;
   for await (const l of forEachLine(proc.stdout)) {
     if (l.startsWith("DIR_FDS=")) {
@@ -95,10 +96,7 @@ async function runAndCount(env: Record<string, string | undefined>): Promise<num
   }
   proc.kill("SIGKILL");
   await proc.exited;
-  if (!line) {
-    const stderr = await proc.stderr.text();
-    throw new Error(`child produced no DIR_FDS line; stderr:\n${stderr}`);
-  }
+  if (!line) throw new Error(`child produced no DIR_FDS line; stderr:\n${await stderrP}`);
   return Number(line.slice("DIR_FDS=".length));
 }
 

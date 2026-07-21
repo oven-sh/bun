@@ -6678,9 +6678,7 @@ impl<'a> Resolver<'a> {
                                     if worklist.append(raw).is_err() {
                                         // Degenerate >64-config extends tree (or a
                                         // cycle): drop this base and stop walking.
-                                        TSConfigJSON::destroy(unsafe {
-                                            bun_core::heap::take(raw)
-                                        });
+                                        TSConfigJSON::destroy(unsafe { bun_core::heap::take(raw) });
                                         break 'walk;
                                     }
                                 }

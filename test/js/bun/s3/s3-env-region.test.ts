@@ -17,6 +17,8 @@ describe("Bun.S3Client region from environment", () => {
     AWS_DEFAULT_REGION: undefined,
     S3_ENDPOINT: undefined,
     AWS_ENDPOINT: undefined,
+    S3_ACCESS_KEY_ID: undefined,
+    S3_SECRET_ACCESS_KEY: undefined,
     AWS_ACCESS_KEY_ID: "AK",
     AWS_SECRET_ACCESS_KEY: "SK",
   };

@@ -2595,10 +2595,9 @@ impl JSValue {
         }
         JSC__JSValue__getDirectIndex(self, global, i)
     }
-    /// Read the `i`th indexed own property for console.log/`Bun.inspect`: an
-    /// own indexed accessor is returned as its `GetterSetter` cell (the printer
-    /// renders `[Getter]`) instead of being called, and any exception from the
-    /// lookup is swallowed. Holes return the empty value.
+    /// `i`th indexed own property for `Bun.inspect`: accessors come back as the
+    /// `GetterSetter` cell (printer renders `[Getter]`) instead of being called,
+    /// exceptions are swallowed, and holes return the empty value.
     pub fn get_own_index_for_inspect(self, global: &JSGlobalObject, i: u32) -> JSValue {
         unsafe extern "C" {
             safe fn JSC__JSValue__getOwnIndexForInspect(

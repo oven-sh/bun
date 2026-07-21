@@ -2881,10 +2881,9 @@ JSC::EncodedJSValue JSC__JSValue__getDirectIndex(JSC::EncodedJSValue jsValue, JS
     return JSC::JSValue::encode(object->getDirectIndex(arg1, arg3));
 }
 
-// Like getDirectIndex, but for console.log/inspect: an own indexed accessor is
-// returned as its GetterSetter cell (so the printer renders "[Getter]") instead
-// of being invoked, and any exception is swallowed rather than escaping the
-// inspect walk. Holes return the empty value.
+// getDirectIndex for console.log/inspect: own indexed accessors come back as
+// their GetterSetter cell (printer renders "[Getter]") instead of being called,
+// exceptions are swallowed, and holes return the empty value.
 extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnIndexForInspect(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject, uint32_t i)
 {
     JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
@@ -2898,7 +2897,10 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnIndexForInspect(JSC::EncodedJ
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::Get);
     bool has = object->methodTable()->getOwnPropertySlotByIndex(object, globalObject, i, slot);
-    CLEAR_IF_EXCEPTION(scope);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
     if (!has)
         return JSC::JSValue::encode(JSC::JSValue());
     if (slot.isAccessor())
@@ -5129,10 +5131,9 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     size_t prototypeCount = 0;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    // The prototype walk ends at a realm's Object.prototype / Function.prototype.
-    // A `node:vm` object's chain ends at a *different* realm's prototypes, so a
-    // pointer-identity check against this realm's intrinsics would walk through
-    // them and enumerate `toString`/`hasOwnProperty`/... as if they were own.
+    // End the walk at any realm's Object.prototype / Function.prototype; an
+    // identity check against *this* realm's intrinsics would walk through a
+    // `node:vm` object's foreign-realm prototype and list its methods as own.
     auto isTerminalPrototype = [&](JSC::JSValue proto) -> bool {
         JSC::JSObject* protoObject = proto.getObject();
         if (!protoObject)

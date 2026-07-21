@@ -62,8 +62,8 @@ fn align_up(v: u64, a: u64) -> u64 {
     (v + a - 1) / a * a
 }
 
-/// Validate header and return (e_shoff, e_shnum, e_shstrndx).
-fn parse_header(elf: &[u8]) -> Result<(u64, u16, u16), SignError> {
+/// Validate header and return (e_shoff, e_shnum, e_shstrndx, e_shentsize).
+fn parse_header(elf: &[u8]) -> Result<(u64, u16, u16, u16), SignError> {
     if elf.len() < 64 || &elf[0..4] != b"\x7fELF" || elf[4] != 2 {
         return Err(SignError::NotElf64);
     }
@@ -71,10 +71,15 @@ fn parse_header(elf: &[u8]) -> Result<(u64, u16, u16), SignError> {
     let e_shnum = read_u16(elf, E_SHNUM);
     let e_shentsize = read_u16(elf, E_SHENTSIZE);
     let e_shstrndx = read_u16(elf, E_SHSTRNDX);
-    if e_shoff == 0 || e_shnum == 0 || e_shentsize != 64 || e_shstrndx as u64 >= e_shnum as u64 {
+    if e_shoff == 0 || e_shnum == 0 || e_shstrndx as u64 >= e_shnum as u64 {
         return Err(SignError::NoSectionHeaders);
     }
-    Ok((e_shoff, e_shnum, e_shstrndx))
+    Ok((e_shoff, e_shnum, e_shstrndx, e_shentsize))
+}
+
+/// Read section header entry at index i with given entry size.
+fn sh_entry<'a>(elf: &'a [u8], e_shoff: usize, i: usize, e_shentsize: usize) -> &'a [u8] {
+    &elf[e_shoff + i * e_shentsize..e_shoff + (i + 1) * e_shentsize]
 }
 
 /// Find the index of a section by name in the shstrtab; returns offset of that section entry.
@@ -83,20 +88,22 @@ fn find_section_by_name<'a>(
     e_shoff: u64,
     e_shnum: u16,
     e_shstrndx: u16,
+    e_shentsize: u16,
     name: &[u8],
 ) -> Option<usize> {
-    let shstr_e = e_shoff as usize + e_shstrndx as usize * 64;
+    let e_shentsize = e_shentsize as usize;
+    let shstr_e = e_shoff as usize + e_shstrndx as usize * e_shentsize;
     let shstr_off = read_u64(elf, shstr_e + 24) as usize;
     let shstr_sz = read_u64(elf, shstr_e + 32) as usize;
     if shstr_off + shstr_sz > elf.len() {
         return None;
     }
     for i in 0..e_shnum as usize {
-        let e = e_shoff as usize + i * 64;
-        let name_off = read_u32(elf, e) as usize;
+        let entry = sh_entry(elf, e_shoff as usize, i, e_shentsize);
+        let name_off = read_u32(entry, 0) as usize;
         if name_off + name.len() <= shstr_sz {
             if &elf[shstr_off + name_off..shstr_off + name_off + name.len()] == name {
-                return Some(e);
+                return Some(e_shoff as usize + i * e_shentsize);
             }
         }
     }
@@ -104,22 +111,23 @@ fn find_section_by_name<'a>(
 }
 
 pub fn has_codesign_section(elf: &[u8]) -> bool {
-    let Ok((e_shoff, e_shnum, e_shstrndx)) = parse_header(elf) else {
+    let Ok((e_shoff, e_shnum, e_shstrndx, e_shentsize)) = parse_header(elf) else {
         return false;
     };
-    find_section_by_name(elf, e_shoff, e_shnum, e_shstrndx, CODESIGN_NAME).is_some()
+    find_section_by_name(elf, e_shoff, e_shnum, e_shstrndx, e_shentsize, CODESIGN_NAME).is_some()
 }
 
 /// Strip .codesign section. Returns true if a section was removed.
 /// Rebuilds the ELF in-place by rewriting shstrtab and SHT without the removed entry.
 pub fn strip(elf: &mut Vec<u8>) -> Result<bool, SignError> {
-    let (e_shoff, e_shnum, e_shstrndx) = parse_header(elf)?;
+    let (e_shoff, e_shnum, e_shstrndx, e_shentsize) = parse_header(elf)?;
+    let e_shentsize = e_shentsize as usize;
     let Some(cs_entry_off) =
-        find_section_by_name(elf, e_shoff, e_shnum, e_shstrndx, CODESIGN_NAME)
+        find_section_by_name(elf, e_shoff, e_shnum, e_shstrndx, e_shentsize as u16, CODESIGN_NAME)
     else {
         return Ok(false);
     };
-    let cs_idx = (cs_entry_off - e_shoff as usize) / 64;
+    let cs_idx = (cs_entry_off - e_shoff as usize) / e_shentsize;
 
     // Read shstrtab location
     let shstr_e = e_shoff as usize + e_shstrndx as usize * 64;

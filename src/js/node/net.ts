@@ -937,10 +937,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       self.pause();
     }
     if (server) {
-      const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-      if (typeof connectionListener === "function") {
-        server.prependOnceListener("secureConnection", connectionListener);
-      }
       // onServerSocketSecure hands the socket to the user before emitting
       // 'secureConnection': from here on errors reach the user's 'error'
       // listener instead of the server's 'tlsClientError'. A socket destroyed
@@ -948,6 +944,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       // completion, is dropped here.
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1227
       if (!self.destroyed && self._releaseControl()) {
+        const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+        if (typeof connectionListener === "function") {
+          server.prependOnceListener("secureConnection", connectionListener);
+        }
         server.emit("secureConnection", self);
       }
     }

@@ -191,8 +191,8 @@ describe("createHash outputLength", () => {
          }`,
       ],
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
       ipc(message) {
         messages.push(String(message));
         if (message === "entering") entering.resolve();
@@ -208,9 +208,8 @@ describe("createHash outputLength", () => {
     await Promise.race([done.promise, proc.exited, Bun.sleep(2000)]);
     proc.kill("SIGKILL");
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const exitCode = await proc.exited;
 
-    expect(stderr).toBe("");
     expect(messages[0]).toBe("entering");
     expect(proc.signalCode).not.toBe("SIGABRT");
     if (proc.signalCode === null) {

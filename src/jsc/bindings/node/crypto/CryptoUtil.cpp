@@ -149,7 +149,9 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
             return {};
         }
 
-        memcpy(buffer->data(), bytes.data(), bytes.size());
+        if (bytes.size()) {
+            memcpy(buffer->data(), bytes.data(), bytes.size());
+        }
 
         return JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(buffer), 0, bytes.size()));
     }

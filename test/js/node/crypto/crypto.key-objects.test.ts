@@ -654,10 +654,7 @@ describe("crypto.KeyObjects", () => {
     });
 
     test("createPublicKey accepts DER SPKI with explicit parameters", () => {
-      const der = Buffer.from(
-        publicPem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, "").replace(/\s/g, ""),
-        "base64",
-      );
+      const der = Buffer.from(publicPem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, "").replace(/\s/g, ""), "base64");
       const key = createPublicKey({ key: der, format: "der", type: "spki" });
       expect({
         asymmetricKeyType: key.asymmetricKeyType,

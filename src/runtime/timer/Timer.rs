@@ -622,4 +622,30 @@ pub mod internal_bindings {
         // `js_number(f64)` (i64 → f64 is lossless for the millisecond range).
         Ok(JSValue::js_number(now as f64))
     }
+
+    /// Ref'd `setTimeout`/`setInterval` count for `process.getActiveResourcesInfo()`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn get_active_timeout_count(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let _ = global_this;
+        let _ = call_frame;
+        Ok(JSValue::js_number(f64::from(
+            All::Bun__Timer__getActiveTimeoutCount(),
+        )))
+    }
+
+    /// Pending `setImmediate` count for `process.getActiveResourcesInfo()`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn get_active_immediate_count(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let _ = global_this;
+        let _ = call_frame;
+        Ok(JSValue::js_number(f64::from(
+            All::Bun__Timer__getActiveImmediateCount(),
+        )))
+    }
 }

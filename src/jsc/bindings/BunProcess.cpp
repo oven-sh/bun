@@ -4170,46 +4170,25 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// getActiveResourcesInfo / _getActiveHandles / _getActiveRequests live in JS
+// (ProcessObjectInternals.ts): node:net maintains the live-handle registry
+// and the timer/fs counts come from Rust via $newRustFunction bindings.
+static JSValue constructGetActiveResourcesInfo(VM& vm, JSObject* processObject)
 {
-    return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    return JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetActiveResourcesInfoCodeGenerator(vm), globalObject);
 }
 
-extern "C" uint32_t Bun__Timer__getActiveTimeoutCount();
-extern "C" uint32_t Bun__Timer__getActiveImmediateCount();
-
-// Only the resource kinds Bun can enumerate for real are reported: ref'd
-// setTimeout/setInterval ('Timeout') and pending setImmediate ('Immediate').
-// Sockets, servers and in-flight fs requests need loop-level bookkeeping Bun
-// does not keep yet, so they are omitted rather than guessed at.
-JSC_DEFINE_HOST_FUNCTION(Process_functionGetActiveResourcesInfo, (JSGlobalObject * globalObject, CallFrame* callFrame))
+static JSValue constructGetActiveHandles(VM& vm, JSObject* processObject)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    return JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetActiveHandlesCodeGenerator(vm), globalObject);
+}
 
-    const uint32_t timeouts = Bun__Timer__getActiveTimeoutCount();
-    const uint32_t immediates = Bun__Timer__getActiveImmediateCount();
-
-    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, timeouts + immediates);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    unsigned index = 0;
-    if (timeouts > 0) {
-        JSC::JSString* label = jsString(vm, String("Timeout"_s));
-        for (uint32_t i = 0; i < timeouts; i++) {
-            array->putDirectIndex(globalObject, index++, label);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-    if (immediates > 0) {
-        JSC::JSString* label = jsString(vm, String("Immediate"_s));
-        for (uint32_t i = 0; i < immediates; i++) {
-            array->putDirectIndex(globalObject, index++, label);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-
-    return JSValue::encode(array);
+static JSValue constructGetActiveRequests(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    return JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetActiveRequestsCodeGenerator(vm), globalObject);
 }
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
@@ -4755,8 +4734,8 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _debugEnd                        Process_stubEmptyFunction                           Function 0
   _debugProcess                    Process_stubEmptyFunction                           Function 0
   _eval                            processGetEval                                      CustomAccessor
-  _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
-  _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
+  _getActiveHandles                constructGetActiveHandles                           PropertyCallback
+  _getActiveRequests               constructGetActiveRequests                          PropertyCallback
   _kill                            Process_functionReallyKill                          Function 2
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
@@ -4795,7 +4774,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   _fatalException                  Process_functionFatalException                      Function 1
   features                         constructFeatures                                   PropertyCallback
-  getActiveResourcesInfo           Process_functionGetActiveResourcesInfo              Function 0
+  getActiveResourcesInfo           constructGetActiveResourcesInfo                     PropertyCallback
   getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback

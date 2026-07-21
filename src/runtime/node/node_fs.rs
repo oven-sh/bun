@@ -528,6 +528,19 @@ pub enum Flavor {
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
 // ──────────────────────────────────────────────────────────────────────────
+thread_local! {
+    /// Async fs requests in flight on this JS thread (scheduled in `create()`,
+    /// retired in `destroy()`). Backs the 'FSReqCallback' entries of
+    /// `process.getActiveResourcesInfo()` and `process._getActiveRequests()`.
+    static PENDING_ASYNC_REQUESTS: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+}
+
+/// `process._getActiveRequests()` / `getActiveResourcesInfo()`: in-flight
+/// async fs request count for this JS thread.
+pub(crate) fn pending_request_count() -> u32 {
+    PENDING_ASYNC_REQUESTS.get()
+}
+
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
 // `cp` builtin).
@@ -727,6 +740,7 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get() + 1));
             let _ = vm;
             task.tracker.did_schedule(global_object);
 
@@ -1023,6 +1037,7 @@ mod _async_tasks {
             let this_ref = unsafe { &mut *this };
             // `bun_sys::Error` frees its path on Drop.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get().saturating_sub(1)));
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create()
@@ -1306,6 +1321,7 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get() + 1));
             let _ = vm;
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
@@ -1389,6 +1405,7 @@ mod _async_tasks {
             // `bun_sys::Error` frees its path on Drop.
             // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get().saturating_sub(1)));
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create()
@@ -1618,6 +1635,7 @@ mod _async_tasks {
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
+                super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get() + 1));
             }
             task.tracker.did_schedule(global_object);
 
@@ -1820,6 +1838,7 @@ mod _async_tasks {
                 this_ref
                     .r#ref
                     .unref(event_loop_handle_to_ctx(this_ref.evtloop));
+                super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get().saturating_sub(1)));
             }
             // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
@@ -2399,6 +2418,7 @@ mod _async_tasks {
                 pending_err_mutex: bun_threading::Mutex::default(),
             });
             task.r#ref.ref_(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get() + 1));
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
@@ -2669,6 +2689,7 @@ mod _async_tasks {
             // `KeepAlive::unref` takes the type-erased
             // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get().saturating_sub(1)));
             // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
             this_ref.free_root_path();
             this_ref.clear_result_list();

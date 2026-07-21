@@ -421,6 +421,18 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     Binding::to_js_boxed(module, global)
 }
 
+/// `process._getActiveRequests()` / `getActiveResourcesInfo()`: in-flight
+/// async fs requests on this JS thread (see `fs::pending_request_count`).
+#[bun_jsc::host_fn]
+pub(crate) fn get_pending_request_count(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let _ = global;
+    let _ = frame;
+    Ok(JSValue::js_number(f64::from(fs::pending_request_count())))
+}
+
 #[bun_jsc::host_fn]
 pub(crate) fn create_memfd_for_testing(
     global: &JSGlobalObject,

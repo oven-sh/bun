@@ -884,3 +884,15 @@ export function buildAllowedNodeEnvironmentFlags() {
   Object.freeze(NodeEnvironmentFlagsSet.prototype);
   return Object.freeze(new NodeEnvironmentFlagsSet());
 }
+
+export function getActiveResourcesInfo() {
+  return require("internal/active_handles").getActiveResourcesInfo();
+}
+
+export function getActiveHandles() {
+  return require("internal/active_handles").getActiveHandles();
+}
+
+export function getActiveRequests() {
+  return require("internal/active_handles").getActiveRequests();
+}

@@ -1,0 +1,106 @@
+// Live node:net handle registry plus assembly for process._getActiveHandles(),
+// process._getActiveRequests() and process.getActiveResourcesInfo(). Intrusive
+// doubly-linked list keyed by symbols: register/unregister add no GC cells.
+
+const getActiveTimeoutCount = $newRustFunction(
+  "runtime/timer/Timer.rs",
+  "internal_bindings.getActiveTimeoutCount",
+  0,
+);
+const getActiveImmediateCount = $newRustFunction(
+  "runtime/timer/Timer.rs",
+  "internal_bindings.getActiveImmediateCount",
+  0,
+);
+const getPendingFsRequestCount = $newRustFunction("node_fs_binding.rs", "getPendingRequestCount", 0);
+
+const kPrev = Symbol("kActiveHandlePrev");
+const kNext = Symbol("kActiveHandleNext");
+const kKind = Symbol("kActiveHandleKind");
+// The handle's own unref-marker key (net.ts's kUserUnrefed symbol for
+// sockets, "_unref" for servers): truthy after unref(), so unref'd handles
+// drop out of both APIs and ref() re-includes them, as in node.
+const kUnrefFlag = Symbol("kActiveHandleUnrefFlag");
+
+const head: any = {};
+head[kPrev] = head;
+head[kNext] = head;
+
+function registerHandle(handle, kind, unrefFlag) {
+  handle[kUnrefFlag] = unrefFlag;
+  if (handle[kKind] != null) {
+    // Already linked (e.g. kReinitializeHandle swapping the native handle).
+    handle[kKind] = kind;
+    return;
+  }
+  handle[kKind] = kind;
+  handle[kPrev] = head[kPrev];
+  handle[kNext] = head;
+  head[kPrev][kNext] = handle;
+  head[kPrev] = handle;
+}
+
+function unregisterHandle(handle) {
+  if (handle == null || handle[kKind] == null) return;
+  handle[kKind] = null;
+  handle[kPrev][kNext] = handle[kNext];
+  handle[kNext][kPrev] = handle[kPrev];
+  handle[kPrev] = null;
+  handle[kNext] = null;
+}
+
+// Walks the list, unlinking any handle whose native handle is gone — a missed
+// unregister self-heals instead of pinning the dead socket forever.
+function forEachActive(out, pushKind) {
+  for (let h = head[kNext]; h !== head; ) {
+    const next = h[kNext];
+    if (h._handle == null) {
+      unregisterHandle(h);
+    } else if (!h[h[kUnrefFlag]]) {
+      out.push(pushKind ? h[kKind] : h);
+    }
+    h = next;
+  }
+  return out;
+}
+
+function getActiveHandles() {
+  return forEachActive([], false);
+}
+
+function getActiveResourcesInfo() {
+  // Node orders requests before handles before timers. Every async fs request
+  // is 'FSReqCallback': Bun's fs callback API wraps the promise API, so node's
+  // FSReqCallback/FSReqPromise split does not exist here.
+  const resources: string[] = [];
+  for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
+    resources.push("FSReqCallback");
+  }
+  forEachActive(resources, true);
+  for (let i = 0, n = getActiveTimeoutCount(); i < n; i++) {
+    resources.push("Timeout");
+  }
+  for (let i = 0, n = getActiveImmediateCount(); i < n; i++) {
+    resources.push("Immediate");
+  }
+  return resources;
+}
+
+function getActiveRequests() {
+  // One entry per real in-flight async fs request. Node returns its live
+  // FSReqCallback wrap objects; Bun's requests complete through a native
+  // promise with no user-visible wrap, so each entry is a fresh plain object.
+  const requests: unknown[] = [];
+  for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
+    requests.push({});
+  }
+  return requests;
+}
+
+export default {
+  registerHandle,
+  unregisterHandle,
+  getActiveHandles,
+  getActiveRequests,
+  getActiveResourcesInfo,
+};

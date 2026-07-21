@@ -1319,7 +1319,8 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
         if (format == KeyFormat::RawPublic && aliasesRawPublic)
             format = KeyFormat::Raw;
         else {
-            auto type = key.type() == CryptoKeyType::Private ? "private"_s : key.type() == CryptoKeyType::Public ? "public"_s : "secret"_s;
+            auto type = key.type() == CryptoKeyType::Private ? "private"_s : key.type() == CryptoKeyType::Public ? "public"_s
+                                                                                                                 : "secret"_s;
             promise->reject(NotSupportedError, makeString("Unable to export "_s, CryptoAlgorithmRegistry::singleton().name(key.algorithmIdentifier()), ' ', type, " key using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));
             return;
         }
@@ -1990,7 +1991,8 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
             if (!publicKey || !is<CryptoKeyEC>(*publicKey))
                 return false;
             auto namedCurve = downcast<CryptoKeyEC>(*publicKey).namedCurveString();
-            unsigned maxLength = namedCurve == "P-256"_s ? 256 : namedCurve == "P-384"_s ? 384 : 528;
+            unsigned maxLength = namedCurve == "P-256"_s ? 256 : namedCurve == "P-384"_s ? 384
+                                                                                         : 528;
             return !length || *length <= maxLength;
         }
         default:

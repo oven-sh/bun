@@ -180,7 +180,8 @@ void CryptoAlgorithmECDH::importKey(CryptoKeyFormat format, KeyData&& data, cons
         break;
     }
     if (!result) {
-        exceptionCallback(DataError, keyTypeMismatch ? "Invalid key type"_s : curveMismatch ? "Named curve mismatch"_s : "Invalid keyData"_s);
+        exceptionCallback(DataError, keyTypeMismatch ? "Invalid key type"_s : curveMismatch ? "Named curve mismatch"_s
+                                                                                            : "Invalid keyData"_s);
         return;
     }
 

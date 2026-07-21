@@ -978,7 +978,7 @@ pub unsafe fn spawn_process_posix(
         // OHOS seccomp blocks exec of unsigned ELF binaries. Sign any
         // native binary before spawning so posix_spawn doesn't return
         // EACCES. Only checks regular files with ELF magic.
-        let argv0_str = unsafe { core::str::from_utf8_unchecked(argv0_cstr.as_bytes()) };
+        let argv0_str = unsafe { core::str::from_utf8_unchecked(argv0_cstr.to_bytes()) };
         let p = std::path::Path::new(argv0_str);
         if p.is_file() {
             if let Ok(bytes) = std::fs::read(p) {

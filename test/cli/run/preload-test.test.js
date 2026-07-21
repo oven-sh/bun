@@ -1,9 +1,10 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
+import { pathToFileURL } from "url";
 const preloadModule = `
 import {plugin} from 'bun';
 
@@ -208,6 +209,53 @@ plugin({
       expect(stderr.toString()).toContain("preload not found ");
       expect(stdout.toString()).toBe("");
       expect(exitCode).toBe(1);
+    }
+  });
+
+  describe("file:// URL specifiers", () => {
+    for (const flag of ["--preload", "--import"]) {
+      test(`${flag} percent-decodes file:// URLs`, async () => {
+        using dir = tempDir("preload-file-url", {
+          "has space/preload.js": `console.log("preloaded");`,
+          "has space/main.js": `console.log("main");`,
+        });
+        const preloadPath = join(String(dir), "has space", "preload.js");
+        const mainPath = join(String(dir), "has space", "main.js");
+        const url = pathToFileURL(preloadPath).href;
+        expect(url).toContain("%20");
+
+        const { stderr, exitCode, stdout } = spawnSync({
+          cmd: [bunExe(), flag, url, mainPath],
+          env: bunEnv,
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("preloaded\nmain\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test(`${flag} resolves a plain file:// URL`, async () => {
+        using dir = tempDir("preload-file-url", {
+          "preload.js": `console.log("preloaded");`,
+          "main.js": `console.log("main");`,
+        });
+        const preloadPath = join(String(dir), "preload.js");
+        const mainPath = join(String(dir), "main.js");
+        const url = pathToFileURL(preloadPath).href;
+
+        const { stderr, exitCode, stdout } = spawnSync({
+          cmd: [bunExe(), flag, url, mainPath],
+          env: bunEnv,
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("preloaded\nmain\n");
+        expect(exitCode).toBe(0);
+      });
     }
   });
 });

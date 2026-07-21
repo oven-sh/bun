@@ -156,11 +156,15 @@ async function resolveReporter(name: string) {
     try {
       mod = await import(specifier);
     } catch (err) {
-      // Rewrap: bun's ResolveMessage hides `code` from inspection, and the
-      // reporter tests look for ERR_MODULE_NOT_FOUND in stderr like node's.
-      const error = new Error((err as Error)?.message ?? String(err));
-      (error as { code?: string }).code = (err as { code?: string })?.code ?? "ERR_MODULE_NOT_FOUND";
-      throw error;
+      // Rewrap only a resolve failure: bun's ResolveMessage hides `code` from
+      // inspection, and the reporter tests look for ERR_MODULE_NOT_FOUND in
+      // stderr like node's. An evaluation-time throw keeps its original stack.
+      if ((err as { name?: string })?.name === "ResolveMessage") {
+        const error = new Error((err as Error)?.message ?? String(err));
+        (error as { code?: string }).code = (err as { code?: string })?.code ?? "ERR_MODULE_NOT_FOUND";
+        throw error;
+      }
+      throw err;
     }
     reporter = mod.default ?? mod;
   }

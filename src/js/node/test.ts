@@ -3460,15 +3460,28 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
       destinationNames.push(arg.slice("--test-reporter-destination=".length));
     else if (arg === "--test-reporter-destination" && i + 1 < argv.length) destinationNames.push(argv[++i]);
   }
-  if (names.length === 0) names.push("spec");
-  while (destinationNames.length < names.length) destinationNames.push("stdout");
+  if (names.length === 0 && destinationNames.length === 0) {
+    names.push("spec");
+    destinationNames.push("stdout");
+  } else if (names.length === 1 && destinationNames.length === 0) {
+    destinationNames.push("stdout");
+  } else if (names.length !== destinationNames.length) {
+    const error = new TypeError(
+      `The argument '--test-reporter' must match the number of specified '--test-reporter-destination'. ` +
+        `Received ${Bun.inspect(names)}`,
+    );
+    (error as { code?: string }).code = "ERR_INVALID_ARG_VALUE";
+    console.error(error);
+    process.exitCode = 1;
+    return;
+  }
 
   const { PassThrough, compose } = require("node:stream");
   const { createWriteStream } = require("node:fs");
   const path = require("node:path");
   for (let i = 0; i < names.length; i++) {
     const name = names[i];
-    let reporter = (reporters as Record<string, unknown>)[name];
+    let reporter = Object.hasOwn(reporters, name) ? (reporters as Record<string, unknown>)[name] : undefined;
     if (reporter === undefined) {
       // A custom reporter is a module specifier, like in node.
       try {

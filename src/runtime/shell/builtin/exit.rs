@@ -18,19 +18,22 @@ enum State {
 impl Exit {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let bltn = Builtin::of(interp, cmd);
-        let code: crate::shell::ExitCode = match bltn.args_slice().len() {
-            0 => 0,
-            1 => {
-                let s = bltn.arg_bytes(0);
-                match parse_exit_code(s) {
-                    Some(c) => c,
-                    None => {
-                        return Self::fail(interp, cmd, b"exit: numeric argument required\n");
-                    }
+        let argc = bltn.args_slice().len();
+        let code: crate::shell::ExitCode = if argc == 0 {
+            // POSIX: "the exit status shall be that of the last command
+            // executed, or zero if no command was executed."
+            interp.as_cmd(cmd).base.shell().last_exit_code
+        } else {
+            // bash checks arg[0] before argc: `exit abc def` is "numeric
+            // argument required" (2), not "too many arguments" (1).
+            match parse_exit_code(bltn.arg_bytes(0)) {
+                None => {
+                    return Self::fail(interp, cmd, b"exit: numeric argument required\n", 2);
                 }
-            }
-            _ => {
-                return Self::fail(interp, cmd, b"exit: too many arguments\n");
+                Some(_) if argc > 1 => {
+                    return Self::fail(interp, cmd, b"exit: too many arguments\n", 1);
+                }
+                Some(c) => c,
             }
         };
         // Intentional divergence from bash: this completes only the current
@@ -38,9 +41,9 @@ impl Exit {
         Builtin::done(interp, cmd, code)
     }
 
-    fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
+    fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8], code: crate::shell::ExitCode) -> Yield {
         Self::state_mut(interp, cmd).state = State::WaitingIo;
-        Builtin::write_failing_error(interp, cmd, msg, 1)
+        Builtin::write_failing_error(interp, cmd, msg, code)
     }
 
     pub(crate) fn on_io_writer_chunk(
@@ -50,11 +53,13 @@ impl Exit {
         _err: Option<bun_sys::SystemError>,
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, 1)
+        let code = Builtin::of(interp, cmd).exit_code.unwrap_or(1);
+        Builtin::done(interp, cmd, code)
     }
 }
 
 fn parse_exit_code(s: &[u8]) -> Option<crate::shell::ExitCode> {
-    // %256 is bash semantics — keep wrapper fn.
-    bun_core::fmt::parse_decimal::<u64>(s).map(|n| (n % 256) as crate::shell::ExitCode)
+    // bash semantics: parse as a signed integer and keep the low 8 bits
+    // (`exit -1` → 255, `exit 300` → 44, `exit -300` → 212).
+    bun_core::fmt::parse_decimal::<i64>(s).map(|n| crate::shell::ExitCode::from(n as u8))
 }

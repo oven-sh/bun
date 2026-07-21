@@ -22,9 +22,10 @@ function baseEnv(home: string, xdg?: string) {
   return env;
 }
 
-async function run(cmd: string[], cwd: string, env: Record<string, string>) {
+async function run(cmd: string[], cwd: string, env: Record<string, string>, argv0?: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
+    argv0,
     env,
     cwd,
     stdout: "pipe",
@@ -94,16 +95,8 @@ describe("global ~/.bunfig.toml applies to runtime commands", () => {
   test.concurrent("node shim (argv0=node)", async () => {
     const { dir, home, app } = layout();
     using _ = dir;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.ts"],
-      argv0: "node",
-      env: baseEnv(home),
-      cwd: app,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe("preload-ran\nsentinel");
+    const { stdout, exitCode } = await run(["main.ts"], app, baseEnv(home), "node");
+    expect(stdout).toBe("preload-ran\nsentinel");
     expect(exitCode).toBe(0);
   });
 

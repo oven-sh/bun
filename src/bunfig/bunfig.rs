@@ -989,6 +989,7 @@ impl<'a> Parser<'a> {
                 jsx_factory = Box::<[u8]>::from(value);
             }
         }
+        let jsx_present = json.get(b"jsx").is_some();
         {
             if let Some(jsx) = self.ctx.args.jsx.as_mut() {
                 if !jsx_factory.is_empty() {
@@ -1000,8 +1001,10 @@ impl<'a> Parser<'a> {
                 if !jsx_import_source.is_empty() {
                     jsx.import_source = jsx_import_source;
                 }
-                jsx.runtime = jsx_runtime;
-                jsx.development = jsx_dev;
+                if jsx_present {
+                    jsx.runtime = jsx_runtime;
+                    jsx.development = jsx_dev;
+                }
             } else {
                 self.ctx.args.jsx = Some(api::Jsx {
                     factory: jsx_factory,

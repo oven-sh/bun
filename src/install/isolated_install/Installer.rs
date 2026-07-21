@@ -108,6 +108,15 @@ pub struct Installer<'a> {
     pub trusted_dependencies_from_update_requests:
         ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
 
+    /// Package ids whose store entries an active `bun link` overrides: the
+    /// resolutions of root/workspace direct dependencies whose resolved name
+    /// is link-registered. Name-only matching would stamp the producer tree
+    /// into every version of the name in the lockfile; this keeps transitive
+    /// different-version copies registry-sourced (hoisted-linker parity).
+    /// Built on the main thread before tasks spawn and only read
+    /// concurrently afterwards.
+    pub linked_pkg_ids: DynamicBitSet,
+
     /// Absolute path to the global virtual store (`<cache_dir>/links`). When
     /// non-null, npm/git/tarball entries are materialized once into this
     /// directory and `node_modules/.bun/<storepath>` becomes a symlink into
@@ -1068,6 +1077,263 @@ impl Task {
                         }
 
                         tag => {
+                            // If an active `bun link` overrides this store entry
+                            // (direct-dep resolution of a link-registered name; see
+                            // `linked_pkg_ids`) and the user did not opt into the symlink
+                            // backend, source the body from the producer dir instead of
+                            // the registry tarball cache. Under isolated linking the
+                            // top-level symlink-only contract isn't available, so without
+                            // this the `.bun/<storepath>` body stays pinned to the
+                            // (stale) tarball cache while the top-level symlink points at
+                            // the producer. The bitset gate also keeps transitive
+                            // same-name entries at other versions registry-sourced even
+                            // when the task was started for unrelated reasons (fresh
+                            // `.bun`, force install).
+                            //
+                            // Relaxed load of `supported_backend` is okay because it's an
+                            // optimization hint; a stale read is harmless (same rationale
+                            // as the cache-backend switch further down).
+                            if installer.linked_pkg_ids.is_set(pkg_id as usize)
+                                && InstallMethod::from_u8(
+                                    installer.supported_backend.load(Ordering::Relaxed),
+                                ) != InstallMethod::Symlink
+                            {
+                                let mut linked_buf = paths::path_buffer_pool::get();
+                                let producer_path_opt = {
+                                    // Worker thread: must not form `&mut PackageManager`
+                                    // (the Task::run SAFETY contract at the top of
+                                    // this file forbids it — concurrent workers would
+                                    // alias it). `populate_linked_names_cache` ran on
+                                    // the main thread before workers started and the
+                                    // linked_names map is read-only thereafter, so the
+                                    // shared-ref entry point is race-free here.
+                                    let manager = manager_ref.get();
+                                    match directories::linked_package_path(
+                                        manager,
+                                        pkg_name.slice(string_buf),
+                                        &mut *linked_buf,
+                                    ) {
+                                        Some(p) => {
+                                            // Copy bytes so we don't hold &manager across
+                                            // the install work below.
+                                            let bytes = p.as_bytes();
+                                            Some((bytes.as_ptr(), bytes.len()))
+                                        }
+                                        None => None,
+                                    }
+                                };
+                                if let Some((ptr, len)) = producer_path_opt {
+                                    // SAFETY: the `linked_buf` pool guard lives until the
+                                    // end of this arm and the pooled buffer doesn't move,
+                                    // so the pointer is valid for the remainder of the
+                                    // Step::LinkPackage match arm.
+                                    let producer_path: &[u8] =
+                                        unsafe { core::slice::from_raw_parts(ptr, len) };
+
+                                    let folder_dir = match bun_sys::open_dir_for_iteration(
+                                        Fd::cwd(),
+                                        producer_path,
+                                    ) {
+                                        sys::Result::Ok(fd) => fd,
+                                        sys::Result::Err(err) => {
+                                            return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                                        }
+                                    };
+                                    let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
+
+                                    // Force copyfile here — producer tree is mutable and
+                                    // lifecycle scripts would otherwise propagate back
+                                    // through a shared inode. The backend switch falls
+                                    // back to copyfile on EXDEV in any case.
+                                    let mut src_path = OsAutoAbsPath::init();
+                                    #[cfg(windows)]
+                                    {
+                                        let buf = src_path.buf();
+                                        let cap = buf.len();
+                                        let ptr = buf.as_mut_ptr();
+                                        // SAFETY: FFI — valid handle + writable buffer.
+                                        let src_path_len = unsafe {
+                                            bun_sys::windows::GetFinalPathNameByHandleW(
+                                                folder_dir.native(),
+                                                ptr,
+                                                u32::try_from(cap).expect("int cast"),
+                                                0,
+                                            )
+                                        };
+                                        if src_path_len == 0 || src_path_len as usize >= cap {
+                                            use bun_sys::windows::Win32ErrorExt as _;
+                                            let err: sys::SystemErrno = if src_path_len == 0 {
+                                                bun_sys::windows::Win32Error::get()
+                                                    .to_system_errno()
+                                                    .unwrap_or(sys::SystemErrno::EUNKNOWN)
+                                            } else {
+                                                sys::SystemErrno::ENAMETOOLONG
+                                            };
+                                            return Ok(Yield::failure(TaskError::LinkPackage(
+                                                sys::Error {
+                                                    errno: err as _,
+                                                    syscall: sys::Tag::copyfile,
+                                                    ..Default::default()
+                                                },
+                                            )));
+                                        }
+                                        src_path.set_length(src_path_len as usize);
+                                    }
+                                    #[cfg(not(windows))]
+                                    {
+                                        let _ = src_path.append_join(producer_path);
+                                    }
+
+                                    // Stale-GVS-symlink detachment. The `continue` at
+                                    // the bottom of this override block bypasses the
+                                    // post-switch detachment further down (the
+                                    // `append_local_store_entry_path` / `is_stale_link`
+                                    // block after the cache-backend switch); without
+                                    // this an entry that was GVS-eligible on the
+                                    // previous install would still have
+                                    // `node_modules/.bun/<storepath>` as a symlink into
+                                    // `<cache>/links/<hash>/`, and FileCopier's writes
+                                    // would land IN the shared cache under every
+                                    // consumer on the machine.
+                                    let mut local = AutoPath::init_top_level_dir();
+                                    installer
+                                        .append_local_store_entry_path(&mut local, self.entry_id);
+                                    let is_stale_link: bool = {
+                                        #[cfg(windows)]
+                                        {
+                                            if let Some(a) =
+                                                sys::get_file_attributes(local.slice_z())
+                                            {
+                                                a.is_reparse_point
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                        #[cfg(not(windows))]
+                                        {
+                                            if let Ok(st) = sys::lstat(local.slice_z()) {
+                                                sys::posix::s_islnk(st.st_mode as u32)
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                    };
+                                    if is_stale_link {
+                                        let remove_err: Option<sys::Error> = {
+                                            #[cfg(windows)]
+                                            {
+                                                'win: {
+                                                    if let Some(_e) =
+                                                        sys::rmdir(local.slice_z()).err()
+                                                    {
+                                                        if let Some(e) =
+                                                            sys::unlink(local.slice_z()).err()
+                                                        {
+                                                            break 'win Some(e);
+                                                        }
+                                                    }
+                                                    break 'win None;
+                                                }
+                                            }
+                                            #[cfg(not(windows))]
+                                            {
+                                                sys::unlink(local.slice_z()).err()
+                                            }
+                                        };
+                                        if let Some(e) = remove_err {
+                                            if e.get_errno() != sys::Errno::ENOENT {
+                                                // Do NOT proceed: the subsequent
+                                                // FileCopier writes through `dest`
+                                                // (node_modules/.bun/<storepath>/…)
+                                                // would resolve through the still-
+                                                // live symlink into the shared
+                                                // `<cache>/links/` entry under every
+                                                // consumer on the machine. Fail the
+                                                // task so the user sees the
+                                                // AV/sharing-violation or EACCES
+                                                // instead of silently mutating the
+                                                // shared cache.
+                                                return Ok(Yield::failure(TaskError::LinkPackage(
+                                                    e,
+                                                )));
+                                            }
+                                        }
+                                    }
+
+                                    // Wipe the entry dir first — linked packages re-
+                                    // materialize straight to the final path (no
+                                    // staging rename). Files the producer has since
+                                    // deleted would otherwise persist across
+                                    // reinstalls.
+                                    //
+                                    // Link-overridden entries are forced GVS-ineligible
+                                    // by the eligibility carve-out in isolated_install.rs
+                                    // (`linked_pkg_ids.is_set` implies `entry_hash == 0`),
+                                    // so `append_real_store_path` here is guaranteed
+                                    // project-local. If that ever regressed, this
+                                    // delete_tree would silently wipe a machine-wide
+                                    // `<cache>/links/<hash>/` entry.
+                                    debug_assert!(
+                                        !installer.entry_uses_global_store(self.entry_id)
+                                    );
+                                    let mut final_path = AutoPath::init();
+                                    installer.append_real_store_path(
+                                        &mut final_path,
+                                        self.entry_id,
+                                        Which::Final,
+                                    );
+                                    let _ = Fd::cwd().delete_tree(final_path.slice());
+
+                                    let mut dest = OsAutoPath::init();
+                                    installer.append_store_path(&mut dest, self.entry_id);
+
+                                    // Default excludes for the producer's working tree
+                                    // (lockfiles, VCS state, env files, OS junk) that
+                                    // `bun pm pack` would also drop. Full pack parity
+                                    // (`package.json#files` whitelists, `.npmignore`
+                                    // rules) is not implemented for linked producers.
+                                    let skip_dirs: &[&paths::OSPathSlice] = &[
+                                        bun_paths::os_path_literal!("node_modules"),
+                                        bun_paths::os_path_literal!(".git"),
+                                        bun_paths::os_path_literal!(".hg"),
+                                        bun_paths::os_path_literal!(".svn"),
+                                        bun_paths::os_path_literal!("CVS"),
+                                    ];
+                                    let skip_files: &[&paths::OSPathSlice] = &[
+                                        bun_paths::os_path_literal!(".DS_Store"),
+                                        bun_paths::os_path_literal!(".gitignore"),
+                                        bun_paths::os_path_literal!(".npmignore"),
+                                        bun_paths::os_path_literal!(".npmrc"),
+                                        bun_paths::os_path_literal!(".lock-wscript"),
+                                        bun_paths::os_path_literal!("npm-debug.log"),
+                                        bun_paths::os_path_literal!("bunfig.toml"),
+                                        bun_paths::os_path_literal!(".env.production"),
+                                        bun_paths::os_path_literal!("package-lock.json"),
+                                        bun_paths::os_path_literal!("yarn.lock"),
+                                        bun_paths::os_path_literal!("pnpm-lock.yaml"),
+                                        bun_paths::os_path_literal!("bun.lockb"),
+                                        bun_paths::os_path_literal!("bun.lock"),
+                                    ];
+
+                                    let mut file_copier = FileCopier::init_with_skip(
+                                        folder_dir,
+                                        src_path.into_sep::<{ PathSeparators::AUTO }>(),
+                                        dest.into_sep::<{ PathSeparators::AUTO }>(),
+                                        skip_files,
+                                        skip_dirs,
+                                    )?;
+                                    match file_copier.copy() {
+                                        sys::Result::Ok(()) => {}
+                                        sys::Result::Err(err) => {
+                                            return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                                        }
+                                    }
+
+                                    step = self.next_step(current_step);
+                                    continue;
+                                }
+                            }
+
                             let patch_info =
                                 installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
 

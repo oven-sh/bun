@@ -719,7 +719,9 @@ describe("HTMLRewriter", () => {
     expect(() => new HTMLRewriter().on(nest("not", 129), { element() {} })).toThrow("Selector nesting is too deep.");
     expect(() => new HTMLRewriter().on(nest("host", 129), { element() {} })).toThrow("Selector nesting is too deep.");
     // Parentheses inside an attribute-value string must not count toward depth.
-    expect(() => new HTMLRewriter().on('[data-x="' + Buffer.alloc(200, "(").toString() + '"]', { element() {} })).not.toThrow();
+    expect(() =>
+      new HTMLRewriter().on('[data-x="' + Buffer.alloc(200, "(").toString() + '"]', { element() {} }),
+    ).not.toThrow();
     // Single-level :not() continues to work.
     expect(() => new HTMLRewriter().on(":not(span)", { element() {} })).not.toThrow();
   });

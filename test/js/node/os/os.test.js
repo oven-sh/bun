@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -296,3 +296,50 @@ it("getPriority system error object", () => {
     expect(err.syscall).toBe("uv_os_getpriority");
   }
 });
+
+it("setPriority system error object names uv_os_setpriority", () => {
+  try {
+    os.setPriority(-1, 0);
+    expect.unreachable();
+  } catch (err) {
+    expect(err.name).toBe("SystemError");
+    expect(err.message).toBe("A system error occurred: uv_os_setpriority returned ESRCH (no such process)");
+    expect(err.code).toBe("ERR_SYSTEM_ERROR");
+    expect(err.info).toEqual({
+      errno: isWindows ? -4040 : -3,
+      code: "ESRCH",
+      message: "no such process",
+      syscall: "uv_os_setpriority",
+    });
+    expect(err.errno).toBe(isWindows ? -4040 : -3);
+    expect(err.syscall).toBe("uv_os_setpriority");
+  }
+});
+
+it.skipIf(isWindows || process.getuid?.() === 0)(
+  "setPriority permission error names uv_os_setpriority with matching errno",
+  async () => {
+    // Use a disposable child so we never touch init or our own priority.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "setTimeout(() => {}, 300000)"],
+      env: bunEnv,
+    });
+    let err;
+    try {
+      os.setPriority(proc.pid, -20);
+    } catch (e) {
+      err = e;
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
+    // Raising priority without CAP_SYS_NICE fails with EACCES or EPERM.
+    expect(err).toBeDefined();
+    expect(err.syscall).toBe("uv_os_setpriority");
+    expect(err.info.syscall).toBe("uv_os_setpriority");
+    expect(["EACCES", "EPERM"]).toContain(err.info.code);
+    const expectedErrno = -os.constants.errno[err.info.code];
+    expect(err.errno).toBe(expectedErrno);
+    expect(err.info.errno).toBe(expectedErrno);
+  },
+);

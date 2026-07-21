@@ -62,6 +62,12 @@ pub type ValuesHashMap = HashMap<u64, Box<[u8]>>;
 pub struct InlineSnapshotToWrite {
     pub line: c_ulong,
     pub col: c_ulong,
+    /// Location of the `expect(...)` call that produced this matcher; used as
+    /// a fallback starting point when `(line, col)` doesn't land on the
+    /// matcher name (JSC tail-call elimination can report the helper's caller
+    /// instead of the matcher call site). `(0, 0)` means no usable fallback.
+    pub fallback_line: c_ulong,
+    pub fallback_col: c_ulong,
     /// owned (was: owned by Snapshots.allocator)
     pub value: Box<[u8]>,
     pub has_matchers: bool,
@@ -87,6 +93,82 @@ impl InlineSnapshotToWrite {
         }
         false
     }
+}
+
+/// Scan `text[from..]` for the matcher identifier `fn_name` as the target of a
+/// property call (`.<fn_name>(`), returning its byte offset. Whitespace is
+/// permitted around `.` and `(`. Used when JSC tail-call elimination loses the
+/// exact matcher-call column and we only have the `expect(...)` location.
+fn find_matcher_call(text: &[u8], from: usize, fn_name: &[u8]) -> Option<usize> {
+    let mut cursor = from;
+    while let Some(rel) = strings::index_of(&text[cursor..], fn_name) {
+        let pos = cursor + rel;
+        let after = pos + fn_name.len();
+        // Require `.` immediately (modulo JS whitespace) before the name.
+        let mut b = pos;
+        while b > from {
+            let c = text[b - 1];
+            if c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' {
+                b -= 1;
+            } else {
+                break;
+            }
+        }
+        let dot_ok = b > from && text[b - 1] == b'.';
+        // Require `(` immediately (modulo JS whitespace) after the name.
+        let mut a = after;
+        while a < text.len() {
+            let c = text[a];
+            if c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' {
+                a += 1;
+            } else {
+                break;
+            }
+        }
+        let paren_ok = a < text.len() && text[a] == b'(';
+        if dot_ok && paren_ok {
+            return Some(pos);
+        }
+        cursor = after;
+    }
+    None
+}
+
+/// Compute the 1-based (line, column) of byte offset `target` in `text`,
+/// counting columns in UTF-16 code units to match JSC / source-map semantics.
+fn byte_offset_to_line_col(text: &[u8], target: usize) -> (c_ulong, c_ulong) {
+    use bun_core::strings::{CodepointIterator, Cursor};
+    let iter_ = CodepointIterator::init(&text[..target.min(text.len())]);
+    let mut iter = Cursor::default();
+    let mut line: c_ulong = 1;
+    let mut col: c_ulong = 1;
+    let mut prev_cr = false;
+    while iter_.next(&mut iter) {
+        match iter.c {
+            0x0A => {
+                if !prev_cr {
+                    line += 1;
+                }
+                col = 1;
+                prev_cr = false;
+            }
+            0x0D => {
+                line += 1;
+                col = 1;
+                prev_cr = true;
+            }
+            0x2028 | 0x2029 => {
+                line += 1;
+                col = 1;
+                prev_cr = false;
+            }
+            _ => {
+                col += if iter.c > 0xFFFF { 2 } else { 1 };
+                prev_cr = false;
+            }
+        }
+    }
+    (line, col)
 }
 
 pub struct File {
@@ -389,18 +471,7 @@ impl<'a> Snapshots<'a> {
                 }
             });
 
-            // 1. sort ils_info by row, col
-            ils_info.sort_by(|a, b| {
-                if InlineSnapshotToWrite::less_than_fn(a, b) {
-                    core::cmp::Ordering::Less
-                } else if InlineSnapshotToWrite::less_than_fn(b, a) {
-                    core::cmp::Ordering::Greater
-                } else {
-                    core::cmp::Ordering::Equal
-                }
-            });
-
-            // 2. load file text
+            // 1. load file text
             // avoid `Jest::runner()` (would alias `&mut TestRunner` over the live
             // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `parse_file`.
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
@@ -439,6 +510,66 @@ impl<'a> Snapshots<'a> {
 
             let source =
                 bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
+
+            // 2a. resolve fallback locations: when the matcher was called in
+            // tail position, JSC's proper tail calls eliminate the helper's
+            // frame and `(line, col)` points at the helper's *caller* instead
+            // of the matcher call site. Scan forward from the `expect(...)`
+            // location (captured before the tail call) to find the real
+            // `.<fn_name>(` and fix up `(line, col)` before sorting.
+            for ils in ils_info.iter_mut() {
+                // c_ulong is u32 on Windows (LLP64); widen explicitly.
+                #[allow(clippy::useless_conversion)]
+                let primary = bun_ast::Source::line_col_to_byte_offset(
+                    &file_text,
+                    1,
+                    1,
+                    u64::from(ils.line),
+                    u64::from(ils.col),
+                );
+                if let Some(p) = primary {
+                    if strings::starts_with(&file_text[p..], ils.kind) {
+                        continue;
+                    }
+                }
+                if ils.fallback_line == 0 {
+                    continue;
+                }
+                #[allow(clippy::useless_conversion)]
+                let Some(fallback) = bun_ast::Source::line_col_to_byte_offset(
+                    &file_text,
+                    1,
+                    1,
+                    u64::from(ils.fallback_line),
+                    u64::from(ils.fallback_col),
+                ) else {
+                    continue;
+                };
+                if let Some(found) = find_matcher_call(&file_text, fallback, ils.kind) {
+                    let (line, col) = byte_offset_to_line_col(&file_text, found);
+                    bun_core::scoped_log!(
+                        inline_snapshot,
+                        "Fallback resolved {}/{} -> {}/{}",
+                        ils.line,
+                        ils.col,
+                        line,
+                        col
+                    );
+                    ils.line = line;
+                    ils.col = col;
+                }
+            }
+
+            // 2b. sort ils_info by row, col
+            ils_info.sort_by(|a, b| {
+                if InlineSnapshotToWrite::less_than_fn(a, b) {
+                    core::cmp::Ordering::Less
+                } else if InlineSnapshotToWrite::less_than_fn(b, a) {
+                    core::cmp::Ordering::Greater
+                } else {
+                    core::cmp::Ordering::Equal
+                }
+            });
 
             let mut result_text: Vec<u8> = Vec::new();
 

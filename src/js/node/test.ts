@@ -3078,6 +3078,10 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
     for (let i = 0; i < standaloneQueue.length; i++) {
       await runStandaloneEntry(standaloneQueue[i]);
     }
+  } else {
+    // Node's root Test.postRun cancels each pending subtest; matches the
+    // suite-level setupFailed path in runStandaloneEntry.
+    for (const entry of standaloneQueue) reportCancelledNode(entry.node);
   }
   standaloneQueue.length = 0;
   for (const hook of root.hooks.after) {

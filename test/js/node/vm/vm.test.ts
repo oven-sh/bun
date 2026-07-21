@@ -420,6 +420,33 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       expect(context.baz).toEqual([undefined, "b", "c"]);
       expect(result).toBe(true);
     });
+    test("sloppy assignment to read-only globals is a no-op", () => {
+      const context = createContext({});
+      for (const name of ["NaN", "undefined", "Infinity"]) {
+        const result = fn(
+          `(function () {` +
+            `globalThis[${JSON.stringify(name)}] = 123;` +
+            `var d = Object.getOwnPropertyDescriptor(globalThis, ${JSON.stringify(name)});` +
+            `return { value: String(globalThis[${JSON.stringify(name)}]), writable: d.writable, configurable: d.configurable };` +
+            `})()`,
+          context,
+        );
+        expect({ name, ...result }).toEqual({ name, value: name, writable: false, configurable: false });
+        expect(Object.prototype.hasOwnProperty.call(context, name)).toBe(false);
+      }
+      expect(Object.getOwnPropertyNames(context)).toEqual([]);
+    });
+    test("strict assignment to read-only globals throws and does not mutate the sandbox", () => {
+      const context = createContext({});
+      const result = fn(
+        "(function(){'use strict'; try { globalThis.NaN = 5; return 'set'; } catch (e) { return e.constructor.name; } })()",
+        context,
+      );
+      expect(result).toBe("TypeError");
+      expect(fn("String(globalThis.NaN)", context)).toBe("NaN");
+      expect(Object.prototype.hasOwnProperty.call(context, "NaN")).toBe(false);
+      expect(Object.getOwnPropertyNames(context)).toEqual([]);
+    });
     test("cannot access `process`", () => {
       const context = createContext({});
       const result = fn("typeof process;", context);

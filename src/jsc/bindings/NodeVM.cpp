@@ -1086,6 +1086,19 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     }
     bool isDeclaredOnGlobalObject = slot.type() == JSC::PutPropertySlot::NewProperty;
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // If the property already exists on the global object as read-only, do not
+    // forward the store to the sandbox. Matches Node's contextify
+    // PropertySetterCallback, which intercepts and returns early on ReadOnly.
+    {
+        PropertySlot existingSlot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+        bool existsOnGlobal = thisObject->JSC::JSGlobalObject::getOwnPropertySlot(thisObject, globalObject, propertyName, existingSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (existsOnGlobal && (existingSlot.attributes() & PropertyAttribute::ReadOnly) != 0) {
+            RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+        }
+    }
+
     PropertySlot getter(sandbox, PropertySlot::InternalMethodType::Get, nullptr);
     bool isDeclaredOnSandbox = sandbox->getPropertySlot(globalObject, propertyName, getter);
     RETURN_IF_EXCEPTION(scope, false);

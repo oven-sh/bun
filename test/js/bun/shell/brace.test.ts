@@ -60,6 +60,12 @@ describe("$.braces", () => {
       ["{{a,},x}", ["a", "", "x"]],
       ["{{a,}{b,}}", ["ab", "a", "b", ""]],
       ["p{q,{r,}{s,}}t", ["pqt", "prst", "prt", "pst", "pt"]],
+      // A nested comma-free `{}` previously parsed to 0 variants, which made
+      // expand_nested return early and drop the text after it. It is now 1
+      // empty variant, matching calculate_expanded_amount and expand_flat.
+      ["{x,a{}b}", ["x", "ab"]],
+      ["{a,b{}}c", ["ac", "bc"]],
+      ["{x,{}y}", ["x", "y"]],
     ])("%s", (pattern, expected) => {
       expect($.braces(pattern)).toEqual(expected);
     });

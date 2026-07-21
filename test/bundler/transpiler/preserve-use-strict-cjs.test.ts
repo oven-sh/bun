@@ -102,7 +102,7 @@ test.concurrent(`a parenthesized string ends the directive prologue`, async () =
         "use strict";
         return this === undefined ? "strict" : "sloppy";
       }
-      console.log(withDefault.call(globalThis, 2));
+      console.log(withDefault(2));
     `,
   });
 
@@ -127,13 +127,18 @@ test.concurrent(`a parenthesized string ends the directive prologue`, async () =
 // "use strict" out of the unwrapped single-statement block and make the engine
 // treat the body as strict (or reject a non-simple parameter list). Matches Node.
 test.concurrent(`a block-scope "use strict" is not a directive, even when minified`, async () => {
+  // The bundled output is an ES module (implicitly strict), so runtime `this`
+  // cannot distinguish the regression. Detect it two other ways: the dropped
+  // string must not appear in the minified output at all, and the non-simple
+  // parameter list makes a hoisted prologue directive a SyntaxError (ES 15.2.1)
+  // when the output is executed.
   using dir = tempDir("issue-31806-block", {
     "entry.cjs": String.raw`
-      function f() {
+      function f(a = 1) {
         { "use strict"; }
-        return this === undefined ? "strict" : "sloppy";
+        return a;
       }
-      console.log(f.call(globalThis));
+      console.log(f(2));
     `,
   });
 
@@ -146,9 +151,17 @@ test.concurrent(`a block-scope "use strict" is not a directive, even when minifi
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [buildStderr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+  const [buildStdout, buildStderr, buildExit] = await Promise.all([
+    build.stdout.text(),
+    build.stderr.text(),
+    build.exited,
+  ]);
+  expect(buildStdout).toContain("out.js");
   expect(buildStderr).toBe("");
   expect(buildExit).toBe(0);
+
+  const outJs = await Bun.file(`${dir}/out.js`).text();
+  expect(outJs).not.toContain("use strict");
 
   await using run = Bun.spawn({
     cmd: [bunExe(), "out.js"],
@@ -160,6 +173,6 @@ test.concurrent(`a block-scope "use strict" is not a directive, even when minifi
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
 
   expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("sloppy");
+  expect(stdout.trim()).toBe("2");
   expect(exitCode).toBe(0);
 });

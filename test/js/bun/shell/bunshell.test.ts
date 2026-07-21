@@ -3172,3 +3172,17 @@ test("cd treats interpolated arguments starting with tilde or dash as literal di
     expect(exitCode).toBe(1);
   }
 });
+
+// An executable file with no shebang makes execve() return ENOEXEC. Like
+// Node/libuv, the file should be run through /bin/sh instead of failing with
+// "Exec format error". https://github.com/oven-sh/bun/issues/11563
+test.if(isPosix)("runs an executable with no shebang through /bin/sh", async () => {
+  using dir = tempDir("shell-noshebang", { "script.sh": "echo 'Hello, World!'\n" });
+  const cwd = String(dir).replaceAll("\\", "/");
+  chmodSync(join(cwd, "script.sh"), 0o755);
+
+  const { stdout, stderr, exitCode } = await $`./script.sh`.cwd(cwd).quiet().nothrow();
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toBe("Hello, World!\n");
+  expect(exitCode).toBe(0);
+});

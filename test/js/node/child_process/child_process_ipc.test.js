@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("child_process ipc", async () => {
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc_fixture.js`.text();
@@ -14,7 +14,9 @@ test("child_process ipc", async () => {
   `);
 });
 
-test("advanced serialization: malformed frame from child does not crash parent", async () => {
+// Writing raw bytes to fd 3 only reaches the IPC decoder on POSIX (Windows uses a
+// named pipe); the decode path under test is platform-independent.
+test.skipIf(isWindows)("advanced serialization: malformed frame from child does not crash parent", async () => {
   using dir = tempDir("ipc-advanced-malformed", {
     "fixture.mjs": `
       import { fork } from "node:child_process";
@@ -29,7 +31,7 @@ test("advanced serialization: malformed frame from child does not crash parent",
           console.error("uncaughtException: " + err.message);
           process.exit(1);
         });
-        const cp = fork(new URL(import.meta.url).pathname, [], {
+        const cp = fork(import.meta.filename, [], {
           serialization: "advanced",
           env: { ...process.env, ROLE: "child" },
         });

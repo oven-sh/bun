@@ -644,6 +644,44 @@ it("clearTimeout with a numeric id is a no-op after a timeout promoted to an int
   expect(exitCode).toBe(0);
 });
 
+it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async () => {
+  // Subprocess so no other in-process work has raised the Windows tick
+  // resolution; median of 50 so a single scheduler hiccup on a busy CI
+  // runner does not fail the assertion.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const samples = [];
+        for (let i = 0; i < 50; i++) {
+          const t0 = process.hrtime.bigint();
+          await new Promise(r => setTimeout(r, 1));
+          samples.push(Number(process.hrtime.bigint() - t0) / 1e6);
+        }
+        samples.sort((a, b) => a - b);
+        const median = samples[samples.length >> 1];
+        process.stdout.write(JSON.stringify({ median, min: samples[0] }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
+  const { median, min } = JSON.parse(stdout);
+  // Before: median ~15.6ms. After: median ~1-2ms. 8ms splits the two with
+  // plenty of headroom for CI jitter. Also assert we never fire early.
+  expect(median).toBeLessThan(8);
+  expect(min).toBeGreaterThanOrEqual(1);
+  expect(exitCode).toBe(0);
+});
+
 it("timer heap clock is monotonic, not wall-clock", () => {
   // The clock that schedules setTimeout/setInterval deadlines must be monotonic
   // (boot-relative) on every platform so NTP steps / user clock changes can't

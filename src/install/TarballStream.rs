@@ -179,6 +179,18 @@ impl TarballStream {
         usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).expect("int cast")
     }
 
+    /// Compressed bytes to buffer in `pending` before the HTTP thread
+    /// schedules a drain; without this each body chunk re-wakes a worker
+    /// once the drain has yielded. See `BUN_INSTALL_STREAMING_DRAIN_THRESHOLD`.
+    fn drain_threshold() -> usize {
+        usize::try_from(
+            env_var::BUN_INSTALL_STREAMING_DRAIN_THRESHOLD
+                .get()
+                .unwrap(),
+        )
+        .expect("int cast")
+    }
+
     pub(crate) fn init(
         extract_task: *mut Task,
         network_task: *mut NetworkTask,
@@ -288,9 +300,15 @@ impl TarballStream {
             if let Some(e) = err {
                 (*this).http_err = Some(e);
             }
+            let pending_len = (*this).pending.len();
             (*this).mutex.unlock();
 
-            Self::schedule_drain(this);
+            // Batch sub-threshold chunks so each one doesn't re-wake a worker
+            // once the drain has yielded; `is_last`/`err` always schedule so
+            // `finish()` never waits on the threshold.
+            if is_last || err.is_some() || pending_len >= Self::drain_threshold() {
+                Self::schedule_drain(this);
+            }
         }
     }
 

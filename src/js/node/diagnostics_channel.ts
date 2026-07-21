@@ -1,16 +1,19 @@
 // Hardcoded module "node:diagnostics_channel"
-// Reference: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/lib/diagnostics_channel.js
+// Reference: https://github.com/nodejs/node/blob/v26.3.0/lib/diagnostics_channel.js
 
 const { validateFunction } = require("internal/validators");
 
 const SafeMap = Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
+const SafeDisposableStack = DisposableStack;
 
 const ArrayPrototypeAt = Array.prototype.at;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeSplice = Array.prototype.splice;
+const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const SymbolDispose = Symbol.dispose;
 const SymbolHasInstance = Symbol.hasInstance;
 const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromiseReject = Promise.$reject.bind(Promise);
@@ -91,6 +94,48 @@ function wrapStoreRun(store, data, next, transform = defaultTransform) {
   };
 }
 
+class RunStoresScope {
+  #stack;
+
+  constructor(activeChannel, data) {
+    const stack = new SafeDisposableStack();
+    let taken = false;
+
+    try {
+      const stores = activeChannel._stores;
+      if (stores) {
+        for (const entry of stores.entries()) {
+          const store = entry[0];
+          const transform = entry[1];
+
+          let newContext = data;
+          if (transform) {
+            try {
+              newContext = transform(data);
+            } catch (err) {
+              process.nextTick(() => reportError(err));
+              continue;
+            }
+          }
+
+          stack.use(store.withScope(newContext));
+        }
+      }
+
+      activeChannel.publish(data);
+
+      this.#stack = stack.move();
+      taken = true;
+    } finally {
+      if (!taken) stack[SymbolDispose]();
+    }
+  }
+
+  [SymbolDispose]() {
+    this.#stack[SymbolDispose]();
+  }
+}
+
 class ActiveChannel {
   _subscribers;
   name;
@@ -147,6 +192,10 @@ class ActiveChannel {
         process.nextTick(() => reportError(err));
       }
     }
+  }
+
+  withStoreScope(data) {
+    return new RunStoresScope(this, data);
   }
 
   runStores(data, fn, thisArg, ...args) {
@@ -210,6 +259,10 @@ class Channel {
   runStores(data, fn, thisArg, ...args) {
     return fn.$apply(thisArg, args);
   }
+
+  withStoreScope() {
+    return { [SymbolDispose]() {} };
+  }
 }
 
 const channels = new WeakRefMap();
@@ -240,7 +293,7 @@ function hasSubscribers(name) {
   return channel.hasSubscribers;
 }
 
-const traceEvents = ["start", "end", "asyncStart", "asyncEnd", "error"];
+const boundedEvents = ["start", "end"];
 
 function assertChannel(value, name) {
   if (!(value instanceof Channel)) {
@@ -248,54 +301,191 @@ function assertChannel(value, name) {
   }
 }
 
-class TracingChannel {
-  start;
-  end;
-  asyncStart;
-  asyncEnd;
-  error;
+function channelFromMap(nameOrChannels, name, className) {
+  if (typeof nameOrChannels === "string") {
+    return channel(`tracing:${nameOrChannels}:${name}`);
+  }
 
+  if (typeof nameOrChannels === "object" && nameOrChannels !== null) {
+    const channel = nameOrChannels[name];
+    assertChannel(channel, `nameOrChannels.${name}`);
+    return channel;
+  }
+
+  throw $ERR_INVALID_ARG_TYPE("nameOrChannels", ["string", "object", className], nameOrChannels);
+}
+
+class BoundedChannelScope {
+  #context;
+  #end;
+  #scope;
+
+  constructor(boundedChannel, context) {
+    if (!boundedChannel.hasSubscribers) {
+      return;
+    }
+
+    const { start, end } = boundedChannel;
+    this.#context = context;
+    this.#end = end;
+
+    this.#scope = new RunStoresScope(start, context);
+  }
+
+  [SymbolDispose]() {
+    if (!this.#scope) {
+      return;
+    }
+
+    this.#end.publish(this.#context);
+
+    this.#scope[SymbolDispose]();
+    this.#scope = undefined;
+  }
+}
+
+class BoundedChannel {
   constructor(nameOrChannels) {
-    if (typeof nameOrChannels === "string") {
-      this.start = channel(`tracing:${nameOrChannels}:start`);
-      this.end = channel(`tracing:${nameOrChannels}:end`);
-      this.asyncStart = channel(`tracing:${nameOrChannels}:asyncStart`);
-      this.asyncEnd = channel(`tracing:${nameOrChannels}:asyncEnd`);
-      this.error = channel(`tracing:${nameOrChannels}:error`);
-    } else if (typeof nameOrChannels === "object") {
-      const { start, end, asyncStart, asyncEnd, error } = nameOrChannels;
-
-      assertChannel(start, "nameOrChannels.start");
-      assertChannel(end, "nameOrChannels.end");
-      assertChannel(asyncStart, "nameOrChannels.asyncStart");
-      assertChannel(asyncEnd, "nameOrChannels.asyncEnd");
-      assertChannel(error, "nameOrChannels.error");
-
-      this.start = start;
-      this.end = end;
-      this.asyncStart = asyncStart;
-      this.asyncEnd = asyncEnd;
-      this.error = error;
-    } else {
-      throw $ERR_INVALID_ARG_TYPE("nameOrChannels", ["string, object, or Channel"], nameOrChannels);
+    for (let i = 0; i < boundedEvents.length; ++i) {
+      const eventName = boundedEvents[i];
+      ObjectDefineProperty(this, eventName, {
+        __proto__: null,
+        value: channelFromMap(nameOrChannels, eventName, "BoundedChannel"),
+      });
     }
   }
 
-  subscribe(handlers) {
-    for (const name of traceEvents) {
-      if (!handlers[name]) continue;
+  get hasSubscribers() {
+    return this.start?.hasSubscribers || this.end?.hasSubscribers;
+  }
 
-      this[name]?.subscribe(handlers[name]);
+  subscribe(handlers) {
+    for (let i = 0; i < boundedEvents.length; ++i) {
+      const name = boundedEvents[i];
+      const handler = handlers[name];
+      if (!handler) continue;
+
+      this[name]?.subscribe(handler);
     }
   }
 
   unsubscribe(handlers) {
     let done = true;
 
-    for (const name of traceEvents) {
-      if (!handlers[name]) continue;
+    for (let i = 0; i < boundedEvents.length; ++i) {
+      const name = boundedEvents[i];
+      const handler = handlers[name];
+      if (!handler) continue;
 
-      if (!this[name]?.unsubscribe(handlers[name])) {
+      if (!this[name]?.unsubscribe(handler)) {
+        done = false;
+      }
+    }
+
+    return done;
+  }
+
+  withScope(context = {}) {
+    return new BoundedChannelScope(this, context);
+  }
+
+  run(context, fn, thisArg, ...args) {
+    context ??= {};
+    const scope = this.withScope(context);
+    try {
+      return fn.$apply(thisArg, args);
+    } finally {
+      scope[SymbolDispose]();
+    }
+  }
+}
+
+function boundedChannel(nameOrChannels) {
+  return new BoundedChannel(nameOrChannels);
+}
+
+class TracingChannel {
+  #callWindow;
+  #continuationWindow;
+
+  constructor(nameOrChannels) {
+    if (typeof nameOrChannels === "string") {
+      this.#callWindow = new BoundedChannel(nameOrChannels);
+      this.#continuationWindow = new BoundedChannel({
+        start: channel(`tracing:${nameOrChannels}:asyncStart`),
+        end: channel(`tracing:${nameOrChannels}:asyncEnd`),
+      });
+    } else if (typeof nameOrChannels === "object" && nameOrChannels !== null) {
+      const { start, end, asyncStart, asyncEnd } = nameOrChannels;
+      assertChannel(start, "nameOrChannels.start");
+      assertChannel(end, "nameOrChannels.end");
+      assertChannel(asyncStart, "nameOrChannels.asyncStart");
+      assertChannel(asyncEnd, "nameOrChannels.asyncEnd");
+
+      this.#callWindow = new BoundedChannel({ start, end });
+      this.#continuationWindow = new BoundedChannel({ start: asyncStart, end: asyncEnd });
+    }
+
+    ObjectDefineProperty(this, "error", {
+      __proto__: null,
+      value: channelFromMap(nameOrChannels, "error", "TracingChannel"),
+    });
+  }
+
+  get start() {
+    return this.#callWindow.start;
+  }
+
+  get end() {
+    return this.#callWindow.end;
+  }
+
+  get asyncStart() {
+    return this.#continuationWindow.start;
+  }
+
+  get asyncEnd() {
+    return this.#continuationWindow.end;
+  }
+
+  get hasSubscribers() {
+    return this.#callWindow.hasSubscribers || this.#continuationWindow.hasSubscribers || this.error?.hasSubscribers;
+  }
+
+  subscribe(handlers) {
+    const { start, end, asyncStart, asyncEnd, error } = handlers;
+
+    if (start || end) {
+      this.#callWindow.subscribe({ start, end });
+    }
+
+    if (asyncStart || asyncEnd) {
+      this.#continuationWindow.subscribe({ start: asyncStart, end: asyncEnd });
+    }
+
+    if (error) {
+      this.error.subscribe(error);
+    }
+  }
+
+  unsubscribe(handlers) {
+    const { start, end, asyncStart, asyncEnd, error } = handlers;
+    let done = true;
+
+    if (start || end) {
+      if (!this.#callWindow.unsubscribe({ start, end })) {
+        done = false;
+      }
+    }
+
+    if (asyncStart || asyncEnd) {
+      if (!this.#continuationWindow.unsubscribe({ start: asyncStart, end: asyncEnd })) {
+        done = false;
+      }
+    }
+
+    if (error) {
+      if (!this.error.unsubscribe(error)) {
         done = false;
       }
     }
@@ -410,5 +600,7 @@ export default {
   subscribe,
   tracingChannel,
   unsubscribe,
+  boundedChannel,
   Channel,
+  BoundedChannel,
 };

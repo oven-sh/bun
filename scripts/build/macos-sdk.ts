@@ -119,7 +119,7 @@ export async function ensureMacosSdk(cfg: {
   osxSysroot: string | undefined;
   cacheDir: string;
   darwin: boolean;
-  bun: string;
+  jsRuntimeArgv: string[];
   host: { os: string };
 }): Promise<void> {
   if (!cfg.darwin || cfg.host.os === "darwin" || cfg.osxSysroot === undefined) return;

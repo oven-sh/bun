@@ -63,7 +63,8 @@ const start = Date.now();
 // The build system runs `install` at the repo root before this script fires
 // (see scripts/build/codegen.ts rootInstall); if @lezer/cpp is missing the
 // only recovery is a manual install anyway.
-if (!existsSync("node_modules/@lezer/cpp/src/cpp.grammar")) {
+const lezerGrammar = join(import.meta.dirname, "../../node_modules/@lezer/cpp/src/cpp.grammar");
+if (!existsSync(lezerGrammar)) {
   console.error("Lezer C++ grammar is not installed. Run your package manager's install at the repo root.");
   process.exit(1);
 }

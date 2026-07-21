@@ -375,9 +375,7 @@ impl<'a> Transpiler<'a> {
         self.resolver.log = core::ptr::NonNull::new(log).expect("wire_after_move: log is non-null");
         self.resolver.fs = self.fs;
         // Only reseat the back-pointers — do NOT `Linker::init` here: that
-        // would clobber `plugin_runner` /
-        // `tagged_resolutions` / `any_needs_runtime`, which must be
-        // preserved across the move.
+        // would clobber `plugin_runner`, which must be preserved across the move.
         self.linker.reseat_self_refs(
             log,
             core::ptr::addr_of_mut!(self.resolve_queue),

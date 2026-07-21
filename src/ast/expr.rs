@@ -829,9 +829,6 @@ impl Expr {
         }
     }
 
-    // `ctx` is passed by `&mut` so a single `&mut P` (the parser state) can be
-    // reborrowed for each callback invocation without `Copy`.
-
     pub fn extract_numeric_values_in_safe_range(left: &Data, right: &Data) -> Option<[f64; 2]> {
         let l_value = left.extract_numeric_value()?;
         let r_value = right.extract_numeric_value()?;

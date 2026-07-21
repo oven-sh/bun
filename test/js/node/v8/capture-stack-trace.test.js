@@ -1121,3 +1121,27 @@ test("lazy error-info materialization does not store an empty stack value when t
   });
   expect(exitCode).toBe(0);
 });
+
+test("a name getter that reads .stack while the lazy captureStackTrace accessor materializes does not free m_stackTrace under the outer call", async () => {
+  // WTF::Vector goes through bmalloc; Malloc=1 routes it to system malloc so ASAN sees it.
+  const src = `
+    let n = 0;
+    class T extends Error { get name() { if (n++ === 0) void this.stack; return "T"; } }
+    const e = new T("m");
+    Error.captureStackTrace(e);
+    const outer = e.stack;
+    console.log(JSON.stringify({ header: String(outer).split("\\n")[0], frames: String(outer).split("\\n").length > 1 }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify({ header: "T: m", frames: true }),
+    signalCode: null,
+  });
+  expect(exitCode).toBe(0);
+});

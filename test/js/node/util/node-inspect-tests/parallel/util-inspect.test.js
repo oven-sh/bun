@@ -1863,11 +1863,10 @@ test("no assertion failures 3", () => {
       `Expected to start with: "[This is a stack]"\nFound: "${util.inspect(foo)}"`,
     );
     foo.stack = stack;
-    // TODO: Bun messes with `Error.stack` and this causes this to fail
-    // assert(
-    //   util.inspect(foo).startsWith(`${Class.name} [WOW]${extra}${message ? `: ${message}` : "\n"}`),
-    //   util.inspect(foo),
-    // );
+    assert(
+      util.inspect(foo).startsWith(`${Class.name} [WOW]${extra}${message ? `: ${message}` : "\n"}`),
+      util.inspect(foo),
+    );
     Object.setPrototypeOf(foo, null);
     assert(
       util.inspect(foo).startsWith(

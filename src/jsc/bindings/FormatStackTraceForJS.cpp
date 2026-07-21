@@ -46,10 +46,9 @@ static bool protectStackFrameCells(JSC::MarkedArgumentBuffer& protectedFrameCell
     return !protectedFrameCells.hasOverflowed();
 }
 
-// V8's ErrorUtils::ToString: [[Get]] "name"/"message" (prototype walk, getters, ToString
-// coercion). An undefined name defaults to "Error", an undefined message to the empty
-// string. A name/message getter that calls back into stack formatting re-enters here; the
-// inner call falls back to side-effect-free reads so the cycle terminates after one level.
+// V8's ErrorUtils::ToString: [[Get]] "name"/"message" with ToString; undefined defaults to
+// "Error" / "". A name/message getter that re-enters stack formatting hits the guard and
+// falls back to side-effect-free sanitized reads so the cycle terminates after one level.
 static void computeErrorHeader(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, WTF::String& name, WTF::String& message)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -768,6 +767,17 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     OrdinalNumber column;
     String sourceURL;
     auto stackTrace = errorObject->stackTrace();
+
+    // A name/message getter reading .stack re-enters here while the outer materialize still
+    // holds a &*m_stackTrace; moving/reassigning it would free that Vector under the outer
+    // call. Under the guard computeErrorHeader uses sanitized reads, so no user code runs.
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    if (stackTrace && zigGlobalObject && zigGlobalObject->isComputingErrorStackHeader) [[unlikely]] {
+        JSValue result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        return JSValue::encode(result);
+    }
 
     JSValue result;
     if (stackTrace == nullptr) {

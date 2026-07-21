@@ -231,9 +231,11 @@ plugin({
           stdout: "pipe",
         });
 
-        expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toBe("preloaded\nmain\n");
-        expect(exitCode).toBe(0);
+        expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+          stdout: "preloaded\nmain\n",
+          stderr: "",
+          exitCode: 0,
+        });
       });
 
       test(`${flag} resolves a plain file:// URL`, async () => {
@@ -252,10 +254,30 @@ plugin({
           stdout: "pipe",
         });
 
-        expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toBe("preloaded\nmain\n");
-        expect(exitCode).toBe(0);
+        expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+          stdout: "preloaded\nmain\n",
+          stderr: "",
+          exitCode: 0,
+        });
       });
     }
+
+    test("reports the original specifier when a file:// URL is invalid", async () => {
+      using dir = tempDir("preload-file-url", {
+        "main.js": `console.log("main");`,
+      });
+      const bad = "file://[invalid";
+      const { stderr, exitCode, stdout } = spawnSync({
+        cmd: [bunExe(), "--import", bad, join(String(dir), "main.js")],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      expect(stderr.toString()).toContain("preload not found");
+      expect(stderr.toString()).toContain(bad);
+      expect(stdout.toString()).toBe("");
+      expect(exitCode).toBe(1);
+    });
   });
 });

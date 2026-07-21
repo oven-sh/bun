@@ -57,7 +57,7 @@ export interface Rec {
   rva: string; // primary callsite (schedule key)
   rvas: string[]; // candidate frames, nearest first
   frame0: string;
-  fault: "" | "P" | "Q";
+  fault: "" | "P" | "Q" | "M"; // pre / post / mangle
   entryOnly: boolean;
 }
 export interface Trace {
@@ -92,7 +92,7 @@ export function parseTrace(text: string): Trace {
         rva: rvas[0] ?? "0",
         rvas,
         frame0: p[6],
-        fault: p[7] === "!P" ? "P" : p[7] === "!Q" ? "Q" : "",
+        fault: p[7] === "!P" ? "P" : p[7] === "!Q" ? "Q" : p[7] === "!M" ? "M" : "",
         entryOnly: false,
       });
     } else if (p[0] === "E") {

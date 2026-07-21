@@ -18,8 +18,17 @@ constexpr int kMaxFrames = 8;
 
 enum class Fault : uint8_t {
   None,
-  Pre,  // skip the real syscall entirely, return injected status (genuine failure)
-  Post, // run the real syscall, then report injected status (succeeded-but-told-failed)
+  Pre,    // skip the real syscall entirely, return injected status (genuine failure)
+  Post,   // run the real syscall, then report injected status (succeeded-but-told-failed)
+  Mangle, // run the real syscall, keep its status, perturb its OUTPUT
+          // (the misbehaving filter-driver class: malformed successes)
+};
+
+// Mangle kinds — all target the IO_STATUS_BLOCK a synchronous I/O
+// syscall filled in on success. Real filter drivers do exactly these.
+enum class MangleKind : uint8_t {
+  Short, // Information (bytes transferred) reported smaller than actual
+  Zero,  // "successful" zero-byte transfer where data was expected
 };
 
 // Per-syscall-invocation context. Constructed at hook entry; drives the
@@ -46,6 +55,7 @@ class CallCtx {
   uint8_t nframes_;
   ULONG_PTR injected_ = 0;
   Fault fault_ = Fault::None;
+  MangleKind mangle_ = MangleKind::Short;
   const ULONG_PTR* args_;
   int argc_;
   uintptr_t frames_[kMaxFrames];

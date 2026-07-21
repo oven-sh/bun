@@ -556,6 +556,7 @@ struct HookEntry {
   const char* const* argNames;
   const uint8_t* argDir;   // 0=in 1=out 2=inout (bit 7 = optional)
   const char* category;
+  int8_t iosbIndex; // arg index of the PIO_STATUS_BLOCK, -1 if none (mangle target)
 };
 
 extern HookEntry kHooks[SYS__COUNT];

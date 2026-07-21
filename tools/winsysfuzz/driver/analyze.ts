@@ -1,103 +1,33 @@
 // Reads a wsf trace log and prints a human summary: syscalls by name with
 // counts and status breakdown, distinct callsites, injected faults.
 //
-//   bun driver/analyze.ts <log> [--callsites] [--status]
+//   bun driver/analyze.ts <log> [--callsites] [--status] [--sym <bun.exe>]
 //
-// The (syscall, callsite, hit-index) census this produces is the input the
-// fault scheduler enumerates.
-
 // With --sym <bun.exe> every distinct callsite RVA is batch-symbolized
 // through wsfsym.exe and classified into a calling MODULE by source path
 // (libuv / WebKit-JSC-WTF / mimalloc / boringssl / c-ares / bun's Rust /
 // ...). That per-module census is the "all locations" coverage matrix:
 // which of bun's dependencies actually reach which syscalls.
 
-import { dirname, join } from "node:path";
-
-const here = dirname(import.meta.path);
-const manifest: { id: number; name: string; category: string }[] = await Bun.file(
-  join(here, "generated", "syscalls.gen.json"),
-).json();
-const nameOf = (id: number) => manifest[id]?.name ?? `sys#${id}`;
+import { moduleOf, nameOf, parseTrace, statusName, symbolize } from "./lib";
 
 const args = process.argv.slice(2);
 const flagVal = (f: string) => {
   const i = args.indexOf(f);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const logPath = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--sym" && args[i - 1] !== "--wsfsym");
+const logPath = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--sym");
 if (!logPath) {
-  console.error("usage: analyze.ts <log> [--callsites] [--status] [--sym <bun.exe>] [--wsfsym <path>]");
+  console.error("usage: analyze.ts <log> [--callsites] [--status] [--sym <bun.exe>]");
   process.exit(2);
 }
 const showCallsites = args.includes("--callsites");
 const showStatus = args.includes("--status");
 const symExe = flagVal("--sym");
-const wsfsymPath = flagVal("--wsfsym") ?? join(here, "..", "build", "Release", "wsfsym.exe");
 
-const KNOWN: Record<string, string> = {
-  "0": "STATUS_SUCCESS",
-  "103": "STATUS_PENDING",
-  "80000005": "STATUS_BUFFER_OVERFLOW",
-  "8000001a": "STATUS_NO_MORE_ENTRIES",
-  "c0000005": "STATUS_ACCESS_VIOLATION",
-  "c0000008": "STATUS_INVALID_HANDLE",
-  "c000000d": "STATUS_INVALID_PARAMETER",
-  "c0000022": "STATUS_ACCESS_DENIED",
-  "c0000023": "STATUS_BUFFER_TOO_SMALL",
-  "c0000034": "STATUS_OBJECT_NAME_NOT_FOUND",
-  "c0000035": "STATUS_OBJECT_NAME_COLLISION",
-  "c000003a": "STATUS_OBJECT_PATH_NOT_FOUND",
-  "c0000043": "STATUS_SHARING_VIOLATION",
-  "c000007c": "STATUS_NO_TOKEN",
-  "c00000bb": "STATUS_NOT_SUPPORTED",
-  "c0000102": "STATUS_TIMEOUT",
-  "102": "STATUS_TIMEOUT(wait)",
-};
-const statusName = (h: string) => KNOWN[h] ?? h;
-
-interface Rec {
-  seq: number;
-  tid: number;
-  sys: number;
-  status: string;
-  rva: string; // primary callsite (schedule key) — first candidate
-  rvas: string[]; // all candidate bun.exe frames, nearest first
-  frame0: string;
-  fault: "" | "P" | "Q";
-  entryOnly: boolean;
-}
-
-const text = await Bun.file(logPath).text();
-const recs: Rec[] = [];
-const notes: string[] = [];
-for (const line of text.split("\n")) {
-  if (!line) continue;
-  if (line.startsWith("#")) {
-    notes.push(line);
-    continue;
-  }
-  const p = line.split(" ");
-  if (p[0] === "X") {
-    const rvas = p[5] === "0" ? [] : p[5].split(",");
-    recs.push({
-      seq: +p[1],
-      tid: +p[2],
-      sys: +p[3],
-      status: p[4],
-      rva: rvas[0] ?? "0",
-      rvas,
-      frame0: p[6],
-      fault: p[7] === "!P" ? "P" : p[7] === "!Q" ? "Q" : "",
-      entryOnly: false,
-    });
-  } else if (p[0] === "E") {
-    const rvas = p[4] === "0" ? [] : p[4].split(",");
-    recs.push({ seq: +p[1], tid: +p[2], sys: +p[3], status: "", rva: rvas[0] ?? "0", rvas, frame0: p[5], fault: "", entryOnly: true });
-  }
-}
-
-for (const n of notes) console.log(n);
+const trace = parseTrace(await Bun.file(logPath).text());
+const recs = trace.recs;
+for (const n of trace.notes) console.log(n);
 console.log(`\n${recs.length} records, ${new Set(recs.map(r => r.tid)).size} threads\n`);
 
 // --- by syscall -------------------------------------------------------------
@@ -138,78 +68,29 @@ for (const [sys, a] of rows) {
 
 const injected = recs.filter(r => r.fault);
 if (injected.length) {
+  const modeName = { P: "pre", Q: "post", M: "mangle" } as const;
   console.log(`\n${injected.length} injected faults:`);
   for (const r of injected)
     console.log(
       `  seq ${r.seq} tid ${r.tid} ${nameOf(r.sys)} -> ${statusName(r.status)} ` +
-        `(${r.fault === "P" ? "pre" : "post"}) at bun+0x${r.rva}`,
+        `(${modeName[r.fault as "P" | "Q" | "M"]}) at bun+0x${r.rva}`,
     );
 }
 
 // --- module census -----------------------------------------------------------
 if (symExe) {
-  const rvas = [...new Set(recs.flatMap(r => r.rvas).filter(v => v && v !== "0"))];
-  const proc = Bun.spawn([wsfsymPath, symExe, "-"], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
-  proc.stdin.write(rvas.map(v => v + "\n").join(""));
-  proc.stdin.end();
-  const symOut = await new Response(proc.stdout).text();
-  await proc.exited;
-
-  // rva -> {sym, file}
-  const symOf = new Map<string, { sym: string; file: string }>();
-  for (const line of symOut.split("\n")) {
-    const [rva, sym, file] = line.split("\t");
-    if (rva) symOf.set(rva.trim(), { sym: sym ?? "?", file: file ?? "-" });
-  }
-
-  // Classify by source path first, then symbol namespace as a fallback.
-  const classify = (rva: string): string => {
-    const s = symOf.get(rva);
-    if (!s) return "unresolved";
-    const f = s.file.toLowerCase().replace(/\\/g, "/");
-    const sym = s.sym;
-    if (f.includes("/vendor/libuv/") || /^uv[_A-Z]/.test(sym)) return "libuv";
-    if (f.includes("/vendor/webkit/") || /^(JSC|WTF|Inspector|bmalloc|Gigacage)::/.test(sym) || sym.startsWith("bmalloc"))
-      return "webkit(jsc/wtf)";
-    if (f.includes("/mimalloc/") || /^(mi_|_mi_)/.test(sym)) return "mimalloc";
-    if (f.includes("/boringssl/") || /^(SSL_|CRYPTO_|EVP_|BN_|EC_|RSA_)/.test(sym)) return "boringssl";
-    if (f.includes("/cares/") || sym.startsWith("ares_")) return "c-ares";
-    if (f.includes("/lolhtml/")) return "lolhtml";
-    if (f.includes("/zlib/") || f.includes("/brotli/") || f.includes("/zstd/") || f.includes("/libdeflate/"))
-      return "compression";
-    if (f.includes("/rust/") && (f.includes("/library/std/") || f.includes("/library/core/") || f.includes("/library/alloc/")))
-      return "rust-std";
-    if (f.includes("/.cargo/registry/")) return "rust-crates";
-    if (f.includes("/bun/src/")) return "bun-rust(src)";
-    if (sym === "?" || sym.startsWith("?(")) return "unresolved";
-    return "other";
-  };
-  // Walk candidate frames, nearest first, to the first confidently-owned one;
-  // an inlined std:: template (STL header path) can't name its owner, but the
-  // frame behind it usually can.
-  const weak = new Set(["other", "unresolved", "rust-std"]);
-  const moduleOf = (r: Rec): string => {
-    let fallback = "unresolved";
-    for (const rva of r.rvas) {
-      const m = classify(rva);
-      if (!weak.has(m)) return m;
-      if (fallback === "unresolved" && m !== "unresolved") fallback = m;
-    }
-    return fallback;
-  };
-  const primary = (r: Rec) => r.rva;
-
+  const syms = await symbolize(symExe, recs.flatMap(r => r.rvas));
   type MAgg = { count: number; syscalls: Map<number, number>; callsites: Set<string>; syms: Map<string, number> };
   const byMod = new Map<string, MAgg>();
   for (const r of recs) {
-    if (primary(r) === "0") continue;
-    const mod = moduleOf(r);
+    if (r.rva === "0") continue;
+    const mod = moduleOf(r, syms);
     let a = byMod.get(mod);
     if (!a) byMod.set(mod, (a = { count: 0, syscalls: new Map(), callsites: new Set(), syms: new Map() }));
     a.count++;
     a.syscalls.set(r.sys, (a.syscalls.get(r.sys) ?? 0) + 1);
-    a.callsites.add(primary(r));
-    const s = symOf.get(primary(r))?.sym.replace(/\+0x[0-9a-f]+$/, "") ?? "?";
+    a.callsites.add(r.rva);
+    const s = syms.get(r.rva)?.sym.replace(/\+0x[0-9a-f]+$/, "") ?? "?";
     a.syms.set(s, (a.syms.get(s) ?? 0) + 1);
   }
   const attributed = [...byMod.values()].reduce((n, a) => n + a.count, 0);

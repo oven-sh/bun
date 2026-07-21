@@ -52,28 +52,32 @@ const planOnly = argv.includes("--plan-only"); // baseline + estimate, then stop
 //                    CRASH(), Rust alloc abort). A crash here is expected.
 //   judgment       — lying-API (post-mode) / edge cases where "correct"
 //                    behavior is a human call.
-type Fault = { status: string; mode: "pre" | "post"; expect?: "must-handle" | "abort-expected" | "judgment" };
-const F = (status: string, mode: "pre" | "post" = "pre", expect: Fault["expect"] = "must-handle"): Fault => ({
+type Mode = "pre" | "post" | "mangle:short" | "mangle:zero";
+type Fault = { status: string; mode: Mode; expect?: "must-handle" | "abort-expected" | "judgment" };
+const F = (status: string, mode: Mode = "pre", expect: Fault["expect"] = "must-handle"): Fault => ({
   status,
   mode,
   expect,
 });
+// mangle:* faults model the misbehaving filter driver: the syscall really
+// succeeds but its IO_STATUS_BLOCK.Information is perturbed (short / zero
+// bytes). bun must honor the count it is handed, so these are must-handle.
 const FAULTS: Record<string, Fault[]> = {
   NtCreateFile: [F("C0000034"), F("C0000022"), F("C0000043")],
   NtOpenFile: [F("C0000034"), F("C0000022")],
-  NtReadFile: [F("C0000185"), F("C0000185", "post", "judgment")],
-  NtWriteFile: [F("C000007F"), F("C000007F", "post", "judgment")],
+  NtReadFile: [F("C0000185"), F("C0000185", "post", "judgment"), F("0", "mangle:short"), F("0", "mangle:zero")],
+  NtWriteFile: [F("C000007F"), F("C000007F", "post", "judgment"), F("0", "mangle:short")],
   NtQueryInformationFile: [F("C0000185")],
   NtSetInformationFile: [F("C0000022")],
-  NtQueryDirectoryFile: [F("C0000185")],
-  NtQueryDirectoryFileEx: [F("C0000185")],
+  NtQueryDirectoryFile: [F("C0000185"), F("0", "mangle:short")],
+  NtQueryDirectoryFileEx: [F("C0000185"), F("0", "mangle:short")],
   NtQueryVolumeInformationFile: [F("C0000185")],
   NtQueryAttributesFile: [F("C0000034")],
   NtQueryFullAttributesFile: [F("C0000034")],
   NtDeleteFile: [F("C0000022")],
   NtFsControlFile: [F("C000009A")],
   NtCreateNamedPipeFile: [F("C000009A")],
-  NtDeviceIoControlFile: [F("C000009A"), F("C000009A", "post", "judgment")],
+  NtDeviceIoControlFile: [F("C000009A"), F("C000009A", "post", "judgment"), F("0", "mangle:short")],
   NtCreateEvent: [F("C000009A")],
   NtCreateSection: [F("C000009A")],
   NtMapViewOfSection: [F("C000009A")],
@@ -148,7 +152,7 @@ interface Job {
   id: number;
   coord: Coord;
   status: string;
-  mode: "pre" | "post";
+  mode: Mode;
   expect: NonNullable<Fault["expect"]>;
   hit: number;
 }

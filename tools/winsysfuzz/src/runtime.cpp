@@ -83,6 +83,7 @@ struct Rule {
   bool anyCallsite;
   LONG hitIndex; // 0 => every match
   Fault mode;
+  MangleKind mangle;
   ULONG_PTR status;
   volatile LONG hits;
 };
@@ -152,8 +153,8 @@ void LoadSchedule(const char* path) {
   g_rules = (Rule*)calloc(cap, sizeof(Rule));
   char line[256];
   while (fgets(line, sizeof line, f)) {
-    char sysName[80], rvaTok[32], hitTok[16], modeTok[8], statusTok[24];
-    if (sscanf_s(line, "%79s %31s %15s %7s %23s", sysName, (unsigned)sizeof sysName, rvaTok,
+    char sysName[80], rvaTok[32], hitTok[16], modeTok[24], statusTok[24];
+    if (sscanf_s(line, "%79s %31s %15s %23s %23s", sysName, (unsigned)sizeof sysName, rvaTok,
                  (unsigned)sizeof rvaTok, hitTok, (unsigned)sizeof hitTok, modeTok,
                  (unsigned)sizeof modeTok, statusTok, (unsigned)sizeof statusTok) != 5)
       continue;
@@ -173,9 +174,15 @@ void LoadSchedule(const char* path) {
     r.anyCallsite = rvaTok[0] == '*';
     r.rva = r.anyCallsite ? 0 : (uintptr_t)strtoull(rvaTok, nullptr, 16);
     r.hitIndex = hitTok[0] == '*' ? 0 : (LONG)strtol(hitTok, nullptr, 10);
-    r.mode = (modeTok[0] == 'p' || modeTok[0] == 'P') && (modeTok[1] == 'r' || modeTok[1] == 'R')
-                 ? Fault::Pre
-                 : Fault::Post;
+    // mode: pre | post | mangle:short | mangle:zero
+    if (strncmp(modeTok, "mangle", 6) == 0) {
+      r.mode = Fault::Mangle;
+      r.mangle = strstr(modeTok, "zero") ? MangleKind::Zero : MangleKind::Short;
+    } else if ((modeTok[0] == 'p' || modeTok[0] == 'P') && (modeTok[1] == 'r' || modeTok[1] == 'R')) {
+      r.mode = Fault::Pre;
+    } else {
+      r.mode = Fault::Post;
+    }
     r.status = (ULONG_PTR)strtoull(statusTok, nullptr, 16);
   }
   fclose(f);
@@ -264,6 +271,7 @@ bool CallCtx::PreFault() {
     LONG hit = InterlockedIncrement(&r.hits);
     if (r.hitIndex != 0 && hit != r.hitIndex) continue;
     fault_ = r.mode;
+    mangle_ = r.mangle;
     injected_ = r.status;
     if (fault_ == Fault::Pre) {
       // Real call is skipped: log the exit record here.
@@ -301,13 +309,28 @@ void CallCtx::FormatRvas(char* out, size_t cap) const {
 ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
   ULONG_PTR ret = real;
   if (live_) {
-    if (fault_ == Fault::Post) ret = injected_;
+    const char* tag = "";
+    if (fault_ == Fault::Post) {
+      ret = injected_;
+      tag = " !Q";
+    } else if (fault_ == Fault::Mangle) {
+      tag = " !M";
+      // Only a synchronous success has a filled IO_STATUS_BLOCK to mangle;
+      // a pending async op's IOSB is written by the kernel later.
+      int8_t idx = kHooks[sys_].iosbIndex;
+      if ((ULONG)ret == 0 && idx >= 0 && idx < argc_) {
+        auto* iosb = (IO_STATUS_BLOCK*)args_[idx];
+        if (iosb) {
+          if (mangle_ == MangleKind::Zero) iosb->Information = 0;
+          else if (iosb->Information > 1) iosb->Information /= 2; // short
+        }
+      }
+    }
     char rvas[64];
     FormatRvas(rvas, sizeof rvas);
     LONG64 seq = InterlockedIncrement64(&g_seq);
     LogLine("X %lld %lu %u %llx %s %llx%s\n", seq, GetCurrentThreadId(), sys_,
-            (unsigned long long)ret, rvas,
-            (unsigned long long)(nframes_ ? frames_[0] : 0), fault_ == Fault::Post ? " !Q" : "");
+            (unsigned long long)ret, rvas, (unsigned long long)(nframes_ ? frames_[0] : 0), tag);
   }
   return ret;
 }

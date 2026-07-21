@@ -727,6 +727,23 @@ describe("lex shell", () => {
       await TestBuilder.command`echo hi &`.error('Background commands "&" are not supported yet.').run();
     });
 
+    describe("Unclosed quote", async () => {
+      TestBuilder.command`${{ raw: `echo "start; touch MARKER; echo cleanup-done` }}`
+        .error("Unclosed double quote")
+        .runAsTest("double quote swallows rest of script");
+      TestBuilder.command`${{ raw: `echo 'start; touch MARKER` }}`
+        .error("Unclosed single quote")
+        .runAsTest("single quote swallows rest of script");
+      TestBuilder.command`${{ raw: `echo hi"` }}`.error("Unclosed double quote").runAsTest("trailing double quote");
+      TestBuilder.command`${{ raw: `echo hi'` }}`.error("Unclosed single quote").runAsTest("trailing single quote");
+      TestBuilder.command`${{ raw: `echo $(echo "hi` }}`
+        .error("Unclosed double quote\nUnclosed command substitution")
+        .runAsTest("inside command substitution");
+      TestBuilder.command`${{ raw: `echo "hi"` }}`.stdout("hi\n").runAsTest("closed double quote ok");
+      TestBuilder.command`${{ raw: `echo 'hi'` }}`.stdout("hi\n").runAsTest("closed single quote ok");
+      TestBuilder.command`echo ${'"'}`.stdout('"\n').runAsTest("interpolated quote is data");
+    });
+
     test("Unclosed subshell", async () => {
       await TestBuilder.command`echo hi && $(echo uh oh`.error("Unclosed command substitution").run();
       await TestBuilder.command`echo hi && $(echo uh oh)`

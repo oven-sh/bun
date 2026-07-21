@@ -3131,6 +3131,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             self.append_char_to_str_pool(char)?;
         }
 
+        match self.chars.state {
+            CharState::Normal => {}
+            CharState::Single => self.add_error(b"Unclosed single quote"),
+            CharState::Double => self.add_error(b"Unclosed double quote"),
+        }
+
         if let Some(subshell_kind) = self.in_subshell {
             match subshell_kind {
                 SubShellKind::Dollar | SubShellKind::Backtick => {

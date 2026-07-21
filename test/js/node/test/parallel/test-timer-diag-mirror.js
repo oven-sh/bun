@@ -14,7 +14,8 @@ const poller = setInterval(() => {
   if (poller._pollN === undefined) poller._pollN = 0;
   if (++poller._pollN >= 100) {
     console.log(`PARTIAL ${count}/10 fired=${fired}`);
-    process.exit(0);
+    // Fail loudly so the runner surfaces the phase log in the annotation.
+    process.exit(1);
   }
 }, 100);
 

@@ -13,6 +13,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"
 #include "AsyncContextFrame.h"
+#include "NodeAsyncHooks.h"
 namespace Bun {
 using namespace JSC;
 
@@ -20,6 +21,19 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // async_hooks: before/after events + execution async ids around the fire.
+    // One flag load + branch when async_hooks id tracking was never enabled.
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    bool timerHooks = zigGlobal->asyncHooksTimerHooksEnabled;
+    if (timerHooks) [[unlikely]] {
+        emitAsyncHooksTimerEvent(zigGlobal, AsyncHooksTimerEvent::Before, timerObject);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+            return true;
+        }
+    }
 
     JSValue restoreAsyncContext {};
     JSC::InternalFieldTuple* asyncContextData = nullptr;
@@ -31,33 +45,35 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());
     }
 
+    bool hadException = false;
+
     if (auto* promise = dynamicDowncast<JSPromise>(callbackValue)) {
         // This was a Bun.sleep() call
         promise->resolve(globalObject, vm, jsUndefined());
     } else {
         auto callData = JSC::getCallData(callbackValue);
         if (callData.type == CallData::Type::None) {
+            // No early return: the async-context restore and the After emit
+            // below must still run.
             Bun__reportUnhandledError(globalObject, JSValue::encode(createNotAFunctionError(globalObject, callbackValue)));
-            return true;
-        }
-
-        MarkedArgumentBuffer args;
-        if (auto* butterfly = dynamicDowncast<JSCellButterfly>(argumentsValue)) {
-            //  If it's a JSCellButterfly, there is more than 1 argument.
-            unsigned length = butterfly->length();
-            args.ensureCapacity(length);
-            for (unsigned i = 0; i < length; ++i) {
-                args.append(butterfly->get(i));
+            hadException = true;
+        } else {
+            MarkedArgumentBuffer args;
+            if (auto* butterfly = dynamicDowncast<JSCellButterfly>(argumentsValue)) {
+                //  If it's a JSCellButterfly, there is more than 1 argument.
+                unsigned length = butterfly->length();
+                args.ensureCapacity(length);
+                for (unsigned i = 0; i < length; ++i) {
+                    args.append(butterfly->get(i));
+                }
+            } else if (!argumentsValue.isUndefined()) {
+                // Otherwise, it's a single argument.
+                args.append(argumentsValue);
             }
-        } else if (!argumentsValue.isUndefined()) {
-            // Otherwise, it's a single argument.
-            args.append(argumentsValue);
+
+            JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);
         }
-
-        JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);
     }
-
-    bool hadException = false;
 
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
@@ -68,6 +84,17 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    }
+
+    // Emitted after the unhandled-error report so an uncaughtException handler
+    // still observes the timer's execution async id (node parity).
+    if (timerHooks) [[unlikely]] {
+        emitAsyncHooksTimerEvent(zigGlobal, AsyncHooksTimerEvent::After, timerObject);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+            hadException = true;
+        }
     }
 
     return hadException;

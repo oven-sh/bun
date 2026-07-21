@@ -354,6 +354,7 @@ export default {
   once,
   getLazy,
   guardCallback,
+  reportUncaughtException,
 
   hasObserver,
   startPerf,

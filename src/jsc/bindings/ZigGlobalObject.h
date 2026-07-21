@@ -432,6 +432,16 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    // One-way flag set on first async_hooks id/hook use; gates the native
+    // timer -> JS async_hooks dispatch (NodeTimers.cpp, NodeTimerObject.cpp).
+    bool asyncHooksTimerHooksEnabled = false;
+
+    JSC::JSObject* asyncHooksTimerDispatch() { return m_asyncHooksTimerDispatch.get(); }
+    void setAsyncHooksTimerDispatch(JSC::JSObject* dispatch)
+    {
+        m_asyncHooksTimerDispatch.set(vm(), this, dispatch);
+        asyncHooksTimerHooksEnabled = true;
+    }
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 
@@ -514,6 +524,10 @@ public:
     /* setupMainThreadPort's drain callback; run once by WebWorker__dispatchOnline */                        \
     /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
+                                                                                                             \
+    /* internal/async_hooks_tick's timerHookDispatch; receives timer */                                      \
+    /* schedule/fire/clear events once async_hooks id tracking is enabled. */                                \
+    V(private, WriteBarrier<JSObject>, m_asyncHooksTimerDispatch)                                            \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \

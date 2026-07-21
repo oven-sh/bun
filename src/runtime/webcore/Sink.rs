@@ -841,7 +841,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         bun_core::mark_binding!();
 
         if !T::HAS_CONSTRUCT {
-            return Err(global.throw_illegal_constructor(T::NAME));
+            return Err(global.throw_illegal_constructor());
         }
 
         let mut this: Box<core::mem::MaybeUninit<T>> = Box::new(core::mem::MaybeUninit::uninit());

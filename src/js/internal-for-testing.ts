@@ -234,6 +234,10 @@ export const exposedInternals = {
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  // Node's internal/fixed_queue module IS the FixedQueue class.
+  "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
+  "internal/freelist": require("internal/freelist"),
+  "internal/validators": require("internal/validators"),
   "internal/fs/utils": {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert

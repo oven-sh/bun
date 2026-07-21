@@ -627,15 +627,6 @@ pub struct FindCache {
 impl FindCache {
     pub const SLOT_COUNT: usize = 16;
 
-    pub fn invalidate(&mut self, data: *const u8) {
-        for (k, s) in self.keys.iter_mut().zip(self.slots.iter_mut()) {
-            if k.data == data {
-                k.data = ptr::null();
-                s.data = ptr::null();
-            }
-        }
-    }
-
     pub fn invalidate_all(&mut self) {
         for (k, s) in self.keys.iter_mut().zip(self.slots.iter_mut()) {
             k.data = ptr::null();

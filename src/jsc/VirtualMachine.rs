@@ -1513,7 +1513,15 @@ impl VirtualMachine {
             }
         }
 
-        ExitHandler::dispatch_on_exit(self, self.unhandled_error_counter == 0);
+        // Drain microtasks queued by the 'exit' listener only on a natural
+        // event-loop drain: not after a fatal error, and not when a worker
+        // reached here via terminate()/process.exit() (both set
+        // requested_terminate before shutdown() calls us).
+        let natural = self.unhandled_error_counter == 0
+            && !self
+                .worker_ref()
+                .is_some_and(|w| w.has_requested_terminate());
+        ExitHandler::dispatch_on_exit(self, natural);
         self.is_shutting_down = true;
 
         // Make sure we run new cleanup hooks introduced by running cleanup

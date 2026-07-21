@@ -729,9 +729,11 @@ describe.concurrent(() => {
         stdio: ["inherit", "pipe", "pipe"],
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("exit-listener\npt-in-exit\nqm-in-exit\nafter-await-in-exit\n");
-      expect(exitCode).toBe(0);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "exit-listener\npt-in-exit\nqm-in-exit\nafter-await-in-exit\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("does not drain microtasks queued by the listener on process.exit()", async () => {
@@ -749,9 +751,11 @@ describe.concurrent(() => {
         stdio: ["inherit", "pipe", "pipe"],
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("exit-listener\n");
-      expect(exitCode).toBe(0);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "exit-listener\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("does not drain microtasks queued by the listener after a fatal uncaught exception", async () => {
@@ -789,9 +793,11 @@ describe.concurrent(() => {
         stdio: ["inherit", "pipe", "pipe"],
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("exit-listener\nqm-in-exit\n");
-      expect(exitCode).toBe(0);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "exit-listener\nqm-in-exit\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("drains microtasks queued by the listener on a worker's natural exit", async () => {
@@ -812,9 +818,11 @@ describe.concurrent(() => {
         stdio: ["inherit", "pipe", "pipe"],
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("exit-listener\nqm-in-exit\nworker-done\n");
-      expect(exitCode).toBe(0);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "exit-listener\nqm-in-exit\nworker-done\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("throwing inside preserves exit code", async () => {

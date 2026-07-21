@@ -336,7 +336,17 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     let output = build.outputFiles[0].text;
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
-    const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
+    // esbuild hoists array/object `define` values (and other helpers) to
+    // module scope as `var define_*_default = ...;` before `$$capture_start$$`.
+    // Fold that prologue into the function body so references stay resolvable.
+    const [, hoisted, captureBody] = output.match(/^([\s\S]*?)\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)!;
+    const prologue = hoisted
+      .replace(/^\/\/[^\n]*\n/gm, "")
+      .replace(/^\(?\$\)?;\s*$/m, "")
+      .trim();
+    const captured = prologue
+      ? captureBody.replace(/(function\s*\(.*?\)\s*{)/, `$1${prologue}\n`)
+      : captureBody;
     const finalReplacement =
       (fn.directives.sloppy
         ? captured

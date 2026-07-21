@@ -75,6 +75,12 @@ async function run() {
         pure: debug ? [] : ["DEBUG.ASSERT", "DEBUG", "ASSERT"],
         conditions: [side],
         supported: { "using": false },
+        // The server runtime is evaluated via executeProgram (no ambient
+        // `require`), so esbuild's ESM require-shim would throw. Pin `require`
+        // to `import.meta.require` in a banner; the postprocessing below then
+        // rewrites `import.meta` to the `$importMeta` parameter.
+        banner: side === "server" ? { js: "var require=import.meta.require;" } : undefined,
+        external: side === "server" ? ["node:*"] : undefined,
         logLevel: "silent",
       });
       if (result.errors.length) throw new AggregateError(result.errors);

@@ -17,7 +17,6 @@ import {
   getBootstrapVersion,
   getBranch,
   getBranchImageSuffix,
-  getBuildNumber,
   getGithubApiUrl,
   getGithubUrl,
   getSecret,

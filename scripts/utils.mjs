@@ -1148,7 +1148,10 @@ export function getBuildNumber() {
  */
 export function getBranchImageSuffix() {
   const branch = getBranch() || "unknown";
-  return `branch-${branch.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80)}`;
+  return `branch-${branch
+    .replace(/[^A-Za-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)}`;
 }
 
 /**

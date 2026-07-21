@@ -5684,6 +5684,111 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
   expect(readFileSync(file, "utf8")).toBe("hello world");
 });
 
+// pin() blocks transfer(), not ArrayBuffer.prototype.resize: a shrink decommits
+// pages the threadpool hands to write(2)/pwritev(2). Async write/writev now
+// snapshot resizable non-shared inputs at call time.
+describe.concurrent.each(["write", "writev"] as const)(
+  "async fs.%s snapshots a resizable ArrayBuffer input at call time",
+  op => {
+    const fixture = /* js */ `
+      import fs from "node:fs";
+      import { open, readFile, writeFile } from "node:fs/promises";
+      import { join } from "node:path";
+
+      const dir = process.env.FIXTURE_DIR;
+      const SIZE = 256 * 1024;
+      const heavy = join(dir, "heavy");
+      await writeFile(heavy, Buffer.alloc(2 * 1024 * 1024));
+      const saturate = () =>
+        Promise.all(Array.from({ length: 32 }, () => fs.promises.readFile(heavy).catch(() => {})));
+
+      const enqueue = ${
+        op === "write"
+          ? `(fd, ab) => new Promise(r => fs.write(fd, new Uint8Array(ab), 0, SIZE, 0, (e, n) => r({ e, n })))`
+          : `(fd, ab) => new Promise(r => fs.writev(fd, [new Uint8Array(ab, 0, SIZE / 2), new Uint8Array(ab, SIZE / 2)], 0, (e, n) => r({ e, n })))`
+      };
+
+      const out = join(dir, "out");
+      const failures = [];
+      for (let i = 0; i < 6; i++) {
+        const fh = await open(out, "w");
+        const ab = new ArrayBuffer(SIZE, { maxByteLength: SIZE * 2 });
+        new Uint8Array(ab).fill(0x41);
+        const blockers = saturate();
+        const p = enqueue(fh.fd, ab);
+        // Shrink then regrow: zeroes the bytes without leaving PROT_NONE pages,
+        // so a write that races the resize succeeds with wrong content instead
+        // of EFAULT. The snapshot taken at call time must write the 0x41 bytes.
+        ab.resize(0);
+        ab.resize(SIZE);
+        const { e, n } = await p;
+        await blockers;
+        await fh.close();
+        if (e) { failures.push(e.code); continue; }
+        if (n !== SIZE) { failures.push("short=" + n); continue; }
+        const content = await readFile(out);
+        if (content.indexOf(0) !== -1) failures.push("zeroed");
+      }
+      if (failures.length) {
+        console.error(JSON.stringify(failures));
+        process.exit(1);
+      }
+      console.log("ok");
+    `;
+
+    it("writes the call-time bytes", async () => {
+      using dir = tempDir(`fs-${op}-resizable-ab`, {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, FIXTURE_DIR: String(dir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "ok",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
+
+    if (op === "write") {
+      it("snapshots only the [offset, offset+length) window", async () => {
+        using dir = tempDir("fs-write-resizable-offset", {});
+        const out = join(String(dir), "out");
+        const fh = await fs.promises.open(out, "w");
+        const ab = new ArrayBuffer(64, { maxByteLength: 128 });
+        const view = new Uint8Array(ab);
+        view.fill(0x42);
+        view.fill(0x41, 16, 48);
+        const p = new Promise<{ e: any; n: number }>(r => fs.write(fh.fd, view, 16, 32, 0, (e, n) => r({ e, n })));
+        ab.resize(0);
+        const { e, n } = await p;
+        await fh.close();
+        expect({ e, n, out: readFileSync(out) }).toEqual({ e: null, n: 32, out: Buffer.alloc(32, 0x41) });
+      });
+    }
+
+    it("accepts a growable SharedArrayBuffer input", async () => {
+      using dir = tempDir(`fs-${op}-growable-sab`, {});
+      const out = join(String(dir), "out");
+      const fh = await fs.promises.open(out, "w");
+      const sab = new SharedArrayBuffer(4096, { maxByteLength: 8192 });
+      new Uint8Array(sab).fill(0x41);
+      const { e, n } =
+        op === "write"
+          ? await new Promise<{ e: any; n: number }>(r =>
+              fs.write(fh.fd, new Uint8Array(sab), 0, 4096, 0, (e, n) => r({ e, n })),
+            )
+          : await new Promise<{ e: any; n: number }>(r =>
+              fs.writev(fh.fd, [new Uint8Array(sab, 0, 2048), new Uint8Array(sab, 2048)], 0, (e, n) => r({ e, n })),
+            );
+      await fh.close();
+      expect({ e, n, out: readFileSync(out) }).toEqual({ e: null, n: 4096, out: Buffer.alloc(4096, 0x41) });
+    });
+  },
+);
+
 describe("fs.close on stdio descriptors", () => {
   it.skipIf(isWindows)("closeSync(2) actually closes fd 2 and allows redirect", async () => {
     using dir = tempDir("fs-close-stdio", {

@@ -701,6 +701,16 @@ impl ProxyTunnel {
         if let Some(wrapper) = &mut self.wrapper {
             // fast shutdown the connection
             let _ = wrapper.shutdown(true);
+            // This is the completion/fail/redirect teardown (`close_proxy_tunnel`):
+            // the owning client is detaching from the tunnel and is freed by its
+            // result callback, or already delivered its result via `fail()`. Mark
+            // the close notified so a pending `handle_reading` close callback
+            // self-bails instead of running `on_close` on the freed client when a
+            // final response and the TLS close_notify arrive in one read. The error
+            // path (`close_raw`) deliberately does NOT route through here: it relies
+            // on `on_close` -> `close_and_fail` to deliver the error, so its close
+            // callback must still fire.
+            wrapper.mark_close_notified();
         }
     }
 

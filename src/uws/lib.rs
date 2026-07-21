@@ -706,6 +706,15 @@ pub mod ssl_wrapper {
             self.flags.received_ssl_shutdown() && self.flags.sent_ssl_shutdown()
         }
 
+        /// Mark the close as already notified WITHOUT invoking `on_close`. The
+        /// owner uses this when it is detaching for good and must not receive a
+        /// further close callback (e.g. the request completed and freed its
+        /// context). A pending `trigger_close_callback` then no-ops instead of
+        /// calling `on_close` on a detached or freed handler context.
+        pub fn mark_close_notified(&self) {
+            self.flags.set_closed_notified(true);
+        }
+
         pub fn is_authorized(&self) -> bool {
             // handshake ended we know if we are authorized or not
             if self.flags.handshake_state() == HandshakeState::HandshakeCompleted {

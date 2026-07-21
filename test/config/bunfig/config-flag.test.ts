@@ -27,13 +27,26 @@ const spellings = [
   ["-ccfg.toml"],
 ];
 
-describe.concurrent("bun install --config path binding", () => {
+describe("bun install --config path binding", () => {
   test.each(spellings)("install %p loads the named config, never treats it as a package", async (...flag) => {
+    // Local 404 registry so nothing ever reaches the public network, even if
+    // parsing regresses and routes the path to `bun add`.
+    const hits: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        hits.push(new URL(req.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+    const base = `http://localhost:${server.port}`;
+
     using dir = tempDir("config-flag-install", {
-      "package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { "is-odd": "*" } }),
-      // A config that points the registry at a closed port. If honored,
-      // resolution fails before any public-registry GET.
-      "cfg.toml": `[install]\nregistry = "http://127.0.0.1:1/"\n`,
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+      // Auto-loaded when `--config` is NOT effective (regression).
+      "bunfig.toml": `[install]\nregistry = "${base}/default/"\ncache = false\n`,
+      // Loaded when `--config cfg.toml` IS effective (the fix).
+      "cfg.toml": `[install]\nregistry = "${base}/fromcfg/"\ncache = false\n`,
     });
 
     const { stdout, stderr, exitCode } = await run(String(dir), ["install", ...flag]);
@@ -41,10 +54,10 @@ describe.concurrent("bun install --config path binding", () => {
 
     // The path must never be routed to `bun add` as a package name.
     expect(out).not.toContain("bun add");
-    expect(out).not.toContain("/cfg.toml");
-    // The config must have been loaded: install should fail against the
-    // dead registry, not succeed against the public one.
-    expect(out.toLowerCase()).toMatch(/connectionrefused|econnrefused|failed to resolve/);
+    expect(hits).not.toContain("/default/cfg.toml");
+    // The named config must have been loaded, not the auto-loaded bunfig.toml.
+    expect(hits).toContain("/fromcfg/no-deps");
+    expect(hits).not.toContain("/default/no-deps");
     expect(exitCode).not.toBe(0);
   });
 

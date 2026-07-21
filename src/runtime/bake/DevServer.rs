@@ -3244,6 +3244,12 @@ impl DeferredRequest {
                 drop(saved);
             }
             Handler::BundledHtmlPage(r) => {
+                // Reached from JS event-loop tasks (on_plugins_rejected, the
+                // bundle-completion OOM cleanup defer), so end_without_body
+                // alone cannot close the socket; write Content-Length so the
+                // client has framing.
+                r.response.write_status(b"500 Internal Server Error");
+                r.response.write_header_int(b"Content-Length", 0);
                 r.response.end_without_body(true);
             }
             Handler::Aborted => {}

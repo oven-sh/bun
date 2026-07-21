@@ -4,7 +4,7 @@
 // always produce correct code, or bail with an error.
 import assert from "node:assert";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { FuncOptions, t } from "./bindgen-lib";
 import { hash, inspect, inspectCustom } from "./helpers";
 
@@ -873,17 +873,19 @@ function validateVariant(variant: any) {
   return { minRequiredArgs };
 }
 
-// Node ESM frames use file:// URLs (forward-slash even on Windows); Bun uses
-// plain host paths. Compare against the forward-slash form so a Windows
-// `import.meta.dirname` still matches the frame.
+// Bun frames use plain host paths; Node ESM frames use percent-encoded
+// file:// URLs. Compare against both so checkouts at paths that
+// pathToFileURL encodes (spaces, '#') still match.
 const codegenDirForward = import.meta.dirname.replaceAll("\\", "/");
+const codegenDirUrl = pathToFileURL(import.meta.dirname).href;
 
 function snapshotCallerLocation(): string | undefined {
   const stack = new Error().stack!;
   const lines = stack.split("\n");
   let i = 1;
   for (; i < lines.length; i++) {
-    if (!lines[i].replaceAll("\\", "/").includes(codegenDirForward)) {
+    const l = lines[i].replaceAll("\\", "/");
+    if (!l.includes(codegenDirForward) && !l.includes(codegenDirUrl)) {
       return lines[i];
     }
   }

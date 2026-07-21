@@ -264,7 +264,9 @@ const outputs = new Map();
 
 for (const entrypoint of bundledEntryPoints) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
-  let output = fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8").replace(/^\/\/[^\n]*\n/gm, "");
+  let output = fs
+    .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
+    .replace(/^\/\/ .*?\btmp_modules\b.*\n/m, "");
   // esbuild's keepNames `__name` reads user-overridable Object.defineProperty
   // and trusts its return value as the binding; neutralize both.
   if (output.includes("__name(")) {

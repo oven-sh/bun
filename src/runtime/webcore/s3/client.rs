@@ -467,7 +467,9 @@ pub(crate) fn writable_stream(
                 }
             }
         }
-        sink.finalize();
+        // SAFETY: `sink` is the heap-allocated `callback_context`; this releases
+        // the task's +1 on it and is the last use of `sink`.
+        unsafe { NetworkSink::deref(core::ptr::from_mut(sink)) };
         Ok(())
     }
 

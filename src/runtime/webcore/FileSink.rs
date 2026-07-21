@@ -924,21 +924,23 @@ impl FileSink {
             }
         }
 
-        // Per-wrapper accounting is on `ref_count` directly: each path that
-        // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
-        // via `self.ref_()`, and `finalize`'s `deref()` below releases it.
-        // `JsSinkType::construct` allocates with `ref_count=1` and that +1
-        // belongs to the wrapper it's about to be stored in, so no extra
-        // `ref_()` there. Callers that allocate via `init`/`create` and then
-        // `to_js()` must `deref()` once to release init's +1 (see
-        // `Blob::get_writer`).
-        //
-        // `pending` is left for `run_pending`/`deinit()`: `.close()` reaches
-        // here via `doClose` while a backpressured write may still be awaited.
+        self.pending.set(streams::WritablePending::default());
+        self.release_wrapper_ref();
+    }
+
+    // Per-wrapper accounting is on `ref_count` directly: each path that
+    // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
+    // via `self.ref_()`, and `finalize`'s `deref()` below releases it.
+    // `JsSinkType::construct` allocates with `ref_count=1` and that +1
+    // belongs to the wrapper it's about to be stored in, so no extra
+    // `ref_()` there. Callers that allocate via `init`/`create` and then
+    // `to_js()` must `deref()` once to release init's +1 (see
+    // `Blob::get_writer`).
+    fn release_wrapper_ref(&mut self) {
         self.readable_stream.set(readable_stream::Strong::default());
         self.js_sink_ref.with_mut(|r| r.deinit());
         // SAFETY: `&mut self` carries write provenance over the whole
-        // allocation; this is the last use of `self` in `finalize`.
+        // allocation; this is the last use of `self`.
         unsafe { FileSink::deref(std::ptr::from_mut::<Self>(self)) };
     }
 
@@ -1199,6 +1201,12 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     }
     fn finalize(&mut self) {
         Self::finalize(self)
+    }
+    fn wrapper_detached(&mut self) {
+        // `.close()` may run while a backpressured write promise is still
+        // awaited; leave `pending` for `run_pending` and skip the GC-sweep
+        // shutdown cleanup.
+        Self::release_wrapper_ref(self)
     }
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         // `Self::construct()` allocates with `ref_count=1`; that +1 belongs to

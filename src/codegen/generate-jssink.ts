@@ -285,6 +285,7 @@ using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
 ${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
+${classes.map(name => `extern "C" void ${name}__wrapperDetached(void* sinkPtr);`).join("\n")}
 `;
   var templ = head;
 
@@ -514,8 +515,8 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
     ${name}__close(lexicalGlobalObject, ptr);
     // detach() nulled m_sinkPtr so ~${className} will not reach __finalize;
-    // release the wrapper's ref here instead.
-    ${name}__finalize(ptr);
+    // release the wrapper's ref via a non-GC path.
+    ${name}__wrapperDetached(ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -1116,6 +1117,16 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
     templ += `#[unsafe(no_mangle)]
 pub extern "C" fn ${name}__finalize(this: &mut ${name}) {
     ${JSSinkT}::js_finalize(this)
+}
+
+`;
+
+    // extern "C" void ${name}__wrapperDetached(void* sinkPtr) — called from
+    // ${name}__doClose after it nulls m_sinkPtr. C++ caller null-checks `ptr`.
+    symbols.push(`${name}__wrapperDetached`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__wrapperDetached(this: &mut ${name}) {
+    ${JSSinkT}::js_wrapper_detached(this)
 }
 
 `;

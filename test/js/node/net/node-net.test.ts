@@ -1068,8 +1068,8 @@ describe("net.Server accepted-socket buffering", () => {
   });
 
   it("delivers bytes to a 'data' listener attached via setImmediate from the connection handler", async () => {
-    // The abandoned-socket teardown at EOF is deferred so a nextTick /
-    // microtask / setImmediate attach still counts as engaging the reader.
+    // Bytes that arrived before the handler engaged the readable side stay
+    // buffered until a reader attaches, like Node.
     const received = Promise.withResolvers<string>();
     const server = createServer(sock => {
       setImmediate(() => {

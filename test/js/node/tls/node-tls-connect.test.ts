@@ -143,6 +143,10 @@ it("should have checkServerIdentity", async () => {
 
 it("should thow ECONNRESET if FIN is received before handshake", async () => {
   await using server = net.createServer(c => {
+    // resume() so the ClientHello the peer still sends is discarded and `c`
+    // can reach 'end' -> autoDestroy; Node buffers otherwise and server.close()
+    // (from await using) would wait on it forever.
+    c.resume();
     c.end();
   });
   await once(server.listen(0, "127.0.0.1"), "listening");

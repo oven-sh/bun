@@ -181,20 +181,6 @@ function validateCiphers(ciphers: string, name: string = "options") {
 
 const VALID_TLS_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
 
-const SUPPORTED_ECDH_GROUPS = new Set([
-  "P-256",
-  "prime256v1",
-  "P-384",
-  "secp384r1",
-  "P-521",
-  "secp521r1",
-  "X25519",
-  "x25519",
-  "X25519Kyber768Draft00",
-  "X25519MLKEM768",
-  "MLKEM1024",
-]);
-
 // Subset of Node's configSecureContext() validations:
 // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L318
 function validateSecureContextOptions(options) {
@@ -218,18 +204,7 @@ function validateSecureContextOptions(options) {
     validateString(sigalgs, "options.sigalgs");
     if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
   }
-  if (ecdhCurve !== undefined && ecdhCurve !== null) {
-    validateString(ecdhCurve, "options.ecdhCurve");
-    if (ecdhCurve !== "auto") {
-      for (const curve of StringPrototypeSplit.$call(ecdhCurve, ":")) {
-        if (!SUPPORTED_ECDH_GROUPS.has(curve)) {
-          const err = new Error("Failed to set ECDH curve") as Error & { code: string };
-          err.code = "ERR_CRYPTO_OPERATION_FAILED";
-          throw err;
-        }
-      }
-    }
-  }
+  if (ecdhCurve !== undefined) validateString(ecdhCurve, "options.ecdhCurve");
   // clientCertEngine must be a string (engine name); a provided engine then
   // fails because BoringSSL (which Bun always uses) has no OpenSSL ENGINE
   // support, matching Node's setClientCertEngine. Node:
@@ -647,7 +622,9 @@ var InternalSecureContext = class SecureContext {
     }
     const requestedCiphers = options?.ciphers;
     if (requestedCiphers && StringPrototypeIncludes.$call(requestedCiphers, "TLS_")) {
-      options = { ...options, ciphers: stripTls13CipherNames(requestedCiphers) };
+      const { cipherList, tls13Only } = stripTls13CipherNames(requestedCiphers);
+      options = { ...options, ciphers: cipherList };
+      if (tls13Only) options.minVersion = "TLSv1.3";
     }
     // The native handle (SSL_CTX wrapper) is what's memoised — not this JS
     // object — so per-call fields like `servername` come from THIS call's
@@ -1079,7 +1056,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
-    ciphers: this.ciphers && stripTls13CipherNames(this.ciphers),
+    ciphers: this.ciphers && stripTls13CipherNames(this.ciphers).cipherList,
     // Hand the native SSL_CTX wrapper to upgradeTLS so it can up_ref instead
     // of rebuilding from raw cert/key bytes.
     secureContext: ctx?.context,
@@ -1401,22 +1378,23 @@ function Server(options, secureConnectionListener): void {
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
-        ciphers: this.ciphers && stripTls13CipherNames(this.ciphers),
         // Translate minVersion/maxVersion/secureProtocol to the integer
         // protocol range the native layer applies (secureProtocol wins, like
         // Node's SecureContext::Init). When none are given the module-level
         // tls.DEFAULT_MIN_VERSION / DEFAULT_MAX_VERSION apply.
         ...(() => {
+          const processed = this.ciphers && stripTls13CipherNames(this.ciphers);
           let minVersion, maxVersion;
           const range = secureProtocolToVersionRange(this.secureProtocol);
           if (range) {
             minVersion = range[0];
             maxVersion = range[1];
           } else {
-            minVersion = tlsStringToProtocolVersion(this.minVersion ?? DEFAULT_MIN_VERSION);
+            const min = processed && processed.tls13Only ? "TLSv1.3" : (this.minVersion ?? DEFAULT_MIN_VERSION);
+            minVersion = tlsStringToProtocolVersion(min);
             maxVersion = tlsStringToProtocolVersion(this.maxVersion ?? DEFAULT_MAX_VERSION);
           }
-          return { minVersion, maxVersion };
+          return { ciphers: processed && processed.cipherList, minVersion, maxVersion };
         })(),
       },
       TLSSocket,
@@ -1751,10 +1729,16 @@ function tlsCipherFilter(a: string) {
   return !StringPrototypeStartsWith.$call(a, "TLS_");
 }
 
-function stripTls13CipherNames(ciphers: string): string {
-  if (!StringPrototypeIncludes.$call(ciphers, "TLS_")) return ciphers;
-  const kept = ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(ciphers, ":"), tlsCipherFilter);
-  return ArrayPrototypeJoin.$call(kept, ":");
+// Node's processCiphers splits into cipherList (<=1.2) and cipherSuites (1.3);
+// when only 1.3 suites were given it forces minVersion = TLSv1.3 so the empty
+// 1.2 list does not leave the handshake with nothing to offer:
+// https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L117
+function stripTls13CipherNames(ciphers: string): { cipherList: string; tls13Only: boolean } {
+  if (!StringPrototypeIncludes.$call(ciphers, "TLS_")) return { cipherList: ciphers, tls13Only: false };
+  const parts = StringPrototypeSplit.$call(ciphers, ":");
+  const kept = ArrayPrototypeFilter.$call(parts, tlsCipherFilter);
+  const cipherList = ArrayPrototypeJoin.$call(kept, ":");
+  return { cipherList, tls13Only: cipherList === "" && kept.length !== parts.length };
 }
 
 function getDefaultCiphers() {
@@ -1777,7 +1761,7 @@ export default {
     if (value) {
       validateCiphers(value, "value");
       // filter out TLS_ ciphers
-      value = stripTls13CipherNames(value);
+      value = stripTls13CipherNames(value).cipherList;
     }
     setTLSDefaultCiphers(value);
   },

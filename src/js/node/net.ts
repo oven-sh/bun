@@ -146,7 +146,6 @@ const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
 const kended = Symbol("ended");
-const kReaderInterest = Symbol("kReaderInterest");
 const kpendingSession = Symbol("pendingSession");
 const kSNIError = Symbol("kSNIError");
 const kALPNError = Symbol("kALPNError");
@@ -615,9 +614,6 @@ function SocketEmitEndNT(self, _err?) {
   }
   if (!self[kended]) {
     finishSocketEnd(self);
-    if (!self.allowHalfOpen && !self[kReaderInterest]) {
-      setImmediate(destroyAbandonedNT, self);
-    }
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
@@ -1111,23 +1107,6 @@ function onconnection(err, clientHandle) {
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
   }
-  if (_socket.readableFlowing !== null || _socket.listenerCount("data") > 0 || _socket.listenerCount("readable") > 0) {
-    _socket[kReaderInterest] = true;
-  }
-}
-
-function destroyAbandonedNT(self) {
-  if (
-    self.destroyed ||
-    self[kReaderInterest] ||
-    self.readableLength === 0 ||
-    self.readableFlowing !== null ||
-    self.listenerCount("data") > 0 ||
-    self.listenerCount("readable") > 0
-  ) {
-    return;
-  }
-  self.destroySoon();
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
@@ -1617,22 +1596,32 @@ function Socket(options?) {
     const self = this;
     this[kOnreadTail] = undefined;
     this[kOnreadDraining] = false;
-    this[kOnreadBuffer] = onreadBufferIsFn ? true : onreadBuffer;
+    // Node calls the factory once at initSocketHandle time, then once after
+    // every callback (stream_base_commons onStreamRead): the first delivery
+    // already has a real buffer, and a non-Uint8Array result leaves the prior
+    // value (or the `true` sentinel) in place.
+    if (onreadBufferIsFn) {
+      const first = onreadBuffer();
+      this[kOnreadBuffer] = isUint8Array(first) ? first : true;
+    } else {
+      this[kOnreadBuffer] = onreadBuffer;
+    }
     this[kOnreadDeliver] = function deliver(buffer) {
       try {
         let offset = 0;
         const total = buffer.length;
         while (offset < total) {
-          if (onreadBufferIsFn) {
-            const next = onreadBuffer();
-            if (isUint8Array(next)) self[kOnreadBuffer] = next;
-          }
           const dest = self[kOnreadBuffer];
           if (dest === true) {
-            if (onreadCallback(total - offset, true) === false) {
+            const ret = onreadCallback(total - offset, true);
+            if (onreadBufferIsFn) {
+              const next = onreadBuffer();
+              if (isUint8Array(next)) self[kOnreadBuffer] = next;
+            }
+            if (self.destroyed) return;
+            if (ret === false || self.isPaused()) {
               self[kOnreadTail] = kOnreadEmptyTail;
               self._handle?.pause?.();
-              Duplex.prototype.pause.$call(self);
             }
             return;
           }
@@ -1646,14 +1635,19 @@ function Socket(options?) {
           }
           const n = Math.min(dest.length, total - offset);
           dest.set(buffer.subarray(offset, offset + n));
-          if (onreadCallback(n, dest) === false) {
-            const rest = buffer.subarray(offset + n);
+          offset += n;
+          const ret = onreadCallback(n, dest);
+          if (onreadBufferIsFn) {
+            const next = onreadBuffer();
+            if (isUint8Array(next)) self[kOnreadBuffer] = next;
+          }
+          if (self.destroyed) return;
+          if (ret === false || self.isPaused()) {
+            const rest = buffer.subarray(offset);
             self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
             self._handle?.pause?.();
-            Duplex.prototype.pause.$call(self);
             return;
           }
-          offset += n;
         }
       } catch (e) {
         self.destroy(e);
@@ -2217,6 +2211,10 @@ function drainOnreadTailNT(socket) {
 }
 
 Socket.prototype.resume = function resume() {
+  // Schedule the Readable flow tick first so its read() runs while
+  // kOnreadDraining is still set and does not queue a second drain: Node's
+  // override sets handle.reading synchronously for the same reason.
+  const ret = Duplex.prototype.resume.$call(this);
   if (!this.connecting && !drainOnreadTail(this)) {
     this._handle?.resume?.();
   }
@@ -2228,7 +2226,7 @@ Socket.prototype.resume = function resume() {
     this._handle?.ref?.();
     this[kPausedUnref] = false;
   }
-  return Duplex.prototype.resume.$call(this);
+  return ret;
 };
 
 Socket.prototype.pause = function pause() {

@@ -80,6 +80,14 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, R
             Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, -1);
         return;
     }
+    // An AtSomePoint ticket (Atomics.waitAsync) sat in m_pendingTicketsOther
+    // without an event-loop ref while dormant. The work is now imminent, so
+    // promote it; otherwise the queued concurrent task is invisible to
+    // is_event_loop_alive() and the loop can exit before draining it.
+    if (auto pending = scheduler.m_pendingTicketsOther.take(ticket)) {
+        Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, 1);
+        scheduler.m_pendingTicketsKeepingEventLoopAlive.add(pending.releaseNonNull());
+    }
     auto* job = new JSCDeferredWorkTask(WTF::move(ticket), WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->bunVM, job);
 }

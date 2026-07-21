@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Atomics", () => {
   describe("basic operations", () => {
@@ -158,6 +159,61 @@ describe("Atomics", () => {
       } else {
         expect(typeof result.value).toBe("string");
       }
+    });
+
+    test("waitAsync promises resolve when notify is the last live handle", async () => {
+      // The notify() inside the setTimeout callback is the last thing keeping the
+      // event loop alive. The waiter resolutions it schedules must still run
+      // before the process exits (Node.js behaviour).
+      const src = `
+        const ia = new Int32Array(new SharedArrayBuffer(4));
+        const got = [];
+        for (let i = 0; i < 5; i++)
+          Atomics.waitAsync(ia, 0, 0, 60000).value.then(v => {
+            got.push("w" + i + ":" + v);
+            if (got.length === 5) console.log("resolved:" + got.join(","));
+          });
+        setTimeout(() => console.log("notify=" + Atomics.notify(ia, 0)), 40);
+        process.on("exit", () => {
+          if (got.length !== 5) console.log("exit-with-unsettled:" + got.length);
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("notify=5\nresolved:w0:ok,w1:ok,w2:ok,w3:ok,w4:ok\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("waitAsync alone does not keep the event loop alive", async () => {
+      // Matches Node.js: a pending waitAsync with no other live handle lets the
+      // process exit. Only a delivered notify should extend the loop.
+      const src = `
+        const ia = new Int32Array(new SharedArrayBuffer(4));
+        Atomics.waitAsync(ia, 0, 0, 60000).value.then(v => console.log("settled:" + v));
+        process.on("exit", () => console.log("exit"));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("exit\n");
+      expect(exitCode).toBe(0);
     });
   });
 

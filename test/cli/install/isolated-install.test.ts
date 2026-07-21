@@ -2443,3 +2443,84 @@ test("invalid --linker value is echoed back in the error", async () => {
   expect(stderr).toContain("'isolated' or 'hoisted'");
   expect(exitCode).toBe(1);
 });
+
+describe("global install", () => {
+  // Regression: `bun add -g --linker isolated <pkg-with-bin>` used to leave
+  // the bin in `<BUN_INSTALL>/install/global/node_modules/.bin/` instead of
+  // linking it into `<BUN_INSTALL>/bin/`, so the command wasn't on $PATH.
+  // https://github.com/oven-sh/bun/issues/30450
+  //
+  // File-path deps here so the test doesn't depend on the registry — the bug
+  // is in the isolated installer's `linkDependencyBins` pass and fires the
+  // same way regardless of source.
+  test("links requested-package bins into BUN_INSTALL/bin", async () => {
+    using dir = tempDir("isolated-global-bin-", {
+      "pkg-with-bin/package.json": JSON.stringify({
+        name: "pkg-with-bin",
+        version: "1.0.0",
+        bin: { "bin-from-pkg": "./cli.js" },
+      }),
+      "pkg-with-bin/cli.js": "#!/usr/bin/env node\nconsole.log('ok');\n",
+    });
+    const bunInstall = join(String(dir), "bun-install");
+    const globalBinDir = join(bunInstall, "bin");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "-g", "--linker=isolated", join(String(dir), "pkg-with-bin")],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_INSTALL: bunInstall },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("pkg-with-bin");
+    expect(exitCode).toBe(0);
+
+    // POSIX: `bin-from-pkg` symlink. Windows: `bin-from-pkg.exe` shim.
+    const hasBin = existsSync(join(globalBinDir, "bin-from-pkg")) || existsSync(join(globalBinDir, "bin-from-pkg.exe"));
+    expect(hasBin).toBe(true);
+  });
+
+  // Transitive bins (bins of deps of the requested package) must NOT land in
+  // `<BUN_INSTALL>/bin/` for a *non-global* install — the global-bin link is
+  // gated on `options.global`. A local `bun install` with the isolated linker
+  // links the bin into the project's `node_modules/.bin/`, never into
+  // `<BUN_INSTALL>/bin/`. Guards the `options.global` half of the gate.
+  test("non-global install does not link bins into BUN_INSTALL/bin", async () => {
+    using dir = tempDir("isolated-global-bin-local-", {
+      "proj/package.json": JSON.stringify({
+        name: "proj",
+        version: "1.0.0",
+        dependencies: { "dep-pkg": "file:../dep-pkg" },
+      }),
+      "proj/bunfig.toml": `[install]\nlinker = "isolated"\n`,
+      "dep-pkg/package.json": JSON.stringify({
+        name: "dep-pkg",
+        version: "1.0.0",
+        bin: { "dep-bin": "./dep.js" },
+      }),
+      "dep-pkg/dep.js": "#!/usr/bin/env node\nconsole.log('dep');\n",
+    });
+    const projDir = join(String(dir), "proj");
+    const bunInstall = join(String(dir), "bun-install");
+    const globalBinDir = join(bunInstall, "bin");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projDir,
+      env: { ...bunEnv, BUN_INSTALL: bunInstall },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    // The bin is linked into the project, not the global bin dir.
+    const localBin = process.platform === "win32" ? "dep-bin.bunx" : "dep-bin";
+    expect(existsSync(join(projDir, "node_modules", ".bin", localBin))).toBe(true);
+    expect(existsSync(join(globalBinDir, "dep-bin"))).toBe(false);
+    expect(existsSync(join(globalBinDir, "dep-bin.exe"))).toBe(false);
+  });
+});

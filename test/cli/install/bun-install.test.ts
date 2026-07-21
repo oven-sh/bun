@@ -9182,7 +9182,9 @@ it("should honor [install] dryRun from bunfig.toml", async () => {
       name: "x",
       dependencies: { a: "file:./vend/a" },
     }),
-    "bunfig.toml": "[install]\ndryRun = true\n",
+    // [install.lockfile] save = true is redundant (already the default) but
+    // must not re-enable lockfile writing when dryRun is also set.
+    "bunfig.toml": "[install]\ndryRun = true\n\n[install.lockfile]\nsave = true\n",
   });
 
   await using proc = spawn({

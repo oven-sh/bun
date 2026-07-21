@@ -2252,12 +2252,23 @@ fn append_hostname(out: &mut Vec<u8>) {
 
 #[cfg(windows)]
 fn append_hostname(out: &mut Vec<u8>) {
-    let mut buf = [0u8; 256];
-    let mut size: usize = buf.len();
-    // SAFETY: `buf` is valid for `size` writes; `size` is in-out. libuv
-    // handles WSAStartup itself, so this works before any socket init.
-    if unsafe { bun_libuv_sys::uv_os_gethostname(buf.as_mut_ptr().cast(), &mut size) } == 0 {
-        out.extend_from_slice(&buf[..size]);
+    use bun_sys::windows::{GetHostNameW, ws2_32};
+    let mut buf = [0u16; 256];
+    // `GetHostNameW` is winsock and fails with WSANOTINITIALISED before
+    // `WSAStartup`; mirror `node_os::hostname` and retry once after init.
+    // SAFETY: `buf` is valid for `len - 1` writes (NUL reserved).
+    let mut rc = unsafe { GetHostNameW(buf.as_mut_ptr(), (buf.len() - 1) as _) };
+    if rc != 0 {
+        let mut wsa: ws2_32::WSADATA = bun_core::ffi::zeroed();
+        // SAFETY: valid out-pointer.
+        if unsafe { ws2_32::WSAStartup(0x202, &mut wsa) } == 0 {
+            // SAFETY: as above.
+            rc = unsafe { GetHostNameW(buf.as_mut_ptr(), (buf.len() - 1) as _) };
+        }
+    }
+    if rc == 0 {
+        let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        bun_core::strings::convert_utf16_to_utf8_append(out, &buf[..end]);
     }
 }
 

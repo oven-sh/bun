@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { azure } from "./azure.mjs";
 import { packerDownload } from "./build/ci/artifacts.ts";
-import { BOOTSTRAP_SOURCE_DIRS, LINUX_REMOTE_ROOT, linuxBootstrapCommand } from "./build/ci/delivery.ts";
+import { BOOTSTRAP_SOURCE_DIRS, LINUX_REMOTE_ROOT } from "./build/ci/delivery.ts";
 import { imageName as computeImageName, imageEntry } from "./build/ci/naming.ts";
 import { linuxPackerTemplate, windowsPackerTemplate } from "./build/ci/packer.ts";
 import { docker } from "./docker.mjs";
@@ -698,6 +698,5 @@ async function main() {
   // including cleanup on failure.
   await buildLinuxImageWithPacker({ image, repoRef, agentPath, bootstrapDir });
 }
-
 
 await main();

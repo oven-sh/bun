@@ -31,7 +31,11 @@ const ciDir = here; // scripts/build/ci — everything here ships to the bake VM
 /** Files under scripts/build/ci that are TOOLING, not recipe: they inspect
  * or check images but produce nothing on one. Editing them must not rename
  * any image. Everything else in the tree is recipe. */
-const NON_RECIPE = new Set(["scripts/build/ci/check.ts", "scripts/build/ci/existence.ts", "scripts/build/ci/CLAUDE.md"]);
+const NON_RECIPE = new Set([
+  "scripts/build/ci/check.ts",
+  "scripts/build/ci/existence.ts",
+  "scripts/build/ci/CLAUDE.md",
+]);
 
 /** Recipe files that produce only ONE platform's images. Any recipe file
  * not listed here is shared and affects both. toolchain-linux.ts holds

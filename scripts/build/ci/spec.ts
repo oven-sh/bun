@@ -53,7 +53,6 @@
  */
 export const epoch = 1;
 
-
 /** Packer, which bakes every CI image (Linux via amazon-ebs, Windows via
  * azure-arm). One tool, so its pins are shared facts. Bumping these does
  * not change what is ON any image, so hashes are unaffected. */

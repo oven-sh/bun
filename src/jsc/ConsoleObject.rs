@@ -1726,8 +1726,6 @@ pub mod formatter {
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
-                // `print_as_prelude` is the only recursion guard on the array
-                // path, so seat a live bound here (one thread-local read).
                 stack_check: StackCheck::init(),
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
@@ -3383,16 +3381,15 @@ pub mod formatter {
             if self.global_this.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }
-            if !can_circ {
-                return Ok(true);
-            }
-
             if !self.stack_check.is_safe_to_recurse() {
                 self.failed = true;
                 if self.can_throw_stack_overflow {
                     return Err(self.global_this.throw_stack_overflow());
                 }
                 return Ok(false);
+            }
+            if !can_circ {
+                return Ok(true);
             }
 
             if self.map_node.is_none() {

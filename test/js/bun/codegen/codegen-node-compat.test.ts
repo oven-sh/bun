@@ -8,9 +8,11 @@ import { globSync, readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 const codegenDir = path.join(repoRoot, "src", "codegen");
+const nodeLoaderUrl = pathToFileURL(path.join(codegenDir, "node-loader.ts")).href;
 
 function findOnPath(name: string, minMajor = 0): string | null {
   const exe = process.platform === "win32" ? `${name}.exe` : name;
@@ -32,14 +34,7 @@ const perl = findOnPath("perl");
 
 async function runNode(args: string[], opts: { cwd?: string; env?: Record<string, string> } = {}) {
   await using proc = Bun.spawn({
-    cmd: [
-      node!,
-      "--experimental-strip-types",
-      "--no-warnings",
-      "--import",
-      path.join(codegenDir, "node-loader.ts"),
-      ...args,
-    ],
+    cmd: [node!, "--experimental-strip-types", "--no-warnings", "--import", nodeLoaderUrl, ...args],
     env: opts.env ?? bunEnv,
     cwd: opts.cwd,
     stdout: "pipe",
@@ -126,10 +121,9 @@ describe.skipIf(!node)("codegen scripts execute under Node", () => {
   });
 });
 
-// The bundled src/js modules are now produced by esbuild instead of Bun.build.
-// Loading every public builtin proves JSC's builtin parser accepts the new
-// output (catches `view.is8Bit()`, `__commonJS` wrapping, trailing `//!`
-// swallowing the wrapper close, stray `__name`, ...).
+// The bundled src/js modules now come from esbuild; loading every public
+// builtin proves JSC's builtin parser accepts the new output (catches
+// is8Bit/__commonJS/trailing-`//!`/__name regressions).
 test("all builtin modules load in the built bun", async () => {
   const mods = builtinModules.filter(m => !m.startsWith("_") && !m.startsWith("bun:internal"));
   await using proc = Bun.spawn({

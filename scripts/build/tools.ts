@@ -116,7 +116,7 @@ export interface PackageManager {
 
 /**
  * Find a package manager for the codegen install steps. Prefer bun when
- * available (reuses the checked-in bun.lock), otherwise any of npm/pnpm/yarn.
+ * available (reuses the checked-in bun.lock), otherwise npm.
  * All codegen scripts run under `cfg.jsRuntime`, so bun is NOT required; this
  * only affects which `install` command populates node_modules/.
  */

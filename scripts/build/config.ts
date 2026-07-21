@@ -244,7 +244,7 @@ export interface Config {
   jsRuntimeArgv: string[];
   /**
    * Package manager for the codegen install steps. Absolute path to bun if
-   * available (uses bun.lock), otherwise npm/pnpm/yarn from PATH.
+   * available (uses bun.lock), otherwise npm.
    */
   packageManager: { exe: string; installArgs: string[]; lockfile: string };
   esbuild: string;

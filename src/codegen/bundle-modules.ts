@@ -239,12 +239,10 @@ const modulesResult = await esbuild.build({
   // Latin-1, so escape everything outside ASCII.
   charset: "ascii",
   // Syntax minification is on in both debug and release: the $bundleError
-  // checks below depend on dead-branch elimination after process.platform /
-  // process.arch are substituted via `define`, and esbuild only folds those
-  // when minifySyntax is true. keepNames is off: esbuild implements it by
-  // injecting a `__name` helper outside the captured body, leaving dangling
-  // calls inside the function wrapper.
+  // checks below depend on dead-branch elimination after the define
+  // substitutions, which esbuild only folds with minifySyntax on.
   minifySyntax: true,
+  keepNames: true,
   external: builtinModules.flatMap(x => [x, "node:" + x]),
   legalComments: "none",
   define: {

@@ -36,6 +36,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Sources } from "../glob-sources.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
 import type { Config } from "./config.ts";
@@ -117,7 +118,7 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   // ship with the build host's platform baked in.
   //
   // restat = 1 because most scripts use writeIfNotChanged().
-  const nodeLoader = q(resolve(cfg.cwd, "src", "codegen", "node-loader.ts"));
+  const nodeLoader = q(pathToFileURL(resolve(cfg.cwd, "src", "codegen", "node-loader.ts")).href);
   const runtime = `${cfg.jsRuntime} --import ${nodeLoader}`;
   const env = hostWin
     ? `set TARGET_PLATFORM=${platform}&& set TARGET_ARCH=${arch}&& `
@@ -820,7 +821,7 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // configure immediately with a clear error. Better to catch that here than
   // get a cryptic "multiple rules generate <unknown>" from ninja.
   const sourcesArg = sources.bindgenV2.join(",");
-  const nodeLoader = resolve(cfg.cwd, "src", "codegen", "node-loader.ts");
+  const nodeLoader = pathToFileURL(resolve(cfg.cwd, "src", "codegen", "node-loader.ts")).href;
   const [rt, ...rtArgs] = cfg.jsRuntimeArgv;
   const listResult = spawnSync(
     rt,

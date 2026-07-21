@@ -246,7 +246,7 @@ The build system runs under Node 24+ with `--experimental-strip-types` (or Node 
 
 `cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (codegen, stream.ts, fetch-cli.ts, the regen rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. `cfg.jsRuntimeArgv` is the same thing as argv for spawnSync.
 
-Codegen scripts use the esbuild npm package (not `Bun.build`) for bundling the src/js modules and bake runtime; `cfg.packageManager` picks bun/npm/pnpm/yarn for the install steps. When running under Node, `src/codegen/node-loader.ts` (registered via `--import`) provides the tsconfig path mappings (`bindgen`/`bindgenv2`) that `*.bind.ts` rely on.
+Codegen scripts use the esbuild npm package (not `Bun.build`) for bundling the src/js modules and bake runtime; `cfg.packageManager` picks bun (preferred) or npm for the install steps. When running under Node, `src/codegen/node-loader.ts` (registered via `--import`) provides the tsconfig path mappings (`bindgen`/`bindgenv2`) that `*.bind.ts` rely on.
 
 ## Adding a workaround
 

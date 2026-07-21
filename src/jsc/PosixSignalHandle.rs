@@ -252,9 +252,7 @@ impl PosixSignalTask {
         let fired = Bun__onSignalForJS(i32::from(number), global_object);
         // Node parity: in watch mode the watcher exits 0 on SIGINT when the
         // script has no handler for it (see `enable_watch_mode_signals`).
-        if !fired
-            && number == SIGINT_NUMBER
-            && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0
+        if !fired && number == SIGINT_NUMBER && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0
         {
             bun_core::Output::flush();
             bun_core::Global::exit(0);

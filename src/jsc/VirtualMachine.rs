@@ -3585,9 +3585,10 @@ impl VirtualMachine {
             // entry promise (node restarts regardless of child state), and
             // emit the --watch-kill-signal JS handlers first, like node.
             crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
-            let should_clear_terminal = !self
-                .env_loader()
-                .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
+            let should_clear_terminal =
+                !self.env_loader().has_set_no_clear_terminal_on_reload(
+                    !bun_core::Output::enable_ansi_colors_stdout(),
+                );
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }

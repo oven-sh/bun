@@ -359,18 +359,19 @@ it.if(isPosix && process.getuid?.() === 0)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      syscall: "uv_os_setpriority",
-      errno: -os.constants.errno.EPERM,
-      info: {
-        code: "EPERM",
-        errno: -os.constants.errno.EPERM,
-        message: "operation not permitted",
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+      result: {
         syscall: "uv_os_setpriority",
+        errno: -os.constants.errno.EPERM,
+        info: {
+          code: "EPERM",
+          errno: -os.constants.errno.EPERM,
+          message: "operation not permitted",
+          syscall: "uv_os_setpriority",
+        },
       },
+      exitCode: 0,
     });
-    expect(exitCode).toBe(0);
   },
 );

@@ -4558,6 +4558,7 @@ impl VirtualMachine {
         allow_side_effects: bool,
     ) {
         let mut formatter = crate::console_object::Formatter::new(self.global());
+        formatter.stack_check = bun_core::StackCheck::init();
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),
@@ -5564,6 +5565,7 @@ impl VirtualMachine {
         allow_ansi_color: bool,
     ) -> crate::CrateResult<()> {
         let mut default_formatter = crate::console_object::Formatter::new(self.global());
+        default_formatter.stack_check = bun_core::StackCheck::init();
         let f = formatter.unwrap_or(&mut default_formatter);
         self.print_error_instance_body(
             zig_exception,

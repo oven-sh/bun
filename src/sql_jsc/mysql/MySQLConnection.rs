@@ -88,6 +88,10 @@ pub struct MySQLConnection {
     ssl_mode: SSLMode,
     allow_public_key_retrieval: bool,
     flags: ConnectionFlags,
+    /// When `true`, request `CLIENT_FOUND_ROWS` during handshake so
+    /// `affected_rows` counts rows matched by `WHERE` instead of rows whose
+    /// column values actually changed (mysql2 / mariadb default).
+    found_rows: bool,
 }
 
 impl Default for MySQLConnection {
@@ -120,6 +124,7 @@ impl Default for MySQLConnection {
             ssl_mode: SSLMode::Disable,
             allow_public_key_retrieval: false,
             flags: ConnectionFlags::default(),
+            found_rows: true,
         }
     }
 }
@@ -139,6 +144,7 @@ impl MySQLConnection {
         secure: Option<*mut SslCtx>,
         ssl_mode: SSLMode,
         allow_public_key_retrieval: bool,
+        found_rows: bool,
     ) -> Self {
         Self {
             database,
@@ -159,6 +165,7 @@ impl MySQLConnection {
                 TLSStatus::None
             },
             character_set: CharacterSet::default(),
+            found_rows,
             ..Default::default()
         }
     }
@@ -639,11 +646,17 @@ impl MySQLConnection {
         // server's advertised capabilities. This ensures features like CLIENT_DEPRECATE_EOF
         // are only used when the server actually supports them (critical for MySQL-compatible
         // databases like StarRocks, TiDB, SingleStore, etc.).
-        self.capabilities = Capabilities::get_default_capabilities(
+        let mut requested = Capabilities::get_default_capabilities(
             self.ssl_mode != SSLMode::Disable,
             !self.database.is_empty(),
-        )
-        .intersect(handshake.capability_flags);
+        );
+        // CLIENT_FOUND_ROWS (`foundRows` connection option; default on) tells
+        // the server to report rows matched by `WHERE` in affected_rows rather
+        // than rows actually changed. Matches the mysql2 / mariadb driver
+        // defaults so an `UPDATE` that matches but doesn't change values still
+        // returns `affectedRows: 1`.
+        requested.CLIENT_FOUND_ROWS = self.found_rows;
+        self.capabilities = requested.intersect(handshake.capability_flags);
 
         // Override with utf8mb4 instead of using server's default
         self.character_set = CharacterSet::default();

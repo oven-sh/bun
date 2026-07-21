@@ -299,47 +299,12 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         other.subset_of(self)
     }
 
-    /// Returns the complement bit sets. Bits in the result
-    /// are set if the corresponding bits were not set.
-    pub fn complement(self) -> Self {
-        let mut result = self;
-        result.toggle_all();
-        result
-    }
-
-    /// Returns the union of two bit sets. Bits in the
-    /// result are set if the corresponding bits were set
-    /// in either input.
-    pub fn union_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.set_union(other);
-        result
-    }
-
     /// Returns the intersection of two bit sets. Bits in
     /// the result are set if the corresponding bits were
     /// set in both inputs.
     pub fn intersect_with(self, other: Self) -> Self {
         let mut result = self;
         result.set_intersection(other);
-        result
-    }
-
-    /// Returns the xor of two bit sets. Bits in the
-    /// result are set if the corresponding bits were
-    /// not the same in both inputs.
-    pub fn xor_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.toggle_set(other);
-        result
-    }
-
-    /// Returns the difference of two bit sets. Bits in
-    /// the result are set if set in the first but not
-    /// set in the second set.
-    pub fn difference_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.set_intersection(other.complement());
         result
     }
 
@@ -651,23 +616,6 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         other.subset_of(self)
     }
 
-    /// Returns the complement bit sets. Bits in the result
-    /// are set if the corresponding bits were not set.
-    pub fn complement(&self) -> Self {
-        let mut result = *self;
-        result.toggle_all();
-        result
-    }
-
-    /// Returns the union of two bit sets. Bits in the
-    /// result are set if the corresponding bits were set
-    /// in either input.
-    pub fn union_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.set_union(other);
-        result
-    }
-
     /// Returns the intersection of two bit sets. Bits in
     /// the result are set if the corresponding bits were
     /// set in both inputs.
@@ -685,24 +633,6 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
             }
         }
         false
-    }
-
-    /// Returns the xor of two bit sets. Bits in the
-    /// result are set if the corresponding bits were
-    /// not the same in both inputs.
-    pub fn xor_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.toggle_set(other);
-        result
-    }
-
-    /// Returns the difference of two bit sets. Bits in
-    /// the result are set if set in the first but not
-    /// set in the second set.
-    pub fn difference_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.set_intersection(&other.complement());
-        result
     }
 
     /// Iterates through the items in the set, according to the options.
@@ -803,15 +733,6 @@ impl DynamicBitSetUnmanaged {
         // *this* struct; the caller is responsible for not aliasing the
         // underlying storage via another view.
         unsafe { slice::from_raw_parts_mut(self.masks, n) }
-    }
-
-    /// Raw pointer to the mask words. Use this (not `masks_slice{,_mut}`) when
-    /// `self` and another `DynamicBitSetUnmanaged` may point at the same
-    /// storage and both are accessed in the same operation — forming
-    /// overlapping `&mut [usize]` / `&[usize]` would be UB.
-    #[inline(always)]
-    pub fn masks_ptr(&self) -> *mut usize {
-        self.masks
     }
 
     /// `self.masks[i] = f(self.masks[i], other.masks[i])` for every mask word.
@@ -1129,14 +1050,6 @@ impl DynamicBitSetUnmanaged {
     pub fn set_intersection(&mut self, other: &Self) {
         debug_assert!(other.bit_length == self.bit_length);
         self.zip_masks_raw(other, |a, b| a & b);
-    }
-
-    pub fn set_exclude_two(&mut self, other: &Self, third: &Self) {
-        debug_assert!(other.bit_length == self.bit_length);
-        // Two passes is equivalent to the original fused loop: each word is
-        // independent, so `(a & !b) & !c` per index is associative across passes.
-        self.zip_masks_raw(other, |a, b| a & !b);
-        self.zip_masks_raw(third, |a, c| a & !c);
     }
 
     pub fn set_exclude(&mut self, other: &Self) {

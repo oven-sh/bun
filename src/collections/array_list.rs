@@ -64,22 +64,9 @@ impl<T> ArrayListAlignedIn<T> {
         }
     }
 
-    // Sentinel-terminated owned slices are not a Rust type, so this takes a `Box<[T]>` with
-    // the sentinel already stripped.
-    pub fn from_owned_slice_sentinel(/* sentinel: T, */ slice: Slice<T>) -> Self {
-        Self {
-            unmanaged: Vec::from(slice),
-        }
-    }
-
     /// This method empties `self`.
     pub fn move_to_unmanaged(&mut self) -> Unmanaged<T> {
         mem::take(&mut self.unmanaged)
-    }
-
-    /// Unlike `move_to_unmanaged`, this method *consumes* `self`.
-    pub fn into_unmanaged_with_allocator(self) -> (Unmanaged<T>, ()) {
-        (self.unmanaged, ())
     }
 
     /// The contents of `unmanaged` must have been allocated by the global allocator.
@@ -119,31 +106,6 @@ impl<T> ArrayListAlignedIn<T> {
         self.unmanaged.insert(i, item);
     }
 
-    /// Note that this creates *shallow* copies of `value`.
-    pub fn add_many_at(
-        &mut self,
-        index: usize,
-        value: T,
-        count: usize,
-    ) -> Result<&mut [T], AllocError>
-    where
-        T: Clone,
-    {
-        self.unmanaged
-            .splice(index..index, core::iter::repeat_n(value, count));
-        Ok(&mut self.unmanaged[index..index + count])
-    }
-
-    /// Note that this creates *shallow* copies of `value`.
-    pub fn add_many_at_assume_capacity(&mut self, index: usize, value: T, count: usize) -> &mut [T]
-    where
-        T: Clone,
-    {
-        self.unmanaged
-            .splice(index..index, core::iter::repeat_n(value, count));
-        &mut self.unmanaged[index..index + count]
-    }
-
     /// Note that this `Clone`s each element of `new_items`.
     pub fn insert_slice(&mut self, index: usize, new_items: &[T]) -> Result<(), AllocError>
     where
@@ -169,15 +131,6 @@ impl<T> ArrayListAlignedIn<T> {
         self.unmanaged
             .splice(start..start + len, new_items.iter().cloned());
         Ok(())
-    }
-
-    /// This method `Drop`s the removed items.
-    /// Note that this `Clone`s each element of `new_items` (see `insert_slice`).
-    pub fn replace_range_assume_capacity(&mut self, start: usize, len: usize, new_items: &[T])
-    where
-        T: Clone,
-    {
-        let _ = self.replace_range(start, len, new_items);
     }
 
     pub fn append(&mut self, item: T) -> Result<(), AllocError> {
@@ -208,25 +161,6 @@ impl<T> ArrayListAlignedIn<T> {
 
     /// Note that this `Clone`s each element of `new_items` (see `insert_slice`).
     pub fn append_slice_assume_capacity(&mut self, new_items: &[T])
-    where
-        T: Clone,
-    {
-        self.unmanaged.extend_from_slice(new_items);
-    }
-
-    /// Note that this `Clone`s each element of `new_items` (see `insert_slice`).
-    pub fn append_unaligned_slice(&mut self, new_items: &[T]) -> Result<(), AllocError>
-    where
-        T: Clone,
-    {
-        // Rust `&[T]` is always naturally aligned, so this is identical to `append_slice`; a
-        // caller that truly has unaligned bytes needs `ptr::read_unaligned` at the call site.
-        self.unmanaged.extend_from_slice(new_items);
-        Ok(())
-    }
-
-    /// Note that this `Clone`s each element of `new_items` (see `insert_slice`).
-    pub fn append_unaligned_slice_assume_capacity(&mut self, new_items: &[T])
     where
         T: Clone,
     {
@@ -323,19 +257,6 @@ impl<T> ArrayListAlignedIn<T> {
         // Panics on empty.
         let items = self.items();
         &items[items.len() - 1]
-    }
-
-    pub fn get_last_mut(&mut self) -> &mut T {
-        let len = self.unmanaged.len();
-        &mut self.unmanaged[len - 1]
-    }
-
-    pub fn get_last_or_null(&self) -> Option<&T> {
-        if self.is_empty() {
-            None
-        } else {
-            Some(self.get_last())
-        }
     }
 
     pub fn is_empty(&self) -> bool {

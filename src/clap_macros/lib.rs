@@ -265,91 +265,15 @@ fn byte_str_b(s: &[u8]) -> LitByteStr {
     LitByteStr::new(s, Span::call_site())
 }
 
-/// 1:1 port of `bun_core::output::pretty_fmt_runtime` — rewrites Bun's `<tag>`
-/// colour markup to ANSI escape sequences when `is_enabled`, or strips it when
-/// not. Run here at macro-expansion time with `is_enabled = false` so each param
-/// description's tag-stripped form (`Help::msg_plain`) is a `const` byte literal
-/// in rodata. The ANSI form is *not* baked in — it is rare (only `bun --help` on
-/// a colour TTY) and would otherwise roughly triple the help-string rodata, so
-/// `bun_clap::pretty_help_desc` derives it from `Help::msg` on demand instead.
-fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
-    use bun_output_tags::{RESET, color_for_bytes};
-    let mut out: Vec<u8> = Vec::with_capacity(fmt.len() * 2);
-    let mut i = 0usize;
-    while i < fmt.len() {
-        match fmt[i] {
-            b'\\' => {
-                i += 1;
-                if i < fmt.len() {
-                    match fmt[i] {
-                        b'<' | b'>' => {
-                            out.push(fmt[i]);
-                            i += 1;
-                        }
-                        _ => {
-                            out.push(b'\\');
-                            out.push(fmt[i]);
-                            i += 1;
-                        }
-                    }
-                }
-            }
-            b'>' => {
-                i += 1;
-            }
-            b'{' => {
-                while i < fmt.len() && fmt[i] != b'}' {
-                    out.push(fmt[i]);
-                    i += 1;
-                }
-            }
-            b'<' => {
-                i += 1;
-                let mut is_reset = i < fmt.len() && fmt[i] == b'/';
-                if is_reset {
-                    i += 1;
-                }
-                let start = i;
-                while i < fmt.len() && fmt[i] != b'>' {
-                    i += 1;
-                }
-                let name = &fmt[start..i];
-                let seq: &str = if let Some(c) = color_for_bytes(name) {
-                    c
-                } else if name == b"r" {
-                    is_reset = true;
-                    ""
-                } else {
-                    // Unknown tag: `pretty_fmt_runtime` (the path this replaces)
-                    // drops it silently. Match
-                    // the lenient runtime behaviour — a compile error would be
-                    // stricter than what shipped, and param specs don't carry
-                    // unknown tags anyway.
-                    ""
-                };
-                if is_enabled {
-                    out.extend_from_slice(if is_reset {
-                        RESET.as_bytes()
-                    } else {
-                        seq.as_bytes()
-                    });
-                }
-            }
-            _ => {
-                out.push(fmt[i]);
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
 fn emit_param(krate: &Path, p: &Param) -> TokenStream2 {
     let msg = byte_str(&p.id.msg);
-    // Precompute only the tag-stripped form (the non-TTY help path needs it ready
-    // without a TTY check); the ANSI form is derived lazily from `msg` by
-    // `bun_clap::pretty_help_desc`, so it stays out of rodata.
-    let msg_plain = byte_str_b(&pretty_rewrite(p.id.msg.as_bytes(), false));
+    // Precompute only the tag-stripped form as a rodata `const` (non-TTY help
+    // needs it without a TTY check); the ANSI form is derived lazily by
+    // `bun_clap::pretty_help_desc` since baking it would ~triple help rodata.
+    let msg_plain = byte_str_b(&bun_output_tags::pretty_fmt_runtime(
+        p.id.msg.as_bytes(),
+        false,
+    ));
     let value = byte_str(&p.id.value);
 
     let short = match p.names.short {

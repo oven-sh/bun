@@ -602,18 +602,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.drop_index();
     }
 
-    /// Same as `ensure_total_capacity` but takes an explicit `ctx` for the
-    /// stored key type. Capacity reservation is purely a Vec operation here,
-    /// so the context is accepted and ignored.
-    #[inline]
-    pub fn ensure_total_capacity_context<Ctx>(
-        &mut self,
-        n: usize,
-        _ctx: Ctx,
-    ) -> Result<(), AllocError> {
-        self.ensure_total_capacity(n)
-    }
-
     /// Insert/replace using an externally-supplied
     /// hash/eql context instead of the stored `C`. Used when `C = AutoContext`
     /// can't satisfy `K: Hash` (e.g. `bun_semver::String`, whose hash needs the
@@ -1982,15 +1970,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         // lifetime, only the (ptr, len) pair.
         let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
         self.inner.insert(StringHashMapKey::borrowed(key), value);
-        Ok(())
-    }
-
-    /// Insert a pre-boxed key without re-allocating it. Uses `try_reserve` so
-    /// OOM surfaces as `Err` instead of aborting; callers can roll back side
-    /// effects on failure.
-    pub fn put_owned(&mut self, key: Box<[u8], A>, value: V) -> Result<(), AllocError> {
-        self.inner.try_reserve(1).map_err(|_| AllocError)?;
-        self.inner.insert(StringHashMapKey::owned(key), value);
         Ok(())
     }
 

@@ -690,12 +690,6 @@ pub mod fs {
             self.base
         }
 
-        /// The dir component, or `"."` when it is empty.
-        #[inline]
-        pub fn dir_or_dot(&self) -> &'a [u8] {
-            if self.dir.is_empty() { b"." } else { self.dir }
-        }
-
         /// Formats [`Self::non_unique_name_string_base`] as a valid JS
         /// identifier.
         #[inline]
@@ -921,23 +915,6 @@ pub mod fs {
             text: &'static [u8],
             namespace: &'static [u8],
             pretty: &'static [u8],
-        ) -> Path<'static> {
-            Path {
-                pretty,
-                is_symlink: true,
-                text,
-                namespace,
-                is_disabled: false,
-            }
-        }
-
-        /// Same const-concat caveat as `init_with_namespace_virtual`:
-        /// callers pass the precomputed `concatcp!` result as `pretty`.
-        #[inline]
-        pub const fn init_for_kit_built_in(
-            namespace: &'static [u8],
-            pretty: &'static [u8],
-            text: &'static [u8],
         ) -> Path<'static> {
             Path {
                 pretty,

@@ -1,9 +1,12 @@
-//! Single source of truth for Bun's `<tag>` → ANSI colour table **and** the
+//! Single source of truth for Bun's `<tag>` → ANSI colour table, the
 //! named ANSI escape constants used directly by REPL / diff-printer / multi-run
-//! output. Zero-dep `#![no_std]` leaf so both the proc-macro crate and runtime
-//! crates can import it without a cycle.
+//! output, **and** the runtime `<tag>` rewriter ([`pretty_fmt_runtime`]).
+//! Zero-dep `#![no_std]` (+`alloc`) leaf so both the proc-macro crates and
+//! runtime crates can import it without a cycle.
 
 #![no_std]
+
+extern crate alloc;
 
 /// Named ANSI SGR escape sequences. One canonical literal per colour/attribute;
 /// every other crate aliases this module rather than re-declaring the bytes.
@@ -99,4 +102,85 @@ pub fn color_for_bytes(name: &[u8]) -> Option<&'static str> {
         }
     }
     None
+}
+
+/// Runtime `<tag>` → ANSI rewriter: expands tags to escape sequences when
+/// `is_enabled`, or strips them when not. `\<`/`\>` escapes pass the bracket
+/// through, `{…}` spec bodies are copied verbatim, `</…>` and `<r>` emit
+/// [`RESET`], and unknown tags are dropped silently.
+///
+/// Shared by `bun_core::output` (CLI logging) and `bun_clap_macros` (which runs
+/// it at macro-expansion time with `is_enabled = false` to bake tag-stripped
+/// help strings into rodata). The `pretty_fmt!` proc-macro keeps its own
+/// deliberately divergent variant (`{s}`→`{}` spec rewriting, compile errors on
+/// unknown tags).
+#[inline]
+pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> alloc::vec::Vec<u8> {
+    // `* 2` covers the worst-case expansion: the shortest tags (`<r>`, `<b>`,
+    // 3 bytes) become 4-byte escapes, a ratio under 2.
+    let mut out = alloc::vec::Vec::with_capacity(fmt.len() * 2);
+    let mut i = 0usize;
+    while i < fmt.len() {
+        match fmt[i] {
+            b'\\' => {
+                i += 1;
+                if i < fmt.len() {
+                    match fmt[i] {
+                        b'<' | b'>' => {
+                            out.push(fmt[i]);
+                            i += 1;
+                        }
+                        _ => {
+                            out.push(b'\\');
+                            out.push(fmt[i]);
+                            i += 1;
+                        }
+                    }
+                }
+            }
+            b'>' => {
+                i += 1;
+            }
+            b'{' => {
+                while i < fmt.len() && fmt[i] != b'}' {
+                    out.push(fmt[i]);
+                    i += 1;
+                }
+            }
+            b'<' => {
+                i += 1;
+                let mut is_reset = i < fmt.len() && fmt[i] == b'/';
+                if is_reset {
+                    i += 1;
+                }
+                let start = i;
+                while i < fmt.len() && fmt[i] != b'>' {
+                    i += 1;
+                }
+                let name = &fmt[start..i];
+                let seq: &str = if let Some(c) = color_for_bytes(name) {
+                    c
+                } else if name == b"r" {
+                    is_reset = true;
+                    ""
+                } else {
+                    // Unknown tag: dropped silently (the `pretty_fmt!`
+                    // proc-macro rejects these at compile time instead).
+                    ""
+                };
+                if is_enabled {
+                    out.extend_from_slice(if is_reset {
+                        RESET.as_bytes()
+                    } else {
+                        seq.as_bytes()
+                    });
+                }
+            }
+            _ => {
+                out.push(fmt[i]);
+                i += 1;
+            }
+        }
+    }
+    out
 }

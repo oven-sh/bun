@@ -66,20 +66,16 @@ impl<T> Node<T> {
         self.next = std::ptr::from_mut::<Node<T>>(new_node);
     }
 
-    /// Remove a node from the list.
-    ///
-    /// Arguments:
-    ///     node: Pointer to the node to be removed.
-    /// Returns:
-    ///     node removed
-    pub fn remove_next(&mut self) -> Option<*mut Node<T>> {
-        let next_node = if self.next.is_null() {
-            return None;
-        } else {
-            self.next
-        };
-        self.next = Node::next_of(next_node);
-        Some(next_node)
+    /// Iterate over each next node, returning the count of all nodes except the starting one.
+    /// This operation is O(N).
+    pub fn count_children(&self) -> usize {
+        let mut count: usize = 0;
+        let mut it: *const Node<T> = self.next;
+        while !it.is_null() {
+            count += 1;
+            it = Node::next_of(it);
+        }
+        count
     }
 
     /// Iterate over the singly-linked list from this node, until the final node is found.
@@ -93,18 +89,6 @@ impl<T> Node<T> {
             }
             it = next;
         }
-    }
-
-    /// Iterate over each next node, returning the count of all nodes except the starting one.
-    /// This operation is O(N).
-    pub fn count_children(&self) -> usize {
-        let mut count: usize = 0;
-        let mut it: *const Node<T> = self.next;
-        while !it.is_null() {
-            count += 1;
-            it = Node::next_of(it);
-        }
-        count
     }
 }
 

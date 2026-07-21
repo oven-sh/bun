@@ -58,14 +58,6 @@ impl<'a, T: Copy> Channel<T, SliceBuffer<'a, T>> {
     }
 }
 
-impl<T: Copy> Channel<T, DynamicBuffer<T>> {
-    #[inline]
-    pub fn init_dynamic() -> Self {
-        // No allocator param; this non-AST crate uses the global mimalloc.
-        Self::with_buffer(LinearFifo::<T, DynamicBuffer<T>>::init())
-    }
-}
-
 // `T: Copy` because `LinearFifo::write`/`read` are slice-copy based. All
 // in-tree channel payloads are POD; revisit if a non-`Copy` T appears.
 impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
@@ -87,11 +79,6 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         self.is_closed.set(true);
         self.putters.broadcast();
         self.getters.broadcast();
-    }
-
-    pub fn try_write_item(&self, item: T) -> Result<bool, ChannelError> {
-        let wrote = self.write(core::slice::from_ref(&item))?;
-        Ok(wrote == 1)
     }
 
     pub fn write_item(&self, item: T) -> Result<(), ChannelError> {

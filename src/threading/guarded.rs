@@ -74,15 +74,6 @@ impl<Value> GuardedBy<Value, Mutex> {
             None
         }
     }
-
-    /// Borrow the underlying raw [`Mutex`]. Needed by callers that split
-    /// `lock()`/`unlock()` across function boundaries (e.g. `Progress.rs`
-    /// porting `lock_api::RawMutex`) or pair this `Guarded` with a bare
-    /// [`Condition::wait`](crate::Condition::wait).
-    #[inline]
-    pub fn raw_mutex(&self) -> &Mutex {
-        &self.mutex
-    }
 }
 
 impl<Value, M: RawMutex> GuardedBy<Value, M> {

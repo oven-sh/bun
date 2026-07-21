@@ -35,7 +35,3 @@ bun_resolver.workspace = true
 bun_sys.workspace = true
 bun_url.workspace = true
 bun_wyhash.workspace = true
-
-[dev-dependencies]
-# Test harness (Test::make / Test::make_routes) needs the AST stores.
-bun_js_parser.workspace = true

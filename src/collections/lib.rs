@@ -419,13 +419,6 @@ impl<T, const N: usize> SmallList<T, N> {
         self.0.insert_many(index as usize, items.iter().cloned())
     }
     #[inline]
-    pub fn insert_slice_assume_capacity(&mut self, index: u32, items: &[T])
-    where
-        T: Clone,
-    {
-        self.0.insert_many(index as usize, items.iter().cloned())
-    }
-    #[inline]
     pub fn pop(&mut self) -> Option<T> {
         self.0.pop()
     }

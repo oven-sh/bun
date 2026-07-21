@@ -103,10 +103,6 @@ impl VersionType<u32> {
 
 impl<T: VersionInt> VersionType<T> {
     /// Assumes that there is only one buffer for all the strings
-    pub fn sort_gt(ctx: &[u8], lhs: Self, rhs: Self) -> bool {
-        Self::order_fn(ctx, lhs, rhs) == Ordering::Greater
-    }
-
     pub fn order_fn(ctx: &[u8], lhs: Self, rhs: Self) -> Ordering {
         lhs.order(rhs, ctx, ctx)
     }

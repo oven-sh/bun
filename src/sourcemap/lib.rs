@@ -1213,22 +1213,3 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::S
         bun_core::strings::to_utf8_alloc(url),
     ))
 }
-
-pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
-    origin: &bun_url::URL<'_>,
-    source: &bun_ast::Source,
-    asset_prefix_path: &[u8],
-    writer: &mut W,
-) -> bun_io::Result<()> {
-    writer.write_all(b"\n//# sourceMappingURL=")?;
-    writer.write_all(bun_core::strings::without_trailing_slash(origin.href))?;
-    if !asset_prefix_path.is_empty() {
-        writer.write_all(asset_prefix_path)?;
-    }
-    if !source.path.pretty.is_empty() && source.path.pretty[0] != b'/' {
-        writer.write_all(b"/")?;
-    }
-    writer.write_all(source.path.pretty)?;
-    writer.write_all(b".map")?;
-    Ok(())
-}

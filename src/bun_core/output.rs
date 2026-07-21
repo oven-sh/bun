@@ -1740,16 +1740,6 @@ pub fn clear_to_end() {
 // </r> - reset
 // <r> - reset
 
-/// Lowercase lookup wrapper. The table
-/// itself lives in `bun_output_tags` (shared with the `pretty_fmt!` proc-macro
-/// so there is exactly one copy).
-pub mod color_map {
-    #[inline]
-    pub fn get(name: &[u8]) -> Option<&'static str> {
-        bun_output_tags::color_for_bytes(name)
-    }
-}
-
 pub use ansi::{BOLD, DIM, RESET};
 pub use bun_output_tags::{ansi, ansi_b};
 
@@ -2051,82 +2041,9 @@ pub fn pretty_fmt_args<A: FmtTuple>(
 }
 
 /// Runtime `<tag>` → ANSI rewriter, used for testing the proc-macro and for
-/// the rare dynamic case.
-///
-/// Colour table lives in `bun_output_tags`; the state machine is kept duplicated
-/// vs `bun_core_macros::rewrite` because the two intentionally diverge in the
-/// `{` arm (proc-macro rewrites specs `{s}`→`{}`; this side copies braces
-/// verbatim) and on unknown tags (proc-macro errors; this side emits `""`).
-pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
-    let mut out = Vec::with_capacity(fmt.len() * 4);
-    let mut i = 0usize;
-    while i < fmt.len() {
-        match fmt[i] {
-            b'\\' => {
-                i += 1;
-                if i < fmt.len() {
-                    match fmt[i] {
-                        b'<' | b'>' => {
-                            out.push(fmt[i]);
-                            i += 1;
-                        }
-                        _ => {
-                            out.push(b'\\');
-                            out.push(fmt[i]);
-                            i += 1;
-                        }
-                    }
-                }
-            }
-            b'>' => {
-                i += 1;
-            }
-            b'{' => {
-                while i < fmt.len() && fmt[i] != b'}' {
-                    out.push(fmt[i]);
-                    i += 1;
-                }
-            }
-            b'<' => {
-                i += 1;
-                let mut is_reset = i < fmt.len() && fmt[i] == b'/';
-                if is_reset {
-                    i += 1;
-                }
-                let start = i;
-                while i < fmt.len() && fmt[i] != b'>' {
-                    i += 1;
-                }
-                let color_name = &fmt[start..i];
-                let color_str: &str = 'picker: {
-                    if let Some(lit) = color_map::get(color_name) {
-                        break 'picker lit;
-                    } else if color_name == b"r" {
-                        is_reset = true;
-                        break 'picker "";
-                    } else {
-                        // Unknown tag: the `pretty_fmt!` proc-macro rejects
-                        // this at its call sites; this runtime path drops the
-                        // tag.
-                        break 'picker "";
-                    }
-                };
-                if is_enabled {
-                    out.extend_from_slice(if is_reset {
-                        RESET.as_bytes()
-                    } else {
-                        color_str.as_bytes()
-                    });
-                }
-            }
-            _ => {
-                out.push(fmt[i]);
-                i += 1;
-            }
-        }
-    }
-    out
-}
+/// the rare dynamic case. The implementation lives in `bun_output_tags` so the
+/// `bun_clap_macros` proc-macro crate shares the same state machine.
+pub use bun_output_tags::pretty_fmt_runtime;
 
 #[doc(hidden)]
 #[inline]

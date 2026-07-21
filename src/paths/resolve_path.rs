@@ -48,9 +48,6 @@ pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
 }
 
 type IsSeparatorFunc = fn(char: u8) -> bool;
-// Rust cannot express "fn<T>(T) -> bool" as a value, so the generic-`T`
-// callers dispatch via Platform methods instead of fn pointers.
-type LastSeparatorFunction = fn(slice: &[u8]) -> Option<usize>;
 
 #[inline(always)]
 fn is_dotdot_with_type<T: PathChar>(slice: &[T]) -> bool {
@@ -1237,14 +1234,6 @@ impl Platform {
             Platform::Loose => is_sep_any,
             Platform::Nt | Platform::Windows => is_sep_any,
             Platform::Posix => is_sep_posix,
-        }
-    }
-
-    pub const fn get_last_separator_func(self) -> LastSeparatorFunction {
-        match self {
-            Platform::Loose => last_index_of_separator_loose,
-            Platform::Nt | Platform::Windows => last_index_of_separator_windows,
-            Platform::Posix => last_index_of_separator_posix,
         }
     }
 

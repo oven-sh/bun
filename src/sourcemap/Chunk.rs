@@ -55,20 +55,6 @@ impl Chunk {
         unsafe { core::ptr::read(self) }
     }
 
-    pub fn print_source_map_contents<const ASCII_ONLY: bool>(
-        &self,
-        source: &Source,
-        mutable: &mut MutableString,
-        include_sources_contents: bool,
-    ) -> Result<(), crate::Error> {
-        print_source_map_contents_json::<ASCII_ONLY>(
-            source,
-            mutable,
-            include_sources_contents,
-            self.buffer.list.as_slice(),
-        )
-    }
-
     /// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
     /// to a standard VLQ "mappings" string before emitting JSON.
     pub fn print_source_map_contents_from_internal<const ASCII_ONLY: bool>(

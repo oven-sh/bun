@@ -3436,9 +3436,10 @@ pub use bun_windows_sys::externs::GetHostNameW;
 /// `GetHostNameW` with the `WSAStartup` retry it needs when winsock hasn't
 /// been initialized yet. Returns the NUL-terminated hostname slice on success.
 pub fn gethostname_w(buf: &mut [u16]) -> Option<&[u16]> {
-    debug_assert!(buf.len() >= 2);
-    let cap = (buf.len() - 1) as core::ffi::c_int;
-    // SAFETY: `buf` is valid for `cap` writes (NUL reserved).
+    // `namelen` counts WCHARs including the NUL; MSDN bounds the result at
+    // 256, so both callers pass `[u16; 256]`.
+    let cap = core::ffi::c_int::try_from(buf.len()).ok()?;
+    // SAFETY: `buf` is valid for `cap` writes.
     let mut rc = unsafe { GetHostNameW(buf.as_mut_ptr(), cap) };
     if rc != 0 {
         let mut wsa: ws2_32::WSADATA = bun_core::ffi::zeroed();

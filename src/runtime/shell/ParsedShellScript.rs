@@ -8,6 +8,8 @@ use bun_jsc::{
     JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 
+use crate::api::bun_terminal_body::{self as terminal_body, Terminal};
+
 use super::interpreter::ShellArgs;
 use super::shell_body::{JsStrings, shell_cmd_from_js};
 use super::{EnvMap, EnvStr, Interpreter};
@@ -28,6 +30,10 @@ pub struct ParsedShellScript {
     pub export_env: JsCell<Option<EnvMap>>,
     pub quiet: Cell<bool>,
     pub cwd: Cell<Option<BunString>>,
+    /// `Bun.Terminal` attached via `setTerminal`. Non-owning backref: the
+    /// terminal's JS wrapper holds the intrusive ref, and `setTerminal` roots
+    /// that wrapper on this wrapper's `terminal` cached-value slot.
+    pub terminal: Cell<Option<core::ptr::NonNull<Terminal>>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
     /// sound: codegen calls `finalize()` which flips this to `.Finalized` before sweep.
     /// Read-only after construction; mutated only in `finalize(mut self: Box<Self>)`.
@@ -44,6 +50,7 @@ impl Default for ParsedShellScript {
             export_env: JsCell::new(None),
             quiet: Cell::new(false),
             cwd: Cell::new(None),
+            terminal: Cell::new(None),
             this_jsvalue: JsRef::empty(),
             estimated_size_for_gc: 0,
         }
@@ -84,13 +91,18 @@ impl ParsedShellScript {
         bool,
         Option<BunString>,
         Option<EnvMap>,
+        Option<core::ptr::NonNull<Terminal>>,
     ) {
         let args = self.args.replace(None).expect("args already taken");
         let jsobjs = self.jsobjs.replace(Vec::new());
         let quiet = self.quiet.get();
         let cwd = self.cwd.take();
         let export_env = self.export_env.replace(None);
-        (args, jsobjs, quiet, cwd, export_env)
+        // The terminal's JS wrapper stays rooted on this wrapper's `terminal`
+        // cached-value slot until `create_shell_interpreter` re-roots it on
+        // the `ShellInterpreter` wrapper.
+        let terminal = self.terminal.take();
+        (args, jsobjs, quiet, cwd, export_env, terminal)
     }
 
     /// Called from the generated C++ wrapper's `finalize()`. Runs on the mutator
@@ -131,6 +143,58 @@ impl ParsedShellScript {
     pub fn set_quiet(&self, _global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arg = callframe.argument(0);
         self.quiet.set(arg.to_boolean());
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// Attach a `Bun.Terminal` whose PTY slave becomes the interpreter's root
+    /// stdin/stdout/stderr, so spawned commands see `isatty() == true`.
+    #[bun_jsc::host_fn(method)]
+    pub fn set_terminal(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // On Windows the shell's root IO cannot be backed by a ConPTY (there
+        // is no slave fd to dup and builtins cannot write into the conhost
+        // stream), so fail loudly instead of silently ignoring the option.
+        if cfg!(windows) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "$`...`.terminal() is not supported on Windows"
+            )));
+        }
+        let value = callframe.argument(0);
+        let Some(terminal) = terminal_body::js::from_js(value) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "$`...`.terminal(): expected a Bun.Terminal (create one with `new Bun.Terminal(options)`)"
+            )));
+        };
+        // Same validation `Bun.spawn` applies to an existing terminal.
+        {
+            let term = bun_ptr::BackRef::from(terminal);
+            if term.is_closed() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "$`...`.terminal(): terminal is closed"
+                )));
+            }
+            if term.is_inline_spawned() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "$`...`.terminal(): terminal was created inline by Bun.spawn and cannot be reused"
+                )));
+            }
+            if term.get_slave_fd() == bun_sys::Fd::INVALID {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "$`...`.terminal(): terminal slave fd is no longer valid"
+                )));
+            }
+        }
+        // Root the terminal's JS wrapper on this wrapper so the raw pointer in
+        // `self.terminal` stays valid until `take()` hands it to the interpreter.
+        crate::generated_classes::js_ParsedShellScript::terminal_set_cached(
+            callframe.this(),
+            global,
+            value,
+        );
+        self.terminal.set(Some(terminal));
         Ok(JSValue::UNDEFINED)
     }
 

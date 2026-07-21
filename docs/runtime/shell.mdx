@@ -246,6 +246,48 @@ const result = await $`cat < ${response} | wc -w`.text();
 console.log(result); // 6\n
 ```
 
+## Terminals (PTY)
+
+By default, the commands Bun Shell spawns get pipes for stdout and stderr, so anything that checks `isatty()` behaves as if it were piped: `ls` and `git` turn colors off, pagers act like `cat`, and full-screen programs like `vim` or `htop` refuse to start.
+
+`.terminal()` attaches a [`Bun.Terminal`](/runtime/child-process#terminal-pty-support) (a pseudo-terminal) to the shell. Every command the script spawns receives the terminal's slave on stdin, stdout, and stderr, so `isatty()` is `true` on all three. Builtins like `echo` write to the terminal too.
+
+```js
+import { $ } from "bun";
+
+await using terminal = new Bun.Terminal({
+  cols: process.stdout.columns,
+  rows: process.stdout.rows,
+  data(_terminal, chunk) {
+    process.stdout.write(chunk);
+  },
+});
+
+await $`git log --oneline | head -5`.terminal(terminal);
+```
+
+Output goes to the terminal's `data` callback instead of the shell's buffered `stdout`/`stderr` (which stay empty), mirroring how `Bun.spawn({ terminal })` returns `null` for `proc.stdout`/`proc.stderr`. Use `terminal.write()` to send input to whatever is currently reading the terminal.
+
+The shell never closes the terminal, so one terminal can back many invocations, which is useful for an interactive shell that evaluates each line the user types:
+
+```js
+import { $ } from "bun";
+
+await using terminal = new Bun.Terminal({
+  data(_terminal, chunk) {
+    process.stdout.write(chunk);
+  },
+});
+
+for await (const line of console) {
+  await $`${{ raw: line }}`.terminal(terminal).nothrow();
+}
+```
+
+Redirects still take precedence over the terminal. With `cmd > out.txt`, stdout goes to the file and only stderr reaches the terminal. In a pipeline, only the last stage's stdout is the terminal; the intermediate stages still get pipes.
+
+`.terminal()` requires an existing `Bun.Terminal` instance and is not supported on Windows.
+
 ## Command substitution (`$(...)`)
 
 Command substitution inserts the output of another command into the current script:

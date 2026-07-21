@@ -165,6 +165,12 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       return this;
     }
 
+    terminal(terminal: Bun.Terminal): this {
+      this.#throwIfRunning();
+      this.#args!.setTerminal(terminal);
+      return this;
+    }
+
     #run() {
       if (!this.#hasRun) {
         this.#hasRun = true;

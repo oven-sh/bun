@@ -9,6 +9,8 @@ export default [
     hasPendingActivity: false,
     configurable: false,
     valuesArray: true,
+    // GC root for the `Bun.Terminal` wrapper attached via `setTerminal`.
+    values: ["terminal"],
     memoryCost: true,
     estimatedSize: true,
     klass: {},
@@ -23,6 +25,10 @@ export default [
       },
       setQuiet: {
         fn: "setQuiet",
+        length: 1,
+      },
+      setTerminal: {
+        fn: "setTerminal",
         length: 1,
       },
     },

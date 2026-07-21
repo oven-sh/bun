@@ -10,7 +10,8 @@ export default [
     hasPendingActivity: true,
     configurable: false,
     klass: {},
-    values: ["resolve", "reject"],
+    // `terminal` roots the `Bun.Terminal` wrapper for the lifetime of the run.
+    values: ["resolve", "reject", "terminal"],
     valuesArray: true,
     memoryCost: true,
     estimatedSize: true,

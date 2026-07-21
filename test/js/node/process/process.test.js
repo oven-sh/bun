@@ -270,6 +270,60 @@ it("process.env.TZ", () => {
   expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(realOrigTimezone);
 });
 
+// https://github.com/oven-sh/bun/issues/2786
+it("process.env.TZ reverts on delete / empty / invalid instead of staying stuck", async () => {
+  // Run in a child so TZ manipulation cannot leak into other tests. TZ is
+  // unset at startup so "initial" and every revert target the host zone.
+  const fixture = `
+    const d = new Date("2018-07-14T12:34:56Z");
+    const snap = () => ({ zone: new Intl.DateTimeFormat().resolvedOptions().timeZone, offset: d.getTimezoneOffset() });
+    const initial = snap();
+    const target = initial.zone === "Asia/Tokyo" ? "America/Los_Angeles" : "Asia/Tokyo";
+
+    process.env.TZ = target;
+    const afterSet = snap();
+
+    delete process.env.TZ;
+    const afterDelete = { ...snap(), value: process.env.TZ };
+
+    process.env.TZ = target;
+    const afterReSet = snap();
+
+    process.env.TZ = "Not/A/Real/Zone";
+    const afterInvalid = snap();
+
+    process.env.TZ = target;
+    process.env.TZ = "";
+    const afterEmpty = snap();
+
+    process.stdout.write(JSON.stringify({ initial, target, afterSet, afterDelete, afterReSet, afterInvalid, afterEmpty }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, TZ: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = stdout ? JSON.parse(stdout) : { stderr };
+  expect({ ...out, exitCode }).toEqual({
+    initial: out.initial,
+    target: out.target,
+    afterSet: { zone: out.target, offset: expect.any(Number) },
+    // Previously stayed at `target`: the accessor was removed and the WTF
+    // override never cleared.
+    afterDelete: { ...out.initial, value: undefined },
+    // Previously a plain data write; the setter never fired again after delete.
+    afterReSet: { zone: out.target, offset: out.afterSet?.offset },
+    // Unresolvable and empty both drop the override rather than keeping the
+    // previous zone.
+    afterInvalid: out.initial,
+    afterEmpty: out.initial,
+    exitCode: 0,
+  });
+  expect(out.afterSet.zone).not.toBe(out.initial.zone);
+});
+
 it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });

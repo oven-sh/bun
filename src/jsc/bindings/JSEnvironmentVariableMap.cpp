@@ -487,10 +487,14 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
 // side-effecting var need only be added in one place.
 static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
-    if (value.length() < 32 && WTF::setTimeZoneOverride(value)) {
-        WTF::timeZoneDidChange();
-        JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
-    }
+    // Node resets V8's date cache on every TZ write, valid or not, so an
+    // unresolvable name reverts to the host zone instead of leaving the
+    // previous override in force. Mirror that: on ICU rejection, clear the
+    // override and re-detect rather than silently keeping the old zone.
+    if (!WTF::setTimeZoneOverride(value))
+        WTF::setTimeZoneOverride({});
+    WTF::timeZoneDidChange();
+    JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
 }
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {
@@ -583,8 +587,11 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
-    syncWindowsEnv(store, String(uid), nullptr);
-    store->remove(String(uid));
+    String keyStr = String(uid);
+    if (SharedEnvStore::normalizeKey(keyStr) == "TZ"_s)
+        applyTZFromString(globalObject, String());
+    syncWindowsEnv(store, keyStr, nullptr);
+    store->remove(keyStr);
     // Also drop any own property the Base fallback installed (accessor descriptors).
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
@@ -744,6 +751,94 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
+// Re-install a side-effecting env var's CustomAccessor after delete so later
+// assignments still reach the setter. Leaves the object in its startup state
+// (accessor present, DontEnum, no backing private value).
+static void reinstallSideEffectingEnvAccessor(VM& vm, JSGlobalObject* globalObject, JSObject* object, const String& key)
+{
+    CustomGetterSetter* accessor = nullptr;
+    Identifier privateName;
+    if (key == "TZ"_s) {
+        accessor = CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter);
+        privateName = WebCore::clientData(vm)->builtinNames().dataPrivateName();
+        applyTZFromString(globalObject, String());
+    } else if (key == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
+        accessor = CustomGetterSetter::create(vm, jsNodeTLSRejectUnauthorizedGetter, jsNodeTLSRejectUnauthorizedSetter);
+        privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
+        applyTLSRejectFromString(globalObject, String());
+    } else if (key == "BUN_CONFIG_VERBOSE_FETCH"_s) {
+        accessor = CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter);
+        privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
+        applyVerboseFetchFromString(globalObject, String());
+    } else {
+        return;
+    }
+    // Sentinel so the getter returns undefined instead of re-reading the OS
+    // env map (which bun does not unsetenv on POSIX).
+    object->putDirect(vm, privateName, jsUndefined(), 0);
+    object->putDirectCustomAccessor(vm, Identifier::fromString(vm, key), accessor,
+        JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum);
+}
+
+// process.env on the main thread. A plain JSObject almost works, but `delete`
+// on a CustomAccessor property removes it without any hook, which leaves the
+// TZ override (and the other side-effecting vars) stuck at their last value
+// and makes later assignments plain data writes. Overriding deleteProperty is
+// the only way to observe it.
+class JSProcessEnv final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSProcessEnv, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSProcessEnv* create(JSC::VM& vm, JSC::Structure* structure)
+    {
+        JSProcessEnv* ptr = new (NotNull, JSC::allocateCell<JSProcessEnv>(vm)) JSProcessEnv(vm, structure);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::DeletePropertySlot& slot)
+    {
+        VM& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        bool result = Base::deleteProperty(cell, globalObject, propertyName, slot);
+        RETURN_IF_EXCEPTION(scope, result);
+        auto* uid = propertyName.uid();
+        if (propertyName.isSymbol() || !uid)
+            return result;
+        reinstallSideEffectingEnvAccessor(vm, globalObject, asObject(cell), String(uid));
+        return result;
+    }
+
+private:
+    JSProcessEnv(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+    }
+};
+
+const JSC::ClassInfo JSProcessEnv::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnv) };
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -751,12 +846,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-    JSC::JSObject* object = nullptr;
-    if (count < 63) {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
-    } else {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
-    }
+    auto* structure = JSProcessEnv::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSC::JSObject* object = JSProcessEnv::create(vm, structure);
 
 #if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);

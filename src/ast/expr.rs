@@ -1593,9 +1593,9 @@ impl Expr {
                 }));
             }
             Data::EBigInt(b) => {
-                return Some(expr.at(E::Boolean {
-                    value: b.value == b"0",
-                }));
+                if let Some(equal) = E::BigInt::check_equality(&b.value, b"0") {
+                    return Some(expr.at(E::Boolean { value: equal }));
+                }
             }
             Data::EFunction(_) | Data::EArrow(_) | Data::ERegExp(_) => {
                 return Some(expr.at(E::Boolean { value: false }));
@@ -1665,7 +1665,13 @@ impl Expr {
             Data::EBoolean(data) | Data::EBranchBoolean(data) => {
                 Some(if data.value { b"true" } else { b"false" })
             }
-            Data::EBigInt(bigint) => Some(bigint.value.slice()),
+            Data::EBigInt(bigint) => {
+                if E::BigInt::has_radix(&bigint.value) {
+                    None
+                } else {
+                    Some(bigint.value.slice())
+                }
+            }
             Data::ENumber(num) => num.to_string(bump).map(|s| s.slice()),
             Data::ERegExp(regexp) => Some(regexp.value.slice()),
             Data::EDot(dot) => 'brk: {
@@ -3407,13 +3413,16 @@ impl Data {
             },
             Data::EBigInt(l) => {
                 if let Data::EBigInt(r) = right {
-                    if bun_core::strings::eql_long(&l.value, &r.value, true) {
-                        return Equality::TRUE;
-                    }
-                    // 0x0000n == 0n is true
-                    return Equality {
-                        ok: false,
-                        ..Default::default()
+                    return match E::BigInt::check_equality(&l.value, &r.value) {
+                        Some(equal) => Equality {
+                            ok: true,
+                            equal,
+                            ..Default::default()
+                        },
+                        None => Equality {
+                            ok: false,
+                            ..Default::default()
+                        },
                     };
                 } else {
                     return Equality {

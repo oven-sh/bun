@@ -6,7 +6,7 @@
 //! large and the number of actual items in a given set is usually
 //! small, they may be less memory efficient than an array set.
 //!
-//! There are five variants defined here:
+//! There are four variants defined here:
 //!
 //! IntegerBitSet:
 //!   A bit set with static size, which is backed by a single integer.
@@ -17,10 +17,6 @@
 //!   A bit set with static size, which is backed by an array of usize.
 //!   This set is good for sets with a larger size, but may use
 //!   more bytes than necessary if your set is small.
-//!
-//! StaticBitSet:
-//!   Picks either IntegerBitSet or ArrayBitSet depending on the requested
-//!   size.  The interfaces of these two types match exactly, except for fields.
 //!
 //! DynamicBitSet:
 //!   A bit set with runtime-known size, backed by an allocated slice
@@ -83,15 +79,14 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
         mask2 = bool_mask_usize(value) >> ((MASK_LEN - 1) - (end_bit - 1));
         masks[start_mask_index] |= mask1 & mask2;
     } else {
-        let bulk_mask_index: usize;
-        if start_bit > 0 {
+        let bulk_mask_index: usize = if start_bit > 0 {
             masks[start_mask_index] = (masks[start_mask_index]
                 & !(bool_mask_usize(true) << start_bit))
                 | (bool_mask_usize(value) << start_bit);
-            bulk_mask_index = start_mask_index + 1;
+            start_mask_index + 1
         } else {
-            bulk_mask_index = start_mask_index;
-        }
+            start_mask_index
+        };
 
         for mask in &mut masks[bulk_mask_index..end_mask_index] {
             *mask = bool_mask_usize(value);
@@ -103,19 +98,6 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
         }
     }
 }
-
-// ───────────────────────────── StaticBitSet ─────────────────────────────
-
-/// Returns the optimal static bit set type for the specified number
-/// of elements.  The returned type will perform no allocations,
-/// can be copied by value, and does not require deinitialization.
-/// Both possible implementations fulfill the same interface.
-///
-// Stable Rust cannot select a struct definition from a const generic, so this
-// alias is the integer form and is only valid for `SIZE <= usize::BITS`
-// (enforced by `IntegerBitSet`'s debug asserts). Callers needing more bits
-// must use `ArrayBitSet<SIZE, { num_masks_for(SIZE) }>` directly.
-pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>;
 
 // ───────────────────────────── IntegerBitSet ─────────────────────────────
 

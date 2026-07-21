@@ -233,21 +233,20 @@ impl JSGlobalObject {
         self.throw_value(err)
     }
 
-    /// Throw `TypeError: <name> is not constructable` with
+    /// Throw `TypeError: Illegal constructor` with
     /// `.code = "ERR_ILLEGAL_CONSTRUCTOR"`.
     ///
     /// Canonical body for hand-written `pub fn constructor` stubs whose
     /// `.classes.ts` entry has `construct: true` but the class is not
     /// user-instantiable. Matches the C++ default
-    /// (`JSDOMConstructorNotConstructable`, ErrorCode.cpp:2428) and Node.js.
+    /// (`JSDOMConstructorNotConstructable`) and Node.js.
     ///
     /// NOTE: do NOT add a stub that calls this when `.classes.ts` declares
     /// `noConstructor: true` / `construct: false` — codegen omits the
     /// `${T}Class__construct` thunk entirely, so the stub would be dead code.
     #[cold]
-    pub fn throw_illegal_constructor(&self, name: &str) -> JsError {
-        crate::ErrorCode::ILLEGAL_CONSTRUCTOR
-            .throw(self, format_args!("{name} is not constructable"))
+    pub fn throw_illegal_constructor(&self) -> JsError {
+        crate::ErrorCode::ILLEGAL_CONSTRUCTOR.throw(self, format_args!("Illegal constructor"))
     }
 
     #[inline]
@@ -909,9 +908,7 @@ impl JSGlobalObject {
         message: BunString,
         error_array: JSValue,
     ) -> JsResult<JSValue> {
-        if cfg!(debug_assertions) {
-            debug_assert!(error_array.is_array());
-        }
+        debug_assert!(error_array.is_array());
         crate::from_js_host_call(self, || {
             JSC__JSGlobalObject__createAggregateErrorWithArray(
                 self,

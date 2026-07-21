@@ -76,22 +76,33 @@ test/js/node/test/parallel/test-set-http-max-http-headers.js [ FAIL ] # spawns t
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
-[ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
-[ ASAN ] test/js/node/worker_threads/worker_destruction.test.ts [ CRASH ] # After: bun closes cleanly when Bun.connect is used in a Worker that is terminating
 [ ASAN ] test/integration/next-pages/test/dev-server-ssr-100.test.ts [ CRASH ]
 [ ASAN ] test/integration/next-pages/test/next-build.test.ts [ CRASH ]
 [ ASAN ] test/js/third_party/next-auth/next-auth.test.ts [ CRASH ]
-[ ASAN ] test/js/node/watch/fs.watch.test.ts [ CRASH ]
 
 # Tests failed due to ASAN: SEGV on unknown address
 [ ASAN ] test/integration/next-pages/test/dev-server.test.ts [ CRASH ]
 
+# worker.terminate() lands while a process.* lazy PropertyCallback builder
+# (stdout/stderr/stdin/nextTick/mainModule, via setupWorkerStdio) is in JS;
+# tryClearException() refuses to clear the TerminationException, so the
+# builder returns with it pending and reifyStaticProperty reports the slot
+# found, tripping JSC's "ASSERTION FAILED: !scope.exception() || !result"
+# in getOwnPropertyDescriptor / JSValue::get. Tracked in #34095; fix PRs
+# #33966 and #33418. x64-asan only (e.g. builds 75570, 75601); release
+# lanes are unaffected. Remove once either fix PR lands.
+[ ASAN ] test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js [ CRASH ] # #34095: JSC assertion when terminate() interrupts a lazy PropertyCallback builder
+# The stress test is the bun-owned 8×10-worker amplification of the above,
+# but on CI it only ever hits JSC::ExceptionScope::assertNoException at
+# ExceptionScope.h:61 (6/6: builds 75493/75495/75514/75597/75604/75606),
+# which #33966 reports still reproducing at ~1/4000 workers AFTER its
+# lazy-builder fix ("termination landing later in the bootstrap, after the
+# stdio builders have completed"). Tracked separately in #34690; this entry
+# is NOT removable with the one above.
+[ ASAN ] test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts [ CRASH ] # #34690: ExceptionScope::assertNoException during worker terminate bootstrap
+
 # Tests failed due to ASAN: use-after-poison
-[ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]
 [ ASAN ] test/napi/napi.test.ts [ CRASH ] # can throw an exception from an async_complete_callback
-[ ASAN ] test/js/node/test/parallel/test-fs-watch.js [ CRASH ]
-[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js [ CRASH ]
-[ ASAN ] test/js/node/test/parallel/test-fs-promises-watch.js [ CRASH ]
 
 # Tests failed due to ASAN: unknown-crash
 [ ASAN ] test/js/sql/tls-sql.test.ts [ CRASH ] # After: Throws on illegal transactions
@@ -99,8 +110,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # Tests timed out due to ASAN
 [ ASAN ] test/js/bun/spawn/spawn.test.ts [ TIMEOUT ]
 [ ASAN ] test/cli/inspect/inspect.test.ts [ TIMEOUT ]
-[ ASAN ] test/cli/test/parallel.test.ts [ TIMEOUT ] # 24 spawns × N workers each × LSAN exit overhead
-[ ASAN ] test/cli/test/isolation.test.ts [ TIMEOUT ] # 14 spawns × LSAN exit overhead
 [ ASAN ] test/js/bun/typescript/type-export.test.ts [ TIMEOUT ] # bun build --compile is slow under ASAN
 
 # Tests failed due to memory leaks
@@ -108,7 +117,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/fs/abort-signal-leak-read-write-file.test.ts [ LEAK ] # should not leak memory with already aborted signals
 [ ASAN ] test/js/web/streams/streams-leak.test.ts [ LEAK ] # Absolute memory usage remains relatively constant when reading and writing to a pipe
 [ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
-[ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
 
 # Windows-only gaps in named-pipe / socket teardown for ported Node net tests
 # (these pass on Linux and macOS): half-close (FIN) handling on named pipes,
@@ -124,10 +132,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # readable side on Windows, so the accepted connection never ends and
 # server.close() (via `await using`) waits forever. The assertion itself passes;
 # only the teardown hangs. Passes on Linux and macOS.
-
-# The 10 MB socket write in this test is an order of magnitude slower under
-# AddressSanitizer and exceeds the per-test timeout; it passes on regular builds.
-[ ASAN ] test/js/node/test/parallel/test-net-error-twice.js [ SKIP ] # ASAN-instrumented 10 MB write exceeds the timeout
 
 # The localAddress/localPort bind-before-connect and the SO_ERROR read on a
 # connecting socket that was reset during establishment are implemented in the

@@ -377,31 +377,10 @@ pub use crate::strings_impl::{
     to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
 
-/// memmem — libc on posix, scalar fallback on windows.
-#[cfg(not(windows))]
+/// memmem — `highway_memmem` (HWY_DYNAMIC_DISPATCH MemMemImpl), same on all platforms.
+#[inline]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    // SAFETY: `&[u8]` guarantees both (ptr,len) pairs are valid for reads;
-    // libc memmem only reads within those bounds.
-    let p = unsafe {
-        libc::memmem(
-            haystack.as_ptr().cast(),
-            haystack.len(),
-            needle.as_ptr().cast(),
-            needle.len(),
-        )
-    };
-    if p.is_null() {
-        None
-    } else {
-        Some(p as usize - haystack.as_ptr() as usize)
-    }
-}
-#[cfg(windows)]
-pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    bstr::ByteSlice::find(haystack, needle)
+    highway::memmem(haystack, needle)
 }
 
 /// `bun.reinterpretSlice` — `&[T]` → `&[u8]` view (T must be u8/u16 in practice).
@@ -1847,10 +1826,8 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
 }
 
 pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
-    if cfg!(debug_assertions) {
-        debug_assert!(!destination.is_empty());
-        debug_assert!(!source.is_empty());
-    }
+    debug_assert!(!destination.is_empty());
+    debug_assert!(!source.is_empty());
     let to_write = if destination.len() < source.len() * 2 {
         destination.len() - destination.len() % 2
     } else {
@@ -2309,22 +2286,18 @@ pub fn move_all_slices<'a, T: MoveSlices<'a> + ?Sized>(
 }
 
 pub fn move_slice<'a>(slice: &[u8], from: &[u8], to: &'a [u8]) -> &'a [u8] {
-    if cfg!(debug_assertions) {
-        debug_assert!(from.len() <= to.len() && from.len() >= slice.len());
-        // assert we are in bounds
-        debug_assert!(
-            (from.as_ptr() as usize + from.len()) >= slice.as_ptr() as usize + slice.len()
-                && (from.as_ptr() as usize <= slice.as_ptr() as usize)
-        );
-        debug_assert!(eql_long(from, &to[0..from.len()], false)); // data should be identical
-    }
+    debug_assert!(from.len() <= to.len() && from.len() >= slice.len());
+    // assert we are in bounds
+    debug_assert!(
+        (from.as_ptr() as usize + from.len()) >= slice.as_ptr() as usize + slice.len()
+            && (from.as_ptr() as usize <= slice.as_ptr() as usize)
+    );
+    debug_assert!(eql_long(from, &to[0..from.len()], false)); // data should be identical
 
     let ptr_offset = slice.as_ptr() as usize - from.as_ptr() as usize;
     let result = &to[ptr_offset..][0..slice.len()];
 
-    if cfg!(debug_assertions) {
-        debug_assert!(eql_long(slice, result, false)); // data should be identical
-    }
+    debug_assert!(eql_long(slice, result, false)); // data should be identical
 
     result
 }

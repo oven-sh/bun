@@ -307,6 +307,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_REDIS_TLS_NOT_AVAILABLE", Error, "RedisError"],
   ["ERR_REDIS_TLS_UPGRADE_FAILED", Error, "RedisError"],
   ["HPE_UNEXPECTED_CONTENT_LENGTH", Error],
+  ["HPE_INVALID_CONTENT_LENGTH", Error],
   ["HPE_INVALID_TRANSFER_ENCODING", Error],
   ["HPE_INVALID_EOF_STATE", Error],
   ["HPE_INVALID_METHOD", Error],

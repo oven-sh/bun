@@ -8,6 +8,25 @@ afterEach(() => {
   inspectee?.kill();
 });
 
+function waitForReply(ws: WebSocket, id: number): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const onMessage = ({ data }: MessageEvent) => {
+      const parsed = JSON.parse(String(data));
+      if (parsed.id === id) {
+        ws.removeEventListener("message", onMessage);
+        ws.removeEventListener("close", onClose);
+        ws.removeEventListener("error", onError);
+        resolve(parsed);
+      }
+    };
+    const onClose = (ev: CloseEvent) => reject(new Error(`closed (${ev.code} ${ev.reason}) before reply id=${id}`));
+    const onError = (cause: unknown) => reject(new Error("WebSocket error", { cause }));
+    ws.addEventListener("message", onMessage);
+    ws.addEventListener("close", onClose);
+    ws.addEventListener("error", onError);
+  });
+}
+
 test("binary frame closes the inspector websocket with 1003 instead of leaving a mute open socket", async () => {
   inspectee = spawn({
     cwd: import.meta.dir,
@@ -43,16 +62,7 @@ test("binary frame closes the inspector websocket with 1003 instead of leaving a
 
   // Sanity: the session answers before the binary frame.
   ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-  const before = await new Promise<any>(resolve => {
-    const onMessage = ({ data }: MessageEvent) => {
-      const parsed = JSON.parse(String(data));
-      if (parsed.id === 1) {
-        ws.removeEventListener("message", onMessage);
-        resolve(parsed);
-      }
-    };
-    ws.addEventListener("message", onMessage);
-  });
+  const before = await waitForReply(ws, 1);
   expect(before).toMatchObject({ id: 1, result: { result: { type: "number", value: 2 } } });
 
   const closed = new Promise<{ code: number; reason: string }>(resolve => {
@@ -88,12 +98,7 @@ test("binary frame closes the inspector websocket with 1003 instead of leaving a
     ws2.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
   });
   ws2.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "3 + 3" } }));
-  const after = await new Promise<any>(resolve => {
-    ws2.addEventListener("message", ({ data }) => {
-      const parsed = JSON.parse(String(data));
-      if (parsed.id === 1) resolve(parsed);
-    });
-  });
+  const after = await waitForReply(ws2, 1);
   expect(after).toMatchObject({ id: 1, result: { result: { type: "number", value: 6 } } });
   ws2.close();
 });

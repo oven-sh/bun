@@ -9,10 +9,8 @@ const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimar
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
 const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
-const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
 
 let child_process;
-let netForProbe;
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
@@ -204,9 +202,7 @@ const methodMessageMapping = {
   exitedAfterDisconnect,
   listening,
   online,
-  probePort,
   queryServer,
-  shareListenFd,
 };
 
 function onmessage(message, _handle) {
@@ -327,140 +323,6 @@ function queryServer(worker, message) {
   });
 }
 
-// node:http cluster workers self-bind with SO_REUSEPORT, which never collides
-// with a foreign process at bind time. The primary arbitrates instead: known
-// keys belong to this cluster; new ones get a one-shot test bind.
-class ReusePortHandle {
-  key;
-  port;
-  address;
-  workers = new Map();
-  errno = 0;
-  pending = null;
-  server = null;
-
-  constructor(key, message, owned) {
-    this.key = key;
-    this.port = message.port;
-    this.address = message.address ?? null;
-    if (!(this.port > 0)) return; // Port 0 is kernel-assigned; nothing can collide.
-    if (owned !== undefined) {
-      // The port is already claimed by this cluster under an overlapping host
-      // key; mirror that claim instead of test-binding against our own
-      // workers' REUSEPORT sockets (a plain bind would collide on Linux).
-      const ownedPending = owned.pending;
-      if (ownedPending) {
-        this.pending = [];
-        ownedPending.push(errno => {
-          this.errno = errno;
-          this.#settle();
-        });
-      } else {
-        this.errno = owned.errno;
-      }
-      return;
-    }
-    netForProbe ??= require("node:net");
-    this.pending = [];
-    const server = (this.server = netForProbe.createServer());
-    server.once("error", err => {
-      const raw = typeof err.errno === "number" && err.errno !== 0 ? err.errno : null;
-      this.errno = raw != null ? uvTranslateSysError(raw) : einvalErrorCode();
-      this.#settle();
-    });
-    server.listen({ port: this.port, host: this.address || undefined }, () => {
-      server.close(() => this.#settle());
-    });
-  }
-
-  #settle() {
-    this.server = null;
-    const pending = this.pending;
-    this.pending = null;
-    if (pending) for (const send of pending) send(this.errno);
-  }
-
-  add(worker, send) {
-    this.workers.set(worker.id, worker);
-    const { pending } = this;
-    if (pending) pending.push(send);
-    else send(this.errno);
-  }
-
-  remove(worker) {
-    this.workers.delete(worker.id);
-    if (this.workers.size !== 0) return false;
-    this.server?.close();
-    this.server = null;
-    return true;
-  }
-}
-
-// node:http `listen({fd})` in a worker: the descriptor exists only in the
-// primary, so SCM_RIGHTS-dup it to the worker, which adopts it directly
-// (accepts are then kernel-distributed across sharers).
-function shareListenFd(worker, message) {
-  if (worker.exitedAfterDisconnect) return;
-
-  const fd = message.fd;
-  if (process.platform === "win32") {
-    // Descriptor passing over IPC is not implemented on Windows; reply with
-    // the same EINVAL the direct listen({fd}) path reports there.
-    send(worker, { errno: einvalErrorCode(), ack: message.seq });
-    return;
-  }
-  if (typeof fd !== "number" || fd < 0) {
-    send(worker, { errno: -9 /* UV_EBADF */, ack: message.seq });
-    return;
-  }
-  try {
-    // sendHelper dups the descriptor for the wire; null means the dup or
-    // serialize failed and no reply reached the worker.
-    const sent = send(worker, { errno: 0, ack: message.seq }, { fd });
-    if (sent === null) send(worker, { errno: einvalErrorCode(), ack: message.seq });
-  } catch {
-    // A native send failure must not take down the primary's dispatch loop.
-    send(worker, { errno: einvalErrorCode(), ack: message.seq });
-  }
-}
-
-function hostCoversAll(host) {
-  return host == null || host === "" || host === "::" || host === "0.0.0.0";
-}
-
-// An existing claim on the same port whose host overlaps the requested one
-// (wildcards overlap everything) belongs to this cluster, not a foreigner.
-function findOwnReusePort(port, address) {
-  for (const handle of handles.values()) {
-    if (
-      handle instanceof ReusePortHandle &&
-      handle.port === port &&
-      (hostCoversAll(handle.address) || hostCoversAll(address) || handle.address === address)
-    ) {
-      return handle;
-    }
-  }
-  return undefined;
-}
-
-function probePort(worker, message) {
-  // Stop processing if worker already disconnecting
-  if (worker.exitedAfterDisconnect) return;
-
-  const key = `${message.address}:${message.port}:${message.addressType}:reuseport`;
-  let handle = handles.get(key);
-
-  if (handle === undefined) {
-    handle = new ReusePortHandle(key, message, findOwnReusePort(message.port, message.address ?? null));
-    handles.set(key, handle);
-  }
-
-  handle.add(worker, errno => {
-    if (errno) handles.delete(key); // Gives other workers a chance to retry.
-    send(worker, { errno, key, ack: message.seq });
-  });
-}
-
 function listening(worker, message) {
   const info = {
     addressType: message.addressType,
@@ -484,9 +346,6 @@ function close(worker, message) {
 }
 
 function send(worker, message, handle?, cb?) {
-  // Node marks every cluster-internal message; workers re-emit these as
-  // process 'internalMessage' events keyed on this cmd.
-  message.cmd = "NODE_CLUSTER";
   return sendHelper(worker.process[kHandle], message, handle, cb);
 }
 

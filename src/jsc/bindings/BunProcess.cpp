@@ -4379,35 +4379,37 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObj
     return JSValue::encode(ret);
 }
 
+// Keep in step with INTERNAL_IPC_PREFIX in src/js/node/child_process.ts, which
+// makes the same decision for the parent end of the channel.
+static constexpr auto kInternalIpcPrefix = "NODE_"_s;
+
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value, EncodedJSValue handle)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
-    // Entered from Rust (ipc.rs message dispatch) with no JS frame below us,
-    // so a pending exception has no caller to check it: report at this
-    // event-loop boundary instead (same pattern as Process_getMainModule).
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // Node reserves the "NODE_" cmd prefix for the channel's own traffic and
     // routes such messages to "internalMessage" on both ends of the channel.
+    //
+    // Read `cmd` without entering JS, so this frame needs no throw scope. A
+    // throw scope here obliges the caller to perform an exception check, and
+    // the caller is Rust, which has no way to do that -- every IPC message
+    // then trips the exception-check validator.
+    //
+    // `message` is a value we just deserialized off the channel, so `cmd` is
+    // always a plain own property; a getter or a proxy trap cannot reach here.
+    // Unlike node's `message.cmd`, getDirect ignores the prototype chain, so a
+    // polluted `Object.prototype.cmd` cannot reroute a caller's messages to
+    // "internalMessage".
+    auto& names = WebCore::builtinNames(vm);
     auto ident = vm.propertyNames->message;
     JSValue message = JSValue::decode(value);
-    if (message.isObject()) {
-        JSValue cmd = message.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "cmd"_s));
-        if (auto* exception = scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
-            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(global, exception);
-            return;
-        }
+    if (auto* object = message.getObject()) {
+        JSValue cmd = object->getDirect(vm, names.cmdPublicName());
         if (cmd && cmd.isString()) {
-            auto cmdString = cmd.toWTFString(global);
-            if (auto* exception = scope.exception()) [[unlikely]] {
-                (void)scope.tryClearException();
-                Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(global, exception);
-                return;
-            }
-            if (cmdString.length() > 5 && cmdString.startsWith("NODE_"_s)) {
-                ident = JSC::Identifier::fromString(vm, "internalMessage"_s);
+            auto cmdString = JSC::asString(cmd)->tryGetValue();
+            if (cmdString->length() > kInternalIpcPrefix.length() && cmdString->startsWith(kInternalIpcPrefix)) {
+                ident = names.internalMessagePublicName();
             }
         }
     }
@@ -4417,10 +4419,6 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
         args.append(message);
         args.append(JSValue::decode(handle));
         process->wrapped().emit(ident, args);
-        if (auto* exception = scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
-            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(global, exception);
-        }
     }
 }
 

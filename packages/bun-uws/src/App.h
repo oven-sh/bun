@@ -727,12 +727,6 @@ public:
         return std::move(*this);
     }
 
-    /* Adopted fd, options, callback */
-    TemplatedApp &&listen_fd(LIBUS_SOCKET_DESCRIPTOR fd, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        handler(httpContext ? trackListenSocket(httpContext->listen_fd(sslCtxOrNull(), fd, options)) : nullptr);
-        return std::move(*this);
-    }
-
     /* options, callback, path to unix domain socket */
     TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string_view path) {
         handler(httpContext ? trackListenSocket(httpContext->listen_unix(sslCtxOrNull(), path.data(), path.length(), options)) : nullptr);

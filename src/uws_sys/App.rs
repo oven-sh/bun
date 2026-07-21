@@ -290,27 +290,6 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
-    pub fn listen_fd(
-        &mut self,
-        handler: c::uws_listen_handler,
-        user_data: *mut c_void,
-        fd: i32,
-        options: i32,
-    ) {
-        // Callers supply the C-ABI shim directly.
-        // SAFETY: self is a valid app; fd is an adopted descriptor owned by the caller.
-        unsafe {
-            c::uws_app_listen_fd(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                fd,
-                options,
-                handler,
-                user_data,
-            )
-        }
-    }
-
     pub fn listen_on_unix_socket(
         &mut self,
         handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
@@ -654,14 +633,6 @@ pub mod c {
             app: *mut uws_app_t,
             host: *const c_char,
             port: u16,
-            options: i32,
-            handler: uws_listen_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_listen_fd(
-            ssl: i32,
-            app: *mut uws_app_t,
-            fd: i32,
             options: i32,
             handler: uws_listen_handler,
             user_data: *mut c_void,

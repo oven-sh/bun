@@ -198,7 +198,6 @@ int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd);
  * with the error left in errno (WSAGetLastError on Windows). */
 int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out);
 int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
-LIBUS_SOCKET_DESCRIPTOR bsd_prepare_adopted_listen_socket(LIBUS_SOCKET_DESCRIPTOR fd, int *error);
 int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR fd);
 int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);

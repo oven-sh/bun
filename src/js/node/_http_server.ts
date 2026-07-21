@@ -17,7 +17,7 @@ const {
   validateFunction,
   validateOneOf,
 } = require("internal/validators");
-const { ConnResetException, ExceptionWithHostPort, hasObserver, startPerf, stopPerf } = require("internal/shared");
+const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -103,6 +103,7 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
+const kClusterSendOptions = { __proto__: null, "$internal": true };
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -563,7 +564,6 @@ Server.prototype.listen = function () {
   const server = this;
   let port, host, onListen;
   let socketPath;
-  let fd;
   let tls = this[tlsSymbol];
 
   // This logic must align with:
@@ -576,8 +576,6 @@ Server.prototype.listen = function () {
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;
-      const arg0Fd = arg0.fd;
-      if (typeof arg0Fd === "number" && arg0Fd >= 0) fd = arg0Fd;
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -597,7 +595,7 @@ Server.prototype.listen = function () {
 
   // Bun defaults to port 3000.
   // Node defaults to port 0.
-  if (port === undefined && !socketPath && fd === undefined) {
+  if (port === undefined && !socketPath) {
     port = 0;
   }
 
@@ -617,11 +615,31 @@ Server.prototype.listen = function () {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false, onListen, fd);
+      server[kRealListen](tls, port, host, socketPath, false, onListen);
       return this;
     }
 
     if (cluster === undefined) cluster = require("node:cluster");
+
+    // const serverQuery = {
+    //   // address: address,
+    //   port: port,
+    //   addressType: 4,
+    //   // fd: fd,
+    //   // flags,
+    //   // backlog,
+    //   // ...options,
+    // };
+    // cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+    //   // err = checkBindError(err, port, handle);
+    //   // if (err) {
+    //   //   throw new ExceptionWithHostPort(err, "bind", address, port);
+    //   // }
+    //   if (err) {
+    //     throw err;
+    //   }
+    //   server[kRealListen](port, host, socketPath, onListen);
+    // });
 
     server.once("listening", () => {
       cluster.worker.state = "listening";
@@ -636,62 +654,10 @@ Server.prototype.listen = function () {
         address: socketPath ?? (boundHost && boundHost.address) ?? null,
         addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
       };
-      cluster._sendInternal(message);
+      process.send(message, undefined, kClusterSendOptions);
     });
 
-    // listen({fd}): the descriptor was inherited by the primary, not this
-    // worker — ask the primary to share it over IPC, then adopt the copy.
-    if (typeof fd === "number" && fd >= 0 && process.connected) {
-      if (process.platform === "win32") {
-        // Descriptor passing over IPC is not implemented on Windows; fail
-        // like the direct listen({fd}) path does (Node skips these tests).
-        const UV_EINVAL_WIN = -4071;
-        process.nextTick(() => server.emit("error", new ExceptionWithHostPort(UV_EINVAL_WIN, "listen", null, 0)));
-        return this;
-      }
-      cluster._sendInternal({ act: "shareListenFd", fd, addressType: 4 }, (reply, _handle) => {
-        // The IPC wire surfaces a received SCM_RIGHTS descriptor as $fd on
-        // the message itself (see ipc.rs $hasHandle receive path).
-        const received = reply["$fd"];
-        const sharedFd = typeof received === "number" && received >= 0 ? received : undefined;
-        const replyErrno = reply.errno;
-        if (replyErrno || sharedFd === undefined) {
-          if (sharedFd !== undefined) closeSharedFd(sharedFd);
-          server.emit("error", new ExceptionWithHostPort(replyErrno || -9, "listen", null, 0));
-          return;
-        }
-        try {
-          server[kRealListen](tls, port, host, socketPath, true, onListen, sharedFd);
-        } catch (err) {
-          // Adoption failed before the listener took ownership; the received
-          // dup would otherwise leak (and pin the port) in this worker.
-          closeSharedFd(sharedFd);
-          server.emit("error", err);
-        }
-      });
-      return this;
-    }
-
-    // Workers self-bind with SO_REUSEPORT (no handle passing yet), which
-    // cannot collide with a foreign process's socket at bind time. Ask the
-    // primary to arbitrate the port first, like Node's bind-in-primary does.
-    const askPrimary = typeof port === "number" && port > 0 && !socketPath && process.connected;
-    if (askPrimary) {
-      cluster._sendInternal({ act: "probePort", address: host ?? null, port, addressType: 4 }, reply => {
-        const replyErrno = reply.errno;
-        if (replyErrno) {
-          server.emit("error", new ExceptionWithHostPort(replyErrno, "bind", host ?? null, port));
-          return;
-        }
-        try {
-          server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
-        } catch (err) {
-          server.emit("error", err);
-        }
-      });
-    } else {
-      server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
-    }
+    server[kRealListen](tls, port, host, socketPath, true, onListen);
   } catch (err) {
     setTimeout(() => server.emit("error", err), 1);
   }
@@ -699,13 +665,7 @@ Server.prototype.listen = function () {
   return this;
 };
 
-function closeSharedFd(fd) {
-  try {
-    require("node:fs").closeSync(fd);
-  } catch {}
-}
-
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen, fd) {
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -722,7 +682,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       port,
       hostname: host,
       unix: socketPath,
-      fd,
       reusePort,
       // Bindings to be used for WS Server
       websocket: {

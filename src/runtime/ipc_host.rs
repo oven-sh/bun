@@ -118,22 +118,6 @@ pub(crate) fn do_send(
             is_internal = IsInternal::Internal;
         }
     }
-    // Node routes cluster-protocol messages (cmd: "NODE_CLUSTER") through
-    // process.send and dispatches them by cmd on the peer; mark them
-    // wire-internal even when the $internal option was dropped by a wrapper.
-    if is_internal == IsInternal::External
-        && matches!(from, FromEnum::Process)
-        && message.is_object()
-    {
-        if let Some(cmd) = message.get(global_object, "cmd")? {
-            if cmd.is_string()
-                && bun_core::OwnedString::new(cmd.to_bun_string(global_object)?)
-                    .eql_comptime(b"NODE_CLUSTER")
-            {
-                is_internal = IsInternal::Internal;
-            }
-        }
-    }
 
     let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
     if !connected {

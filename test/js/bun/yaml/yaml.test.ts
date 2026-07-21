@@ -496,7 +496,7 @@ database:
       });
     });
 
-    test.todo("handles circular references with anchors and aliases", () => {
+    test("handles circular references with anchors and aliases", () => {
       const yaml = `
 parent: &ref
   name: parent
@@ -508,6 +508,163 @@ parent: &ref
       expect(result.parent.name).toBe("parent");
       expect(result.parent.child.name).toBe("child");
       expect(result.parent.child.parent).toBe(result.parent);
+    });
+
+    describe("self-referential anchors", () => {
+      test("flow mapping: &a {self: *a}", () => {
+        const result = YAML.parse("&a {name: root, self: *a}");
+        expect(result.name).toBe("root");
+        expect(result.self).toBe(result);
+      });
+
+      test("flow sequence: &a [*a]", () => {
+        const result = YAML.parse("- &a [1, *a, 2]");
+        expect(result).toHaveLength(1);
+        expect(result[0][0]).toBe(1);
+        expect(result[0][1]).toBe(result[0]);
+        expect(result[0][2]).toBe(2);
+      });
+
+      test("block mapping", () => {
+        const result = YAML.parse("&a\nname: root\nself: *a\n");
+        expect(result.name).toBe("root");
+        expect(result.self).toBe(result);
+      });
+
+      test("block sequence", () => {
+        const result = YAML.parse("&a\n- first\n- *a\n");
+        expect(result[0]).toBe("first");
+        expect(result[1]).toBe(result);
+      });
+
+      test("block mapping with explicit key", () => {
+        const result = YAML.parse("&a\n? k\n: *a\n");
+        expect(result.k).toBe(result);
+      });
+
+      test("alias to cyclic node from outside the cycle", () => {
+        const result = YAML.parse("first: &a {name: x, self: *a}\nsecond: *a\n");
+        expect(result.first.self).toBe(result.first);
+        expect(result.second).toBe(result.first);
+      });
+
+      test("indirect cycle through two anchors", () => {
+        const result = YAML.parse("&a\nchild: &b\n  parent: *a\nalso: *b\n");
+        expect(result.child.parent).toBe(result);
+        expect(result.also).toBe(result.child);
+      });
+
+      test.each([undefined, 2])("stringify round-trips a cyclic object (space=%p)", space => {
+        const obj: any = { name: "root" };
+        obj.self = obj;
+        const parsed = YAML.parse(YAML.stringify(obj, null, space));
+        expect(parsed.name).toBe("root");
+        expect(parsed.self).toBe(parsed);
+      });
+
+      test.each([undefined, 2])("stringify round-trips a cyclic array (space=%p)", space => {
+        const arr: any[] = ["first"];
+        arr.push(arr);
+        const parsed = YAML.parse(YAML.stringify(arr, null, space));
+        expect(parsed[0]).toBe("first");
+        expect(parsed[1]).toBe(parsed);
+      });
+
+      test.each([undefined, 2])("stringify round-trips a nested cycle (space=%p)", space => {
+        const inner: any = { x: 1 };
+        const outer: any = { inner };
+        inner.parent = outer;
+        const parsed = YAML.parse(YAML.stringify(outer, null, space));
+        expect(parsed.inner.x).toBe(1);
+        expect(parsed.inner.parent).toBe(parsed);
+      });
+
+      test.each([undefined, 2])("stringify round-trips a cycle plus an external alias (space=%p)", space => {
+        const c: any = { name: "c" };
+        c.self = c;
+        const parsed = YAML.parse(YAML.stringify({ first: c, second: c }, null, space));
+        expect(parsed.first.name).toBe("c");
+        expect(parsed.first.self).toBe(parsed.first);
+        expect(parsed.second).toBe(parsed.first);
+      });
+
+      test("anchored non-cyclic collections still charge the alias-expansion budget", () => {
+        // Every &ai below is a pre-registered collection anchor but not
+        // self-referential; each *a(i-1) must still walk the prior subtree so
+        // the billion-laughs guard fires.
+        const lines = ["a0: &a0 [1,2,3,4,5,6,7,8,9,10]"];
+        for (let i = 1; i <= 25; i++) {
+          const prev = `*a${i - 1}`;
+          lines.push(`a${i}: &a${i} [${Array(10).fill(prev).join(",")}]`);
+        }
+        expect(() => YAML.parse(lines.join("\n"))).toThrow("Excessive aliasing");
+      });
+
+      test("prior-line anchor on a flow-sequence implicit key anchors the outer mapping", () => {
+        const result = YAML.parse("&a\n[1, 2]: *a\n");
+        expect(Object.keys(result)).toEqual(["1,2"]);
+        expect(result["1,2"]).toBe(result);
+      });
+
+      test("prior-line anchor on a flow-mapping implicit key anchors the outer mapping", () => {
+        const result = YAML.parse("&a\n{k: 1}: *a\n");
+        const [key] = Object.keys(result);
+        expect(result[key]).toBe(result);
+      });
+
+      test("a merge key cannot alias a mapping whose body is still being parsed", () => {
+        expect(() => YAML.parse("&outer\nname: root\ninner:\n  <<: *outer\n  extra: 1\n")).toThrow("Unresolved alias");
+        expect(() => YAML.parse("&outer\nname: root\ninner:\n  <<: [*outer]\n  extra: 1\n")).toThrow(
+          "Unresolved alias",
+        );
+      });
+
+      test("an alias inside a redefined anchor's body resolves to the previous definition", () => {
+        // Pre-registration would clobber the previous &shared before the body
+        // runs; skipping pre-registration on redefinition preserves the
+        // existing resolution order.
+        const result = YAML.parse("base: &shared\n  x: 1\noverride: &shared\n  <<: *shared\n  y: 2\n");
+        expect(result).toEqual({ base: { x: 1 }, override: { x: 1, y: 2 } });
+
+        const result2 = YAML.parse("a: &x {v: 1}\nb: &x {ref: *x}\nc: *x\n");
+        expect(result2.b.ref).toEqual({ v: 1 });
+        expect(result2.b.ref).toBe(result2.a);
+        expect(result2.c).toBe(result2.b);
+      });
+
+      test("a nested anchor redefinition shadows the still-open ancestor", () => {
+        const result = YAML.parse("&x\nchild: &x\n  ref: *x\nlater: *x\n");
+        expect(result.child.ref).toBe(result.child);
+        expect(result.later).toBe(result.child);
+      });
+
+      test("a merge key can alias a fully-parsed cyclic mapping", () => {
+        const result = YAML.parse("a: &a\n  self: *a\n  k: 1\nb:\n  <<: *a\n  extra: 2\n");
+        expect(Object.keys(result.b).sort()).toEqual(["extra", "k", "self"]);
+        expect(result.b.self).toBe(result.a);
+        expect(result.b.k).toBe(1);
+        expect(result.b.extra).toBe(2);
+      });
+
+      test("the yaml module loader still rejects self-referential anchors", async () => {
+        // Only Bun.YAML.parse opts into cyclic Expr graphs; the bundler's yaml
+        // loader and pnpm-lock migration walk the Expr tree without a seen-set
+        // and must keep seeing a diagnosable parse error.
+        using dir = tempDir("yaml-cyclic-loader", {
+          "cycle.yaml": "&a\nself: *a\n",
+          "index.ts": `import data from "./cycle.yaml"; console.log(data);`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("Unresolved alias");
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+      });
     });
 
     test("handles multiple documents", () => {
@@ -2359,32 +2516,36 @@ my_config:
       expect(YAML.parse(input2)).toMatchSnapshot();
     });
 
-    test("handles YAML bombs", () => {
-      function buildTest(depth) {
-        const lines: string[] = [];
-        lines.push(`a0: &a0\n  k0: 0`);
-        for (let i = 1; i <= depth; i++) {
-          const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
-          lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+    test(
+      "handles YAML bombs",
+      () => {
+        function buildTest(depth) {
+          const lines: string[] = [];
+          lines.push(`a0: &a0\n  k0: 0`);
+          for (let i = 1; i <= depth; i++) {
+            const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
+            lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+          }
+          lines.push(`root:\n  <<: *a${depth}`);
+          const input = lines.join("\n");
+
+          const expected: any = {};
+          for (let i = 0; i <= depth; i++) {
+            const record = {};
+            for (let j = 0; j <= i; j++) record[`k${j}`] = j;
+            expected[`a${i}`] = record;
+          }
+          expected.root = { ...expected[`a${depth}`] };
+
+          return { input, expected };
         }
-        lines.push(`root:\n  <<: *a${depth}`);
-        const input = lines.join("\n");
 
-        const expected: any = {};
-        for (let i = 0; i <= depth; i++) {
-          const record = {};
-          for (let j = 0; j <= i; j++) record[`k${j}`] = j;
-          expected[`a${i}`] = record;
-        }
-        expected.root = { ...expected[`a${depth}`] };
+        const { input, expected } = buildTest(24);
 
-        return { input, expected };
-      }
-
-      const { input, expected } = buildTest(24);
-
-      expect(YAML.parse(input)).toEqual(expected);
-    }, 100);
+        expect(YAML.parse(input)).toEqual(expected);
+      },
+      (isDebug || isASAN ? 10 : 1) * 100,
+    );
 
     describe("merge keys", () => {
       test("merge overrides", () => {
@@ -2941,9 +3102,8 @@ config:
         expect(parsed.shared.host).toBe("localhost");
       });
 
-      test.todo("handles self-referencing objects", () => {
-        // Skipping as this causes build issues with circular references
-        const obj = { name: "root" };
+      test("handles self-referencing objects", () => {
+        const obj: any = { name: "root" };
         obj.self = obj;
 
         const yaml = YAML.stringify(obj);
@@ -3958,9 +4118,9 @@ refs:
         expect(parsed.level2.nested.deep.data.id).toBe(4);
       });
 
-      test.todo("handles root level anchors correctly", () => {
+      test("handles root level anchors correctly", () => {
         // When the root itself is referenced
-        const obj = { name: "root" };
+        const obj: any = { name: "root" };
         obj.self = obj;
 
         const yaml = YAML.stringify(obj);
@@ -4098,7 +4258,7 @@ refs:
         expect(yaml2).toBe("counter: 4");
       });
 
-      test.todo("handles circular getters", () => {
+      test("handles circular getters", () => {
         const obj = {
           get self() {
             return obj;

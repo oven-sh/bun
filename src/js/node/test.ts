@@ -3010,10 +3010,12 @@ function standaloneRegister(entry: StandaloneEntry) {
 // instead of destroying the stream.
 async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   let hookError: unknown;
+  // Node's root is a Test, not a Suite; hookArgFor() hands root a TestContext.
+  const rootArg = hookArgFor(root);
   for (const hook of root.hooks.before) {
     try {
       // Memoized: hooks that ran immediately (started root) are not re-run.
-      await runBeforeHookOnce(hook, root, root.getSuiteCtx());
+      await runBeforeHookOnce(hook, root, rootArg);
     } catch (err) {
       hookError = err;
       break;
@@ -3028,7 +3030,7 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   standaloneQueue.length = 0;
   for (const hook of root.hooks.after) {
     try {
-      await runHook(hook, root, root.getSuiteCtx());
+      await runHook(hook, root, rootArg);
     } catch (err) {
       hookError ??= err;
     }
@@ -3440,7 +3442,13 @@ async function attachStandaloneReporters(stream: TestsStream): Promise<unknown> 
         composed.pipe(destination, { end: endDestination });
         if (endDestination) {
           destination.on("finish", resolvePromise);
-          destination.on("error", resolvePromise);
+          // .pipe() does not back-propagate destination errors to composed;
+          // surface them like the composed-error path above.
+          destination.on("error", (err: Error) => {
+            console.error(err?.stack ?? err);
+            process.exitCode = 1;
+            resolvePromise();
+          });
         } else {
           composed.on("end", resolvePromise);
         }

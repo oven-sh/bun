@@ -280,7 +280,7 @@ it("process.version is set", () => {
   expect(process.version).not.toInclude("unset");
 });
 
-it.todo("process.argv0", () => {
+it("process.argv0", () => {
   expect(basename(process.argv0)).toBe(basename(process.argv[0]));
 });
 
@@ -1541,7 +1541,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todo("exitWithUndefinedFatalException", async () => {
+  it("exitWithUndefinedFatalException", async () => {
     await runInlineFixture(
       `
       process._fatalException = undefined;

@@ -1,18 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 
-// The NetworkSink behind s3.file(k).writer() is heap-allocated and has two
-// owners: the JS wrapper (m_sinkPtr) and the MultiPartUpload's callback_context.
-// Both release paths routed through NetworkSink::finalize(), which only
-// detached the upload task and never reclaimed the Box. Every writer() leaked
-// one ~80-byte NetworkSink on both the success and failure completion paths,
-// whether finished via .end() or .close().
-//
-// This test spawns two subprocesses under detect_leaks=1 with N and N+20
-// writers and asserts the extra 20 writers do not add a proportional number of
-// leaked bytes. symbolize=0 keeps each run under a second; one-time at-exit
-// allocations are constant between the two runs and cancel out in the diff.
-
+// LSAN byte-count diff between N and N+20 writers: symbolize=0 keeps each
+// subprocess fast, and one-time at-exit allocations cancel out in the diff.
+// https://github.com/oven-sh/bun/pull/34999
 async function runWriters(count: number, fail: boolean, finish: "end" | "close") {
   const script = `
     const server = Bun.serve({

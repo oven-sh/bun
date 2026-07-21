@@ -2133,10 +2133,9 @@ pub type H3ResponseSink = HTTPServerWritable<true, true>;
 // NetworkSink
 // ──────────────────────────────────────────────────────────────────────────
 
-// Two owners hold a raw `*mut NetworkSink`: the `JSNetworkSink` wrapper
-// (`m_sinkPtr`, released via the generated `__finalize`) and the
-// `MultiPartUpload.callback_context` (released in `wrapper_callback`). Both
-// routes end in `finalize()`, so the allocation is freed by intrusive refcount.
+// Two intrusive-rc owners: the `JSNetworkSink` wrapper (`m_sinkPtr`, released
+// via `__finalize`) and `MultiPartUpload.callback_context` (released in
+// `wrapper_callback`); both call `finalize()`, which `deref()`s.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct NetworkSink {
     pub ref_count: core::cell::Cell<u32>,

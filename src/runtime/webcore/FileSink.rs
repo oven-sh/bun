@@ -933,10 +933,8 @@ impl FileSink {
         // `to_js()` must `deref()` once to release init's +1 (see
         // `Blob::get_writer`).
         //
-        // `pending` is NOT cleared here: `.close()` reaches `finalize` via
-        // `doClose` while a backpressured write may still be awaiting its
-        // promise; `run_pending` settles it when the writer drains, and
-        // `deinit()` drops the field once the refcount hits zero.
+        // `pending` is left for `run_pending`/`deinit()`: `.close()` reaches
+        // here via `doClose` while a backpressured write may still be awaited.
         self.readable_stream.set(readable_stream::Strong::default());
         self.js_sink_ref.with_mut(|r| r.deinit());
         // SAFETY: `&mut self` carries write provenance over the whole

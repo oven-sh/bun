@@ -1632,16 +1632,22 @@ where
 
         let seconds = arguments[1];
 
+        if !seconds.is_any_int() {
+            return Err(self.global().throw_invalid_arguments(format_args!(
+                "timeout() expects an integer number of seconds",
+            )));
+        }
+        let seconds_i64 = seconds.to_int64();
+        if !(0..=255).contains(&seconds_i64) {
+            return Err(self.global().throw_invalid_arguments(format_args!(
+                "timeout() expects seconds to be between 0 and 255, received {seconds_i64}",
+            )));
+        }
+        let value = seconds_i64 as u32;
+
         if matches!(self.config.address, server_config::Address::Unix(_)) {
             return Ok(JSValue::NULL);
         }
-
-        if !seconds.is_number() {
-            return Err(self
-                .global()
-                .throw(format_args!("timeout() requires a number")));
-        }
-        let value = seconds.to_u32();
 
         if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
             // SAFETY: from_js returns a live *mut Request
@@ -1649,7 +1655,7 @@ where
         } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0])
         {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
-            unsafe { &mut *response }.set_timeout((value % 255) as u8);
+            unsafe { &mut *response }.set_timeout(value as u8);
         } else {
             return Err(self
                 .global()

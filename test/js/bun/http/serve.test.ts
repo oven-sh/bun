@@ -2776,6 +2776,99 @@ it.concurrent(
   20_000,
 );
 
+it.concurrent("server.timeout() validates its seconds argument", async () => {
+  const inputs: Record<string, number> = {
+    nan: NaN,
+    infinity: Infinity,
+    negative: -1,
+    fractionalLow: 0.4,
+    fractionalHigh: 1.9,
+    tooLarge: 300,
+    zero: 0,
+    max: 255,
+    mid: 30,
+  };
+  using server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      const key = new URL(req.url).searchParams.get("k")!;
+      let message = "ok";
+      try {
+        server.timeout(req, inputs[key]);
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      return new Response(message);
+    },
+  });
+
+  const probe = async (key: string) =>
+    (await fetch(new URL(`/?k=${key}`, server.url.origin))).text();
+
+  expect({
+    nan: await probe("nan"),
+    infinity: await probe("infinity"),
+    negative: await probe("negative"),
+    fractionalLow: await probe("fractionalLow"),
+    fractionalHigh: await probe("fractionalHigh"),
+    tooLarge: await probe("tooLarge"),
+    zero: await probe("zero"),
+    max: await probe("max"),
+    mid: await probe("mid"),
+  }).toEqual({
+    nan: "timeout() expects an integer number of seconds",
+    infinity: "timeout() expects an integer number of seconds",
+    negative: "timeout() expects seconds to be between 0 and 255, received -1",
+    fractionalLow: "timeout() expects an integer number of seconds",
+    fractionalHigh: "timeout() expects an integer number of seconds",
+    tooLarge: "timeout() expects seconds to be between 0 and 255, received 300",
+    zero: "ok",
+    max: "ok",
+    mid: "ok",
+  });
+});
+
+it.concurrent(
+  "server.timeout() does not silently disable the idle timeout on invalid input",
+  async () => {
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 1,
+      fetch(req, server) {
+        try {
+          server.timeout(req, NaN);
+        } catch {}
+        return new Promise(() => {});
+      },
+    });
+
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(sock) {
+          sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        },
+        data() {},
+        close() {
+          resolve(true);
+        },
+        error() {
+          resolve(true);
+        },
+      },
+    });
+    // The configured idleTimeout (1s, subject to the uWS timer granularity)
+    // must remain in effect. Without validation, NaN became 0 and cleared
+    // the timeout, so the hung handler was never reaped.
+    const reaped = await Promise.race([promise, Bun.sleep(12000).then(() => false)]);
+    connection.end();
+    expect(reaped).toBe(true);
+  },
+  20_000,
+);
+
 it.concurrent("#6462", async () => {
   let headers: string[] = [];
   using server = Bun.serve({

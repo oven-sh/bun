@@ -2,7 +2,7 @@ import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
-import { createServer as createTcpServer, Socket } from "node:net";
+import { Socket, createServer as createTcpServer } from "node:net";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";

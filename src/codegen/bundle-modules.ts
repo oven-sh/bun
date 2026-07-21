@@ -267,7 +267,13 @@ for (const entrypoint of bundledEntryPoints) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
   const output = fs
     .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
-    .replace(/^(?:\/\/[^\n]*\n)+/, "");
+    .replace(/^(?:\/\/[^\n]*\n)+/, "")
+    // esbuild's keepNames `__name` uses a descriptor without `__proto__: null`,
+    // which `Object.prototype.get = fn` pollution then poisons.
+    .replace(
+      /__defProp\(target, "name", \{ value, configurable: !0 \}\)/,
+      '__defProp(target, "name", { __proto__: null, value, configurable: !0 })',
+    );
   // Trailing newline before `})` is load-bearing: esbuild preserves `//!`
   // legal comments, and a `//!` on the final line would swallow the wrapper
   // close.

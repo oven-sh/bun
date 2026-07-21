@@ -651,29 +651,13 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     }
   }
   if (cfg.crossLangLto) {
-    // The Rust bitcode's shape must match the platform's C++ LTO mode so both
-    // sides land in the same LTO partition at link time and can exchange
-    // function bodies. (The workspace `[profile.release] lto = "fat"` exists
-    // for non-LTO release builds, where the rust .a is linked as
+    // Every crossLangLto platform links ThinLTO, so leave each crate's per-CGU
+    // bitcode with its ThinLTO summary intact: the whole link is one uniform
+    // ThinLTO graph and cross-module importing works across Rust↔C++/JSC.
+    // `fat` would pre-merge the crates into one summary-less blob the thin
+    // link can't import from. (The workspace `[profile.release] lto = "fat"`
+    // exists for non-LTO release builds, where the rust .a is linked as
     // already-codegen'd machine code and still wants intra-Rust inlining.)
-    //
-    //   - darwin / windows cross (ThinLTO links): `off`. Each crate's
-    //     per-CGU bitcode keeps its ThinLTO summary, so the whole link is
-    //     one uniform ThinLTO graph and cross-module importing works across
-    //     Rust↔C++/JSC. `fat` would pre-merge the crates into one
-    //     summary-less blob the thin link can't import from (and rustc's
-    //     serial pre-merge is wasted work — the linker schedules the
-    //     backends itself).
-    //   - ELF (full-LTO link — see the -flto=full entry in flags.ts): `fat`.
-    //     rustc pre-merges every crate (including the prebuilt std's
-    //     embedded bitcode) into ONE summary-less regular-LTO module, which
-    //     lld then merges into the same regular-LTO partition as the C++
-    //     `-flto=full` objects — that merge is what gives Rust↔C++
-    //     cross-language inlining under full LTO. (The merged module first
-    //     gets a regular-LTO summary bolted on by the rust_lto_fix edge —
-    //     rustLtoLinkInputs() below — because lld's EnableSplitLTOUnit
-    //     consistency check requires one.)
-    // All platforms now use ThinLTO, so `off` (per-CGU summaries) everywhere.
     env.CARGO_PROFILE_RELEASE_LTO = "off";
   } else if (cfg.asan) {
     // release-asan has `cfg.lto` forced off (config.ts), but without this

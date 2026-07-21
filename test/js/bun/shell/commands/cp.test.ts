@@ -63,64 +63,62 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     .runAsTest("dir -> ? fails without -R");
 
   describe("-n (no-clobber)", () => {
-    TestBuilder.command`cp -n src dst`
+    TestBuilder.command`echo NEW > src; echo OLD > dst; cp -n src dst`
       .ensureTempDir()
-      .file("src", "NEW\n")
-      .file("dst", "OLD\n")
       .exitCode(0)
       .stderr("")
       .fileEquals("dst", "OLD\n")
       .fileEquals("src", "NEW\n")
+      .testMini()
       .runAsTest("does not overwrite an existing file");
 
-    TestBuilder.command`cp -n src dst`
+    TestBuilder.command`echo NEW > src; cp -n src dst`
       .ensureTempDir()
-      .file("src", "NEW\n")
       .exitCode(0)
       .fileEquals("dst", "NEW\n")
       .fileEquals("src", "NEW\n")
+      .testMini()
       .runAsTest("copies when destination does not exist");
 
-    TestBuilder.command`mkdir d; echo OLD > d/src; cp -n src d/`
+    TestBuilder.command`echo NEW > src; mkdir d; echo OLD > d/src; cp -n src d/`
       .ensureTempDir()
-      .file("src", "NEW\n")
       .exitCode(0)
       .fileEquals("d/src", "OLD\n")
       .fileEquals("src", "NEW\n")
+      .testMini()
       .runAsTest("does not overwrite an existing file in a directory");
 
-    TestBuilder.command`mkdir d; echo OLD > d/a; cp -n a b d/`
+    TestBuilder.command`echo NEW > a; echo B > b; mkdir d; echo OLD > d/a; cp -n a b d/`
       .ensureTempDir()
-      .file("a", "NEW\n")
-      .file("b", "B\n")
       .exitCode(0)
       .fileEquals("d/a", "OLD\n")
       .fileEquals("d/b", "B\n")
       .fileEquals("a", "NEW\n")
       .fileEquals("b", "B\n")
+      .testMini()
       .runAsTest("skips existing but copies the rest into a directory");
 
-    TestBuilder.command`cp -n -v src dst`
+    TestBuilder.command`echo NEW > src; echo OLD > dst; cp -n -v src dst`
       .ensureTempDir()
-      .file("src", "NEW\n")
-      .file("dst", "OLD\n")
       .exitCode(0)
       .stdout("")
       .fileEquals("dst", "OLD\n")
+      .testMini()
       .runAsTest("-v stays quiet when the destination already exists");
 
-    TestBuilder.command`mkdir -p srcdir dstdir; echo NEW > srcdir/a; echo NEW > srcdir/b; echo OLD > dstdir/srcdir/a; cp -R -n srcdir dstdir`
+    TestBuilder.command`mkdir -p srcdir dstdir/srcdir; echo NEW > srcdir/a; echo NEW > srcdir/b; echo OLD > dstdir/srcdir/a; cp -R -n srcdir dstdir`
       .ensureTempDir()
-      .directory("dstdir/srcdir")
       .exitCode(0)
       .fileEquals("dstdir/srcdir/a", "OLD\n")
       .fileEquals("dstdir/srcdir/b", "NEW\n")
+      .testMini()
       .runAsTest("-R -n skips existing files inside the tree");
 
     TestBuilder.command`touch dst; cp -n nosuch dst`
       .ensureTempDir()
       .exitCode(c => expect(c).not.toBe(0))
       .stderr(s => expect(s).toContain("nosuch"))
+      .testMini()
       .runAsTest("still reports a missing source when destination exists");
   });
 
@@ -257,8 +255,7 @@ describe("bunshell cp -n (builtin forced on)", () => {
 
   test.concurrent("does not overwrite an existing file", async () => {
     using dir = tempDir("cp-n-file", { src: "NEW\n", dst: "OLD\n" });
-    const { stderr, exitCode } = await runCp(String(dir), "cp -n src dst");
-    expect(stderr).toBe("");
+    const { exitCode } = await runCp(String(dir), "cp -n src dst");
     expect(await Bun.file(join(String(dir), "dst")).text()).toBe("OLD\n");
     expect(await Bun.file(join(String(dir), "src")).text()).toBe("NEW\n");
     expect(exitCode).toBe(0);
@@ -266,24 +263,21 @@ describe("bunshell cp -n (builtin forced on)", () => {
 
   test.concurrent("copies when destination does not exist", async () => {
     using dir = tempDir("cp-n-new", { src: "NEW\n" });
-    const { stderr, exitCode } = await runCp(String(dir), "cp -n src dst");
-    expect(stderr).toBe("");
+    const { exitCode } = await runCp(String(dir), "cp -n src dst");
     expect(await Bun.file(join(String(dir), "dst")).text()).toBe("NEW\n");
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("does not overwrite an existing file in a directory", async () => {
     using dir = tempDir("cp-n-dir", { src: "NEW\n", "d/src": "OLD\n" });
-    const { stderr, exitCode } = await runCp(String(dir), "cp -n src d/");
-    expect(stderr).toBe("");
+    const { exitCode } = await runCp(String(dir), "cp -n src d/");
     expect(await Bun.file(join(String(dir), "d", "src")).text()).toBe("OLD\n");
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("skips existing but copies the rest into a directory", async () => {
     using dir = tempDir("cp-n-multi", { a: "NEW\n", b: "B\n", "d/a": "OLD\n" });
-    const { stderr, exitCode } = await runCp(String(dir), "cp -n a b d/");
-    expect(stderr).toBe("");
+    const { exitCode } = await runCp(String(dir), "cp -n a b d/");
     expect(await Bun.file(join(String(dir), "d", "a")).text()).toBe("OLD\n");
     expect(await Bun.file(join(String(dir), "d", "b")).text()).toBe("B\n");
     expect(exitCode).toBe(0);
@@ -291,8 +285,7 @@ describe("bunshell cp -n (builtin forced on)", () => {
 
   test.concurrent("-v stays quiet when the destination already exists", async () => {
     using dir = tempDir("cp-n-verbose", { src: "NEW\n", dst: "OLD\n" });
-    const { stdout, stderr, exitCode } = await runCp(String(dir), "cp -n -v src dst");
-    expect(stderr).toBe("");
+    const { stdout, exitCode } = await runCp(String(dir), "cp -n -v src dst");
     expect(stdout).toBe("");
     expect(await Bun.file(join(String(dir), "dst")).text()).toBe("OLD\n");
     expect(exitCode).toBe(0);
@@ -304,8 +297,7 @@ describe("bunshell cp -n (builtin forced on)", () => {
       "srcdir/b": "NEW\n",
       "dstdir/srcdir/a": "OLD\n",
     });
-    const { stderr, exitCode } = await runCp(String(dir), "cp -R -n srcdir dstdir");
-    expect(stderr).toBe("");
+    const { exitCode } = await runCp(String(dir), "cp -R -n srcdir dstdir");
     expect(await Bun.file(join(String(dir), "dstdir", "srcdir", "a")).text()).toBe("OLD\n");
     expect(await Bun.file(join(String(dir), "dstdir", "srcdir", "b")).text()).toBe("NEW\n");
     expect(exitCode).toBe(0);

@@ -3,7 +3,8 @@ fixtures/tools
 fixtures/v8-coverage
 fixtures/test-runner
 fixtures/source-map
-fixtures/snapshot
+fixtures/snapshot/*
+!fixtures/snapshot/typescript.js
 fixtures/repl*
 .tmp.*
 **/fails.txt

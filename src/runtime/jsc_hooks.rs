@@ -2020,6 +2020,24 @@ fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
 /// # Safety
 /// `jsc_vm` is the live per-thread VM; `ret` is a valid out-param;
 /// `args.extra`, when non-null, points at a live [`TranspileExtra`].
+/// Shared guard for the two parse-failure exits: register the module with the
+/// Node compile cache (Unknown module type maps to CJS, matching Node).
+fn note_compile_cache_parse_failure(
+    path: &bun_resolver::fs::Path<'_>,
+    loader: Loader,
+    module_type: ModuleType,
+) {
+    if bun_jsc::node_compile_cache::is_enabled()
+        && loader.is_java_script_like()
+        && path.is_file()
+    {
+        bun_jsc::node_compile_cache::note_parse_failure(
+            path.text,
+            !matches!(module_type, ModuleType::Esm),
+        );
+    }
+}
+
 unsafe fn transpile_source_code(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
@@ -2599,6 +2617,9 @@ fn transpile_source_code_inner(
                         );
                     }
                     arena_guard.2 = false; // give_back_arena = false
+                    // Node compile cache: record the failed module so exit-time
+                    // persist logs the "was not initialized" skip (Node parity).
+                    note_compile_cache_parse_failure(path, loader, module_type);
                     return Err(crate::Error::ParseError);
                 };
 
@@ -2652,6 +2673,9 @@ fn transpile_source_code_inner(
                 // `transpiler.log` was swapped to non-null `args.log` above.
                 if unsafe { (*(*jsc_vm).transpiler.log).errors > 0 } {
                     arena_guard.2 = false;
+                    // Node compile cache: record the failed module so exit-time
+                    // persist logs the "was not initialized" skip (Node parity).
+                    note_compile_cache_parse_failure(path, loader, module_type);
                     return Err(crate::Error::ParseError);
                 }
 
@@ -2825,6 +2849,23 @@ fn transpile_source_code_inner(
                     } else {
                         core::ptr::null_mut()
                     };
+                    let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
+                    // Node compile cache hook (transpiler-cache-hit path); must
+                    // read `output_code` before it is consumed below. UTF-16
+                    // output would hash differently than the print path — skip.
+                    let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                        && source.path.is_file()
+                        && loader.is_java_script_like()
+                        && !matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16())
+                    {
+                        bun_jsc::node_compile_cache::fetch(
+                            source.path.text,
+                            is_commonjs_module,
+                            entry.output_code.byte_slice(),
+                        )
+                    } else {
+                        None
+                    };
                     let source_code = match &mut entry.output_code {
                         OutputCode::String(s) => *s,
                         OutputCode::Utf8(utf8) => {
@@ -2833,7 +2874,6 @@ fn transpile_source_code_inner(
                             result
                         }
                     };
-                    let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
                     // When the cached entry was detected as
                     // CJS but lives inside a `"type":"module"` package, emit
                     // `package_json_type_module` so the C++ loader applies the
@@ -2884,6 +2924,8 @@ fn transpile_source_code_inner(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
+                    let (bytecode_cache, bytecode_cache_size) = node_compile_cache_blob
+                        .map_or((core::ptr::null_mut(), 0), |(ptr, len)| (ptr, len));
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
@@ -2891,6 +2933,8 @@ fn transpile_source_code_inner(
                         is_commonjs_module,
                         module_info,
                         tag,
+                        bytecode_cache,
+                        bytecode_cache_size,
                         ..Default::default()
                     }));
                 }
@@ -3167,6 +3211,16 @@ fn transpile_source_code_inner(
                 let printer: &mut bun_js_printer::BufferPrinter =
                     unsafe { &mut *(*extra).source_code_printer };
                 let written = printer.ctx.get_written();
+                // Node compile cache hook (sync transpile path). `fetch` copies
+                // `written`; the printer may be replaced below.
+                let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                    && path.is_file()
+                    && loader.is_java_script_like()
+                {
+                    bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                } else {
+                    None
+                };
                 // The `Jsc` vtable bridge `put()` does not write
                 // `cache.output_code` (only the `r#impl == None` fallback
                 // does, and `r#impl` is `Some(Jsc)` here), so it is always
@@ -3188,6 +3242,8 @@ fn transpile_source_code_inner(
                 // (fd close handled by `_fd_guard` registered above; spec
                 // :251-256 `defer` fires on every exit path.)
 
+                let (bytecode_cache, bytecode_cache_size) = node_compile_cache_blob
+                    .map_or((core::ptr::null_mut(), 0), |(ptr, len)| (ptr, len));
                 return Ok(OwnedResolvedSource::from(ResolvedSource {
                     source_code,
                     specifier: input_specifier.dupe_ref(),
@@ -3195,6 +3251,8 @@ fn transpile_source_code_inner(
                     is_commonjs_module,
                     module_info,
                     tag,
+                    bytecode_cache,
+                    bytecode_cache_size,
                     ..Default::default()
                 }));
             }
@@ -4286,6 +4344,9 @@ unsafe fn transpile_file(
     // We only run the transpiler concurrently when we can.
     // Today that's: import statements (`import 'foo'`) and import expressions
     // (`import('foo')`).
+    // Node compile cache: lazily initialize from env on the first fetch.
+    bun_jsc::node_compile_cache::init_from_env_once();
+
     'transpile_async: {
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -4306,6 +4367,9 @@ unsafe fn transpile_file(
             // TODO: allow running concurrently when no onLoad handlers match a plugin.
             && plugin_runner_is_none
             && store_enabled
+            // With the Node compile cache enabled, transpile on-thread so the
+            // fetch hook sees every module.
+            && !bun_jsc::node_compile_cache::is_enabled()
         {
             // Disgusting workaround: polyfills like
             // `reflect-metadata` are CJS-with-side-effects that other ESM

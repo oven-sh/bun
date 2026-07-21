@@ -498,6 +498,8 @@ pub mod virtual_machine_exports;
 pub mod any_promise;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
+#[path = "NodeCompileCache.rs"]
+pub mod node_compile_cache;
 #[path = "DeferredError.rs"]
 pub mod deferred_error;
 #[path = "DOMFormData.rs"]

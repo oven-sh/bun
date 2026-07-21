@@ -1559,6 +1559,12 @@ impl VirtualMachine {
         }
         // `mem::take` above leaves an empty `Vec` (capacity already freed by drop).
         self.has_run_cleanup_hooks = true;
+
+        // Persist the Node compile cache (NODE_COMPILE_CACHE /
+        // module.enableCompileCache()) after user exit handlers ran.
+        if self.is_main_thread() {
+            crate::node_compile_cache::persist_at_exit();
+        }
     }
 
     pub fn global_exit(&mut self) -> ! {

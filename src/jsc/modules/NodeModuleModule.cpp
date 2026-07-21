@@ -866,6 +866,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRegister, (JSGlobalObject * globalObject, JSC
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, BunString* outDirectory, BunString* outMessage);
+extern "C" BunString Bun__NodeCompileCache__getDir();
+extern "C" void Bun__NodeCompileCache__flush();
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -873,34 +877,45 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Accepts `string | { directory?: string, portable?: boolean } | undefined`.
-    // When a directory is provided explicitly it must be a string.
-    JSC::JSValue optionsValue = callFrame->argument(0);
-    JSC::JSValue directoryValue = optionsValue;
-    // Matches `typeof options === "object"`, so a callable is not an options bag.
-    if (optionsValue.isObject() && !optionsValue.isCallable()) {
-        auto* options = optionsValue.getObject();
-        directoryValue = options->get(globalObject, JSC::Identifier::fromString(vm, "directory"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        // Node reads `portable` before validating `directory`; the value is unused
-        // here but a throwing getter still propagates.
-        options->get(globalObject, JSC::Identifier::fromString(vm, "portable"_s));
+    // Accepts `undefined`, a string, or `{ directory?, portable? }`.
+    JSValue options = callFrame->argument(0);
+    JSValue directoryValue = options;
+    if (options.isObject() && !options.isCallable()) {
+        directoryValue = options.getObject()->get(globalObject, JSC::Identifier::fromString(vm, "directory"_s));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    if (!directoryValue.isUndefined() && !directoryValue.isString()) {
-        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
-            "cacheDir should be a string"_s);
-        return {};
+    WTF::String directory;
+    if (!directoryValue.isUndefined()) {
+        if (!directoryValue.isString()) {
+            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "cacheDir should be a string"_s);
+            return {};
+        }
+        directory = directoryValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // There is no on-disk module compile cache, so report failure instead of
-    // silently claiming the cache was enabled.
+    BunString directoryStr = Bun::toString(directory);
+    BunString outDirectory = { BunStringTag::Empty, {} };
+    BunString outMessage = { BunStringTag::Empty, {} };
+    int32_t status = Bun__NodeCompileCache__enable(
+        directory.isNull() ? nullptr : &directoryStr, &outDirectory, &outMessage);
+
     auto* result = JSC::constructEmptyObject(globalObject);
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "status"_s),
-        JSC::jsNumber(0)); // constants.compileCacheStatus.FAILED
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s),
-        JSC::jsString(vm, String("the on-disk module compile cache is not supported"_s)));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "status"_s), JSC::jsNumber(status));
+    if (!outMessage.isEmpty()) {
+        JSValue message = outMessage.transferToJS(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            outDirectory.deref();
+            return {};
+        }
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
+    }
+    if (!outDirectory.isEmpty()) {
+        JSValue dir = outDirectory.transferToJS(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "directory"_s), dir);
+    }
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
@@ -908,6 +923,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCompileCacheDir,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
+    BunString dir = Bun__NodeCompileCache__getDir();
+    if (dir.isEmpty()) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    return JSC::JSValue::encode(dir.transferToJS(globalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFlushCompileCache,
+    (JSGlobalObject * globalObject,
+        JSC::CallFrame* callFrame))
+{
+    Bun__NodeCompileCache__flush();
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -935,6 +962,7 @@ constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 1
 findSourceMap           Bun__JSSourceMap__find           Function 1
+flushCompileCache       jsFunctionFlushCompileCache       Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1

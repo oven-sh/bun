@@ -1999,7 +1999,10 @@ describe("KeyObject.prototype.toCryptoKey", () => {
     test.each([
       ["secret as Ed25519, valid usage", () => secret.toCryptoKey("Ed25519", true, ["verify"])],
       ["secret as Ed25519, invalid usage", () => secret.toCryptoKey("Ed25519", true, ["sign"])],
-      ["secret as Ed25519, wrong length", () => createSecretKey(Buffer.alloc(31)).toCryptoKey("Ed25519", true, ["verify"])],
+      [
+        "secret as Ed25519, wrong length",
+        () => createSecretKey(Buffer.alloc(31)).toCryptoKey("Ed25519", true, ["verify"]),
+      ],
       ["secret as X25519", () => secret.toCryptoKey("X25519", true, [])],
       ["secret as ECDSA", () => secret.toCryptoKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["verify"])],
       ["secret as RSA", () => secret.toCryptoKey({ name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["verify"])],

@@ -577,9 +577,9 @@ impl Route {
                 if server.config().is_development() {
                     let now = bun_core::util::Timespec::now_allow_mocked_time().ns();
                     let duration = now.saturating_sub(completion_task.started_at_ns);
-                    let duration_f64 = duration as f64 / 1_000_000_000.0;
+                    let duration_ms = duration as f64 / bun_core::time::NS_PER_MS as f64;
 
-                    bun_output::print_elapsed(duration_f64);
+                    bun_output::print_elapsed(duration_ms);
                     let mut byte_length: u64 = 0;
                     for output_file in output_files.iter() {
                         byte_length += output_file.size_without_sourcemap as u64;

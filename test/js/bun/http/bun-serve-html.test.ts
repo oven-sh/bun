@@ -851,13 +851,17 @@ for (let development of [true, false, { hmr: false }]) {
       new URL("/api-potato", server.url),
       new URL("/apiii", server.url),
     ];
-    for (const url of htmlroutes) {
-      const response = await fetch(url);
-      expect(response.status).toBe(200);
-      const htmlText = await response.text();
-      const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
-      await (await fetch(new URL(jsSrc, server.url))).text();
-    }
+    // Concurrent so `development: {hmr: false}` (which rebundles per request and
+    // has no DevServer cache) only builds once for the whole batch.
+    await Promise.all(
+      htmlroutes.map(async url => {
+        const response = await fetch(url);
+        expect(response.status).toBe(200);
+        const htmlText = await response.text();
+        const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
+        await (await fetch(new URL(jsSrc, server.url))).text();
+      }),
+    );
     for (const url of [new URL("/api", server.url), new URL("/api/", server.url)]) {
       const response = await fetch(url);
       const json = await response.json();
@@ -895,19 +899,66 @@ for (let development of [true, false, { hmr: false }]) {
       new URL("/api/potato", server.url),
       new URL("/api/apiii", server.url),
     ];
-    for (const url of htmlroutes) {
-      const response = await fetch(url);
-      expect(response.status).toBe(200);
-      const htmlText = await response.text();
-      const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
-      await (await fetch(new URL(jsSrc, server.url))).text();
-    }
+    // Concurrent so `development: {hmr: false}` (which rebundles per request and
+    // has no DevServer cache) only builds once for the whole batch.
+    await Promise.all(
+      htmlroutes.map(async url => {
+        const response = await fetch(url);
+        expect(response.status).toBe(200);
+        const htmlText = await response.text();
+        const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
+        await (await fetch(new URL(jsSrc, server.url))).text();
+      }),
+    );
     for (const url of apiroutes) {
       const response = await fetch(url);
       expect(await response.json()).toEqual({ url: url.toString(), method: "GET" });
     }
   });
 }
+
+test("development: {hmr: false} bundle log reports elapsed time in ms", async () => {
+  // The `[XXms] bundle index.html` line should be within an order of magnitude
+  // of the wall-clock fetch time. It previously divided by ns/s instead of
+  // ns/ms, reporting e.g. `[0.03ms]` for a 30ms bundle.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import html from "./index.html";
+        const server = Bun.serve({
+          port: 0,
+          development: { hmr: false },
+          routes: { "/": html },
+          fetch: () => new Response("nope", { status: 404 }),
+        });
+        const t0 = performance.now();
+        const r = await fetch(server.url);
+        await r.text();
+        const elapsed = performance.now() - t0;
+        console.log(JSON.stringify({ status: r.status, elapsed }));
+        server.stop(true);
+      `,
+    ],
+    cwd: join(import.meta.dir, "jsx-runtime"),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout.trim());
+
+  const match = stderr.match(/\[([\d.]+)(ms|s)\]\s+bundle\s+index\.html/);
+  expect(match, `expected a '[XXms] bundle index.html' line in stderr, got:\n${stderr}`).not.toBeNull();
+  const reportedMs = parseFloat(match![1]) * (match![2] === "s" ? 1000 : 1);
+
+  expect({
+    status: result.status,
+    order: reportedMs >= result.elapsed / 10 ? "ok" : `reported ${reportedMs}ms, fetch took ${result.elapsed}ms`,
+  }).toEqual({ status: 200, order: "ok" });
+  expect(exitCode).toBe(0);
+});
 
 describe("production headers and import.meta.env", () => {
   async function collect(development: string) {

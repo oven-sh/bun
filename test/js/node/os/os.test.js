@@ -329,17 +329,14 @@ it.skipIf(isWindows || process.getuid?.() === 0)(
       os.setPriority(proc.pid, -20);
     } catch (e) {
       err = e;
-    } finally {
-      proc.kill();
-      await proc.exited;
     }
-    // Raising priority without CAP_SYS_NICE fails with EACCES or EPERM.
+    // Same-uid target + raising priority without CAP_SYS_NICE -> EACCES.
+    // The EPERM arm needs a different-uid target and is not exercised here.
     expect(err).toBeDefined();
     expect(err.syscall).toBe("uv_os_setpriority");
     expect(err.info.syscall).toBe("uv_os_setpriority");
-    expect(["EACCES", "EPERM"]).toContain(err.info.code);
-    const expectedErrno = -os.constants.errno[err.info.code];
-    expect(err.errno).toBe(expectedErrno);
-    expect(err.info.errno).toBe(expectedErrno);
+    expect(err.info.code).toBe("EACCES");
+    expect(err.errno).toBe(-os.constants.errno.EACCES);
+    expect(err.info.errno).toBe(-os.constants.errno.EACCES);
   },
 );

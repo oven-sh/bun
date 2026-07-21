@@ -807,7 +807,7 @@ macro_rules! impl_number_cast {
         }
     )*};
 }
-impl_number_cast!(u16, u32, usize);
+impl_number_cast!(u32, usize);
 
 pub struct BigInt {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed

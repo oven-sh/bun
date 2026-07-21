@@ -66,7 +66,8 @@ impl<T: Copy> Unaligned<T> {
             "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
             core::mem::align_of::<T>(),
         );
-        // SAFETY: see `slice_align_cast`; `&mut` exclusivity is preserved.
+        // SAFETY: `#[repr(transparent)]` over `T` + the debug-asserted alignment
+        // make the layouts identical; `&mut` exclusivity is preserved.
         unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
     }
 }
@@ -2426,9 +2427,8 @@ impl Default for Ordinal {
 }
 
 // ── Once ──────────────────────────────────────────────────────────────────
-// One-shot initialization cell. Callers use two shapes:
-//   * `Once<T>` — fn supplied at `.call(f)` / `.get_or_init(f)` time
-//   * `Once<T, fn(A) -> T>` — fn supplied at construction (PackageManagerDirectories.rs)
+// One-shot initialization cell. Callers use `Once<T>` with the init fn
+// supplied at `.call(f)` / `.get_or_init(f)` time.
 //
 // Open-coded double-checked-init (AtomicU8 + UnsafeCell<MaybeUninit<T>>) rather
 // than `std::sync::OnceLock`. The previous `OnceLock` backing produced 157
@@ -2446,27 +2446,22 @@ const ONCE_UNINIT: u8 = 0;
 const ONCE_BUSY: u8 = 1;
 const ONCE_DONE: u8 = 2;
 
-pub struct Once<T, F = ()> {
+pub struct Once<T> {
     state: core::sync::atomic::AtomicU8,
     cell: core::cell::UnsafeCell<core::mem::MaybeUninit<T>>,
-    f: F,
 }
 
 // SAFETY: `T` is published behind a Release store / Acquire load pair; once
 // DONE the cell is immutable and only `&T` is handed out, so the bounds match
 // `std::sync::OnceLock` (`T: Send` because init may happen on a different
 // thread than the reader; `T: Sync` because `&T` crosses threads).
-unsafe impl<T: Send + Sync, F: Sync> Sync for Once<T, F> {}
-// SAFETY: `Once<T, F>` owns a `T` (in `UnsafeCell<MaybeUninit<T>>`) and an
-// `F` by value; sending the whole struct to another thread is sound exactly
-// when sending its owned fields is (`T: Send`, `F: Send`).
-unsafe impl<T: Send, F: Send> Send for Once<T, F> {}
-impl<T: core::panic::RefUnwindSafe, F: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe
-    for Once<T, F>
-{
-}
+unsafe impl<T: Send + Sync> Sync for Once<T> {}
+// SAFETY: `Once<T>` owns a `T` (in `UnsafeCell<MaybeUninit<T>>`); sending the
+// whole struct to another thread is sound exactly when sending `T` is.
+unsafe impl<T: Send> Send for Once<T> {}
+impl<T: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe for Once<T> {}
 
-/// Cold contended path shared by every `Once<T, F>` instantiation. Taking
+/// Cold contended path shared by every `Once<T>` instantiation. Taking
 /// `&AtomicU8` (not `&self`) keeps this **non-generic** so exactly one copy
 /// lands in `bun_core`'s CGU regardless of how many `T`s the crate uses.
 /// Returns `true` if the caller won the claim and must initialise + publish;
@@ -2487,7 +2482,21 @@ fn once_claim_slow(state: &core::sync::atomic::AtomicU8) -> bool {
     }
 }
 
-impl<T, F> Once<T, F> {
+impl<T> Once<T> {
+    pub const fn new() -> Self {
+        Self {
+            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
+            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
+        }
+    }
+    /// Run `f` exactly once; subsequent calls return the cached payload.
+    #[inline(always)]
+    pub fn call(&self, f: impl FnOnce() -> T) -> T
+    where
+        T: Copy,
+    {
+        *self.get_or_init(f)
+    }
     /// Fast path: already initialised?
     #[inline(always)]
     pub fn get(&self) -> Option<&T> {
@@ -2571,7 +2580,7 @@ impl<T, F> Once<T, F> {
     }
 }
 
-impl<T, F> Drop for Once<T, F> {
+impl<T> Drop for Once<T> {
     #[inline]
     fn drop(&mut self) {
         if *self.state.get_mut() == ONCE_DONE {
@@ -2581,33 +2590,7 @@ impl<T, F> Drop for Once<T, F> {
     }
 }
 
-impl<T> Once<T, ()> {
-    pub const fn new() -> Self {
-        Self {
-            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
-            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
-            f: (),
-        }
-    }
-    /// Run `f` exactly once; subsequent calls return the cached payload.
-    #[inline(always)]
-    pub fn call(&self, f: impl FnOnce() -> T) -> T
-    where
-        T: Copy,
-    {
-        *self.get_or_init(f)
-    }
-}
-impl<T, A> Once<T, fn(A) -> T> {
-    /// Run the stored fn exactly once with `arg`; returns a borrow of the cached
-    /// payload. Bound to `&'static self` because every call site is a `static`.
-    #[inline(always)]
-    pub fn call(&'static self, arg: A) -> &'static T {
-        let f = self.f;
-        self.get_or_init(|| f(arg))
-    }
-}
-impl<T> Default for Once<T, ()> {
+impl<T> Default for Once<T> {
     #[inline]
     fn default() -> Self {
         Self::new()

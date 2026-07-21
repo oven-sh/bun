@@ -109,7 +109,7 @@ impl<'a> AnyEventLoop<'a> {
         }
     }
 
-    /// Raw-pointer variant of [`Self::tick`] for callers whose `is_done`
+    /// Raw-pointer tick loop for callers whose `is_done`
     /// callback may reborrow the struct that *contains* this `AnyEventLoop`
     /// (e.g. `bun_install::PackageManager::sleep_until`, where the closure's
     /// `is_done` does `&mut *closure.manager` and that `PackageManager` owns

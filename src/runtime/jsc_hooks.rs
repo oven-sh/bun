@@ -17,7 +17,7 @@
 //!      / `load_preloads` / `ensure_debugger` / `auto_tick`.
 //!   3. `__BUN_LOADER_HOOKS` — `transpile_source_code` /
 //!      `fetch_builtin_module` / `transpile_file`.
-//!   4. `__bun_get_vm_ctx` / `__bun_js_vm_get` / `__bun_stdio_blob_store_new` /
+//!   4. `__bun_get_vm_ctx` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
 use bun_core::WTFStringImplExt as _;
@@ -5319,15 +5319,6 @@ pub fn parse_http_date(value: &[u8]) -> Option<u64> {
     } else {
         None
     }
-}
-
-/// `bun_event_loop::__bun_js_vm_get` body — erased `VirtualMachine::get()` for
-/// `AbstractVM::JsKind`'s `get_vm()`.
-/// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
-/// resolved.
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_js_vm_get() -> *mut () {
-    bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()
 }
 
 /// `bun_event_loop::__bun_stdio_blob_store_new` body.

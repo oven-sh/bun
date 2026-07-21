@@ -179,8 +179,6 @@ pub unsafe trait Atom: Copy {
     #[doc(hidden)]
     unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering);
     #[doc(hidden)]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self;
-    #[doc(hidden)]
     unsafe fn _atomic_cas(
         p: *mut Self,
         current: Self,
@@ -245,11 +243,6 @@ macro_rules! unsafe_impl_atom {
                 unsafe { $crate::atomic_cell::_dispatch_store::<$T>(p, v, ord) }
             }
             #[inline]
-            unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: ::core::sync::atomic::Ordering) -> Self {
-                // SAFETY: as above.
-                unsafe { $crate::atomic_cell::_dispatch_swap::<$T>(p, v, ord) }
-            }
-            #[inline]
             unsafe fn _atomic_cas(
                 p: *mut Self,
                 cur: Self,
@@ -264,7 +257,7 @@ macro_rules! unsafe_impl_atom {
     )+};
 }
 
-// The four dispatch helpers below are `pub` only so `unsafe_impl_atom!` can
+// The three dispatch helpers below are `pub` only so `unsafe_impl_atom!` can
 // reach them from other crates; they are not part of the stable surface.
 
 macro_rules! size_dispatch {
@@ -330,15 +323,6 @@ pub unsafe fn _dispatch_store<T: Copy>(p: *mut T, v: T, ord: Ordering) {
 }
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn _dispatch_swap<T: Copy>(p: *mut T, v: T, ord: Ordering) -> T {
-    size_dispatch!(T, p, |a: A, I| {
-        // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; `T: Atom`
-        // guarantees no padding and that the round-trip yields a valid `T`.
-        unsafe { xmute::<I, T>(a.swap(xmute::<T, I>(v), ord)) }
-    })
-}
-#[doc(hidden)]
-#[inline(always)]
 pub unsafe fn _dispatch_cas<T: Copy>(
     p: *mut T,
     cur: T,
@@ -389,12 +373,6 @@ unsafe impl<U> Atom for *mut U {
         unsafe { (*(p as *const AtomicPtr<U>)).store(v, ord) }
     }
     #[inline]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is 8-aligned and live; `*mut U` and `AtomicPtr<U>` have
-        // identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).swap(v, ord) }
-    }
-    #[inline]
     unsafe fn _atomic_cas(
         p: *mut Self,
         cur: Self,
@@ -421,16 +399,6 @@ unsafe impl<U> Atom for *const U {
         // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
         // have identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).store(v.cast_mut(), ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe {
-            (*(p as *const AtomicPtr<U>))
-                .swap(v.cast_mut(), ord)
-                .cast_const()
-        }
     }
     #[inline]
     unsafe fn _atomic_cas(
@@ -476,12 +444,6 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
         // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
         // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).store(nn_to_raw(v), ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
-        // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
-        NonNull::new(unsafe { (*(p as *const AtomicPtr<U>)).swap(nn_to_raw(v), ord) })
     }
     #[inline]
     unsafe fn _atomic_cas(

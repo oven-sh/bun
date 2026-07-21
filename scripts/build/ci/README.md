@@ -18,12 +18,15 @@ number to bump anywhere. Merging _is_ publishing.
 ## Prerequisites
 
 - **The pipeline generator brings its own node.** The `:pipeline:` step runs
-  `sh .buildkite/generate-pipeline.sh`, a POSIX shim that reads
-  `nodejs.version` from `spec.ts`, downloads that exact Node.js for the
-  running host (cached in `~/.cache/bun-ci-node`, so it fetches once), and
-  runs `ci.mjs` under it — the standing agent\'s own node is never used. The
-  `.ts` modules need node >= 25 (type stripping); the spec pins 26.x, which
-  is the same node baked ONTO the images and used by the bake shim.
+  `node .buildkite/ci.mjs`, a plain-JavaScript wrapper (startable under any
+  node) that reads `nodejs.version` from `spec.ts`, downloads that exact
+  Node.js for the running host (cached in `~/.cache/bun-ci-node`, so it
+  fetches once per host), and spawns the real generator
+  `.buildkite/ci.ts` under it — the standing agent\'s own node is never
+  used. `ci.ts` and the modules it imports need node >= 25 (type
+  stripping); the spec pins 26.x, the same node baked onto the images.
+  (`.buildkite/generate-pipeline.sh` is the equivalent standalone shim, for
+  when this becomes the direct entry point.)
 - The `build-image` queue holds the AWS + Azure credentials `machine.mjs`
   already uses; `ci.mjs`\'s existence check reads the same secrets there.
 - The `aws` CLI on that queue (the AWS existence check shells out to it).

@@ -2,7 +2,7 @@ use crate::test_runner::expect::JSValueTestExt;
 use core::ffi::c_void;
 
 use bun_collections::HashMap;
-use bun_core::fmt as bun_fmt;
+use bun_core::{fmt as bun_fmt, StackCheck};
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
@@ -318,6 +318,7 @@ pub struct Formatter<'a> {
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
+    pub(crate) stack_check: StackCheck,
 }
 
 impl<'a> Formatter<'a> {
@@ -332,6 +333,7 @@ impl<'a> Formatter<'a> {
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
+            stack_check: StackCheck::init(),
         }
     }
 
@@ -1039,6 +1041,10 @@ impl<'a> Formatter<'a> {
         js_type: JSType,
     ) -> JsResult<()> {
         if self.failed {
+            return Ok(());
+        }
+        if !self.stack_check.is_safe_to_recurse() {
+            self.failed = true;
             return Ok(());
         }
         // reshaped for borrowck — `WrappedWriter` borrows both writer_

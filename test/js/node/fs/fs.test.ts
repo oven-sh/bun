@@ -3246,6 +3246,145 @@ describe("fs.WriteStream", () => {
     expect(ws.fd).toBe(2);
     expect(existsSync(path)).toBe(false);
   });
+
+  // Node.js defers closing the fd until in-flight IO completes (kIsPerformingIO / kIoDone).
+  it("_destroy waits for in-flight _write before closing fd", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    let finishWrite!: () => void;
+    const writeStarted = Promise.withResolvers<void>();
+
+    const customFs = {
+      open: fs.open,
+      write(fd: number, buf: Buffer, off: number, len: number, pos: number, cb: Function) {
+        events.push("write-start");
+        writeStarted.resolve();
+        finishWrite = () => {
+          events.push("write-cb");
+          cb(null, len, buf);
+        };
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.write(Buffer.from("hello"));
+    await writeStarted.promise;
+    stream.destroy();
+    await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+    finishWrite();
+    await closed.promise;
+
+    expect(events).toEqual(["write-start", "write-cb", "close", "error:ERR_STREAM_DESTROYED", "close-event"]);
+  });
+
+  it("_destroy waits for in-flight _writev before closing fd", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    let finishWritev!: () => void;
+    const writevStarted = Promise.withResolvers<void>();
+
+    const customFs = {
+      open: fs.open,
+      write: fs.write,
+      writev(fd: number, buffers: Buffer[], pos: number, cb: Function) {
+        events.push("writev-start");
+        writevStarted.resolve();
+        let total = 0;
+        for (const b of buffers) total += b.length;
+        finishWritev = () => {
+          events.push("writev-cb");
+          cb(null, total, buffers);
+        };
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    await new Promise<void>(r => stream.on("ready", () => r()));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.cork();
+    stream.write(Buffer.from("aa"));
+    stream.write(Buffer.from("bb"));
+    stream.uncork();
+    await writevStarted.promise;
+    stream.destroy();
+    await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+    finishWritev();
+    await closed.promise;
+
+    expect(events).toEqual(["writev-start", "writev-cb", "close", "error:ERR_STREAM_DESTROYED", "close-event"]);
+  });
+
+  // options.fs with write but no writev: corked writes must fall back to _write,
+  // not sync-throw inside _writev and strand kIsPerformingIO (hanging destroy()).
+  it("options.fs without writev falls back to _write for corked writes and destroy() closes", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    const writeDone = Promise.withResolvers<void>();
+    let pending = 2;
+
+    const customFs = {
+      open: fs.open,
+      write(fd: number, buf: Buffer, off: number, len: number, pos: number, cb: Function) {
+        events.push("write");
+        fs.write(fd, buf, off, len, pos, (...a: any[]) => {
+          cb(...a);
+          if (--pending === 0) writeDone.resolve();
+        });
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    expect(stream._writev).toBeNull();
+    await new Promise<void>(r => stream.on("ready", () => r()));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.cork();
+    stream.write(Buffer.from("aa"));
+    stream.write(Buffer.from("bb"));
+    stream.uncork();
+    await writeDone.promise;
+    stream.destroy();
+    await closed.promise;
+
+    expect(events).toEqual(["write", "write", "close", "close-event"]);
+    expect(readFileSync(join(pathToDir, "out.txt"), "utf8")).toBe("aabb");
+  });
 });
 
 describe("fs.ReadStream", () => {

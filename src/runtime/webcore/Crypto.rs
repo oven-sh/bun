@@ -1,6 +1,8 @@
 use bun_core::String as BunString;
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
-use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsResult, StringJsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSType, JSUint8Array, JSValue, JsClass, JsResult, StringJsc,
+};
 
 use crate::node::Encoding;
 
@@ -82,6 +84,27 @@ impl Crypto {
             ));
         };
 
+        // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only
+        // integer-typed views. This is an allow-list: DataView, ArrayBuffer and SharedArrayBuffer
+        // all pass `as_array_buffer` above but must still raise TypeMismatchError.
+        if !matches!(
+            arguments[0].js_type(),
+            JSType::Int8Array
+                | JSType::Uint8Array
+                | JSType::Uint8ClampedArray
+                | JSType::Int16Array
+                | JSType::Uint16Array
+                | JSType::Int32Array
+                | JSType::Uint32Array
+                | JSType::BigInt64Array
+                | JSType::BigUint64Array
+        ) {
+            return Err(global.throw_dom_exception(
+                bun_jsc::DOMExceptionCode::TypeMismatchError,
+                format_args!("The data argument must be an integer-type TypedArray"),
+            ));
+        }
+
         let slice = array_buffer.byte_slice_mut();
 
         random_data(global, slice);
@@ -146,7 +169,7 @@ impl Crypto {
 
     // `#[JsClass]` emits `CryptoClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
-        Err(global.throw_illegal_constructor("Crypto"))
+        Err(global.throw_illegal_constructor())
     }
 }
 

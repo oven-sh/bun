@@ -47,8 +47,12 @@ CryptoAlgorithmIdentifier CryptoAlgorithmPBKDF2::identifier() const
 
 void CryptoAlgorithmPBKDF2::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    if (!length || *length % 8) {
-        exceptionCallback(OperationError, ""_s);
+    if (!length) {
+        exceptionCallback(OperationError, "length cannot be null"_s);
+        return;
+    }
+    if (*length % 8) {
+        exceptionCallback(OperationError, "length must be a multiple of 8"_s);
         return;
     }
 

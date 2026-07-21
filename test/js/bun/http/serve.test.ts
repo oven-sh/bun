@@ -2955,9 +2955,7 @@ it.concurrent("#20283", async () => {
 // copies the raw bytes and the underlying C socket layer truncates at the first NUL, so
 // `"127.0.0.1\0ignored"` behaves like `"127.0.0.1"` (or at worst surfaces as a catchable JS error).
 // A port that uses CString::new(...).expect(...) would panic and crash the process instead.
-// TODO(zig-rust-divergence): Rust port currently panics on interior NUL;
-// see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
-it.todo("Bun.serve hostname with interior NUL byte does not crash the process", async () => {
+it("Bun.serve hostname with interior NUL byte does not crash the process", async () => {
   const script = `
     try {
       const server = Bun.serve({

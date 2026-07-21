@@ -207,6 +207,8 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
         break;
     case NamedCurve::Ed25519:
         result.crv = Ed25519;
+        // RFC 8037 gives the Edwards curves a JWS "alg"; the montgomery ones have none.
+        result.alg = Ed25519;
         break;
     }
 

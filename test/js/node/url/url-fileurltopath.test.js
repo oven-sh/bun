@@ -12,8 +12,7 @@ describe("url.fileURLToPath", () => {
     }
   }
 
-  // TODO: Support error code.
-  test.todo("invalid input", () => {
+  test("invalid input", () => {
     // Input must be string or URL
     testInvalidArgs(null, undefined, 1, {}, true);
 

@@ -426,8 +426,6 @@ impl Drop for OwnedLineOffsetTables {
     }
 }
 
-pub type SourceMapper<T> = SourceMapFormat<T>;
-
 // PERF(codegen): the hot-path methods below are implemented on the *concrete*
 // `NewBuilder<VLQSourceMap>` (the only instantiation — see `Builder` alias
 // below) rather than on `impl<T: SourceMapFormatCtx> NewBuilder<T>`. When these

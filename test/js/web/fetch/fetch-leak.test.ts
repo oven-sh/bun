@@ -663,9 +663,7 @@ test("fetch() promise Strong handle is consumed on resolve/reject (FetchTasklet 
 // in-hive slot path and the fallback-allocator path.
 describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not leak)", () => {
   for (const kind of ["String"] as const) {
-    // TODO(zig-rust-divergence): Rust port skips Body.Value.deinit() on pool
-    // return; see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
-    test.todo(
+    test(
       kind,
       async () => {
         const script = `

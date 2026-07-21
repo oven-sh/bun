@@ -278,7 +278,15 @@ void throwAttributeTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::Thro
 
 JSC::EncodedJSValue throwRequiredMemberTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral memberName, ASCIILiteral dictionaryName, ASCIILiteral expectedType)
 {
-    return Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString("Member "_s, dictionaryName, '.', memberName, " is required and must be an instance of "_s, expectedType));
+    // Only reached when a required member is absent, which Node reports as
+    // ERR_MISSING_OPTION; a member that is present but ill-typed throws from the
+    // converter with ERR_INVALID_ARG_TYPE instead.
+    return Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_MISSING_OPTION, makeString("Member "_s, dictionaryName, '.', memberName, " is required and must be an instance of "_s, expectedType));
+}
+
+JSC::EncodedJSValue throwDictionaryMemberTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral memberName, ASCIILiteral dictionaryName, ASCIILiteral expectedType)
+{
+    return Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString("Member "_s, dictionaryName, '.', memberName, " must be an instance of "_s, expectedType));
 }
 
 JSC::EncodedJSValue throwConstructorScriptExecutionContextUnavailableError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral interfaceName)

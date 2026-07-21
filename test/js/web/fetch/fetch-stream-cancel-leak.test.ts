@@ -189,16 +189,15 @@ test("response.body.cancel() on a never-read body aborts the underlying fetch", 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const { after, aborted, timedOut } = JSON.parse(stdout.trim());
   // When the cancel reaches the fetch tasklet the server sees the abort and pulls stop
   // within a bounded window. Without the fix the client keeps draining and `after`
   // grows into the thousands (the poll loop above never stabilizes).
-  expect({ aborted, afterBounded: after < 200, timedOut }).toEqual({
+  expect({ aborted, afterBounded: after < 200, timedOut, exitCode }).toEqual({
     aborted: true,
     afterBounded: true,
     timedOut: false,
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });

@@ -1805,6 +1805,14 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
 
+            #[cfg(target_env = "ohos")]
+            if let package_install::InstallResult::Success = &install_result {
+                let mut fd_path_buf = PathBuffer::uninit();
+                if let Ok(pkg_path) = Syscall::get_fd_path(destination_dir.fd(), &mut fd_path_buf) {
+                    ohos_sign_native_binaries(pkg_path);
+                }
+            }
+
             match install_result {
                 package_install::InstallResult::Success => {
                     let is_duplicate = self.successfully_installed.is_set(package_id as usize);
@@ -2377,5 +2385,47 @@ impl<'a> PackageInstaller<'a> {
             name,
             &resolutions[package_id as usize],
         );
+    }
+}
+
+// ───────────────────────────── OHOS install-time signing ─────────────────────────────
+
+/// On OHOS, scan a package directory for native binaries (.so, .node) and
+/// sign any that are not already signed. Called after a package is installed
+/// into node_modules, before lifecycle scripts run.
+#[cfg(target_env = "ohos")]
+fn ohos_sign_native_binaries(pkg_dir: &[u8]) {
+    let dir = match Dir::open(pkg_dir) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let w = match Syscall::walker_skippable::walk(dir.fd(), &[], &[]) {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    let mut w = w;
+    while let Ok(Some(entry)) = w.next() {
+        if entry.kind != Syscall::EntryKind::File {
+            continue;
+        }
+        let name = entry.basename.as_bytes();
+        let needs_sign = if name.len() > 3 {
+            name.ends_with(b".so") || name.ends_with(b".node")
+        } else {
+            false
+        };
+        if !needs_sign {
+            continue;
+        }
+        let mut full = Vec::with_capacity(pkg_dir.len() + 1 + name.len());
+        full.extend_from_slice(pkg_dir);
+        full.push(b'/');
+        full.extend_from_slice(name);
+        let full_str = unsafe { core::str::from_utf8_unchecked(&full) };
+        let p = std::path::Path::new(full_str);
+        if ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
+            continue;
+        }
+        let _ = ohos_sign::sign_selfsign_inplace(p);
     }
 }

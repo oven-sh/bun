@@ -1575,7 +1575,10 @@ describe.concurrent("script files with no test() registrations", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("does not wait on a handle leaked by a prior file", async () => {
+  test("does not drain when a prior file left a ref'd handle", async () => {
+    // a leaks an interval. b's drain is skipped because the loop was not
+    // idle after preloads (it can't tell a's handle from its own). The run
+    // must not hang; b's own delayed error goes unreported, same as before.
     using dir = tempDir("prior-file-leak", {
       "a.test.js": `
         const { test } = require("bun:test");
@@ -1597,11 +1600,31 @@ describe.concurrent("script files with no test() registrations", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // a passes; b's own delayed error is still surfaced; a's leaked interval
-    // is not waited on so the run does not hang.
     expect(stderr).toContain("1 pass");
-    expect(stderr).toContain("file B delayed error");
-    expect(exitCode).toBe(1);
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not drain when a preload left a ref'd handle", async () => {
+    using dir = tempDir("preload-leak", {
+      "setup.js": `setInterval(() => {}, 60_000);`,
+      "a.test.js": `
+        (async () => {
+          await new Promise(r => setTimeout(r, 20));
+          throw new Error("should not hang");
+        })();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./setup.js", "./a.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
   });
 });
 

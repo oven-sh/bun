@@ -3142,11 +3142,12 @@ impl TestCommand {
 
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            // Snapshot ref'd-handle count so the post-test drain (below) waits only
-            // on handles this file created, not a prior file's leak or a --parallel
-            // worker's IPC pipe.
-            let keepalive_baseline = script_keepalive_count(vm);
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            // Record whether the loop was idle after preloads so the post-test
+            // drain (below) only runs when every ref'd handle is this file's.
+            let mut idle_after_preloads = false;
+            let promise = vm.load_entry_point_for_test_runner(file_path, |vm| {
+                idle_after_preloads = script_keepalive_count(vm) == 0;
+            })?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
@@ -3237,13 +3238,13 @@ impl TestCommand {
                     }
                 }
 
-                // A file with no test()/describe() is a plain script: drain handles
-                // it created so late errors surface (like `bun <file>`). The
-                // baseline excludes handles that predate this file.
-                if buntest.collection.root_scope.entries.is_empty() {
+                // A file with no test()/describe() is a plain script: drain the
+                // loop so late errors surface (like `bun <file>`). Gated on an
+                // idle loop after preloads so prior-file handles can't hang it.
+                if buntest.collection.root_scope.entries.is_empty() && idle_after_preloads {
                     let drain_base = vm.unhandled_error_counter;
                     while drain_base == vm.unhandled_error_counter
-                        && script_keepalive_count(vm) > keepalive_baseline
+                        && script_keepalive_count(vm) > 0
                     {
                         vm.event_loop_ref().tick();
                         vm.event_loop_ref().auto_tick();
@@ -3278,8 +3279,8 @@ impl TestCommand {
 }
 
 /// Count of ref'd handles plus individual JS timers (timers share one loop
-/// ref, so `active_count()` alone can't distinguish a new timer from a prior
-/// file's). Used to scope the post-test drain to this file's work.
+/// ref, so `active_count()` alone misses additional timers). Zero means the
+/// file's own work is the only thing keeping the loop alive.
 fn script_keepalive_count(vm: &VirtualMachine) -> usize {
     let state = crate::jsc_hooks::runtime_state();
     let timers = if state.is_null() {

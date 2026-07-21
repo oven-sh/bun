@@ -4608,6 +4608,7 @@ impl VirtualMachine {
     pub fn reload_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
+        after_preloads: impl FnOnce(&Self),
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
         self.set_main(entry_path);
@@ -4633,6 +4634,8 @@ impl VirtualMachine {
                 }
             }
         }
+
+        after_preloads(self);
 
         // Note: reshaped for borrowck.
         let global = self.global;
@@ -4664,11 +4667,14 @@ impl VirtualMachine {
     }
 
     /// Loads a test-file entry point and waits for the load promise to settle.
+    /// `after_preloads` runs between preload completion and entry-point
+    /// evaluation so the caller can observe preload-created handles.
     pub fn load_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
+        after_preloads: impl FnOnce(&Self),
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let promise = self.reload_entry_point_for_test_runner(entry_path)?;
+        let promise = self.reload_entry_point_for_test_runner(entry_path, after_preloads)?;
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {

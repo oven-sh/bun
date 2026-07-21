@@ -187,16 +187,14 @@ describe("timeout kills the process", () => {
     expect(stderr).toBe("");
   });
 
-  // When Bun kills the child on timeout, a grandchild that inherited the pipe
-  // may still hold the write end. Reading stdout/stderr after `proc.exited`
-  // must not wait for that grandchild to exit; Bun closes its read end and
-  // delivers whatever was buffered (same as `spawnSync`).
+  // A grandchild that inherited the pipe may still hold the write end after
+  // the timeout kill. Reading stdout/stderr after `proc.exited` must deliver
+  // what was buffered instead of waiting for that grandchild to exit.
   test.skipIf(isWindows)("Bun.spawn stdout does not hang when a grandchild outlives the timeout", async () => {
-    // `sh` starts fast enough that the background `sleep` is running before
-    // the timeout fires even under a debug build; the signal is delivered
-    // to `sh` alone, so `sleep` survives holding the pipe's write end.
+    // `sh` spawns `sleep` before the stdout marker so the assertion proves a
+    // grandchild holds the pipe's write end when the kill signal reaches `sh`.
     await using proc = Bun.spawn({
-      cmd: ["sh", "-c", "echo from-child; sleep 60 & read _"],
+      cmd: ["sh", "-c", "sleep 60 & echo $! >&2; echo from-child; read _"],
       env: bunEnv,
       timeout: 200,
       killSignal: "SIGTERM",
@@ -204,12 +202,14 @@ describe("timeout kills the process", () => {
     });
     await proc.exited;
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-    expect({ stdout, stderr, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+    const grandchild = parseInt(stderr.trim(), 10);
+    if (Number.isInteger(grandchild)) try { process.kill(grandchild); } catch {}
+    expect({ stdout, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: "from-child\n",
-      stderr: "",
       exitCode: null,
       signalCode: "SIGTERM",
     });
+    expect(stderr).toMatch(/^\d+\n$/);
   });
 
   test("Bun.spawnSync", () => {

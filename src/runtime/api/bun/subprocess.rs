@@ -705,10 +705,9 @@ impl Subprocess<'_> {
         sp.on_max_buffer(kind);
     }
 
-    /// Close any still-open stdout/stderr pipe readers so we stop waiting for
-    /// EOF after a timeout/maxBuffer kill. A grandchild may still hold the
-    /// pipe's write end. Matches Node.js `SyncProcessRunner::Kill()`. Called
-    /// outside any reader callback.
+    /// Close still-open stdout/stderr pipe readers after a timeout/maxBuffer
+    /// kill; a grandchild may still hold the write end (Node.js
+    /// `SyncProcessRunner::Kill()`). Called outside any reader callback.
     pub fn close_readable_pipes(&self) {
         if matches!(self.stdout.get(), Readable::Pipe(_)) {
             self.stdout.with_mut(|s| s.close());
@@ -1034,12 +1033,9 @@ impl Subprocess<'_> {
             }
         }
 
-        // When Bun itself killed the child (timeout/maxBuffer), stop waiting on
-        // pipe EOF: a grandchild may still hold the write end and the caller
-        // has already opted into a bounded wait. The drain above buffers
-        // whatever was readable at exit; closing now delivers that buffer
-        // instead of blocking `proc.stdout` until the grandchild exits. Same
-        // semantics as the spawnSync wait loop's `close_readable_pipes()` call.
+        // When Bun itself killed the child (timeout/maxBuffer) stop waiting on
+        // pipe EOF after the drain above: a grandchild may still hold the
+        // write end and the caller already opted into a bounded wait.
         if self.event_loop_timer.get().state == EventLoopTimerState::FIRED
             || self.exited_due_to_maxbuf.get().is_some()
         {

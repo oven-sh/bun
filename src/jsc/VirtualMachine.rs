@@ -5600,8 +5600,7 @@ impl VirtualMachine {
         // re-check here with an extra `MAX_PATH_BYTES * 3` of slack on Windows
         // to cover the transpiler's nested path buffers — same parity-level
         // protection the Object path gets from C++ `forEachProperty`'s
-        // `vm.isSafeToRecurse()`. The formatter's `stack_check` was seated by
-        // the caller (`format2` / `Bun.inspect`).
+        // `vm.isSafeToRecurse()`.
         let extra_headroom: usize = if cfg!(windows) {
             // 3× PathBuffer ≈ 288 KB — empirically enough for the
             // `remap_zig_exception` → `transpile_source_code` chain on the

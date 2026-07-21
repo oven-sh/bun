@@ -50,4 +50,27 @@ test("deep nesting", () => {
     // Verify it actually formatted and showed the diff (not just crashed)
     expect(stderr).toContain("expect(received).toEqual(expected)");
   }, 30000);
+
+  test.concurrent("deeply nested array via toEqual", async () => {
+    const dir = tempDirWithFiles("pretty-format-stack", {
+      "deep.test.ts": `
+        import { test, expect } from "bun:test";
+        test("deep", () => {
+          let a: unknown = [];
+          for (let i = 0; i < 50000; i++) a = [a];
+          expect(a).toEqual([]);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "deep.test.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(1);
+  });
 });

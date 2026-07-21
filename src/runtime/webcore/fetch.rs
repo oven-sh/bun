@@ -588,14 +588,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         let mut _href = bun_core::OwnedString::default();
         let mut _href_slice = ZigStringSlice::default();
         let data_url = 'process: {
-            // Fast path: for an opaque-path data URL whose bytes are all in
-            // [0x21, 0x7E] the WHATWG URL parser is a no-op (nothing to strip
-            // or percent-encode), so large base64 payloads can skip it.
-            let input = if url_slice.slice().get(5..7) != Some(b"//")
+            // Fast path: for an opaque-path data URL with no `?` and every byte
+            // in [0x21, 0x7E] the WHATWG URL parser is a no-op, so large base64
+            // payloads can skip it.
+            let input = if url_slice.slice().get(5) != Some(&b'/')
                 && url_slice
                     .slice()
                     .iter()
-                    .all(|&b| (0x21..=0x7E).contains(&b))
+                    .all(|&b| (0x21..=0x7E).contains(&b) && b != b'?')
             {
                 url_slice.slice()
             } else {

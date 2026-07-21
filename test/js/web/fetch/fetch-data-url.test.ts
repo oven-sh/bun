@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 
 test("fetch(data:) rejects invalid data URLs with TypeError", async () => {
-  for (const url of ["data:", "data:text/html", "data://test:test/,X"]) {
+  for (const url of ["data:", "data:text/html", "data://test:test/,X", "data:/a,b/.."]) {
     try {
       await fetch(url);
       expect.unreachable(`${url} should reject`);
@@ -85,6 +85,8 @@ describe.each([
   ["data:text/plain;a=b;base64,WA", "text/plain;a=b", [88]],
   ["data:;base64,W A", "text/plain;charset=US-ASCII", [88]],
   ["data:;base64,WA", "text/plain;charset=US-ASCII", [88]],
+  ["data:x/y;a=?>,Z", 'x/y;a="?%3E"', [90]],
+  ["data:x/y,a?b", "x/y", [97, 63, 98]],
 ] as const)("fetch(data:) processing %j", (url, expectedType, expectedBody) => {
   it(`-> ${JSON.stringify(expectedType)} ${JSON.stringify(expectedBody)}`, async () => {
     const res = await fetch(url);

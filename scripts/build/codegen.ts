@@ -118,8 +118,9 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   // ship with the build host's platform baked in.
   //
   // restat = 1 because most scripts use writeIfNotChanged().
+  const underBun = process.versions.bun !== undefined;
   const nodeLoader = q(pathToFileURL(resolve(cfg.cwd, "src", "codegen", "node-loader.ts")).href);
-  const runtime = `${cfg.jsRuntime} --import ${nodeLoader}`;
+  const runtime = underBun ? cfg.jsRuntime : `${cfg.jsRuntime} --import ${nodeLoader}`;
   const env = hostWin
     ? `set TARGET_PLATFORM=${platform}&& set TARGET_ARCH=${arch}&& `
     : `TARGET_PLATFORM=${platform} TARGET_ARCH=${arch} `;
@@ -821,13 +822,13 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // get a cryptic "multiple rules generate <unknown>" from ninja.
   const sourcesArg = sources.bindgenV2.join(",");
   const nodeLoader = pathToFileURL(resolve(cfg.cwd, "src", "codegen", "node-loader.ts")).href;
+  const loaderArgs = process.versions.bun !== undefined ? [] : ["--import", nodeLoader];
   const [rt, ...rtArgs] = cfg.jsRuntimeArgv;
   const listResult = spawnSync(
     rt,
     [
       ...rtArgs,
-      "--import",
-      nodeLoader,
+      ...loaderArgs,
       script,
       "--command=list-outputs",
       `--sources=${sourcesArg}`,

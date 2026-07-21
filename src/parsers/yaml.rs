@@ -23,10 +23,9 @@ use bun_core::{self, StackCheck};
 pub struct YAML;
 
 impl YAML {
-    /// Parse a YAML document. Self-referential anchors (`&a {self: *a}`) are
-    /// rejected with `Unresolved alias` so the returned `Expr` graph is
-    /// acyclic; callers that walk it without a seen-set (bundler printer,
-    /// `Expr::deep_clone`) stay safe.
+    /// Parse a YAML document. Self-referential anchors are rejected so the
+    /// returned `Expr` graph is acyclic and safe for callers that walk it
+    /// without a seen-set (bundler printer, `Expr::deep_clone`).
     pub fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -36,9 +35,8 @@ impl YAML {
     }
 
     /// Parse a YAML document with self-referential anchors resolved. The
-    /// returned `Expr` graph may contain cycles; the caller must be able to
-    /// walk a cyclic graph (as `Bun.YAML.parse`'s `to_js` does via
-    /// `seen_objects`).
+    /// returned `Expr` graph may contain cycles; the caller must walk it with
+    /// a seen-set (as `Bun.YAML.parse`'s `to_js` does via `seen_objects`).
     pub fn parse_allowing_self_references(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -2384,14 +2382,12 @@ pub struct Parser<'i, Enc: Encoding> {
     /// `UnresolvedAlias`, guaranteeing an acyclic `Expr` graph.
     pub allow_self_referential_aliases: bool,
     /// Collection nodes whose anchor is registered but whose body is still
-    /// being parsed. An alias that resolves to one of these is a
-    /// self-reference (`&a {self: *a}`). A merge key that resolves to one is
-    /// rejected because the placeholder is still empty at merge time.
+    /// being parsed. An alias resolving to one is a self-reference; a merge
+    /// key resolving to one is rejected (the placeholder is still empty).
     pub open_anchors: Vec<*const ()>,
-    /// Collection nodes known to be on a cycle. `charge_alias_expansion`
-    /// must not descend into these. O(1) membership keeps the per-node work
-    /// in `charge_alias_expansion` constant regardless of how many
-    /// self-referential anchors the document declares.
+    /// Collection nodes known to be on a cycle; `charge_alias_expansion`
+    /// must not descend into these. O(1) membership keeps the per-node cost
+    /// constant regardless of how many self-referential anchors exist.
     pub self_referential: HashMap<*const (), ()>,
 }
 
@@ -3882,10 +3878,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     /// Register `anchor` with an empty collection node before parsing the
-    /// body so a self-referential alias inside the body resolves to it.
-    /// Returns the placeholder; the caller passes it to
-    /// `adopt_preregistered` once the body is parsed. The placeholder is
-    /// only allocated when `anchor` is `Some`.
+    /// body so a self-referential alias inside resolves to it. The caller
+    /// passes the returned placeholder to `adopt_preregistered` afterwards.
     fn preregister_collection_anchor(
         &mut self,
         anchor: Option<StringRange>,
@@ -3900,10 +3894,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
         let name = Enc::key_bytes(anchor.slice(self.input));
         if self.anchors.get(name).is_some() {
-            // Redefinition: an alias inside this body should keep resolving
-            // to the previous definition (matching the pre-self-reference
-            // behaviour). The post-body put still overwrites for later
-            // aliases.
+            // Redefinition: an alias inside this body keeps resolving to the
+            // previous definition; the post-body put overwrites afterwards.
             return Ok(None);
         }
         let placeholder = match kind {
@@ -4050,10 +4042,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     if let Some(ptr) = Self::collection_ptr(&copy) {
                         if self.open_anchors.contains(&ptr) {
-                            // Self-reference: the anchored node is still being
-                            // parsed. Mark it so later alias charges don't walk
-                            // the cycle; the placeholder is empty here so there
-                            // is nothing to charge for its body yet.
+                            // Self-reference to a node still being parsed:
+                            // mark it so later alias charges skip the cycle.
                             self.self_referential.put(ptr, ())?;
                         }
                     }
@@ -4119,10 +4109,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let sequence_indent = self.token.indent;
                     let sequence_line = self.token.line;
                     let sequence_tab_after_indent = self.tab_after_indent;
-                    // A prior-line anchor may belong to the enclosing block
-                    // mapping (implicit_key_anchors decides after the body is
-                    // parsed); only a same-line anchor is guaranteed to anchor
-                    // this flow sequence itself.
+                    // Only a same-line anchor definitely anchors this flow
+                    // sequence; a prior-line one may be the enclosing block
+                    // mapping's (implicit_key_anchors decides afterwards).
                     let preregistered = self.preregister_collection_anchor(
                         node_props
                             .anchor()

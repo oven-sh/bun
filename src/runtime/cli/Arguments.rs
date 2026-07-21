@@ -280,9 +280,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--abort-on-uncaught-exception     Abort instead of exiting when an uncaught exception is not handled."
     ),
-    parse_param!(
-        "--abort_on_uncaught_exception     Alias of --abort-on-uncaught-exception (V8 accepts both spellings)."
-    ),
+    // V8 accepts both spellings; no help text so the alias is parsed but
+    // hidden from --help (see simple_help), like the Node compat flags below.
+    parse_param!("--abort_on_uncaught_exception"),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
         "--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."
@@ -333,7 +333,7 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
     ),
     parse_param!(
-        "--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                      Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'"
@@ -558,7 +558,7 @@ pub(crate) const BUILD_PARAMS: &[ParamType] =
 // TODO: update test completions
 pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
-        "--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                     Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000."

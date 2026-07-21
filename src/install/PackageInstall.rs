@@ -535,16 +535,10 @@ impl HardLinkWindowsInstallTask {
         // whose internal Release/Acquire on the task queue is what publishes the
         // first-call `MaybeUninit::write` below.
         //
-        // We must NOT re-assign the whole struct each call: even though `copy()` always reaches `queue.wait()`
-        // before returning (see the loop_err handling there), `WaitGroup::wait()` can
-        // return while the last worker is still inside `WaitGroup::finish()` *after*
-        // its `fetch_sub` — touching `mutex`/`cond` for the lock-unlock-signal dance.
-        // Overwriting `wait_group` (or forming `&mut HardLinkQueue` at all) would race
-        // with that trailing access. Instead, on re-init we only drain `errored_task`
-        // through its own mutex; `wait_group`'s counter is already 0 and its
-        // Mutex/Condvar are `Sync`, so a stale `finish()` tail concurrently
-        // locking/signalling them is well-defined. `thread_pool` points at the
-        // process-wide `PackageManager` singleton and never changes.
+        // On re-init we only drain `errored_task` through its own mutex instead of
+        // re-assigning the whole struct: `wait_group`'s counter is already 0 and
+        // `thread_pool` points at the process-wide `PackageManager` singleton that
+        // never changes, so a fresh write would be a no-op anyway.
         static INITIALIZED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
         unsafe {
@@ -2166,12 +2160,9 @@ impl<'a> PackageInstall<'a> {
             }
         };
         let to_path: &[u8] = {
-            // `symlinked_path` is always a package *directory*;
-            // bare `O::RDONLY` on Windows routes to the file-open NtCreateFile arm
-            // which requests `FILE_WRITE_ATTRIBUTES` (may be denied on RO dirs).
-            // `O::DIRECTORY` routes to `open_dir_at_windows_nt_path`
-            // (`FILE_LIST_DIRECTORY | SYNCHRONIZE`),
-            // then `get_fd_path` resolves via `GetFinalPathNameByHandleW`.
+            // `symlinked_path` is always a package *directory*; `O::DIRECTORY`
+            // routes to `open_dir_at_windows_nt_path`, then `get_fd_path`
+            // resolves via `GetFinalPathNameByHandleW`.
             let fd = match sys::openat(
                 self.cache_dir,
                 symlinked_path,
@@ -2366,12 +2357,10 @@ impl<'a> PackageInstall<'a> {
                                     .as_mut_slice()
                             };
 
-                            if cfg!(debug_assertions) {
-                                debug_assert!(bun_core::is_slice_in_buffer(
-                                    self.cache_dir_subpath.as_bytes(),
-                                    buf
-                                ));
-                            }
+                            debug_assert!(bun_core::is_slice_in_buffer(
+                                self.cache_dir_subpath.as_bytes(),
+                                buf
+                            ));
 
                             let subpath_len =
                                 strings::without_trailing_slash(self.cache_dir_subpath.as_bytes())

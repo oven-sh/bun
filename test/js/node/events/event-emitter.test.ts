@@ -5,7 +5,13 @@ import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
-import EventEmitter, { captureRejectionSymbol, getEventListeners, getMaxListeners, setMaxListeners } from "node:events";
+import EventEmitter, {
+  captureRejectionSymbol,
+  getEventListeners,
+  getMaxListeners,
+  listenerCount,
+  setMaxListeners,
+} from "node:events";
 
 describe("node:events", () => {
   test("captureRejectionSymbol", () => {
@@ -910,6 +916,54 @@ test("getEventListeners", () => {
   expect(getEventListeners(target, "hey").length).toBe(0);
 });
 
+test("EventEmitter.prototype.listenerCount", () => {
+  const ee = new EventEmitter();
+  const a = () => {};
+  const b = () => {};
+
+  expect(ee.listenerCount("x")).toBe(0);
+  expect(ee.listenerCount("x", a)).toBe(0);
+
+  ee.on("x", a);
+  expect(ee.listenerCount("x")).toBe(1);
+  expect(ee.listenerCount("x", a)).toBe(1);
+  expect(ee.listenerCount("x", b)).toBe(0);
+
+  ee.on("x", b);
+  expect(ee.listenerCount("x")).toBe(2);
+  expect(ee.listenerCount("x", a)).toBe(1);
+  expect(ee.listenerCount("x", b)).toBe(1);
+
+  ee.once("y", a);
+  expect(ee.listenerCount("y")).toBe(1);
+  expect(ee.listenerCount("y", a)).toBe(1);
+
+  // null/undefined listener arg means "count all", same as omitting it
+  expect(ee.listenerCount("x", null as any)).toBe(2);
+  expect(ee.listenerCount("x", undefined)).toBe(2);
+});
+
+test("events.listenerCount validates emitter argument", () => {
+  const ee = new EventEmitter();
+  ee.on("y", () => {});
+  expect(listenerCount(ee, "y")).toBe(1);
+
+  const et = new EventTarget();
+  et.addEventListener("k", () => {});
+  et.addEventListener("k", () => {});
+  expect(listenerCount(et, "k")).toBe(2);
+
+  const np = Object.create(null);
+  EventEmitter.call(np);
+  EventEmitter.prototype.on.call(np, "y", () => {});
+
+  for (const bad of [{}, 42, np]) {
+    expect(() => listenerCount(bad as any, "y")).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  }
+});
+
 test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
 });
@@ -1080,5 +1134,52 @@ describe("node:domain integration", () => {
       stderr,
       exitCode: 0,
     });
+  });
+});
+
+// A fired once() wrapper must drop its closure refs so holding it (a cached
+// rawListeners() result, the COW array emit() iterates) does not retain the
+// emitter. wrapped.listener stays: node asserts it survives emit.
+test("once() wrapper releases its target after firing", async () => {
+  const src = `
+    const { EventEmitter } = require("events");
+    const held = [];
+    const total = 8;
+    let collected = 0;
+    const registry = new FinalizationRegistry(() => collected++);
+    (function () {
+      for (let i = 0; i < total; i++) {
+        const ee = new EventEmitter();
+        ee.once("x", function () {});
+        held.push(ee.rawListeners("x")[0]);
+        ee.emit("x");
+        registry.register(ee);
+      }
+    })();
+    let iters = 0;
+    setImmediate(function check() {
+      Bun.gc(true);
+      if (collected === total) {
+        console.log("collected " + collected + "/" + total + " holding " + held.length + " wrappers");
+        return;
+      }
+      if (++iters > 50) {
+        console.log("stuck " + collected + "/" + total + " holding " + held.length + " wrappers");
+        process.exit(1);
+      }
+      setImmediate(check);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "collected 8/8 holding 8 wrappers",
+    stderr: "",
+    exitCode: 0,
   });
 });

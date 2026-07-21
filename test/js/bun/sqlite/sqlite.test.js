@@ -2216,8 +2216,7 @@ it("new Database() does not leak the sqlite3 handle when open fails", async () =
     cmd: [bunExe(), "-e", src],
     env: {
       ...bunEnv,
-      ASAN_OPTIONS:
-        "detect_leaks=1:symbolize=0:quarantine_size_mb=0:allow_user_segv_handler=1:disable_coredump=0",
+      ASAN_OPTIONS: "detect_leaks=1:symbolize=0:quarantine_size_mb=0:allow_user_segv_handler=1:disable_coredump=0",
     },
     stdout: "pipe",
     stderr: "pipe",

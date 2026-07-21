@@ -360,29 +360,21 @@ describe("deep / self-referencing values do not overflow the formatter stack", (
     expect(exitCode).toBe(0);
   });
 
-  it("throwing a deeply nested array as an uncaught exception does not crash the printer", async () => {
+  // print_array writes `[\n` + 2*indent spaces before recursing, so the partial
+  // output before the stack check fires is O(N^2); ignore stderr and assert on
+  // exitCode/signalCode (a segfault would be signalCode SIGSEGV, not exit 1).
+  it.each([
+    ["throwing a deeply nested array as an uncaught exception", "throw a;"],
+    ["rejecting a deeply nested array as an unhandled rejection", "Promise.reject(a);"],
+  ])("%s does not crash the printer", async (_, stmt) => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `let a = []; for (let i = 0; i < 60000; i++) a = [a]; throw a;`],
+      cmd: [bunExe(), "-e", `let a = []; for (let i = 0; i < 60000; i++) a = [a]; ${stmt}`],
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Uncaught throw exits 1 (not a segfault's 139/11) and the error printer ran.
-    expect(stderr).toContain("error");
-    expect(exitCode).toBe(1);
-  });
-
-  it("rejecting a deeply nested array as an unhandled rejection does not crash the printer", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `let a = []; for (let i = 0; i < 60000; i++) a = [a]; Promise.reject(a);`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("error");
-    expect(exitCode).toBe(1);
+    await proc.exited;
+    expect({ signalCode: proc.signalCode, exitCode: proc.exitCode }).toEqual({ signalCode: null, exitCode: 1 });
   });
 });
 

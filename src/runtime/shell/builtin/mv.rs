@@ -6,9 +6,7 @@ use bun_ptr::BackRef;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::interpreter::{
-    Interpreter, NodeId, ShellTask, closefd, shell_openat, shell_statat,
-};
+use crate::shell::interpreter::{Interpreter, NodeId, ShellTask, closefd, shell_openat};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
@@ -494,7 +492,9 @@ impl ShellMvBatchedTask {
             return;
         }
         // Rename single entry to a new path (target was not a directory).
-        if this.no_overwrite && shell_statat(this.cwd, &this.target).is_ok() {
+        if this.no_overwrite && bun_sys::lstatat(this.cwd, &this.target).is_ok() {
+            // Still surface a missing source; `-n` only suppresses overwrite.
+            this.err = bun_sys::lstatat(this.cwd, &this.sources[0]).err();
             return;
         }
         if let Err(e) = bun_sys::renameat(this.cwd, &this.sources[0], this.cwd, &this.target) {
@@ -529,8 +529,9 @@ impl ShellMvBatchedTask {
         }
         buf[len] = 0;
         let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
-        if no_overwrite && shell_statat(target_fd, path_in_dir).is_ok() {
-            return Ok(());
+        if no_overwrite && bun_sys::lstatat(target_fd, path_in_dir).is_ok() {
+            // Still surface a missing source; `-n` only suppresses overwrite.
+            return bun_sys::lstatat(cwd, src).map(drop);
         }
         bun_sys::renameat(cwd, src, target_fd, path_in_dir).map_err(|e| {
             // Surface `target/basename(src)` as the failing path.

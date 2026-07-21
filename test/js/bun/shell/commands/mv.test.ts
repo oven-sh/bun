@@ -1,5 +1,7 @@
 import { $ } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { isPosix, tempDirWithFiles } from "harness";
+import { readlinkSync } from "node:fs";
 import { join } from "path";
 import { createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
@@ -106,6 +108,19 @@ describe("mv", async () => {
       .fileEquals("dst", "NEW\n")
       .doesNotExist("src")
       .runAsTest("-n -f: last option wins (-f)");
+
+    TestBuilder.command`touch dst; mv -n nosuch dst`
+      .ensureTempDir()
+      .exitCode(c => expect(c).not.toBe(0))
+      .stderr(s => expect(s).toContain("nosuch"))
+      .runAsTest("still reports a missing source when destination exists");
+
+    test.if(isPosix)("does not overwrite a dangling symlink", async () => {
+      const dir = tempDirWithFiles("mv-n-symlink", { src: "NEW\n" });
+      await $`ln -s nonexistent dst`.cwd(dir).throws(true).quiet();
+      await TestBuilder.command`mv -n src dst`.setTempdir(dir).exitCode(0).fileEquals("src", "NEW\n").run();
+      expect(readlinkSync(join(dir, "dst"))).toBe("nonexistent");
+    });
   });
 
   describe("-i (interactive)", () => {

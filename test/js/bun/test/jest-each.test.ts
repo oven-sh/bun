@@ -86,7 +86,7 @@ describe("tagged template literal", () => {
 
   const unicode: unknown[] = [];
   it.each`
-    café     | 名前        | 값
+    café     | 名前       | 값
     ${"one"} | ${"Alice"} | ${42}
   `("keys non-ASCII column names correctly", row => {
     unicode.push(row);

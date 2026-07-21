@@ -885,8 +885,8 @@ mod draft {
         pub const MAX: usize = 34;
 
         /// Register names in encoding order. Source of truth for `COUNT`; the
-        /// per-target ucontext/CONTEXT readers assign `r.count = Self::COUNT`
-        /// so a drift between this table and the readers fails at compile time.
+        /// readers assign `r.count = Self::COUNT` so the encoded count tracks
+        /// this table. Keep each reader's slot writes in lockstep manually.
         #[cfg(target_arch = "x86_64")]
         pub const NAMES: &[&str] = &[
             "rax", "rbx", "rcx", "rdx", "rdi", "rsi", "rbp", "rsp", "r8", "r9", "r10", "r11",

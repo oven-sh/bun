@@ -1445,6 +1445,25 @@ it("mkdtemp() non-exist dir #2568", done => {
   });
 });
 
+describe("mkdtemp empty prefix", () => {
+  // Node.js rejects an empty prefix with EINVAL; previously Bun would create
+  // a bare six-random-character directory in the process cwd.
+  it("mkdtempSync('') throws EINVAL", () => {
+    expect(() => mkdtempSync("")).toThrow(expect.objectContaining({ code: "EINVAL", syscall: "mkdtemp" }));
+  });
+
+  it("mkdtemp('') callback receives EINVAL", async () => {
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    mkdtemp("", (err, folder) => resolve(err));
+    const err = await promise;
+    expect(err).toMatchObject({ code: "EINVAL", syscall: "mkdtemp" });
+  });
+
+  it("fs.promises.mkdtemp('') rejects with EINVAL", async () => {
+    await expect(promises.mkdtemp("")).rejects.toMatchObject({ code: "EINVAL", syscall: "mkdtemp" });
+  });
+});
+
 describe("mkdtemp encoding option", () => {
   const base = tmpdirSync();
   const prefix = join(base, "mkenc-dé-");

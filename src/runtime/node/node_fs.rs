@@ -6089,6 +6089,16 @@ impl NodeFS {
     pub fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
         let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();
+        // Node rejects an empty prefix with EINVAL. Without this, the bare
+        // "XXXXXX" template creates a random-named directory in cwd.
+        if prefix_slice.is_empty() {
+            return Err(sys::Error {
+                errno: SystemErrno::EINVAL as _,
+                syscall: sys::Tag::mkdtemp,
+                path: b"XXXXXX"[..].into(),
+                ..Default::default()
+            });
+        }
         let len = prefix_slice.len().min(prefix_buf.len().saturating_sub(7));
         if len > 0 {
             prefix_buf[..len].copy_from_slice(&prefix_slice[..len]);

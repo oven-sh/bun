@@ -860,6 +860,26 @@ impl BigInt {
     pub const EMPTY: BigInt = BigInt { value: Str::EMPTY };
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
+
+    /// `value` may carry a `0x`/`0o`/`0b` prefix. A leading zero is otherwise
+    /// a syntax error, so any literal that starts with `0` and has more than
+    /// one character is a radix literal.
+    #[inline]
+    pub fn has_radix(v: &[u8]) -> bool {
+        v.len() >= 2 && v[0] == b'0'
+    }
+
+    /// `Some(equal)` when the comparison is decidable from the source text, or
+    /// `None` when either side has a radix prefix and the values differ.
+    pub fn check_equality(a: &[u8], b: &[u8]) -> Option<bool> {
+        if a == b {
+            return Some(true);
+        }
+        if !Self::has_radix(a) && !Self::has_radix(b) {
+            return Some(false);
+        }
+        None
+    }
 }
 
 // ── immutable JSON nodes ───────────────────────────────────────────────────
@@ -2213,7 +2233,9 @@ impl Template {
                     part.value = Expr::init(EString::init(b"undefined"), part.value.loc);
                 }
                 crate::expr::Data::EBigInt(value) => {
-                    part.value = Expr::init(EString::init(&value.value), part.value.loc);
+                    if !BigInt::has_radix(&value.value) {
+                        part.value = Expr::init(EString::init(&value.value), part.value.loc);
+                    }
                 }
                 _ => {}
             }

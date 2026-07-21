@@ -3090,6 +3090,52 @@ config:
         expect(reparsed).toEqual(value);
         expect(reparsed["\\u{10FFFF}a"]).toBe(reparsed.b);
       });
+
+      test("anchor name survives GC when user getters run between the anchor pass and emission", async () => {
+        // The Proxy's ownKeys yields a property name nothing else references once its iterator
+        // drops; the `zero`/`second` getters allocate and force GC so the stored anchor name's
+        // StringImpl is freed and recycled before the emit pass dereferences it.
+        const src = `
+          let bad = 0;
+          for (let r = 0; r < 3; r++) {
+            let n = 0;
+            const shared = { v: 1 };
+            const churn = () => {
+              const j = [];
+              for (let i = 0; i < 2000; i++) j.push(Math.random().toString(36).padEnd(18, "K"));
+              Bun.gc(true);
+            };
+            const p = new Proxy({}, {
+              ownKeys() { return ["dynamic" + (n++) + Math.random().toString(36).slice(2)]; },
+              getOwnPropertyDescriptor() { return { value: shared, enumerable: true, configurable: true }; },
+              get() { return shared; },
+            });
+            const o = {};
+            Object.defineProperty(o, "zero", { enumerable: true, get() { churn(); return 0; } });
+            o.first = p;
+            Object.defineProperty(o, "second", { enumerable: true, get() { churn(); return shared; } });
+            o.third = shared;
+            const s = Bun.YAML.stringify(o);
+            let parsed;
+            try { parsed = Bun.YAML.parse(s); } catch (e) { bad++; console.error("round " + r + ": " + e.message + " in: " + s); continue; }
+            const inner = Object.values(parsed.first)[0];
+            if (!(parsed.second === inner && parsed.third === inner && inner.v === 1)) {
+              bad++;
+              console.error("round " + r + ": structure mismatch in: " + s);
+            }
+          }
+          if (bad) { console.log("FAIL:" + bad + "/3"); process.exitCode = 1; }
+          else console.log("OK");
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", src],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
+      });
     });
 
     // Edge cases and error handling

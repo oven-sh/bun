@@ -133,7 +133,10 @@ impl AnchorAlias {
                 ValueOrigin::Root => AnchorAliasName::Root,
                 ValueOrigin::ArrayItem => AnchorAliasName::ArrayItem(0),
                 ValueOrigin::PropValue(prop_name) => AnchorAliasName::PropValue {
-                    prop_name,
+                    // `prop_name` is borrowed from `JSPropertyIterator::next()` and may be
+                    // freed once that iterator drops and user getters trigger GC; own a ref
+                    // so it survives until the emitting pass reads it back.
+                    prop_name: OwnedString::new(prop_name.dupe_ref()),
                     counter: 0,
                 },
             },
@@ -146,7 +149,7 @@ pub(crate) enum AnchorAliasName {
     Root,
     ArrayItem(usize),
     PropValue {
-        prop_name: BunString,
+        prop_name: OwnedString,
         // added after the name
         counter: usize,
     },
@@ -408,7 +411,7 @@ impl Stringifier {
                         self.builder.append_latin1(b"value");
                         self.builder.append_usize(*counter);
                     } else {
-                        self.builder.append_string(*prop_name);
+                        self.builder.append_string(prop_name.get());
                         if *counter != 0 {
                             self.builder.append_usize(*counter);
                         }

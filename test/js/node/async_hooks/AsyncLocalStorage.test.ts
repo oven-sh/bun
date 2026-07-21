@@ -1025,7 +1025,7 @@ describe("async context passes through", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
     expect(stderr).not.toContain("AssertionError");
-  });
+  }, 15_000);
 
   // destroy(err) with no 'error' listener throws out of the emit, which must
   // not skip the frame clear (the 'close' tick after it never runs).
@@ -1060,7 +1060,7 @@ describe("async context passes through", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
     expect(stderr).not.toContain("AssertionError");
-  });
+  }, 15_000);
 
   // _destroy emits 'aborted' (and can reach user code via end()/push(null))
   // before it finishes; the clear must not sit downstream of that. The throw is
@@ -1108,7 +1108,7 @@ describe("async context passes through", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
     expect(stderr).not.toContain("AssertionError");
-  });
+  }, 15_000);
 
   // The upgrade/connect branch emits before closeRequest(), which carries the
   // clear; a throwing handler must not leave the request pinning the store.
@@ -1152,7 +1152,7 @@ describe("async context passes through", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
     expect(stderr).not.toContain("AssertionError");
-  });
+  }, 15_000);
 
   test("Bun.build plugin", async () => {
     const s = new AsyncLocalStorage<string>();

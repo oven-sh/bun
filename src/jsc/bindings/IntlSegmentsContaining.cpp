@@ -40,6 +40,18 @@ JSC_DEFINE_HOST_FUNCTION(intlSegmentsPrototypeFuncContainingFix, (JSGlobalObject
 
     JSValue thisValue = callFrame->thisValue();
     JSValue indexValue = callFrame->argument(0);
+
+    // Brand-check before coercion so step 2 (RequireInternalSlot) precedes
+    // step 6 (ToIntegerOrInfinity). IntlSegments::info() is unreachable here,
+    // so read the ClassInfo off the cached structure instead.
+    const ClassInfo* segmentsClassInfo = zigGlobal->segmentsStructure()->classInfoForCells();
+    if (!thisValue.isCell() || !thisValue.asCell()->inherits(segmentsClassInfo)) {
+        MarkedArgumentBuffer rawArgs;
+        rawArgs.append(indexValue);
+        ASSERT(!rawArgs.hasOverflowed());
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, original, callData, thisValue, rawArgs)));
+    }
+
     double value = indexValue.toIntegerOrInfinity(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 

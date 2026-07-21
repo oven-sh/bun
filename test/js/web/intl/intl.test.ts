@@ -204,6 +204,14 @@ describe("Intl.Segmenter", () => {
       });
       expect(calls).toBe(1);
     });
+
+    test("brand check precedes ToIntegerOrInfinity", () => {
+      const { containing } = Object.getPrototypeOf(new Intl.Segmenter("en").segment("x"));
+      let coerced = false;
+      const index = { valueOf: () => ((coerced = true), 0) };
+      expect(() => containing.call({}, index)).toThrow(TypeError);
+      expect(coerced).toBe(false);
+    });
   });
 });
 

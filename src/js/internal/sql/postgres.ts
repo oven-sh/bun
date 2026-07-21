@@ -30,6 +30,10 @@ const {
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
+// How long the connection opened for a CancelRequest waits for the backend to
+// close it before giving up.
+const CANCEL_REQUEST_TIMEOUT_SECONDS = 5;
+
 const escapeBackslash = /\\/g;
 const escapeQuote = /"/g;
 
@@ -414,6 +418,42 @@ class PostgresAdapter
       throw $ERR_INVALID_ARG_VALUE("name", str, "must not contain null bytes");
     }
     return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
+  }
+
+  /**
+   * A backend running a query reads nothing until it finishes, so the only way
+   * to stop it is a CancelRequest on a second connection. The backend handles
+   * that message before authentication and before any SSL negotiation, and it
+   * carries no credentials beyond the pid/secret pair the server itself handed
+   * out in BackendKeyData, so the cancel connection stays plaintext, the way
+   * libpq's PQcancel() sends it.
+   */
+  sendCancelRequest(request: Uint8Array): void {
+    const { path, hostname, port } = this.connectionInfo;
+    const address = path ? { unix: path } : { hostname, port };
+
+    Bun.connect({
+      ...address,
+      socket: {
+        open(socket) {
+          socket.write(request);
+          socket.flush();
+          // The backend closes the connection once it has acted on the request.
+          // Bound the wait so a peer that never answers cannot pin the event loop.
+          socket.timeout(CANCEL_REQUEST_TIMEOUT_SECONDS);
+        },
+        timeout(socket) {
+          socket.end();
+        },
+        // The backend never replies to a CancelRequest, but Bun.connect requires
+        // a reader.
+        data() {},
+        // Cancelling is best effort: a request that never reaches the server
+        // just leaves the query running, which is what happens today anyway.
+        connectError() {},
+        error() {},
+      },
+    });
   }
 
   connectionClosedError() {

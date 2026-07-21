@@ -1580,6 +1580,15 @@ impl PostgresSQLConnection {
         ))
     }
 
+    /// True when `request` is the head of the FIFO, i.e. the one the backend is
+    /// executing right now. Requests behind the head have either not been
+    /// written at all, or were pipelined onto the wire and the backend has not
+    /// reached them yet.
+    pub fn is_current_request(&self, request: *const PostgresSQLQuery) -> bool {
+        let q = self.requests.get();
+        q.readable_length() > 0 && core::ptr::eq(q.peek_item(0).cast_const(), request)
+    }
+
     /// Drop the queue-held intrusive ref on `request` and pop one entry from
     /// the FIFO head. One audited `unsafe` here replaces the per-site
     /// `unsafe { PostgresSQLQuery::deref(ptr) }; self.requests.with_mut(|q| q.discard(1));`

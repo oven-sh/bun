@@ -29,8 +29,8 @@ use core::ptr::NonNull;
 pub use bun_jsc::{
     ArrayBuffer, CallFrame, CoerceTo, ErrorBuilder, ErrorCode, ExternColumnIdentifier,
     ExternColumnIdentifierValue, GlobalRef, JSArrayIterator, JSCell, JSGlobalObject, JSObject,
-    JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    StrongOptional, ThrowFmtArgs, ZigStringJsc, bun_string_jsc, host_fn,
+    JSType, JSUint8Array, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer,
+    StringJsc, StrongOptional, ThrowFmtArgs, ZigStringJsc, bun_string_jsc, host_fn,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -623,6 +623,7 @@ pub mod codegen {
         impl_js_class {
             binding,
             columns,
+            connection,
             pendingValue,
             target
         }

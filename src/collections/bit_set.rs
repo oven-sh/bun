@@ -6,7 +6,7 @@
 //! large and the number of actual items in a given set is usually
 //! small, they may be less memory efficient than an array set.
 //!
-//! There are five variants defined here:
+//! There are four variants defined here:
 //!
 //! IntegerBitSet:
 //!   A bit set with static size, which is backed by a single integer.
@@ -17,10 +17,6 @@
 //!   A bit set with static size, which is backed by an array of usize.
 //!   This set is good for sets with a larger size, but may use
 //!   more bytes than necessary if your set is small.
-//!
-//! StaticBitSet:
-//!   Picks either IntegerBitSet or ArrayBitSet depending on the requested
-//!   size.  The interfaces of these two types match exactly, except for fields.
 //!
 //! DynamicBitSet:
 //!   A bit set with runtime-known size, backed by an allocated slice
@@ -102,19 +98,6 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
         }
     }
 }
-
-// ───────────────────────────── StaticBitSet ─────────────────────────────
-
-/// Returns the optimal static bit set type for the specified number
-/// of elements.  The returned type will perform no allocations,
-/// can be copied by value, and does not require deinitialization.
-/// Both possible implementations fulfill the same interface.
-///
-// Stable Rust cannot select a struct definition from a const generic, so this
-// alias is the integer form and is only valid for `SIZE <= usize::BITS`
-// (enforced by `IntegerBitSet`'s debug asserts). Callers needing more bits
-// must use `ArrayBitSet<SIZE, { num_masks_for(SIZE) }>` directly.
-pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>;
 
 // ───────────────────────────── IntegerBitSet ─────────────────────────────
 

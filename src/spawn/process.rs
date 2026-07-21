@@ -2121,9 +2121,7 @@ mod spawn_process_body {
         // defer dup_fds cleanup — handled below at each exit
         let cleanup_dup = |failed: bool| {
             if dup_src.is_some() {
-                if cfg!(debug_assertions) {
-                    debug_assert!(dup_src.is_some() && dup_tgt.is_some());
-                }
+                debug_assert!(dup_src.is_some() && dup_tgt.is_some());
             }
             if failed && dup_fds[0] != -1 {
                 Fd::from_uv(dup_fds[0]).close();

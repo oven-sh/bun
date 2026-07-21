@@ -77,19 +77,14 @@ pub use bun_uws::ssl_wrapper::SSLWrapper;
 // `NewHTTPContext`; alias all spellings to the canonical types so submodules
 // resolve without churn.
 pub use h2_client as h2;
-pub use h2_client as H2;
 pub use h3_client as h3;
 pub use h3_client as H3;
-pub use http_context as new_http_context;
 pub type NewHTTPContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 pub type NewHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 pub type HttpsContext = http_context::HTTPContext<true>;
-pub type HttpContext = http_context::HTTPContext<false>;
 pub type HttpClient<'a> = HTTPClient<'a>;
-pub type HttpThread = HTTPThread;
 pub type AsyncHttp<'a> = AsyncHTTP<'a>;
 pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
-pub use HTTPClientResult as http_client_result;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
 pub use bun_http_types::Method::Method;
 pub use bun_picohttp as picohttp;
@@ -966,9 +961,9 @@ use crate::internal_state::{RequestStage, ResponseStage, Stage};
 
 bun_core::declare_scope!(fetch, visible);
 
-/// Generic `HttpContext<const SSL>` alias — `crate::HttpContext` /
-/// `crate::HttpsContext` (above) are concrete-SSL aliases; the state machine
-/// needs a const-generic spelling for `get_ssl_ctx<IS_SSL>()`.
+/// Generic `HttpContext<const SSL>` alias — `crate::HttpsContext` (above) is
+/// the concrete-SSL alias; the state machine needs a const-generic spelling
+/// for `get_ssl_ctx<IS_SSL>()`.
 pub type GenHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 
 // ── header constants ────────────────────────────────────────────────────
@@ -4641,29 +4636,26 @@ impl<'a> HTTPClient<'a> {
             self.state.cloned_metadata = None;
         }
 
-        let mut certificate_info: Option<CertificateInfo> = None;
-        if let Some(info) = self.state.certificate_info.take() {
-            // transfer owner ship of the certificate info here
-            certificate_info = Some(info);
-        } else if let Some(metadata) = self.state.cloned_metadata.take() {
-            // transfer owner ship of the metadata here
-            return HTTPClientResult {
-                metadata: Some(metadata),
-                body: body_out::opt_mut(self.state.body_out_str),
-                redirected: self.flags.redirected,
-                fail: self.state.fail,
-                dns_error: self.state.dns_error,
-                dns_hostname: self.state.dns_hostname.take(),
-                // check if we are reporting cert errors, do not have a fail state and we are not done
-                has_more: certificate_info.is_some()
-                    || (self.state.fail.is_none() && !self.state.is_done()),
-                body_size,
-                certificate_info: None,
-                can_stream: (self.state.request_stage == RequestStage::Body
-                    || self.state.request_stage == RequestStage::ProxyBody)
-                    && self.flags.is_streaming_request_body,
-                is_http2: self.flags.protocol != Protocol::Http1_1,
-            };
+        let certificate_info = self.state.certificate_info.take();
+        if certificate_info.is_none() {
+            if let Some(metadata) = self.state.cloned_metadata.take() {
+                // transfer ownership of the metadata here
+                return HTTPClientResult {
+                    metadata: Some(metadata),
+                    body: body_out::opt_mut(self.state.body_out_str),
+                    redirected: self.flags.redirected,
+                    fail: self.state.fail,
+                    dns_error: self.state.dns_error,
+                    dns_hostname: self.state.dns_hostname.take(),
+                    has_more: self.state.fail.is_none() && !self.state.is_done(),
+                    body_size,
+                    certificate_info: None,
+                    can_stream: (self.state.request_stage == RequestStage::Body
+                        || self.state.request_stage == RequestStage::ProxyBody)
+                        && self.flags.is_streaming_request_body,
+                    is_http2: self.flags.protocol != Protocol::Http1_1,
+                };
+            }
         }
         HTTPClientResult {
             body: body_out::opt_mut(self.state.body_out_str),
@@ -4735,14 +4727,12 @@ impl<'a> HTTPClient<'a> {
             }
 
             if self.state.response_message_buffer.owns(incoming_data) {
-                if cfg!(debug_assertions) {
-                    // i'm not sure why this would happen and i haven't seen it happen
-                    // but we should check
-                    debug_assert!(
-                        self.state.get_body_buffer().list.as_ptr()
-                            != self.state.response_message_buffer.list.as_ptr()
-                    );
-                }
+                // i'm not sure why this would happen and i haven't seen it happen
+                // but we should check
+                debug_assert!(
+                    self.state.get_body_buffer().list.as_ptr()
+                        != self.state.response_message_buffer.list.as_ptr()
+                );
                 self.state.response_message_buffer = MutableString::default();
             }
         }
@@ -5294,9 +5284,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
+                                debug_assert!(string_builder.cap == string_builder.len);
 
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());
@@ -5355,9 +5343,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
+                                debug_assert!(string_builder.cap == string_builder.len);
 
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());

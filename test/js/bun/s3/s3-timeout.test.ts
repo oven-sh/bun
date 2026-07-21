@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// The S3 client had no way to bound a request against a wedged endpoint other
-// than the global 5-minute idle timeout. These tests spawn a server that accepts
-// the TCP connection, reads the request, writes a partial response and then goes
-// silent, and verify `{ timeout: N }` rejects the promise instead of hanging.
+// The S3 client had no per-request way to bound a call against an unresponsive
+// endpoint. These tests spawn a server that accepts the connection, consumes the
+// request and never responds, and verify `{ timeout: N }` rejects instead of hanging.
 
 type Op =
   | "text"
@@ -20,6 +19,7 @@ type Op =
   | "client-text"
   | "override-text"
   | "writer"
+  | "writer-multipart"
   | "type-error";
 
 function fixture(op: Op) {
@@ -64,10 +64,16 @@ const calls = {
   },
   "client-text": () => s3short.file("k").text(),
   "override-text": () => s3off.file("k", { timeout: 500 }).text(),
-  // multipart path via writer(): retry: 0 so a single timed-out PUT surfaces
+  // writer() under partSize: single-file PUT path inside MultiPartUpload
   writer: async () => {
     const w = s3.file("k", { timeout: 500, retry: 0 }).writer();
     w.write("hello");
+    await w.end();
+  },
+  // writer() at partSize: CreateMultipartUpload (?uploads=) request path
+  "writer-multipart": async () => {
+    const w = s3.file("k", { timeout: 500, retry: 0 }).writer({ partSize: 5 * 1024 * 1024 });
+    w.write(Buffer.alloc(5 * 1024 * 1024, "x"));
     await w.end();
   },
   "type-error": () => s3.file("k", { timeout: "soon" }).text(),
@@ -131,6 +137,7 @@ describe("S3Options.timeout", () => {
     "client-text",
     "override-text",
     "writer",
+    "writer-multipart",
   ] as const)(
     "%s rejects with Timeout against a stalled endpoint",
     async op => {

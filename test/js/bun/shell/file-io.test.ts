@@ -50,6 +50,20 @@ describe("IOWriter file output redirection", () => {
       .stderr("")
       .runAsTest("word after < file is a file operand, not a new command");
 
+    TestBuilder.command`echo A 2>&1 B C`
+      .ensureTempDir()
+      .exitCode(0)
+      .stdout("A B C\n")
+      .stderr("")
+      .runAsTest("words after 2>&1 stay as arguments (fd-dup takes no file operand)");
+
+    TestBuilder.command`echo A 1>&2 B`
+      .ensureTempDir()
+      .exitCode(0)
+      .stdout("")
+      .stderr("A B\n")
+      .runAsTest("words after 1>&2 stay as arguments");
+
     TestBuilder.command`echo a > f1 b > f2`
       .error("Multiple redirects are not supported yet. Please open a GitHub issue.")
       .runAsTest("second redirect after intervening words is rejected at parse time");

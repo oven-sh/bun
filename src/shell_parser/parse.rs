@@ -1612,6 +1612,11 @@ impl<'bump> Parser<'bump> {
         };
         let redirect_file: Option<ast::Redirect<'bump>> = 'redirect_file: {
             if has_redirect {
+                // `n>&m` is complete on its own and takes no file operand; the
+                // following word (if any) belongs to the enclosing command.
+                if redirect.duplicate_out() {
+                    break 'redirect_file None;
+                }
                 if self.r#match(TokenTag::JSObjRef) {
                     let Token::JSObjRef(obj_ref) = self.prev() else {
                         unreachable!()
@@ -1622,9 +1627,6 @@ impl<'bump> Parser<'bump> {
                 let file = match self.parse_atom()? {
                     Some(f) => f,
                     None => {
-                        if redirect.duplicate_out() {
-                            break 'redirect_file None;
-                        }
                         self.add_error(format_args!("Redirection with no file"))?;
                         return Err(ParseError::Expected.into());
                     }

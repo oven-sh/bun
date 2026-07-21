@@ -184,9 +184,11 @@ describe("Atomics", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("notify=5\nresolved:w0:ok,w1:ok,w2:ok,w3:ok,w4:ok\n");
-      expect(exitCode).toBe(0);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "notify=5\nresolved:w0:ok,w1:ok,w2:ok,w3:ok,w4:ok\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
     });
 
     test("waitAsync alone does not keep the event loop alive", async () => {
@@ -203,9 +205,11 @@ describe("Atomics", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("exit\n");
-      expect(exitCode).toBe(0);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "exit\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
     });
   });
 

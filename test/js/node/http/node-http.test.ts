@@ -1892,6 +1892,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
     // flush batch size). Expected values below verified against Node.js v26.3.0.
     test.each([
       { sent: 12, max: 6, headerKeys: 6, rawLen: 24 },
+      { sent: 12, max: 3.7, headerKeys: 3, rawLen: 24 },
       { sent: 31, max: 6, headerKeys: 6, rawLen: 62 },
       { sent: 32, max: 6, headerKeys: 6, rawLen: 12 },
       { sent: 40, max: 6, headerKeys: 6, rawLen: 12 },
@@ -1905,9 +1906,11 @@ describe("HTTP Server Security Tests - Advanced", () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         server.on("request", (req, res) => {
           try {
+            // rawHeaders first so the lazy getter runs before any clamped view.
+            const rawLen = req.rawHeaders.length;
             resolve({
+              rawLen,
               headerKeys: Object.keys(req.headers).length,
-              rawLen: req.rawHeaders.length,
               distinctKeys: Object.keys(req.headersDistinct).length,
             });
             res.end("ok");
@@ -1920,7 +1923,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
         const msg = ["GET / HTTP/1.1", "Host: h", "Connection: close", ...extra, "", ""].join("\r\n");
         const response = await sendRequest(msg);
         expect(response).toInclude("200");
-        expect(await promise).toEqual({ headerKeys, rawLen, distinctKeys: headerKeys });
+        expect(await promise).toEqual({ rawLen, headerKeys, distinctKeys: headerKeys });
       },
     );
 

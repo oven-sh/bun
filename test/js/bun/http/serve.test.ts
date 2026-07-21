@@ -3186,8 +3186,7 @@ it.concurrent("server.timeout() validates its seconds argument", async () => {
     },
   });
 
-  const probe = async (key: string) =>
-    (await fetch(new URL(`/?k=${key}`, server.url.origin))).text();
+  const probe = async (key: string) => (await fetch(new URL(`/?k=${key}`, server.url.origin))).text();
 
   expect({
     nan: await probe("nan"),

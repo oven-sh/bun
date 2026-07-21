@@ -13,7 +13,7 @@
 
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { moduleOf, nameOf, readTrace, runOnce, stamp, symbolize } from "./lib";
+import { moduleOf, nameOf, readTraceDir, runOnce, stamp, symbolize } from "./lib";
 
 const argv = process.argv.slice(2);
 const flag = (n: string, d?: string) => {
@@ -68,7 +68,7 @@ for (const f of files) {
     workDir: join(workRoot, scenario),
     timeoutMs,
   });
-  const trace = await readTrace(rr.logPath);
+  const trace = await readTraceDir(rr.dir);
   let health = "ok";
   if (rr.outcome === "hang") health = "BASELINE-HANG";
   else if (rr.crash) health = "BASELINE-CRASH";

@@ -16,7 +16,7 @@
 // normalization that changes which file gets touched.
 
 import { join } from "node:path";
-import { ensureDir, nameOf, readTrace, runOnce, stamp } from "./lib";
+import { ensureDir, nameOf, readTraceDir, runOnce, stamp } from "./lib";
 
 const argv = process.argv.slice(2);
 const flag = (n: string, d?: string) => {
@@ -158,7 +158,7 @@ for (const [pi, poison] of POISONS.entries()) {
     } catch {}
   }
   const done = rr.stdout.includes("POISON-DONE");
-  const trace = await readTrace(rr.logPath);
+  const trace = await readTraceDir(rr.dir);
   const kernelPaths: { sys: string; path: string; status: string }[] = [];
   for (const r of trace?.recs ?? [])
     if (r.path) kernelPaths.push({ sys: nameOf(r.sys), path: r.path, status: r.status });

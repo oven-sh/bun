@@ -71,6 +71,12 @@ class CallCtx {
 // Append a formatted header/note line to the trace log ('#' lines by convention).
 void LogNote(const char* fmt, ...);
 
+// Guard for non-syscall-hook code that makes syscalls of its own (e.g. the
+// child-injection housekeeping): raises the reentrancy depth so those calls
+// pass through untraced and can never re-enter the logger or match a fault.
+void DepthPush();
+void DepthPop();
+
 // Entry-only 'E' record for syscalls that never return (see codegen noReturn).
 void LogEntryOnly(uint32_t sysId, uintptr_t retAddr);
 

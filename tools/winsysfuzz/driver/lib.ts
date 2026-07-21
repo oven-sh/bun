@@ -195,6 +195,7 @@ export interface RunResult {
   stdout: string;
   stderr: string;
   logPath: string | null;
+  dir: string; // the run directory (holds parent + child traces)
   crash: boolean; // NTSTATUS-style exit
 }
 
@@ -208,6 +209,26 @@ export function ensureDir(dir: string) {
 
 // Per-invocation timestamp used to build never-reused output roots.
 export const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+// A run's traces: the parent bun's log PLUS one per injected bun child
+// (recursive injection). Merge them - a fault that fires in a child, or a
+// syscall a child makes, belongs to the run. Records keep their own pid via
+// a note; seq numbers are per-process and not comparable across logs.
+export async function readTraceDir(dir: string): Promise<Trace | null> {
+  if (!existsSync(dir)) return null;
+  const files = readdirSync(dir).filter(f => f.startsWith("wsf-") && f.endsWith(".log"));
+  if (!files.length) return null;
+  const merged: Trace = { notes: [], recs: [], bunBase: "0", cleanEnd: true, attached: 0 };
+  for (const f of files) {
+    const t = parseTrace(await Bun.file(join(dir, f)).text());
+    merged.notes.push(`# --- ${f} ---`, ...t.notes);
+    merged.recs.push(...t.recs);
+    if (merged.bunBase === "0") merged.bunBase = t.bunBase;
+    merged.cleanEnd = merged.cleanEnd && t.cleanEnd;
+    merged.attached = Math.max(merged.attached, t.attached);
+  }
+  return merged;
+}
 
 // The trace log a run just wrote: newest wsf-*.log by mtime. Directories
 // are unique per run so there is normally exactly one; newest-by-mtime is
@@ -331,7 +352,7 @@ export async function replayCoordinate(opts: {
   const ms = Math.round(performance.now() - t0);
   const exitCode = timedOut ? null : proc.exitCode;
   const crash = exitCode !== null && (exitCode >= 0x80000000 || exitCode < 0);
-  const trace = await readTrace(newestLog(opts.dir));
+  const trace = await readTraceDir(opts.dir);
   const fired = trace ? trace.recs.filter(r => r.fault) : [];
   let outcome: ReplayResult["outcome"] = "clean";
   if (timedOut) outcome = "HANG";
@@ -455,6 +476,7 @@ export async function runOnce(o: RunOpts): Promise<RunResult> {
     stdout,
     stderr,
     logPath,
+    dir: o.workDir,
     // An NTSTATUS exit (0xC000....) reads as >=0x80000000 unsigned or as a
     // negative signed 32-bit value depending on the plumbing.
     crash: code !== null && (code >= 0x80000000 || code < 0),

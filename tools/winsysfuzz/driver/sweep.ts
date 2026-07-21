@@ -23,7 +23,7 @@ import {
   moduleOf,
   nameOf,
   parseTrace,
-  readTrace,
+  readTraceDir,
   replayCoordinate,
   runOnce,
   stamp,
@@ -145,7 +145,7 @@ if (base.outcome !== "exit") {
   console.error("baseline did not exit cleanly; refusing to sweep a hanging baseline");
   process.exit(1);
 }
-const baseTrace = await readTrace(base.logPath);
+const baseTrace = await readTraceDir(base.dir);
 if (!baseTrace) {
   console.error("no baseline trace produced");
   process.exit(1);
@@ -245,7 +245,7 @@ async function worker(w: number) {
     const sched = join(dir, "schedule.txt");
     await Bun.write(sched, `${job.coord.sysName} ${job.coord.rva} ${job.hit} ${job.mode} ${job.status}\n`);
     const rr = await runOnce({ bun, args: progArgs, workDir: dir, timeoutMs, schedule: sched });
-    const tr = await readTrace(rr.logPath);
+    const tr = await readTraceDir(rr.dir);
     const fired = tr ? tr.recs.filter(r => r.fault).length : 0;
 
     let outcome: string;
@@ -386,7 +386,9 @@ if (findings.length) {
 {
   const md: string[] = [];
   const rel = (ms: number) => (ms >= timeoutMs * 0.8 ? " **(near watchdog: likely an internal timeout/retry path)**" : "");
-  md.push(`# winsysfuzz findings: ${basename(progArgs[0] ?? "program")}`);
+  // Name the target by its file: for `test <file>` that's the file, not "test".
+  const targetFile = progArgs[0] === "test" ? progArgs[progArgs.length - 1] : progArgs[0];
+  md.push(`# winsysfuzz findings: ${basename(targetFile ?? "program")}`);
   md.push("");
   md.push(`- program: \`${progArgs.join(" ")}\``);
   md.push(`- ${results.length} runs; outcomes: ${[...counts.entries()].map(([k, v]) => `${k}=${v}`).join(" ")}`);
@@ -403,6 +405,11 @@ if (findings.length) {
     const v = verdicts.get(f);
     md.push(`## [${v?.verdict ?? "?"}] ${f.outcome} - ${f.job.coord.sysName} (${f.job.mode} ${f.job.status}) [${f.job.expect}]`);
     md.push(`- **where the fault fired**: \`${ownerFrame(f.job.coord)}\` [${coordModule(f.job.coord)}]`);
+    // The scraped nearest frame can be an unrelated stack leftover (a
+    // mimalloc/CRT frame in front of a threadpool call), so show the
+    // distinct candidate frames too rather than betting on one.
+    const cands = [...new Set(f.job.coord.repRvas.map(r => symText(r)))].slice(0, 4);
+    if (cands.length > 1) md.push(`- **candidate frames** (nearest first): ${cands.map(c => `\`${c}\``).join(" ; ")}`);
     md.push(`- **standalone replays**: ${v?.outcomes.join(", ") ?? "-"}`);
     // Status differential: how did OTHER faults at this same coordinate turn
     // out? "one status hangs while its siblings finish at ~30s" is the clue

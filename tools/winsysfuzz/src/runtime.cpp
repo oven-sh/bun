@@ -141,15 +141,29 @@ int g_ruleEnd[SYS__COUNT];
 // --- helpers ----------------------------------------------------------------
 void LogRaw(const char* s, size_t n) {
   if (g_log == INVALID_HANDLE_VALUE) return;
+  // Our own WriteFile hits the hooked NtWriteFile. From a syscall hook the
+  // depth is already >0 so it passes through; but from any OTHER context
+  // (the CreateProcessW hook, attach) depth is 0 - the nested hook would
+  // then try to take g_logLock, which this thread already holds: SRW is not
+  // recursive, self-deadlock. Raise the depth around our own write, always.
+  intptr_t d = Depth();
+  SetDepth(d + 1);
   AcquireSRWLockExclusive(&g_logLock);
   DWORD w;
   WriteFile(g_log, s, (DWORD)n, &w, nullptr);
   ReleaseSRWLockExclusive(&g_logLock);
+  SetDepth(d);
 }
 
 void LogLine(const char* fmt, ...);
 
 } // namespace
+
+// Depth guard for non-syscall-hook code (recursive injection housekeeping):
+// syscalls made inside the guarded region pass through untraced, so the
+// fuzzer's own machinery never appears in bun's trace or matches a fault.
+void DepthPush() { SetDepth(Depth() + 1); }
+void DepthPop() { SetDepth(Depth() - 1); }
 
 // Public: header/note lines. Same writer as LogLine.
 void LogNote(const char* fmt, ...) {

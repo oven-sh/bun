@@ -115,7 +115,9 @@ impl Cp {
                 if exec.started {
                     if exec.tasks_count == 0 && exec.output_done >= exec.output_waiting {
                         let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
-                        exec.err = None;
+                        if let Some(e) = exec.err.take() {
+                            e.deinit();
+                        }
                         #[cfg(windows)]
                         let act = if !exec.ebusy.tasks.is_empty() {
                             Action::Ebusy(exit_code)
@@ -199,13 +201,16 @@ impl Cp {
         written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if let Some(err) = e {
+            err.deref();
+        }
         if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
             return Builtin::done(interp, cmd, 1);
         }
         if let Some(task) = Self::state_mut(interp, cmd).output_queue.pop_front() {
             // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e) };
+            return unsafe { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, None) };
         }
         Self::next(interp, cmd)
     }
@@ -245,7 +250,10 @@ impl Cp {
             match next {
                 Some((t, true)) => {
                     // SAFETY: paired with `heap::alloc` in `create()`.
-                    drop(unsafe { bun_core::heap::take(t) });
+                    let mut task = unsafe { bun_core::heap::take(t) };
+                    if let Some(e) = task.err.take() {
+                        e.deinit();
+                    }
                 }
                 Some((t, false)) => return Self::print_shell_cp_task(interp, cmd, t),
                 None => break,
@@ -311,9 +319,12 @@ impl Cp {
         let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
             let s = Builtin::shell_err_to_string(interp, cmd, Kind::Cp, &e).to_vec();
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.err = Some(e);
+                if let Some(old) = exec.err.replace(e) {
+                    old.deinit();
+                }
+            } else {
+                e.deinit();
             }
-            // `e` drops here when not stored.
             s
         });
         OutputTask::<Cp>::start(output_task, interp, errstr.as_deref())

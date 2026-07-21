@@ -732,6 +732,9 @@ impl Expansion {
             interp.deinit_node(c);
         }
         let me = interp.as_expansion_mut(this);
+        if let ExpansionState::Err(e) = core::mem::replace(&mut me.state, ExpansionState::Done) {
+            e.deinit();
+        }
         me.out.buf.clear();
         me.out.bounds.clear();
         me.current_out.clear();

@@ -645,7 +645,9 @@ impl Cmd {
             drop(arena);
             // Revert exec so `deinit` doesn't free a null `child`.
             interp.as_cmd_mut(this).exec = Exec::None;
-            return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e));
+            let y = Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e));
+            e.deinit();
+            return y;
         }
 
         // Read the subprocess back via the arena instead of holding `child_out`
@@ -846,6 +848,7 @@ impl Cmd {
                     Ok(f) => f,
                     Err(e) => {
                         let sys_err = e.to_shell_system_error();
+                        scopeguard::defer! { sys_err.deref(); }
                         return Ok(Some(Builtin::cmd_write_failing_error(
                             interp,
                             this,
@@ -987,6 +990,7 @@ impl Cmd {
         log!("cmd close buffered stdout");
         if let Some(e) = err {
             self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            e.deref();
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1023,6 +1027,7 @@ impl Cmd {
         log!("cmd close buffered stderr");
         if let Some(e) = err {
             self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            e.deref();
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {

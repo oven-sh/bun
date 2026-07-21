@@ -111,8 +111,11 @@ impl Subshell {
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
-        _err: Option<bun_sys::SystemError>,
+        err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if let Some(e) = err {
+            e.deref();
+        }
         debug_assert!(matches!(
             interp.as_subshell(this).state,
             SubshellState::WaitWriteErr

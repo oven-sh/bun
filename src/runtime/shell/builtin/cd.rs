@@ -121,8 +121,11 @@ impl Cd {
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
-        _err: Option<bun_sys::SystemError>,
+        err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if let Some(e) = err {
+            e.deref();
+        }
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 1)
     }

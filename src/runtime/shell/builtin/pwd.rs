@@ -67,7 +67,8 @@ impl Pwd {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(_err) = err {
+        if let Some(e) = err {
+            e.deref();
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }

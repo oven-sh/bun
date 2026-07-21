@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isASAN, isPosix, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, isASAN, isPosix, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { bunExe } from "./test_builder";
 import { createTestBuilder } from "./util";
@@ -441,6 +441,79 @@ describe.concurrent("fd leak", () => {
     doit(false);
     doit(true);
   });
+
+  // Shell builtins and Cmd build a `bun_sys::SystemError` on redirect/write
+  // failure whose `path`/`dest`/`message` fields are heap `WTF::StringImpl`s.
+  // `SystemError` has no `Drop`, so every receiver of a by-value SystemError
+  // must call `.deref()` to release those strings. The Zig reference did
+  // `defer err.deref()` in every `onIOWriterChunk` arm; the Rust port dropped
+  // it in a number of places. Run the failing paths under LSan with `Malloc=1`
+  // (so WTF allocations go through the system heap) and assert no allocation
+  // rooted at `to_shell_system_error`/`to_system_error` is reported as leaked.
+  //
+  // Windows has no ASAN lane and `Malloc=1` is unimplemented there.
+  test.skipIf(!isASAN || isWindows)(
+    "SystemError strings are released on shell error paths",
+    async () => {
+      using dir = tempDir("shell-syserr-leak", {
+        "run.ts": /* ts */ `
+        import { $ } from "bun";
+        $.nothrow();
+        const bun = process.execPath;
+        for (let i = 0; i < 30; i++) {
+          // builtin stdout-redirect open failure (Builtin::init_redirections)
+          await $\`echo hi > /nonexistent-dir-xyz/out.txt\`.quiet();
+          // builtin stdin-redirect open failure
+          await $\`echo hi < /nonexistent-file-xyz.txt\`.quiet();
+          // subprocess redirect open failure (Cmd::init_subproc_redirections)
+          await $\`\${bun} -e "" > /nonexistent-dir-xyz/out.txt\`.quiet();
+          // IOWriter write failure → on_io_writer_chunk(Some(err))
+          if (process.platform === "linux") {
+            await $\`echo hi > /dev/full\`.quiet();
+            await $\`pwd > /dev/full\`.quiet();
+            await $\`which ls > /dev/full\`.quiet();
+          }
+        }
+        console.error("ran");
+      `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "run.ts")],
+        env: {
+          ...bunEnv,
+          // Route bmalloc through the system allocator so LSan can observe
+          // WTF::StringImpl allocations.
+          Malloc: "1",
+          ASAN_OPTIONS: "detect_leaks=1:allow_user_segv_handler=1:disable_coredump=0",
+          // LSan always reports some process-lifetime allocations (VM
+          // identifiers, sourcemap buffers). exitcode=0 keeps those from
+          // failing the process; the assertion below inspects the report
+          // for frames specific to this leak.
+          LSAN_OPTIONS: "exitcode=0",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The script itself must have run to completion.
+      expect(stderr).toContain("ran");
+
+      // What must be absent is any leak whose allocation stack runs through the
+      // SystemError constructors: those are exactly the WTF::StringImpl refs
+      // this fix releases.
+      const leakedSystemError = stderr
+        .split("\n")
+        .filter(l => l.includes("to_shell_system_error") || l.includes("to_system_error"));
+      if (leakedSystemError.length) {
+        console.error("LSan reported SystemError leak frames:\n" + leakedSystemError.join("\n"));
+      }
+      expect(leakedSystemError).toEqual([]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+    },
+    100_000,
+  );
 
   describe.serial("not leaking ParsedShellScript when ShellInterpreter never runs", () => {
     function doit(builtin: boolean) {

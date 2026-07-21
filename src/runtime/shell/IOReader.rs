@@ -324,6 +324,9 @@ impl IOReader {
         let _keepalive = self.keepalive();
         self.set_reading(false);
         let s = self.state();
+        if let Some(old) = s.err.take() {
+            old.deref();
+        }
         s.err = Some(err.to_shell_system_error());
         s.raw_err = Some(err.clone());
         // NOTE: reshaped for borrowck — copy out before dispatching.
@@ -359,6 +362,9 @@ impl IOReader {
 
     fn run_yield(&self, y: Yield) {
         let Some(interp) = self.state().interp else {
+            if let Yield::OnIoWriterChunk { err: Some(e), .. } = &y {
+                e.deref();
+            }
             debug_assert!(
                 matches!(y, Yield::Done | Yield::Suspended),
                 "IOReader async callback fired without interp backref"
@@ -423,6 +429,9 @@ impl Drop for IOReader {
                 let _ = sys::close(s.fd);
             }
         }
+        if let Some(e) = s.err.take() {
+            e.deref();
+        }
         r.disable_keeping_process_alive(());
         // `reader` Drop handles its own deinit.
     }
@@ -456,6 +465,9 @@ fn dispatch_reader_done(
     interp: Option<bun_ptr::ParentRef<Interpreter>>,
 ) -> Yield {
     let Some(interp) = interp else {
+        if let Some(e) = err {
+            e.deref();
+        }
         return Yield::suspended();
     };
     let interp = interp.get();

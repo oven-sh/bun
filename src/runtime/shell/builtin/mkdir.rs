@@ -143,6 +143,9 @@ impl Mkdir {
         written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if let Some(err) = e {
+            err.deref();
+        }
         let pending = match &mut Self::state_mut(interp, cmd).state {
             State::WaitingWriteErr => return Builtin::done(interp, cmd, 1),
             State::Exec(exec) => exec.output_queue.pop_front(),
@@ -151,7 +154,7 @@ impl Mkdir {
         if let Some(task) = pending {
             // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e) };
+            return unsafe { OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, None) };
         }
         Self::next(interp, cmd)
     }

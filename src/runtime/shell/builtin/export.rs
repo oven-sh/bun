@@ -81,6 +81,13 @@ impl Export {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, err.map_or(0, |_| 1))
+        let exit = match err {
+            Some(e) => {
+                e.deref();
+                1
+            }
+            None => 0,
+        };
+        Builtin::done(interp, cmd, exit)
     }
 }

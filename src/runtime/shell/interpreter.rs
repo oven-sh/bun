@@ -2753,8 +2753,11 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         this: *mut Self,
         interp: &Interpreter,
         _written: usize,
-        _err: Option<bun_sys::SystemError>,
+        err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if let Some(e) = err {
+            e.deref();
+        }
         log!("OutputTask(0x{:x}) onIOWriterChunk", this as usize);
         // SAFETY: `this` is the live heap-allocated `OutputTask` guaranteed by
         // this fn's caller contract; forwarded unchanged to `next`.

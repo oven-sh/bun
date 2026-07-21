@@ -949,6 +949,9 @@ impl IOWriter {
     /// to have been set; if not, the chunk-complete is dropped (debug-asserts).
     fn run_yield(&self, y: Yield) {
         let Some(interp) = self.state().interp else {
+            if let Yield::OnIoWriterChunk { err: Some(e), .. } = &y {
+                e.deref();
+            }
             debug_assert!(
                 matches!(y, Yield::Done),
                 "IOWriter async callback fired without interp backref"

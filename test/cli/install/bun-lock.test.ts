@@ -456,7 +456,9 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
     expect(join(packageDir, "node_modules", ".bin", "pkg1-2")).toBeValidBin(join("..", "pkg1", "bin-2.js"));
     expect(join(packageDir, "node_modules", ".bin", "pkg1-3")).toBeValidBin(join("..", "pkg1", "bin-3.js"));
     expect(join(packageDir, "node_modules", ".bin", "pkg2-1")).toBeValidBin(join("..", "pkg2", "bin-1.js"));
-    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+    expect(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin", "what-bin")).toBeValidBin(
+      join("..", "..", "..", "what-bin", "what-bin.js"),
+    );
   }
 
   let { exited, stdout } = spawn({

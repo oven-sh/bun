@@ -100,6 +100,11 @@ pub struct Execution {
     /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
     /// stamped).
     pub on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
+    /// Set by `--bail` from within `handle_test_completed` to stop the step
+    /// loops mid-run so no further sequences execute. Checked by `step_group`,
+    /// `step_group_one`, and `step`'s per-group loop; lets the run unwind
+    /// cleanly instead of `Global::exit(1)` when `--watch` is active.
+    pub aborted: bool,
 }
 
 pub struct ConcurrentGroup {
@@ -282,6 +287,7 @@ impl Execution {
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),
+            aborted: false,
         }
     }
 
@@ -384,6 +390,9 @@ impl Execution {
                 // re-slice from `this` each iteration via the group's range; carry
                 // `group` as NonNull so no `&mut ConcurrentGroup` aliases `&mut Execution`.
                 loop {
+                    if this.aborted {
+                        return Ok(StepResult::Complete);
+                    }
                     // SAFETY: group_ptr points into this.groups (disjoint from this.sequences).
                     let group = unsafe { &mut *group_ptr.as_ptr() };
                     let seq_len = group.sequence_end - group.sequence_start;
@@ -798,6 +807,9 @@ pub(crate) fn step_group(
     let this = &mut buntest.execution;
 
     loop {
+        if this.aborted {
+            return Ok(StepResult::Complete);
+        }
         // Carry the active group as NonNull so it does not alias `&mut Execution` re-derived
         // inside step_group_one.
         let group_ptr: NonNull<ConcurrentGroup> = match this.active_group() {
@@ -879,6 +891,11 @@ fn step_group_one(
         g.sequence_end - g.sequence_start
     };
     for sequence_index in 0..len {
+        // Fresh short-lived reborrow each iteration so it does not span
+        // `step_sequence`'s own `.get()` (stacked-borrows hygiene).
+        if buntest_strong.get().execution.aborted {
+            break;
+        }
         let sequence_status =
             step_sequence(buntest_strong, global_this, group, sequence_index, now)?;
         match sequence_status {

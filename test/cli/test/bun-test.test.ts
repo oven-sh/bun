@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -356,6 +356,59 @@ describe("bun test", () => {
       expect(stderr).toContain("Bailed out after 3 failures");
       expect(stderr).not.toContain("test #4");
     });
+
+    // On Windows, `bun test --watch` runs a parent watcher-manager that
+    // respawns a child on change rather than exec()-in-place, which makes
+    // the stderr stream sync points here unreliable.
+    test.skipIf(isWindows)("--bail with --watch keeps watching after a bail", async () => {
+      using dir = tempDir("bun-test-bail-watch", {
+        "package.json": "{}",
+        "v.ts": `export const v = 0;\n`,
+        "bail.test.ts": `
+          import { test, expect } from "bun:test";
+          import { v } from "./v";
+          test("t1", () => { expect(v).toBe(1); });
+          test("t2", () => { expect(2).toBe(2); });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--watch", "--bail", "--no-clear-screen"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+
+      const reader = proc.stderr.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      async function waitFor(needle: string, from = 0): Promise<number> {
+        while (!buf.slice(from).includes(needle)) {
+          const { value, done } = await reader.read();
+          if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
+          buf += decoder.decode(value, { stream: true });
+        }
+        return buf.length;
+      }
+
+      // First run: t1 fails, bail fires, t2 must not run, and the normal
+      // end-of-run summary must still print (not a hard exit mid-run).
+      const afterBail = await waitFor("Bailed out after 1 failure");
+      await waitFor("Ran 1 test across 1 file");
+      expect(buf).not.toContain("t2");
+      expect(proc.exitCode).toBeNull();
+
+      // Fix the failing test. The watcher should still be alive, pick up
+      // the change, and re-run to green.
+      writeFileSync(join(String(dir), "v.ts"), "export const v = 1;\n");
+      await waitFor("2 pass", afterBail);
+
+      proc.kill();
+      reader.releaseLock();
+    }, 30_000);
   });
   describe("--timeout", () => {
     test("must provide a number timeout", () => {

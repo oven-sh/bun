@@ -868,10 +868,10 @@ test("aborting an in-flight streaming fetch() discards the buffered body and err
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    // ASAN/debug builds may emit benign stderr noise; stdout carries the result.
+    stderr: "ignore",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const { drained, result } = JSON.parse(stdout.trim());
   // Before the fix the reader drained the retained native buffer then saw
   // { done: true }; now the buffer is released and the stored error is

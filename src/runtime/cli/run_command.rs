@@ -2956,6 +2956,12 @@ impl RunCommand {
     /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
     /// which is Bun's own native REPL.
     pub fn exec_node_repl(ctx: &mut ContextData) -> crate::Result<()> {
+        if ctx.runtime_options.input_type_specified {
+            // Match node exactly: bare message on stderr, exit code 9.
+            pretty_errorln!("Cannot specify --input-type for REPL");
+            Output::flush();
+            Global::exit(9);
+        }
         // Every caller has already established there's no user script target;
         // any remaining positionals are dispatch artifacts (e.g. RunCommand's
         // leading "run"), not user data — keep them out of `process.argv`.

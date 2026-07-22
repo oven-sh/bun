@@ -546,6 +546,9 @@ pub struct RuntimeOptions {
     /// `--interactive` starts the Node.js-compatible REPL (node:repl), like
     /// `node --interactive`. (`-i` is taken by `--install=fallback`.)
     pub interactive: bool,
+    /// `--input-type` was passed. Only used to reject it when the REPL
+    /// starts, matching node ("Cannot specify --input-type for REPL").
+    pub input_type_specified: bool,
     pub preserve_symlinks_main: bool,
     pub console_depth: Option<u16>,
     pub cron_title: Box<[u8]>,
@@ -613,6 +616,7 @@ impl Default for RuntimeOptions {
             dns_result_order: Box::from(&b"verbatim"[..]),
             expose_gc: false,
             interactive: false,
+            input_type_specified: false,
             preserve_symlinks_main: false,
             console_depth: None,
             cron_title: Box::default(),

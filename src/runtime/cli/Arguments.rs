@@ -320,6 +320,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    parse_param!("--input-type <STR>"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -1107,8 +1108,15 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
+        // Plain `bun -i` with nothing to run (previously the help screen) also starts
+        // the REPL; `-i <script>` / `-i -e` keep bun's auto-install semantics.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
-            || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
+            || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"))
+            || (cmd == CommandTag::AutoCommand
+                && args.flag(b"-i")
+                && ctx.positionals.is_empty()
+                && ctx.runtime_options.eval.script.is_empty());
+        ctx.runtime_options.input_type_specified = args.option(b"--input-type").is_some();
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");

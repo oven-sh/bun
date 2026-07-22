@@ -428,11 +428,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         let socket = self.socket.get();
-        // A TLS engine over a JS stream has no fd-backed I/O of its own; its
-        // poll_ref is intentionally never Active (see js_upgrade_duplex_to_tls).
-        // A Detached socket has no I/O to track: either not yet connected
-        // (connect_finish will recompute) or already closed (mark_inactive
-        // already unref'd); never re-ref from a post-callback recompute.
+        // UpgradedDuplex has no fd-backed I/O (poll_ref never Active, see
+        // js_upgrade_duplex_to_tls); Detached has none to track
+        // (connect_finish / mark_inactive own it).
         if matches!(
             socket.socket,
             uws::InternalSocket::UpgradedDuplex(_) | uws::InternalSocket::Detached
@@ -441,16 +439,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let flags = self.flags.get();
         let reading = !flags.intersects(Flags::IS_PAUSED | Flags::READ_EOF);
-        // node:net's buffered tail plus uSockets' own partial-write retry flag:
-        // a raw Bun.connect() `write()` does not touch the node:net buffer, so
-        // `last_write_failed` is the only signal a half-open raw socket left
-        // something queued from its `end`/`drain` handler.
+        // node:net's buffered tail plus uSockets' last_write_failed: raw
+        // Bun.connect() write() never touches the node:net buffer, so the
+        // latter is the only signal a half-open raw socket queued a write.
         let write_pending =
             self.buffered_data_for_node_net.get().len() > 0 || socket.write_pending();
-        // A pending connect is an active request (libuv's uv_connect_t counts
-        // toward active_reqs). An IP-literal connect stores the EINPROGRESS
-        // semi-socket as `Connected`, not `Connecting`, so test the semantic
-        // "on_open hasn't fired" (IS_ACTIVE is set there) instead of the enum.
+        // A pending connect is an active request. IP-literal connects store the
+        // EINPROGRESS semi-socket as Connected, so test IS_ACTIVE (set in
+        // on_open) instead of the enum variant.
         let connecting = !flags.contains(Flags::IS_ACTIVE);
         self.poll_ref.with_mut(|p| {
             if reading || write_pending || connecting {
@@ -1676,10 +1672,20 @@ impl<const SSL: bool> NewSocket<SSL> {
                 "C"
             }
         );
+        // Windows uv_poll can keep reporting DISCONNECT on a FIN'd socket; make
+        // on_end idempotent so a half-open socket the JS side hasn't drained
+        // doesn't re-enter the end callback on every loop tick.
+        if this.flags.get().contains(Flags::READ_EOF) {
+            return;
+        }
         // Ensure the socket remains alive until this is finished
         let _keepalive = this.ref_guard();
 
         this.update_flags(|f| f.insert(Flags::READ_EOF));
+        // No more bytes will arrive; drop readable interest so the poll stops
+        // redelivering EOF (libuv's uv__stream_eof does the same). IS_PAUSED
+        // stays clear: this is EOF, not a user pause.
+        this.socket.get().pause_stream();
 
         let callback = handlers.on_end();
         let vm = handlers.vm;
@@ -2340,7 +2346,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(
             match this.write_or_end::<false>(global, args.mut_(), false) {
                 WriteResult::Fail => JSValue::ZERO,
-                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote),
+                WriteResult::Success { wrote, total } => {
+                    // Partial write arms uSockets' writable retry; re-ref at
+                    // the write site (like libuv's uv_write active_req).
+                    if usize::try_from(wrote.max(0)).expect("int cast") < total {
+                        this.recompute_poll_ref();
+                    }
+                    JSValue::js_number_from_int32(wrote)
+                }
             },
         )
     }
@@ -3196,6 +3209,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             WriteResult::Success { wrote, total } => {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = this.internal_flush();
+                } else {
+                    // Partial write arms uSockets' writable retry; re-ref so
+                    // the drain can fire before the loop exits.
+                    this.recompute_poll_ref();
                 }
                 JSValue::js_number(wrote as f64)
             }
@@ -3616,11 +3633,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // contract is: index 0 keeps the pre-upgrade callbacks and sees
         // ciphertext, index 1 gets the new ones and sees plaintext).
         let raw_handlers = this.take_handlers();
-        // Preserve `socket.unref()` across the upgrade — node:tls callers
-        // that unref the underlying TCP socket before upgrading must not
-        // suddenly hold the loop open via the TLS wrapper. `poll_ref` now
-        // reflects the computed reading/write-pending state, not the user's
-        // intent; `ref_pollref_on_connect` is the user's ref()/unref() choice.
+        // Preserve `socket.unref()` across the upgrade: `ref_pollref_on_connect`
+        // carries the user's ref()/unref() choice (poll_ref is now computed state).
         let was_reffed = this.ref_pollref_on_connect.get();
         // Capture before downgrade so the cached `data` (net.ts stores
         // `{self: net.Socket}` there) survives onto the raw twin.

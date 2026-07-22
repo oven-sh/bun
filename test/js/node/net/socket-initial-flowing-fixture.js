@@ -95,9 +95,8 @@ function onceConnect(socket) {
   }
 
   // E: pause() before connect on an IP literal still reaches 'connect'.
-  // The EINPROGRESS semi-socket is stored as Connected, not Connecting, so
-  // the pending-connect loop hold must cover it too. With nothing else
-  // ref'd, a broken build exits here and D never runs.
+  // The EINPROGRESS semi-socket is stored as Connected (not Connecting), so the
+  // pending-connect hold must cover it; a broken build exits here and D never runs.
   {
     const server = net.createServer(s => {
       s.on("error", () => {});

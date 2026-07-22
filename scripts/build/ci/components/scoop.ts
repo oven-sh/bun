@@ -77,6 +77,15 @@ $ErrorActionPreference = $prev`,
             ]) {
               await win.addToMachinePath(dir);
             }
+            // Scoop's "adding ... to your path" for app-dir packages (nodejs,
+            // llvm, mingw, git\\cmd, ...) writes the BAKE USER's PATH, not the
+            // Machine PATH — those packages get no shim, only their own dir on
+            // PATH. The bake user sees them (so verification passes) but the
+            // runner service account does not: node/clang would be missing at
+            // runtime. Promote every scoop dir the user PATH now carries onto
+            // the Machine PATH, so scoop stays the authority on which dirs a
+            // package needs and only the scope is corrected.
+            await win.promoteScoopUserPathToMachine(image.scoop.root);
             if (ci) {
               await win.powershellScript({
                 describe: "system-wide git config for CI (safe.directory *, lf, longpaths)",

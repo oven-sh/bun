@@ -221,6 +221,37 @@ export async function setMachineEnv(name: string, value: string): Promise<void> 
 }
 
 /** Append a directory to the machine PATH if it isn't already there. */
+/**
+ * Promote every entry under the scoop root that scoop wrote to the CURRENT
+ * (bake) user's PATH onto the Machine PATH. Scoop registers app-dir
+ * packages (nodejs, llvm, mingw, ...) on the installing user's PATH only,
+ * which the runner's service account never sees; the Machine PATH is the
+ * scope that survives sysprep and reaches every account.
+ */
+export async function promoteScoopUserPathToMachine(scoopRoot: string): Promise<void> {
+  if (mode.dryRun) {
+    log(`[dry-run] would promote the bake user's ${scoopRoot}\\... PATH entries to the machine PATH`);
+    return;
+  }
+  const output = await psProbe(
+    `$user = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($user) {
+  foreach ($entry in ($user -split ';')) {
+    $e = $entry.Trim()
+    if ($e -and $e.StartsWith(${psq(scoopRoot)}, [System.StringComparison]::OrdinalIgnoreCase)) {
+      Write-Output $e
+    }
+  }
+}`,
+  );
+  const dirs = output
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  log(`promoting ${dirs.length} scoop user-PATH dir(s) to the machine PATH`);
+  for (const dir of dirs) await addToMachinePath(dir);
+}
+
 export async function addToMachinePath(dir: string): Promise<void> {
   log(`machine PATH += ${dir} (if absent)`);
   // The registry PATH is about to change: children must re-read it.

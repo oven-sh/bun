@@ -38,8 +38,10 @@ describe.concurrent("Bun.cron.parse — algorithm (pinned TZ=UTC)", () => {
     expect(await parseUTC("0 0 29 2 *", "2026-01-01T00:00:00Z")).toBe("2028-02-29T00:00:00.000Z");
   });
 
-  test("impossible day/month (Feb 30) returns null", async () => {
-    expect(await parseUTC("0 0 30 2 *", "2026-01-01T00:00:00Z")).toBe("null");
+  test("impossible day/month (Feb 30) returns null quickly", () => {
+    const t = performance.now();
+    expect(Bun.cron.parse("0 0 30 2 *", new Date("2026-01-01T00:00:00Z"), { tz: "UTC" })).toBeNull();
+    expect(performance.now() - t).toBeLessThan(50);
   });
 
   test("DOM/DOW OR semantics when both restricted", async () => {

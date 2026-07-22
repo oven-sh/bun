@@ -506,6 +506,39 @@ pub struct FILE_RENAME_INFORMATION_EX {
     pub FileName: [u16; 1],
 }
 
+/// `FILE_RENAME_INFORMATION` legacy variant (`ntifs.h`). In the SDK this is
+/// the same struct as the ex variant with the leading field declared as
+/// `union { BOOLEAN ReplaceIfExists; ULONG Flags; }`.
+#[repr(C)]
+pub struct FILE_RENAME_INFORMATION {
+    pub ReplaceIfExists: BOOLEAN,
+    pub RootDirectory: HANDLE,
+    pub FileNameLength: ULONG,
+    pub FileName: [u16; 1],
+}
+
+// `move_opened_file_at` retries `FileRenameInformationEx` rejections through
+// `FileRenameInformation` by rewriting only the leading field of the buffer it
+// already populated, which is sound only if every other field lines up.
+const _: () = {
+    assert!(
+        core::mem::size_of::<FILE_RENAME_INFORMATION>()
+            == core::mem::size_of::<FILE_RENAME_INFORMATION_EX>()
+    );
+    assert!(
+        core::mem::offset_of!(FILE_RENAME_INFORMATION, RootDirectory)
+            == core::mem::offset_of!(FILE_RENAME_INFORMATION_EX, RootDirectory)
+    );
+    assert!(
+        core::mem::offset_of!(FILE_RENAME_INFORMATION, FileNameLength)
+            == core::mem::offset_of!(FILE_RENAME_INFORMATION_EX, FileNameLength)
+    );
+    assert!(
+        core::mem::offset_of!(FILE_RENAME_INFORMATION, FileName)
+            == core::mem::offset_of!(FILE_RENAME_INFORMATION_EX, FileName)
+    );
+};
+
 // `FILE_DISPOSITION_INFORMATION_EX.Flags` bits (winnt.h).
 
 // `FILE_RENAME_INFORMATION_EX.Flags` bits (winnt.h).

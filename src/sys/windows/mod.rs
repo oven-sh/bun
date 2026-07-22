@@ -1887,7 +1887,7 @@ pub fn move_opened_file_at(
         );
     }
     // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
-    let rc = unsafe {
+    let mut rc = unsafe {
         ntdll::NtSetInformationFile(
             src_fd.native(),
             &mut io_status_block,
@@ -1908,6 +1908,39 @@ pub fn move_opened_file_at(
         },
         format_args!("{:?}", rc)
     );
+
+    // INVALID_PARAMETER here means the filesystem does not implement
+    // FileRenameInformationEx (exFAT, FAT32, many network redirectors and filter
+    // drivers only implement the legacy class); retry, like `DeleteFileBun` does.
+    if rc == win32::ntstatus::INVALID_PARAMETER {
+        // FILE_RENAME_INFORMATION and FILE_RENAME_INFORMATION_EX differ only in
+        // their leading field (`BOOLEAN ReplaceIfExists` vs `ULONG Flags`), so
+        // the header and FileName tail written above are reused as-is.
+        let legacy_info: *mut win32::FILE_RENAME_INFORMATION = rename_info.cast();
+        // SAFETY: legacy_info aliases rename_info, whose buffer is 8-aligned and
+        // fully initialized above; const assertions at the struct definitions prove
+        // every field other than the one written here sits at the same offset.
+        unsafe {
+            ptr::addr_of_mut!((*legacy_info).ReplaceIfExists)
+                .write(win32::BOOLEAN::from(replace_if_exists));
+        }
+        // SAFETY: src_fd valid; legacy_info has struct_len initialized bytes
+        // (the two structs have the same size, asserted at their definitions).
+        rc = unsafe {
+            ntdll::NtSetInformationFile(
+                src_fd.native(),
+                &mut io_status_block,
+                legacy_info.cast::<c_void>(),
+                u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
+                win32::FileInformationClass::FileRenameInformation,
+            )
+        };
+        bun_sys::syslog!(
+            "moveOpenedFileAt({}) FileRenameInformation fallback = {}",
+            src_fd,
+            format_args!("{:?}", rc)
+        );
+    }
 
     #[cfg(debug_assertions)]
     if rc == win32::ntstatus::ACCESS_DENIED {

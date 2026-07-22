@@ -20,6 +20,9 @@
 // builds only. Declaring the feature where neither is compiled (Windows
 // release) trips `unused_features`.
 #![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
+// `std::alloc::set_alloc_error_hook` — routes infallible-allocation failure
+// (`handle_alloc_error`) into the crash handler. See `alloc_error_hook`.
+#![feature(alloc_error_hook)]
 #![allow(internal_features)]
 #![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
@@ -51,6 +54,26 @@ pub(crate) fn out_of_memory() -> ! {
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 pub(crate) extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
+    out_of_memory()
+}
+
+/// Alloc-error hook registered by `install_hooks()`. Infallible allocations
+/// (`Vec`/`Box`/`String` growth) report failure through
+/// `std::alloc::handle_alloc_error`, which calls this hook. Without it, std's
+/// default hook prints "memory allocation of N bytes failed" and aborts —
+/// no OOM message, no trace string, no crash report. Routing into
+/// `out_of_memory()` gives those failures the same `CrashReason::OutOfMemory`
+/// report as the explicit `Result<_, AllocError>` path (`bun_core::handle_oom`),
+/// matching Zig, where every failed allocation bubbled to `bun.outOfMemory()`.
+///
+/// Runs under memory pressure, so it must not allocate: the body is a single
+/// diverging call, and the crash handler itself writes through stack buffers
+/// and raw stderr. If the report path does hit a second OOM, the
+/// `PANIC_STAGE` re-entry guard in `crash_handler()` aborts instead of
+/// looping.
+#[cold]
+#[inline(never)]
+fn alloc_error_hook(_layout: core::alloc::Layout) {
     out_of_memory()
 }
 
@@ -1792,6 +1815,11 @@ mod draft {
         // this hook, a bare `panic!` would print the std
         // default hook + unwind with no trace string and no upload.
         std::panic::set_hook(Box::new(rust_panic_hook));
+        // Route infallible-allocation failure (`handle_alloc_error`) through
+        // the same `CrashReason::OutOfMemory` path as `bun_core::handle_oom`;
+        // std's default hook would print "memory allocation of N bytes failed"
+        // and abort with no trace string and no report.
+        std::alloc::set_alloc_error_hook(crate::alloc_error_hook);
     }
 
     /// `std::panic` hook: emit the same trace-string + auto-report as the fatal

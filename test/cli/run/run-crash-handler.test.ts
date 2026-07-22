@@ -162,7 +162,11 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
 });
 
 describe("automatic crash reporter", () => {
-  for (const approach of ["panic", "segfault", "outOfMemory"]) {
+  // "outOfMemory" is the explicit `Result<_, AllocError>` path;
+  // "infallibleOutOfMemory" is ordinary `Vec`/`Box` growth failing inside the
+  // global allocator (`handle_alloc_error` → alloc-error hook). Both must
+  // produce the same OutOfMemory crash report.
+  for (const approach of ["panic", "segfault", "outOfMemory", "infallibleOutOfMemory"]) {
     test(`${approach} should report`, async () => {
       let sent = false;
       const resolve_handler = Promise.withResolvers();
@@ -188,6 +192,14 @@ describe("automatic crash reporter", () => {
             GITHUB_ACTIONS: undefined,
             CI: undefined,
           },
+          approach === "infallibleOutOfMemory"
+            ? {
+                // ASAN's interceptor hard-errors on impossible allocation
+                // sizes; let it return null so the failure reaches Rust's
+                // `handle_alloc_error` like a real OOM would. No-op without ASAN.
+                ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+              }
+            : {},
         ]),
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -195,16 +207,17 @@ describe("automatic crash reporter", () => {
       const stderr = await proc.stderr.text();
       console.log(stderr);
 
-      await resolve_handler.promise;
-
       expect(exitCode).not.toBe(0);
       expect(stderr).toContain(server.url.toString());
-      if (approach !== "outOfMemory") {
-        expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
-      } else {
+      if (approach === "outOfMemory" || approach === "infallibleOutOfMemory") {
         expect(stderr.toLowerCase()).toContain("out of memory");
         expect(stderr.toLowerCase()).not.toContain("panic");
+      } else {
+        expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
       }
+
+      // Wait for the report to arrive (resolves the moment the POST is heard).
+      await resolve_handler.promise;
       expect(sent).toBe(true);
     });
   }

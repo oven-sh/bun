@@ -79,19 +79,53 @@ if (!baseTrace) {
   console.error("no baseline trace");
   process.exit(1);
 }
-type Coord = { sysName: string; key: string; hits: number };
+type Coord = { sysName: string; key: string; hits: number; first: number; last: number };
 const coordMap = new Map<string, Coord>();
-for (const r of baseTrace.recs) {
-  if (r.entryOnly) continue;
+baseTrace.recs.forEach((r, i) => {
+  if (r.entryOnly) return;
   const sysName = nameOf(r.sys);
-  if (!(sysName in FAULTS)) continue;
+  if (!(sysName in FAULTS)) return;
   const id = `${r.sys}:${r.key}`;
   const c = coordMap.get(id);
-  if (c) c.hits++;
-  else coordMap.set(id, { sysName, key: r.key, hits: 1 });
+  if (c) {
+    c.hits++;
+    c.last = i;
+  } else coordMap.set(id, { sysName, key: r.key, hits: 1, first: i, last: i });
+});
+
+// Startup mask: coordinates an EMPTY/init-only program produces are process
+// startup infrastructure - uniform draws would land there almost every time
+// (they dominate the space), reproducing the same init fatals. Mask them out
+// of the draw entirely so chaos spends itself on the program's own I/O.
+const MASK_PROGRAMS: string[][] = [
+  ["-e", "0"],
+  ["-e", "require('net').createConnection({port:1,host:'127.0.0.1'}).on('error',()=>{})"],
+  ["-e", "Bun.spawnSync(['cmd','/c','rem'])"],
+  ["-e", "new Intl.DateTimeFormat().format()"],
+];
+const masked = new Set<string>();
+for (let i = 0; i < MASK_PROGRAMS.length; i++) {
+  const m = await runOnce({ bun, args: MASK_PROGRAMS[i], workDir: join(runsDir, `startup-mask${i}`), timeoutMs });
+  const t = await readTraceDir(m.dir);
+  for (const r of t?.recs ?? []) if (!r.entryOnly) masked.add(`${r.sys}:${r.key}`);
 }
-const coords = [...coordMap.values()];
-console.log(`  ${coords.length} injectable coordinate(s), ${baseTrace.recCount} records`);
+const allCoords = [...coordMap.entries()];
+const coords = allCoords.filter(([id]) => !masked.has(id)).map(([, c]) => c);
+console.log(
+  `  ${coordMap.size} injectable coordinate(s), ${coords.length} after startup mask, ` +
+    `${baseTrace.recCount} records`,
+);
+// Depth weighting: draw call sites in proportion to how deep into the program
+// they live (their LAST occurrence), so faults land in the meat, and pick
+// hits biased toward the deep end of each site's lifetime.
+const totalRecs = baseTrace.recs.length;
+const weights = coords.map(c => 1 + (9 * c.last) / totalRecs); // 1..10 by depth
+const weightSum = weights.reduce((a, b) => a + b, 0);
+const pickCoord = (): Coord => {
+  let t = rnd() * weightSum;
+  for (let i = 0; i < coords.length; i++) if ((t -= weights[i]) <= 0) return coords[i];
+  return coords[coords.length - 1];
+};
 if (!coords.length) {
   console.error("no injectable coordinates in baseline");
   process.exit(1);
@@ -109,9 +143,10 @@ function drawSchedule(): string[] {
   const rules = new Set<string>();
   let guard = 0;
   while (rules.size < n && guard++ < n * 8) {
-    const c = pick(coords);
+    const c = pickCoord();
     const f = pick(FAULTS[c.sysName]);
-    const hit = 1 + Math.floor(rnd() * c.hits);
+    // hit biased deep: sqrt of a uniform skews toward the late end
+    const hit = Math.min(c.hits, 1 + Math.floor(Math.sqrt(rnd()) * c.hits));
     rules.add(`${c.sysName} ${c.key} ${hit} ${f.mode} ${f.status}`);
   }
   return [...rules];

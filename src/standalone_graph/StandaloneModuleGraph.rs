@@ -371,6 +371,175 @@ mod elf {
     }
 }
 
+/// Called as the very first statement in `main()` on ELF targets, before any
+/// other global is read or written. `bun build --compile` grows the writable
+/// PT_LOAD segment so the appended module graph (and the zero-fill that
+/// replaces the former BSS hole) is file-backed. The kernel's ELF loader maps
+/// that full `p_filesz` range whether or not the file on disk is long enough,
+/// so a truncated download still executes; the first touch of a page past EOF
+/// then delivers SIGBUS. Once the crash handler is up, that surfaces as a
+/// "panic: Bus error ... oh no: Bun has crashed" banner misattributing the
+/// user's incomplete file to a Bun bug.
+///
+/// Running this check later (e.g. inside `from_executable`) is too late: the
+/// now-file-backed BSS tail may itself be past EOF, so any startup path that
+/// happens to touch a global placed there faults first. This function is
+/// therefore restricted to stack storage, `.rodata` literals, and raw `libc`
+/// syscalls, and it runs before `bun_crash_handler::init`, `Output`, argv
+/// capture, or anything else that reaches into mutable globals.
+///
+/// Best-effort: on systems without `/proc` the check degrades to a no-op
+/// rather than blocking startup. A plain `bun` (non-standalone) binary has
+/// `BUN_COMPILED.size == 0` and returns immediately without any syscall.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+pub fn exit_early_if_self_exe_truncated() {
+    // `BUN_COMPILED` sits in the original `.bun` section in the middle of the
+    // RW segment (between `.init_array` and `.data.rel.ro`), not in the
+    // appended tail, so this read is safe regardless of truncation.
+    // SAFETY: FFI call returning a process-lifetime pointer (or null).
+    let vaddr_ptr = unsafe { elf::Bun__getStandaloneModuleGraphELFVaddr() };
+    if vaddr_ptr.is_null() {
+        return;
+    }
+    // SAFETY: pointer is non-null; read unaligned u64.
+    if unsafe { core::ptr::read_unaligned(vaddr_ptr) } == 0 {
+        return;
+    }
+    exit_early_if_self_exe_truncated_cold();
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+#[inline(always)]
+pub fn exit_early_if_self_exe_truncated() {}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[cold]
+#[inline(never)]
+fn exit_early_if_self_exe_truncated_cold() {
+    use core::mem::MaybeUninit;
+
+    const PT_LOAD: u32 = 1;
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let path = b"/proc/self/exe\0";
+    #[cfg(target_os = "freebsd")]
+    let path = b"/proc/curproc/file\0";
+
+    // SAFETY: `path` is a NUL-terminated literal.
+    let fd = unsafe { libc::open(path.as_ptr().cast(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return;
+    }
+
+    // SAFETY: zeroed `libc::stat` is valid; `fstat` writes to it.
+    let mut st = unsafe { MaybeUninit::<libc::stat>::zeroed().assume_init() };
+    // SAFETY: `fd` is open; `&mut st` is a valid out-pointer.
+    let fstat_rc = unsafe { libc::fstat(fd, &raw mut st) };
+    if fstat_rc != 0 || st.st_size < 0 {
+        // SAFETY: `fd` is a valid owned descriptor.
+        unsafe { libc::close(fd) };
+        return;
+    }
+    let file_size = st.st_size as u64;
+
+    let mut buf = [0u8; 4096];
+    // SAFETY: `fd` is open for reading; `buf` is a valid writable buffer.
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+    // SAFETY: `fd` is a valid owned descriptor.
+    unsafe { libc::close(fd) };
+    if n < 64 {
+        return;
+    }
+    let data = &buf[..n as usize];
+
+    // Minimal ELF64 LE parse: e_phoff/e_phentsize/e_phnum and, per phdr,
+    // p_type/p_offset/p_filesz at their fixed offsets.
+    if &data[0..4] != b"\x7fELF" || data[4] != 2 || data[5] != 1 {
+        return;
+    }
+    let e_phoff = u64::from_le_bytes(data[32..40].try_into().unwrap());
+    let e_phentsize = u16::from_le_bytes(data[54..56].try_into().unwrap()) as u64;
+    let e_phnum = u16::from_le_bytes(data[56..58].try_into().unwrap()) as u64;
+    let Some(table_end) = e_phnum
+        .checked_mul(e_phentsize)
+        .and_then(|t| e_phoff.checked_add(t))
+    else {
+        return;
+    };
+    if e_phentsize < 56 || table_end > data.len() as u64 {
+        return;
+    }
+
+    let mut required: u64 = 0;
+    let mut i: u64 = 0;
+    while i < e_phnum {
+        let off = (e_phoff + i * e_phentsize) as usize;
+        let p_type = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+        if p_type == PT_LOAD {
+            let p_offset = u64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
+            let p_filesz = u64::from_le_bytes(data[off + 32..off + 40].try_into().unwrap());
+            if let Some(end) = p_offset.checked_add(p_filesz) {
+                if end > required {
+                    required = end;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    if file_size >= required {
+        return;
+    }
+
+    let mut msg = StackBuf::<256>::new();
+    let _ = core::fmt::Write::write_fmt(
+        &mut msg,
+        format_args!(
+            "error: This executable is incomplete: {} bytes on disk, but its load segments require at least {} bytes.\n\nThe file was likely truncated during download or copy. Re-download it and try again.\n",
+            file_size, required,
+        ),
+    );
+    // SAFETY: stderr (fd 2) is always writable; `msg` is a valid readable buffer.
+    unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
+    // SAFETY: `_exit` is async-signal-safe and never returns.
+    unsafe { libc::_exit(1) };
+}
+
+/// Fixed-capacity stack buffer implementing `core::fmt::Write`. Used only by
+/// `exit_early_if_self_exe_truncated_cold` so the error path stays off the
+/// heap and away from `bun_core::Output` globals.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+struct StackBuf<const N: usize> {
+    buf: [u8; N],
+    len: usize,
+}
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+impl<const N: usize> StackBuf<N> {
+    const fn new() -> Self {
+        Self {
+            buf: [0u8; N],
+            len: 0,
+        }
+    }
+    fn as_ptr(&self) -> *const u8 {
+        self.buf.as_ptr()
+    }
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+impl<const N: usize> core::fmt::Write for StackBuf<N> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let bytes = s.as_bytes();
+        let remaining = N - self.len;
+        let take = bytes.len().min(remaining);
+        self.buf[self.len..self.len + take].copy_from_slice(&bytes[..take]);
+        self.len += take;
+        Ok(())
+    }
+}
+
 pub struct File {
     pub name: &'static [u8],
     pub loader: Loader,

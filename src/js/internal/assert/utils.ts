@@ -288,8 +288,9 @@ export function innerFail(obj) {
 
   if (AssertionError === undefined) loadAssertionError();
   const err = new AssertionError(obj);
-  if (obj.generatedMessage !== undefined) {
-    err.generatedMessage = obj.generatedMessage;
+  const { generatedMessage } = obj;
+  if (generatedMessage !== undefined) {
+    err.generatedMessage = generatedMessage;
   }
   throw err;
 }

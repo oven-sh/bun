@@ -299,6 +299,9 @@ bitflags::bitflags! {
         /// by the caller). Owned terminals are closed when the subprocess exits
         /// so the exit callback fires; borrowed terminals are left open for reuse.
         const OWNS_TERMINAL                = 1 << 6;
+        /// `handle_abort_signal` sent `kill_signal`; `on_process_exit` closes
+        /// pipe readers instead of waiting on EOF a grandchild may never send.
+        const ABORT_SIGNAL_KILLED          = 1 << 7;
     }
 }
 
@@ -319,6 +322,9 @@ impl Subprocess<'_> {
     #[bun_uws::uws_callback(thunk = "on_abort_signal_c")]
     fn handle_abort_signal(&self, _reason: JSValue) {
         self.clear_abort_signal();
+        if !self.has_exited() {
+            self.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
+        }
         let _ = self.try_kill(self.kill_signal);
     }
 }
@@ -702,9 +708,9 @@ impl Subprocess<'_> {
         sp.on_max_buffer(kind);
     }
 
-    /// Close any still-open stdout/stderr pipe readers so the sync wait loop
-    /// stops waiting for EOF after timeout/maxBuffer. Matches Node.js
-    /// `SyncProcessRunner::Kill()`. Called outside any reader callback.
+    /// Close still-open stdout/stderr pipe readers after a timeout/maxBuffer
+    /// kill; a grandchild may still hold the write end (Node.js
+    /// `SyncProcessRunner::Kill()`). Called outside any reader callback.
     pub fn close_readable_pipes(&self) {
         if matches!(self.stdout.get(), Readable::Pipe(_)) {
             self.stdout.with_mut(|s| s.close());
@@ -1034,6 +1040,16 @@ impl Subprocess<'_> {
                 reader.unpause();
                 reader.read();
             }
+        }
+
+        // When Bun itself killed the child (timeout/maxBuffer/AbortSignal) stop
+        // waiting on pipe EOF after the drain above: a grandchild may still
+        // hold the write end and the caller already opted into a bounded wait.
+        if self.event_loop_timer.get().state == EventLoopTimerState::FIRED
+            || self.exited_due_to_maxbuf.get().is_some()
+            || self.flags.get().contains(Flags::ABORT_SIGNAL_KILLED)
+        {
+            self.close_readable_pipes();
         }
 
         if let Some(pipe_ptr) = stdin {

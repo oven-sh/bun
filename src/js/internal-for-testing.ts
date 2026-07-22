@@ -316,9 +316,10 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
 );
 
 /**
- * The syscalls instrumented in bsd.c, plus "ssl_loop_buffer" — not a syscall,
- * but the per-loop TLS plaintext buffer allocation, whose failure path is
- * unreachable on an overcommitting kernel. Arming anything else is rejected.
+ * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
+ * paths are otherwise unreachable without injection ("ssl_loop_buffer",
+ * "poll_start"; see fault_inject.h for the per-hook description). Arming
+ * anything else is rejected.
  */
 export type SocketFaultSyscall =
   | "recv"
@@ -328,7 +329,8 @@ export type SocketFaultSyscall =
   | "recvmsg"
   | "connect"
   | "accept"
-  | "ssl_loop_buffer";
+  | "ssl_loop_buffer"
+  | "poll_start";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;

@@ -527,6 +527,8 @@ impl StaticRoute {
                 Method::HEAD => Self::on_head(this, resp),
                 _ => {
                     (*this).do_write_status(405, resp); // Method not allowed
+                    resp.write_header(b"Allow", b"GET, HEAD");
+                    resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(resp.should_close_connection());
                 }
             }

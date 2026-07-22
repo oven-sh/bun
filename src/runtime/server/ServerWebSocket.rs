@@ -11,7 +11,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject,
-    JSType, JSValue, JsRef, JsResult, ZigStringSlice,
+    JSType, JSValue, JsError, JsRef, JsResult, ZigStringSlice,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 
@@ -146,6 +146,17 @@ pub mod js {
     // Emits `{data,server}_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
     // setter forwards through the JSC `WriteBarrier<Unknown>` slot.
     ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data, server);
+}
+
+/// RFC 6455 §5.5: control frame payloads are at most 125 bytes.
+const MAX_CONTROL_FRAME_PAYLOAD: usize = 125;
+
+fn throw_control_frame_too_large(global: &JSGlobalObject, len: usize) -> JsError {
+    let err = global.create_range_error_instance(format_args!(
+        "The data size must not be greater than {} bytes. Received {} bytes.",
+        MAX_CONTROL_FRAME_PAYLOAD, len,
+    ));
+    global.throw_value(err)
 }
 
 /// Maps a uWS `SendStatus` to the JS-visible number contract shared by every
@@ -1180,6 +1191,9 @@ impl ServerWebSocket {
             if !value.is_empty_or_undefined_or_null() {
                 if let Some(data) = value.as_array_buffer(global_this) {
                     let buffer = data.slice();
+                    if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
+                        return Err(throw_control_frame_too_large(global_this, buffer.len()));
+                    }
                     return Ok(send_status_to_js(
                         self.websocket().send(buffer, opcode, false, true),
                         buffer.len(),
@@ -1190,6 +1204,9 @@ impl ServerWebSocket {
                     // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
                     let string_value = value.to_js_string(global_this)?.to_slice(global_this);
                     let buffer = string_value.slice();
+                    if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
+                        return Err(throw_control_frame_too_large(global_this, buffer.len()));
+                    }
                     return Ok(send_status_to_js(
                         self.websocket().send(buffer, opcode, false, true),
                         buffer.len(),

@@ -187,6 +187,39 @@ describe("timeout kills the process", () => {
     expect(stderr).toBe("");
   });
 
+  // A grandchild that inherited the pipe may still hold the write end after
+  // Bun kills the child. Reading stdout/stderr after `proc.exited` must
+  // deliver what was buffered instead of waiting for that grandchild to exit.
+  describe.each([
+    ["timeout", () => ({ timeout: 200 })],
+    ["AbortSignal", () => ({ signal: AbortSignal.timeout(200) })],
+  ] as const)("via %s", (_, opt) => {
+    test.skipIf(isWindows)("Bun.spawn stdout does not hang when a grandchild outlives the kill", async () => {
+      // `sh` spawns `sleep` before the stdout marker so the assertion proves a
+      // grandchild holds the pipe's write end when the kill signal reaches `sh`.
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", "sleep 60 & echo $! >&2; echo from-child; read _"],
+        env: bunEnv,
+        ...opt(),
+        killSignal: "SIGTERM",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      await proc.exited;
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+      const grandchild = parseInt(stderr.trim(), 10);
+      if (Number.isInteger(grandchild))
+        try {
+          process.kill(grandchild);
+        } catch {}
+      expect({ stdout, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "from-child\n",
+        exitCode: null,
+        signalCode: "SIGTERM",
+      });
+      expect(stderr).toMatch(/^\d+\n$/);
+    });
+  });
+
   test("Bun.spawnSync", () => {
     const timeStart = Date.now();
     const proc = Bun.spawnSync([bunExe(), "exec", "sleep 5"], {

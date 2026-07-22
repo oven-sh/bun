@@ -37,26 +37,11 @@ struct ServerTiming {
     bool durationSet = false;
     bool descriptionSet = false;
 
-    ServerTiming(String&& name);
-    ServerTiming(String&& name, double duration, String&& description);
     ServerTiming(String&& name, double duration, String&& description, bool durationSet, bool descriptionSet);
 
-    void setParameter(const String&, const String&);
     ServerTiming isolatedCopy() const&;
     ServerTiming isolatedCopy() &&;
 };
-
-inline ServerTiming::ServerTiming(String&& name)
-    : name(WTF::move(name))
-{
-}
-
-inline ServerTiming::ServerTiming(String&& name, double duration, String&& description)
-    : name(WTF::move(name))
-    , duration(duration)
-    , description(WTF::move(description))
-{
-}
 
 inline ServerTiming::ServerTiming(String&& name, double duration, String&& description, bool durationSet, bool descriptionSet)
     : name(WTF::move(name))

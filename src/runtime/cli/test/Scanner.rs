@@ -280,13 +280,7 @@ impl<'a> Scanner<'a> {
             return true;
         }
         let name_without_extension = &name[..name.len() - extname.len()];
-        for suffix in TEST_NAME_SUFFIXES {
-            if strings::ends_with(name_without_extension, suffix) {
-                return true;
-            }
-        }
-
-        false
+        is_test_like_basename(name_without_extension)
     }
 
     pub fn does_absolute_path_match_filter(&self, name: &[u8]) -> bool {
@@ -453,4 +447,30 @@ impl<'a> Scanner<'a> {
     }
 }
 
-pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
+pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 5] = [b".test", b"_test", b"-test", b".spec", b"_spec"];
+pub(crate) const TEST_NAME_PREFIXES: [&[u8]; 1] = [b"test-"];
+pub(crate) const TEST_NAME_EXACT: [&[u8]; 1] = [b"test"];
+
+/// Returns `true` if a basename (extension already stripped) is shaped like a
+/// test file: ends with one of [`TEST_NAME_SUFFIXES`], starts with one of
+/// [`TEST_NAME_PREFIXES`], or equals one of [`TEST_NAME_EXACT`]. This is a
+/// superset of `node --test`'s default filename patterns (Bun also accepts
+/// `.spec`/`_spec`), minus node's `**/test/**` directory rule.
+pub(crate) fn is_test_like_basename(name_without_extension: &[u8]) -> bool {
+    for suffix in TEST_NAME_SUFFIXES {
+        if strings::ends_with(name_without_extension, suffix) {
+            return true;
+        }
+    }
+    for prefix in TEST_NAME_PREFIXES {
+        if strings::starts_with(name_without_extension, prefix) {
+            return true;
+        }
+    }
+    for exact in TEST_NAME_EXACT {
+        if strings::eql(name_without_extension, exact) {
+            return true;
+        }
+    }
+    false
+}

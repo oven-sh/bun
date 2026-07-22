@@ -9,10 +9,15 @@ description: "Learn how Bun's test runner discovers and filters test files in yo
 
 By default, `bun test` recursively searches the project directory for files that match these patterns:
 
-- `*.test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files ending with `.test.js`, `.test.jsx`, `.test.ts`, `.test.tsx`, `.test.mjs`, `.test.cjs`, `.test.mts`, or `.test.cts`
-- `*_test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files ending with `_test.js`, `_test.jsx`, `_test.ts`, `_test.tsx`, `_test.mjs`, `_test.cjs`, `_test.mts`, or `_test.cts`
-- `*.spec.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files ending with `.spec.js`, `.spec.jsx`, `.spec.ts`, `.spec.tsx`, `.spec.mjs`, `.spec.cjs`, `.spec.mts`, or `.spec.cts`
-- `*_spec.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files ending with `_spec.js`, `_spec.jsx`, `_spec.ts`, `_spec.tsx`, `_spec.mjs`, `_spec.cjs`, `_spec.mts`, or `_spec.cts`
+- `*.test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files ending with `.test.js`, `.test.ts`, etc.
+- `*_test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files ending with `_test.js`, `_test.ts`, etc.
+- `*-test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files ending with `-test.js`, `-test.ts`, etc.
+- `*.spec.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files ending with `.spec.js`, `.spec.ts`, etc.
+- `*_spec.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files ending with `_spec.js`, `_spec.ts`, etc.
+- `test-*.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files starting with `test-`
+- `test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files named exactly `test.js`, `test.ts`, etc.
+
+These patterns are a superset of `node --test`'s default filename patterns, so a `node:test` suite runs under `bun test` without renaming files.
 
 ## Exclusions
 

@@ -1909,11 +1909,10 @@ pub(crate) extern "C" fn BunTest__shouldGenerateCodeCoverage(
 
     if let Some(runner) = jest::Jest::runner() {
         if runner.test_options.coverage.skip_test_files {
-            let name_without_extension = &slice[0..slice.len() - ext.len()];
-            for suffix in scanner::TEST_NAME_SUFFIXES {
-                if strings::ends_with(name_without_extension, suffix) {
-                    return false;
-                }
+            let basename = bun_path::basename(slice);
+            let basename_without_ext = &basename[..basename.len() - ext.len()];
+            if scanner::is_test_like_basename(basename_without_ext) {
+                return false;
             }
         }
     }

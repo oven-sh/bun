@@ -39,8 +39,11 @@ The runner recursively searches the working directory for files that match the f
 
 - `*.test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}`
 - `*_test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}`
+- `*-test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}`
 - `*.spec.{js|jsx|ts|tsx|mjs|cjs|mts|cts}`
 - `*_spec.{js|jsx|ts|tsx|mjs|cjs|mts|cts}`
+- `test-*.{js|jsx|ts|tsx|mjs|cjs|mts|cts}`
+- `test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}`
 
 To filter the set of _test files_ to run, pass additional positional arguments to `bun test`. Any test file with a path that matches one of the filters runs. Filters are commonly file or directory names; glob patterns are not yet supported.
 

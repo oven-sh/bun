@@ -1513,7 +1513,7 @@ describe.concurrent("test file discovery (scanner)", () => {
       "a_first.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a_first"); });`,
       "b_second.test.ts": `import { test } from "bun:test"; test("b", () => { console.log("RAN b_second"); });`,
       "styles.spec.tsx": `import { test } from "bun:test"; test("spec", () => { console.log("RAN spec"); });`,
-      "not-a-test.ts": `console.log("SHOULD NOT RUN plain");`,
+      "helper.ts": `console.log("SHOULD NOT RUN plain");`,
       "nested/deep/inner.test.ts": `import { test } from "bun:test"; test("inner", () => { console.log("RAN inner"); });`,
       "nested/util.ts": `export const x = 1;`,
       ".hidden/skipped.test.ts": `import { test } from "bun:test"; test("hidden", () => { console.log("SHOULD NOT RUN hidden"); });`,
@@ -1588,6 +1588,47 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stdout).toContain("RAN solo");
     expect(stdout).not.toContain("RAN other");
     expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("discovers node --test default filename patterns", async () => {
+    // `node --test` (with no positional args) matches *.test.*, *-test.*,
+    // *_test.*, test-*.*, and bare test.* by default. A project ported from
+    // `node --test` to `bun test` should not silently lose test files.
+    const body = (name: string) =>
+      `import { test } from "bun:test"; test("t", () => { console.log("RAN ${name}"); });`;
+    using dir = tempDir("scanner-node-test-patterns", {
+      "a.test.mjs": body("a.test"),
+      "c_test.mjs": body("c_test"),
+      "d-test.mjs": body("d-test"),
+      "test-b.mjs": body("test-b"),
+      "test.mjs": body("bare-test"),
+      "nested/test-deep.ts": body("nested-prefix"),
+      "nested/test.ts": body("nested-bare"),
+      // Negative cases: must NOT be discovered.
+      "helper.mjs": `console.log("SHOULD NOT RUN helper");`,
+      "testutil.mjs": `console.log("SHOULD NOT RUN testutil");`,
+      "contest.mjs": `console.log("SHOULD NOT RUN contest");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RAN a.test");
+    expect(stdout).toContain("RAN c_test");
+    expect(stdout).toContain("RAN d-test");
+    expect(stdout).toContain("RAN test-b");
+    expect(stdout).toContain("RAN bare-test");
+    expect(stdout).toContain("RAN nested-prefix");
+    expect(stdout).toContain("RAN nested-bare");
+    expect(stdout).not.toContain("SHOULD NOT RUN");
+    expect(stderr).toContain(" 7 pass");
     expect(exitCode).toBe(0);
   });
 });

@@ -4,9 +4,10 @@
 // while smaller allocations (thread stacks, GC bookkeeping) still can.
 //
 // argv: <N> <shape>
-//   shape "root"   => "xxxx..."
-//   shape "array"  => ["xxxx..."]
-//   shape "object" => {"k":"xxxx..."}
+//   shape "root"    => "xxxx..."
+//   shape "array"   => ["xxxx..."]
+//   shape "object"  => {"k":"xxxx..."}
+//   shape "reviver" => "xxxx..." parsed with JSON.parse(input, (k, v) => v)
 //
 // Outcomes, written to stdout:
 //   SETUP-FAIL  the address-space limit was too tight to build the input
@@ -35,12 +36,14 @@ try {
 }
 buf = null;
 
+// allocUnsafe reserves address space (which is what RLIMIT_AS bounds) without
+// committing pages, so this loop is fast and its RSS cost is negligible.
 const filler = [];
 let chunk = N;
 const floor = N >> 2;
 while (chunk >= floor) {
   try {
-    filler.push(Buffer.alloc(chunk));
+    filler.push(Buffer.allocUnsafe(chunk));
   } catch {
     chunk = chunk >> 1;
   }
@@ -48,7 +51,8 @@ while (chunk >= floor) {
 process.stdout.write("INPUT-OK\n");
 
 try {
-  JSON.parse(input);
+  if (shape === "reviver") JSON.parse(input, (k, v) => v);
+  else JSON.parse(input);
   process.stdout.write("PARSED\n");
   process.exit(1);
 } catch (e) {

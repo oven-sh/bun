@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 import { join } from "node:path";
 
 // JSON.parse copies every string value longer than 16 chars into a fresh
@@ -9,9 +9,10 @@ import { join } from "node:path";
 // and surfaces a RangeError, same as "x".repeat(tooLarge).
 //
 // RLIMIT_AS is the only portable way to make tryMalloc actually fail, and it
-// cannot be combined with AddressSanitizer's 16 TB shadow reservation, so this
-// test runs on non-ASAN Linux only.
-test.skipIf(!isLinux || isASAN)(
+// cannot be combined with AddressSanitizer's 16 TB shadow reservation. Debug
+// builds take several seconds per fixture just to zero-fill and toString() the
+// ~200 MB inputs, so this runs only on release Linux lanes.
+test.skipIf(!isLinux || isASAN || isDebug)(
   "JSON.parse throws RangeError instead of crashing when a string value cannot be allocated",
   async () => {
     const fixture = join(import.meta.dir, "json-parse-oom-fixture.js");
@@ -19,48 +20,49 @@ test.skipIf(!isLinux || isASAN)(
     // The filler loop in the fixture exhausts address space down to N/4, so any
     // size should hit the OOM path, but mimalloc's arena layout varies. Sweep a
     // couple of sizes and every parsePrimitiveValue caller (top-level literal,
-    // array element, object property value); every run that reaches INPUT-OK
-    // must either succeed or throw RangeError, never crash.
+    // reviver-mode literal, array element, object property value); every run
+    // that reaches INPUT-OK must either succeed or throw RangeError, never
+    // crash. The fixture's filler uses allocUnsafe, which reserves address
+    // space without committing pages, so the children's combined RSS stays
+    // well under the host's memory and they can run concurrently.
     const cases: Array<[shape: string, mb: number]> = [
       ["root", 200],
       ["root", 400],
       ["array", 300],
       ["object", 300],
+      ["reviver", 300],
     ];
+
+    const results = await Promise.all(
+      cases.map(async ([shape, mb]) => {
+        const size = mb * 1024 * 1024;
+        await using proc = Bun.spawn({
+          cmd: [
+            "/bin/sh",
+            "-c",
+            `ulimit -v ${limitKiB} && ulimit -c 0 && exec "$0" "$1" "$2" "$3"`,
+            bunExe(),
+            fixture,
+            String(size),
+            shape,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { shape, size, stdout, stderr, exitCode, signal: proc.signalCode };
+      }),
+    );
+
     let sawCaught = false;
     let sawInputOK = false;
-
-    for (const [shape, mb] of cases) {
-      const size = mb * 1024 * 1024;
-      await using proc = Bun.spawn({
-        cmd: [
-          "/bin/sh",
-          "-c",
-          `ulimit -v ${limitKiB} && ulimit -c 0 && exec "$0" "$1" "$2" "$3"`,
-          bunExe(),
-          fixture,
-          String(size),
-          shape,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      const reachedParse = stdout.includes("INPUT-OK");
-      if (!reachedParse) continue;
+    for (const { shape, size, stdout, stderr, exitCode, signal } of results) {
+      if (!stdout.includes("INPUT-OK")) continue;
       sawInputOK = true;
 
       // Once the input is built, JSON.parse must not kill the process.
-      expect({
-        shape,
-        size,
-        stdout: stdout.trim(),
-        stderr: stderr.trim(),
-        exitCode,
-        signal: proc.signalCode,
-      }).toMatchObject({
+      expect({ shape, size, stdout: stdout.trim(), stderr: stderr.trim(), exitCode, signal }).toMatchObject({
         shape,
         size,
         signal: null,
@@ -83,5 +85,4 @@ test.skipIf(!isLinux || isASAN)(
     // otherwise the sweep never exercised the path this test is for.
     expect(sawCaught).toBe(true);
   },
-  30_000,
 );

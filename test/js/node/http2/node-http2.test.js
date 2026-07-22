@@ -2072,6 +2072,73 @@ it(
   15_000 * ASAN_MULTIPLIER,
 );
 
+// Every stream in a session's stream map contributes sizeof(Stream) bytes to
+// that session's accounted memory (`get_session_memory_usage`). A session that
+// never evicts closed streams therefore grows that term without bound: once it
+// crosses maxSessionMemory the session refuses every new stream with
+// ERR_HTTP2_STREAM_ERROR and then dies with ENHANCE_YOUR_CALM.
+//
+// maxSessionMemory is compared in whole MiB, so a 1 MiB budget only trips once
+// retained streams exceed 2 MiB — about 13.8k streams at the current 152-byte
+// Stream. The sibling test above stops at 10k, which stays under that boundary
+// and cannot observe a leak; 20k clears it with margin and still trips for any
+// Stream at or above 105 bytes. Both peers get the minimal budget so a leak on
+// either the client or the server session fails this test.
+const STREAM_EVICTION_REQUESTS = 20_000;
+
+it(
+  "http2 sessions evict closed streams from maxSessionMemory accounting",
+  async () => {
+    const server = http2.createServer({ maxSessionMemory: 1 });
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 }, { endStream: true });
+    });
+
+    await new Promise(resolve => server.listen(0, resolve));
+
+    const client = http2.connect(`http://localhost:${server.address().port}`, { maxSessionMemory: 1 });
+
+    // Route session-level failures into the awaited request so the test fails
+    // with the real error instead of hanging until the timeout.
+    const sessionFailed = Promise.withResolvers();
+    sessionFailed.promise.catch(() => {}); // the close() in `finally` emits goaway
+    client.on("error", err => sessionFailed.reject(err));
+    client.on("goaway", errorCode => sessionFailed.reject(new Error(`GOAWAY errorCode=${errorCode}`)));
+
+    let completed = 0;
+    function request() {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const stream = client.request({ ":method": "GET" });
+      stream.on("error", reject);
+      stream.on("response", headers => {
+        if (headers[":status"] !== 200) reject(new Error(`unexpected status ${headers[":status"]}`));
+      });
+      stream.on("close", () => {
+        completed++;
+        resolve();
+      });
+      stream.resume();
+      stream.end();
+      return promise;
+    }
+
+    try {
+      for (let i = 0; i < STREAM_EVICTION_REQUESTS; i++) {
+        await Promise.race([request(), sessionFailed.promise]);
+      }
+    } finally {
+      client.removeAllListeners("goaway");
+      client.removeAllListeners("error");
+      client.on("error", () => {});
+      client.close();
+      server.close();
+    }
+
+    expect(completed).toBe(STREAM_EVICTION_REQUESTS);
+  },
+  30_000 * ASAN_MULTIPLIER,
+);
+
 it("http2.createServer validates input options", () => {
   // Test invalid options passed to createServer
   const invalidOptions = [1, true, "test", null, Symbol("test")];

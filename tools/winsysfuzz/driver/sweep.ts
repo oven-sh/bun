@@ -307,6 +307,9 @@ async function worker(w: number) {
         // backtrace frame is a system DLL means we sabotaged system code
         // from inside its own machinery (mswsock's private threads etc.).
         if (job.expect === "abort-expected") outcome = "expected-abort";
+        // Crash-on-OOM is by design; only an absurdly LARGE allocation
+        // (oom-large: unvalidated size / runaway growth) is a real bug.
+        else if (rr.crashSig?.kind === "oom") outcome = "expected-abort";
         else if (rr.crashSig?.boundary === "system-module") outcome = "system-crash";
         else outcome = "CRASH";
       } else if (fired === 0) outcome = "no-fire";

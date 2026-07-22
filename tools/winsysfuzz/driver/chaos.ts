@@ -160,7 +160,12 @@ function drawSchedule(): string[] {
 // --- classification, shared with the sweeper's semantics --------------------
 function classify(rr: ReplayResult): string {
   if (rr.outcome === "HANG") return "HANG";
-  if (rr.outcome === "CRASH") return rr.crashSig?.boundary === "system-module" ? "system-crash" : "CRASH";
+  // Crash-on-OOM is by design (only oom-large - an absurd request - is a
+  // real bug); a system-DLL top frame is sabotaged system code, not bun.
+  if (rr.outcome === "CRASH") {
+    if (rr.crashSig?.kind === "oom") return "expected-abort";
+    return rr.crashSig?.boundary === "system-module" ? "system-crash" : "CRASH";
+  }
   if (rr.fired === 0) return "no-fire";
   if (rr.ms >= slowMs) return timedOutTests(rr.stdout + rr.stderr) > baseTimeouts ? "stalled" : "slow";
   if (rr.exitCode !== base.exitCode) return "error-exit";

@@ -61,7 +61,11 @@ const CRASH_SIGNATURES: { re: RegExp; kind: string }[] = [
   { re: /(Assertion failed: [^\n]{0,140})/, kind: "c-assert" },
   { re: /(mimalloc: assertion failed[^\n]{0,120})/, kind: "mimalloc-assert" },
   { re: /(panic: [^\n]{0,120})/, kind: "rust-panic" },
+  // OOM family: crash-on-OOM is by design and not a finding worth triage.
+  // Recognized as its own kind so admission can drop it as a class.
   { re: /(RangeError: Out of memory[^\n]{0,80})/, kind: "oom" },
+  { re: /((?:oh no: )?[^\n]{0,40}out of memory[^\n]{0,80})/i, kind: "oom" },
+  { re: /((?:memory allocation of \d+ bytes failed|failed to allocate|Failed to allocate)[^\n]{0,80})/i, kind: "oom" },
   { re: /(oh no: Bun has crashed[^\n]{0,80})/, kind: "crash-banner" },
   // Self-verifying workloads print this when data flowed through WRONG
   // without any crash - the silent-corruption class garbage faults expose.
@@ -113,7 +117,15 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
         else if (isDll(top)) boundary = "system-module";
         else boundary = frames.some(isExe) ? "bun" : frames.some(isDll) ? "system-module" : "unknown";
       }
-      return { kind, signature, detail, boundary, frames };
+      // OOM is ignorable UNLESS the allocation could genuinely OOM because
+      // it is LARGE - an absurd requested size means an unvalidated length
+      // or runaway growth (a real bug), not an exhausted environment.
+      let k = kind;
+      if (k === "oom") {
+        const bytes = /memory allocation of (\d+) bytes failed/i.exec(text)?.[1];
+        if (bytes && Number(bytes) >= 256 * 1024 * 1024) k = "oom-large";
+      }
+      return { kind: k, signature, detail, boundary, frames };
     }
   }
   return null;

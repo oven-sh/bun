@@ -72,7 +72,7 @@ for (const e of entries) {
 // which beats a slow crawl; system-module crashes and allocator aborts are
 // almost never bun bugs and sink to the bottom.
 function rankOf(e: Entry): number {
-  const notBun = e.boundary === "system-module" || e.expect === "abort-expected";
+  const notBun = e.boundary === "system-module" || e.expect === "abort-expected" || e.crashKind === "oom";
   // A deliberate panic (an explicit message = bun CHOSE to abort) and a
   // crash still inside process initialization (fatal chain has JSCInitialize
   // / the runtime's start-up, no JS ran) are usually intentional fatals in an
@@ -157,9 +157,41 @@ if (argv.includes("--reap")) {
       }
     }
   }
+  // Actionable cases (reported / needs-work) keep their REPLAY MATERIAL -
+  // schedules, small stdout/stderr, captured stacks - but not raw
+  // multi-MB syscall traces: those are re-generable by replaying the
+  // schedule, and a kept sweep workDir otherwise hoards every child trace.
+  let stripped = 0;
+  let stripFreed = 0;
+  const stripTraces = (d: string) => {
+    let ents: import("node:fs").Dirent[] = [];
+    try {
+      ents = readdirSync(d, { withFileTypes: true }) as any;
+    } catch {
+      return;
+    }
+    for (const e of ents) {
+      const p = join(d, e.name);
+      try {
+        if (e.isDirectory()) stripTraces(p);
+        else if (e.name.startsWith("wsf-") && e.name.endsWith(".log")) {
+          stripFreed += statSync(p).size;
+          stripped++;
+          if (!dryRun) rmSync(p, { force: true });
+        }
+      } catch {}
+    }
+  };
+  const liveKeys = new Set(triaged.filter(t => actionable.has(t.verdict)).map(t => t.dedupeKey));
+  for (const e of entries) {
+    if (!liveKeys.has(e.dedupeKey) || !e.workDir || !existsSync(e.workDir)) continue;
+    stripTraces(e.workDir);
+  }
   console.log(
-    `${dryRun ? "[dry-run] would remove" : "removed"} ${removed} non-actionable case dir(s), ` +
-      `${(freed / 1024 ** 3).toFixed(1)} GB ${dryRun ? "reclaimable" : "reclaimed"}`,
+    `${dryRun ? "[dry-run] would remove" : "removed"} ${removed} non-actionable case dir(s) ` +
+      `(${(freed / 1024 ** 3).toFixed(1)} GB); ${dryRun ? "would strip" : "stripped"} ` +
+      `${stripped} raw trace(s) from actionable cases (${(stripFreed / 1024 ** 3).toFixed(1)} GB) ` +
+      `- ${((freed + stripFreed) / 1024 ** 3).toFixed(1)} GB ${dryRun ? "reclaimable" : "reclaimed"}`,
   );
   process.exit(0);
 }
@@ -170,10 +202,22 @@ const ordered = [...groups.values()].sort(
 const pending = ordered.filter(g => showAll || !triagedKeys.has(g.key));
 
 if (doneIdx !== undefined) {
-  // Record a triage verdict for entry #N (index into the pending list).
-  const g = pending[+doneIdx];
+  // Record a triage verdict. --done takes an index into the CURRENT pending
+  // list, or (safer, race-free) a substring of the entry's dedupeKey -
+  // indexes shift as verdicts are recorded, keys do not.
+  let g: Group | undefined;
+  if (/^\d+$/.test(doneIdx)) g = pending[+doneIdx];
+  else {
+    const matches = pending.filter(p => p.key.includes(doneIdx));
+    if (matches.length !== 1) {
+      console.error(`--done key "${doneIdx}" matched ${matches.length} pending entries (need exactly 1)`);
+      for (const m of matches) console.error(`  - ${m.key}`);
+      process.exit(2);
+    }
+    g = matches[0];
+  }
   if (!g) {
-    console.error(`no pending entry #${doneIdx}`);
+    console.error(`no pending entry ${doneIdx}`);
     process.exit(2);
   }
   const verdict = flag("--verdict", "reported") as string;

@@ -84,7 +84,8 @@ export const FAULTS: Record<string, Fault[]> = {
   // (NtClose post-fault removed: "close succeeded but reported failure" is a
   // near non-event for real code - top slow-generator, zero findings.)
   NtDuplicateObject: [F("C000009A")],
-  NtAllocateVirtualMemory: [F("C0000017", "pre", "abort-expected")],
-  NtAllocateVirtualMemoryEx: [F("C0000017", "pre", "abort-expected")],
+  // Allocation-failure faults deliberately absent: crash-on-OOM is by design
+  // and not a finding worth compute or triage. (NtAllocateVirtualMemory[Ex]
+  // used to carry an abort-expected fault; removed.)
 };
 

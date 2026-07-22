@@ -413,34 +413,34 @@ describe("NODE_PATH test", () => {
 describe("global folders resolution", () => {
   const homeVar = isWindows ? "USERPROFILE" : "HOME";
 
-  const prepare = () => {
-    const dir = tempDirWithFiles("global-folders", {
-      "home/.node_modules/gp-from-nm/index.js": "module.exports = 'FROM_HOME_NODE_MODULES';",
-      "home/.node_libraries/gp-from-lib/index.js": "module.exports = 'FROM_HOME_NODE_LIBRARIES';",
-      "home/.node_modules/gp-both/index.js": "module.exports = 'NM_WINS';",
-      "home/.node_libraries/gp-both/index.js": "module.exports = 'LIB_LOSES';",
-      "np/gp-from-np/index.js": "module.exports = 'FROM_NODE_PATH';",
-      "np/gp-from-nm/index.js": "module.exports = 'NODE_PATH_WINS';",
-      "proj/package.json": JSON.stringify({ name: "proj", type: "commonjs" }),
-      "proj/node_modules/gp-local/index.js": "module.exports = 'LOCAL_WINS';",
-      "home/.node_modules/gp-local/index.js": "module.exports = 'GLOBAL_LOSES';",
-      "proj/app.js": `
-        const M = require("node:module");
-        let result = {};
-        for (const name of ["gp-from-nm", "gp-from-lib", "gp-both", "gp-from-np", "gp-local"]) {
-          try { result[name] = require(name); } catch (e) { result[name] = "THREW:" + e.code; }
-        }
-        result.globalPaths = M.globalPaths;
-        result.resolvePaths = require.resolve.paths("gp-from-nm");
-        result.lookupPaths = M._resolveLookupPaths("gp-from-nm", module);
-        console.log(JSON.stringify(result));
-      `,
-    });
-    return { dir, home: joinP(dir, "home"), proj: joinP(dir, "proj"), np: joinP(dir, "np") };
+  const fixture = {
+    "home/.node_modules/gp-from-nm/index.js": "module.exports = 'FROM_HOME_NODE_MODULES';",
+    "home/.node_libraries/gp-from-lib/index.js": "module.exports = 'FROM_HOME_NODE_LIBRARIES';",
+    "home/.node_modules/gp-both/index.js": "module.exports = 'NM_WINS';",
+    "home/.node_libraries/gp-both/index.js": "module.exports = 'LIB_LOSES';",
+    "np/gp-from-np/index.js": "module.exports = 'FROM_NODE_PATH';",
+    "np/gp-from-nm/index.js": "module.exports = 'NODE_PATH_WINS';",
+    "proj/package.json": JSON.stringify({ name: "proj", type: "commonjs" }),
+    "proj/node_modules/gp-local/index.js": "module.exports = 'LOCAL_WINS';",
+    "home/.node_modules/gp-local/index.js": "module.exports = 'GLOBAL_LOSES';",
+    "proj/app.js": `
+      const M = require("node:module");
+      let result = {};
+      for (const name of ["gp-from-nm", "gp-from-lib", "gp-both", "gp-from-np", "gp-local"]) {
+        try { result[name] = require(name); } catch (e) { result[name] = "THREW:" + e.code; }
+      }
+      result.globalPaths = M.globalPaths;
+      result.resolvePaths = require.resolve.paths("gp-from-nm");
+      result.lookupPaths = M._resolveLookupPaths("gp-from-nm", module);
+      console.log(JSON.stringify(result));
+    `,
   };
 
   it("resolves bare specifiers from $HOME/.node_modules and $HOME/.node_libraries", () => {
-    const { home, proj, np } = prepare();
+    using dir = tempDir("global-folders", fixture);
+    const home = joinP(String(dir), "home");
+    const proj = joinP(String(dir), "proj");
+    const np = joinP(String(dir), "np");
     const { exitCode, stdout, stderr } = Bun.spawnSync({
       cmd: [bunExe(), "--no-install", "app.js"],
       env: { ...bunEnv, [homeVar]: home, NODE_PATH: np },
@@ -481,7 +481,9 @@ describe("global folders resolution", () => {
   });
 
   it("resolves from $HOME/.node_modules when NODE_PATH is unset", () => {
-    const { home, proj } = prepare();
+    using dir = tempDir("global-folders", fixture);
+    const home = joinP(String(dir), "home");
+    const proj = joinP(String(dir), "proj");
     const { exitCode, stdout, stderr } = Bun.spawnSync({
       cmd: [bunExe(), "--no-install", "app.js"],
       env: { ...bunEnv, [homeVar]: home, NODE_PATH: "" },
@@ -497,7 +499,8 @@ describe("global folders resolution", () => {
   });
 
   it("returns MODULE_NOT_FOUND when HOME is unset and no global folder matches", () => {
-    const { proj } = prepare();
+    using dir = tempDir("global-folders", fixture);
+    const proj = joinP(String(dir), "proj");
     const env = { ...bunEnv, NODE_PATH: "" };
     delete env[homeVar];
     const { exitCode, stdout } = Bun.spawnSync({

@@ -1559,8 +1559,12 @@ async function getPipeline(options = {}) {
         // test fleet (see getTraceOrderStep). Always on main so the inheritance
         // chain stays fed, and anywhere else on commit-message opt-in so a PR
         // that changes the tracer can prove the step works before merge — the
-        // same `[generate symbol order]` tag ci.ts already honours.
-        const traceOn = traceOrderTargets.find(t => t.os === target.os && t.arch === target.arch && !target.abi);
+        // same `[generate symbol order]` tag ci.ts already honours. Release
+        // profile only — usesOrderFile() is false under a sanitizer anyway.
+        const traceOn = traceOrderTargets.find(
+          t =>
+            t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
+        );
         if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
           // The trace host's image, same as verify-baseline: on the step, so
           // build-cpp/build-bun don't wait for it. Darwin has no cloud image.

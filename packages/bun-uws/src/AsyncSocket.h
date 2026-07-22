@@ -184,8 +184,16 @@ public:
     /* Returns the user space backpressure. */
     size_t getBufferedAmount() {
         /* Unsent bytes; already-written bytes sitting behind the head cursor
-         * are not backpressure (maxBackpressure checks, drain progress). */
-        return getAsyncSocketData()->buffer.length();
+         * are not backpressure (maxBackpressure checks, drain progress).
+         * For TLS, us_socket_write() can report a batch as written while its
+         * ciphertext still sits in the loop's spill slot (openssl.c
+         * ssl_flush_write_batch); count that so the close-after-drain gates
+         * in HttpResponse/HttpContext/WebSocketContext wait for it. */
+        size_t buffered = getAsyncSocketData()->buffer.length();
+        if constexpr (SSL) {
+            buffered += us_socket_ssl_spill_pending((us_socket_t *) this);
+        }
+        return buffered;
     }
 
     /* Returns the text representation of an IPv4 or IPv6 address */

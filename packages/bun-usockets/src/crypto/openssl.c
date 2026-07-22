@@ -2098,6 +2098,16 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
   return s->ssl ? s_ssl(s) : NULL;
 }
 
+/* Ciphertext bytes already sealed for `s` and counted as written by
+ * us_internal_ssl_write, still waiting on a writable event to reach the
+ * kernel. uWS's getBufferedAmount() adds this so its close-after-drain
+ * gates do not fire while the last batch is still in userspace. */
+unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  if (!loop_ssl_data || loop_ssl_data->ssl_spill_owner != s) return 0;
+  return loop_ssl_data->ssl_spill_len - loop_ssl_data->ssl_spill_off;
+}
+
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
 

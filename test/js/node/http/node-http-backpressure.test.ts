@@ -6,9 +6,13 @@
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
+import path from "node:path";
+import nodeTls from "node:tls";
 
 describe("backpressure", () => {
   // Writes `total` bytes to `res` in `chunk`-sized pieces, waiting for "drain"
@@ -197,6 +201,81 @@ describe("backpressure", () => {
     // rejects the second write (socketOnEnd already called socket.end()); Bun
     // currently accepts and drains it. Both are consistent: the client sees
     // either the first write only, or both, never a torn second write.
+    // Same scenario over TLS: the server's TLS write-batch spill (up to one
+    // 128 KiB ciphertext batch the kernel did not fully accept) must be
+    // counted as buffered and drained before the post-FIN close gate fires.
+    // Cycling several times proves the on_writable drain loop, not just the
+    // first kernel-accepted write.
+    describe("https", () => {
+      const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+      const tlsOptions = {
+        cert: readFileSync(path.join(keysDir, "agent1-cert.pem")),
+        key: readFileSync(path.join(keysDir, "agent1-key.pem")),
+      };
+
+      async function halfCloseTlsRequestBodyBytes(
+        port: number,
+        request: string,
+        halfClose: boolean,
+      ): Promise<{ body: number; ended: boolean }> {
+        const socket = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        let body = 0;
+        let head = "";
+        let gotHead = false;
+        let ended = false;
+        socket.on("data", chunk => {
+          if (!gotHead) {
+            head += chunk.toString("latin1");
+            const i = head.indexOf("\r\n\r\n");
+            if (i >= 0) {
+              gotHead = true;
+              body = Buffer.byteLength(head.slice(i + 4), "latin1");
+            }
+          } else {
+            body += chunk.length;
+          }
+        });
+        socket.on("end", () => (ended = true));
+        socket.on("error", () => {});
+        await once(socket, "secureConnect");
+        if (halfClose) socket.end(request);
+        else socket.write(request);
+        await once(socket, "close");
+        return { body, ended };
+      }
+
+      it.each([
+        ["client half-close, res.write() then res.end()", "write-end", true],
+        ["client half-close, res.end(payload)", "end", true],
+        ["client half-close, httpAllowHalfOpen, res.end() after drain", "drain", true],
+      ] as const)("%s", async (_name, endMode, halfClose) => {
+        await using server = https.createServer(tlsOptions, (req, res) => {
+          res.writeHead(200, { "Content-Length": String(BODY) });
+          if (endMode === "end") {
+            res.end(payload);
+          } else {
+            res.write(payload);
+            if (endMode === "write-end") res.end();
+            else res.once("drain", () => res.end());
+          }
+        });
+        if (endMode === "drain") server.httpAllowHalfOpen = true;
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const port = (server.address() as AddressInfo).port;
+        // Loop a few times: the bug is an ordering race between the final
+        // spilled TLS batch and the close gate, so a single pass on a fast
+        // loopback may not catch the last-batch truncation.
+        for (let i = 0; i < 5; i++) {
+          const { body, ended } = await halfCloseTlsRequestBodyBytes(
+            port,
+            "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            halfClose,
+          );
+          expect({ body, ended }).toEqual({ body: BODY, ended: true });
+        }
+      });
+    });
+
     it("res.write() from 'drain' after client FIN is not torn mid-write", async () => {
       await using server = http.createServer((req, res) => {
         res.writeHead(200, { "Content-Length": String(BODY * 2) });

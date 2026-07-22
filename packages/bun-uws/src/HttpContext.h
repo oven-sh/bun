@@ -206,14 +206,13 @@ private:
             /* A peer FIN must not tear the connection down at the loop level:
              * onEnd() below decides whether to close right away (idle) or to
              * keep writing the responses that are still in flight / pipelined
-             * (Node's socketOnEnd semantics). Without this flag the loop
-             * force-closes the socket right after dispatching onEnd. TLS
-             * (openssl.c us_internal_ssl_on_end) does not consult this flag
-             * and force-closes on FIN regardless, so this half of the compat
-             * block is http-only for now. */
-            if constexpr (!SSL) {
-                s->flags.allow_half_open = 1;
-            }
+             * (Node's socketOnEnd semantics). Without this flag the loop (and
+             * openssl.c us_internal_ssl_on_end for TLS) force-closes the
+             * socket right after dispatching onEnd, discarding the buffered
+             * response bytes. getBufferedAmount() counts the TLS spill, so
+             * onEnd's defer and onWritable's close gate are accurate for both
+             * transports. */
+            s->flags.allow_half_open = 1;
         }
 
         if(!SSL) {

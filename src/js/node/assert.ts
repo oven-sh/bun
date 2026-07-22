@@ -147,9 +147,10 @@ Object.defineProperty(Assert.prototype, "constructor", {
 // both the actual and expected values to the assertion error for
 // display purposes.
 
-// DESTRUCTURING WARNING: All Assert.prototype methods read instance options via
-// getDiff(this). When methods are destructured or copied onto `assert` they lose
-// their `this` context and use default behavior instead of instance options.
+// DESTRUCTURING WARNING: The comparison methods (plus fail/ifError/match) read
+// instance options via getDiff(this); destructuring or copying them onto
+// `assert` loses `this` and falls back to default options. ok/throws/rejects/
+// doesNotThrow/doesNotReject do not thread `diff` in Node 26 either.
 
 assert.fail = Assert.prototype.fail = function fail(message?: string | Error): never {
   if (Error.isError(message)) throw message;

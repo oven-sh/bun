@@ -817,3 +817,53 @@ test(
   },
   isASAN ? 30_000 : 5_000,
 );
+
+// The Response's abort listener takes a +1 on the AbortSignal; Response::destroy
+// must release it. Run in a subprocess so heapStats is not polluted by the
+// suite's other concurrent tests, and so the destruct-on-exit teardown of a
+// timeout signal with the listener still attached is exercised.
+// https://github.com/oven-sh/bun/issues/32659
+test.concurrent(
+  "fetch Response's abort-signal listener does not leak the AbortSignal",
+  async () => {
+    const script = `
+    const { heapStats } = require("bun:jsc");
+    const server = Bun.serve({ port: 0, fetch: () => new Response(new Uint8Array(8)) });
+    // Response::destroy releases the signal ref from its finalizer, so the
+    // signal becomes collectable only on the *next* GC.
+    const count = async () => {
+      Bun.gc(true);
+      await new Promise(r => setImmediate(r));
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.AbortSignal || 0;
+    };
+    async function once() {
+      const ac = new AbortController();
+      const res = await fetch(server.url, { signal: ac.signal });
+      await res.arrayBuffer().catch(() => {});
+    }
+    for (let i = 0; i < 8; i++) await once();
+    const baseline = await count();
+    for (let i = 0; i < 64; i++) await once();
+    const after = await count();
+    // One more with a pending AbortSignal.timeout() so exit teardown runs
+    // BodyAbortListener::drop on a signal whose m_timeout is still set.
+    const res = await fetch(server.url, { signal: AbortSignal.timeout(60_000) });
+    await res.arrayBuffer().catch(() => {});
+    server.stop(true);
+    console.log(JSON.stringify({ baseline, after }));
+    process.exit(after > baseline + 4 ? 1 : 0);
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"after"');
+    expect(exitCode).toBe(0);
+  },
+  isASAN ? 30_000 : 5_000,
+);

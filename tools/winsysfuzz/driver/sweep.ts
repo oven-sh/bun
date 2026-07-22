@@ -656,24 +656,30 @@ if (findings.length) {
     // the test timed out again) IS the reproduction.
     // A leak replay counts as bad when it leaks named handles the
     // baseline does not (the verify replays log 'leak' via the same rule).
-    const bad = outcomes.filter(
-      o => o === "CRASH" || o === "HANG" || o === "leak" || (f.outcome === "stalled" && o === "slow"),
-    ).length;
+    // A replay reproduces a STALL only by stalling (more tests timed out) -
+    // NOT by merely running slower. A file that sits at the edge of its
+    // per-test timeout tips one test over under any perturbation on one run
+    // and reads "slow" on the next: five unrelated hit-1 faults on such a
+    // file all "confirmed" as stalls when slow was counted as bad. Slow is
+    // corroboration for a HANG (crawls twice, hangs once), never a stall.
+    const stalledCount = outcomes.filter(o => o === "stalled").length;
+    const bad = outcomes.filter(o => o === "CRASH" || o === "HANG" || o === "leak").length + stalledCount;
     const slow = outcomes.filter(o => o === "slow").length;
     const fired = outcomes.filter(o => o !== "no-fire").length;
-    // "crawls twice, hangs once" is bad EVERY time (borderline on the
-    // watchdog), so slow counts toward confirmation once any replay hangs -
-    // but for a STALLED finding slow already IS the bad outcome, so don't
-    // double-count it: one slow replay must not confirm itself. Stalled
-    // needs a genuine majority of stall replays.
     const verdict: Verdict =
-      bad >= 2 || (f.outcome !== "stalled" && bad >= 1 && bad + slow >= 2)
-        ? "confirmed"
-        : bad === 0 && slow >= 2
-          ? "slow"
-          : bad === 0 && fired > 0
+      f.outcome === "stalled"
+        ? stalledCount >= 2
+          ? "confirmed"
+          : slow + stalledCount >= 2
             ? "load-dependent"
-            : "not-reproduced";
+            : "not-reproduced"
+        : bad >= 2 || (bad >= 1 && bad + slow >= 2)
+          ? "confirmed"
+          : bad === 0 && slow >= 2
+            ? "slow"
+            : bad === 0 && fired > 0
+              ? "load-dependent"
+              : "not-reproduced";
     verdicts.set(f, { verdict, outcomes, stage, stacks, termChain, panicChain });
     await queueFinding(f, { verdict, outcomes, stage, stacks, termChain, panicChain });
     console.log(

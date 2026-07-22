@@ -200,10 +200,10 @@ describe("WebSocket", () => {
     });
     test("(no reason)", (ws, done) => {
       ws.addEventListener("open", () => {
-        ws.close(1001);
+        ws.close(3001);
       });
       ws.addEventListener("close", ({ code, reason, wasClean }) => {
-        expect(code).toBe(1001);
+        expect(code).toBe(3001);
         expect(reason).toBeString();
         expect(wasClean).toBeTrue();
         done();

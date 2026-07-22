@@ -247,14 +247,13 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
         return false;
     }
     /* HttpContext<SSL>::onWritable shuts the socket down once the buffered
-     * response data has flushed, HTTP_CONNECTION_CLOSE is set and
-     * HTTP_RESPONSE_PENDING is clear, so the FIN is sequenced after the
-     * response bytes (like Node's destroySoon). socket.end() means no more
-     * response bytes will ever be written, so the pending bit is cleared here
-     * too (res.end() may never be called). */
+     * response data has flushed and HTTP_CONNECTION_CLOSE is set, so the FIN
+     * is sequenced after the response bytes (like Node's destroySoon).
+     * HTTP_NODE_SOCKET_ENDED lets that gate fire even when res.end() was never
+     * called (so HTTP_RESPONSE_PENDING is still set). */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
-    httpResponseData->state = (httpResponseData->state | uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE)
-        & ~uWS::HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE
+        | uWS::HttpResponseData<SSL>::HTTP_NODE_SOCKET_ENDED;
     return true;
 }
 

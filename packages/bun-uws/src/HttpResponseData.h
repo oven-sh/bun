@@ -140,13 +140,19 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * into the shared word so the shared response-end path (internalEnd) never
          * has to touch the node-only field. */
         HTTP_NODE_HAS_RESPONSE_TRAILERS = 1 << 16,
+        /* node:http socket.end() deferred its FIN because response bytes were
+         * still buffered. onWritable shuts the socket down once the buffer has
+         * drained even when HTTP_RESPONSE_PENDING is still set (res.end() may
+         * never be called; in Node the shared Writable queue orders the FIN
+         * after every byte handed to res.write()). */
+        HTTP_NODE_SOCKET_ENDED = 1 << 17,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
-            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN,
+            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_NODE_SOCKET_ENDED,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is

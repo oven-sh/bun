@@ -85,7 +85,11 @@ export interface CrashSig {
   frames: string[]; // the printed backtrace lines, for the card
 }
 export function detectCrash(stdout: string, stderr: string): CrashSig | null {
-  const text = stderr + "\n" + stdout;
+  // A crashing CHILD's report reaches us via the parent's test-failure
+  // output with its newlines JSON-escaped ("panic: ...\n???:?:?: ...") -
+  // unescape first, or the signature swallows the escaped backtrace and
+  // the same crash gets two keys depending on which layer printed it.
+  const text = (stderr + "\n" + stdout).replace(/\\n/g, "\n").replace(/\\t/g, "\t");
   for (const { re, kind } of CRASH_SIGNATURES) {
     const m = re.exec(text);
     if (m) {

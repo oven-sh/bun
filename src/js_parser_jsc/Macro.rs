@@ -580,11 +580,15 @@ impl<'a> Run<'a> {
         };
 
         let global = vm.global();
-        let result = vm.run_with_api_lock(|| {
-            macro_callback
-                .call(global, JSValue::ZERO, args)
-                .unwrap_or_else(|_| global.try_take_exception().unwrap_or(JSValue::ZERO))
-        });
+        let result = vm.run_with_api_lock(|| macro_callback.call(global, JSValue::ZERO, args));
+
+        let result = match result {
+            Ok(v) => v,
+            Err(e) => {
+                global.report_active_exception_as_unhandled(e);
+                return Err(MacroError::MacroFailed);
+            }
+        };
 
         let mut runner = Run {
             caller,

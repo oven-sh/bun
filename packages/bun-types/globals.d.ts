@@ -1074,7 +1074,7 @@ interface ArrayBuffer {
   /**
    * Resize an ArrayBuffer in-place.
    */
-  resize(byteLength: number): ArrayBuffer;
+  resize(byteLength: number): void;
 
   /**
    * Returns a section of an ArrayBuffer.

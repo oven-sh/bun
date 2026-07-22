@@ -722,16 +722,20 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
           const inflight = Promise.withResolvers();
           const release = Promise.withResolvers();
           let hits = 0;
+          // Routes-only (no top-level fetch) so an unmatched path reaches the
+          // on_404 fallback rather than on_request.
           const server = Bun.serve({
             port: 0,
             hostname: "127.0.0.1",
             idleTimeout: 0,
-            routes: { "/s": new Response("static") },
-            async fetch() {
-              hits++;
-              inflight.resolve();
-              await release.promise;
-              return new Response("ok", { headers: { "content-length": "2" } });
+            routes: {
+              "/s": new Response("static"),
+              "/hold": async () => {
+                hits++;
+                inflight.resolve();
+                await release.promise;
+                return new Response("ok", { headers: { "content-length": "2" } });
+              },
             },
           });
           const port = server.port;
@@ -744,15 +748,15 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
           s.on("close", () => { closed = true; waiter.p.resolve(); });
           s.on("error", e => { closed = true; waiter.p.resolve(); connected.reject(e); });
           await connected.promise;
-          s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+          s.write("GET /hold HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
           await inflight.promise;
           server.stop(false);
-          // Post-stop requests pipelined behind the held one (dynamic, static,
-          // and an unmatched path) must each be answered 503 + Connection:
-          // close instead of dispatching.
-          s.write("GET /after HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          // Post-stop requests pipelined behind the held one must each be
+          // answered 503 + Connection: close instead of dispatching: a
+          // per-route handler, a static route, and the on_404 fallback.
+          s.write("GET /hold HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
           s.write("GET /s HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
-          s.write("GET /s HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          s.write("GET /nope HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
           release.resolve();
           const until = Date.now() + 2000;
           while (!closed && Date.now() < until) {
@@ -770,10 +774,10 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const out = JSON.parse(stdout.trim() || "{}");
-    // Every pipelined request after stop() is 503 (never 200); the socket
-    // closes once the 503 run has flushed. How many of the three 503s the
-    // client observes before FIN is up to uWS's close sequencing, so only
-    // assert none of them is a 200.
+    // Every pipelined request after stop() is 503 (never 200 or 404); the
+    // socket closes once the 503 run has flushed. How many of the three 503s
+    // the client observes before FIN is up to uWS's close sequencing, so only
+    // assert none of them dispatched.
     expect({ stderr, first: out.first, hits: out.hits, closed: out.closed, exitCode }).toEqual({
       stderr: "",
       first: "200",
@@ -782,6 +786,7 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
       exitCode: 0,
     });
     expect(out.rest?.length).toBeGreaterThan(0);
+    expect(out.rest).not.toContain("404");
     expect(out.rest).not.toContain("200");
   });
 });

@@ -2779,6 +2779,10 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
+        if !self.has_listener() {
+            respond_stopped_503(resp);
+            return;
+        }
         if !matches!(self.config.address, server_config::Address::Unix(_))
             && (!bake::is_allowed_host_header(req, Some(&self.config.address))
                 || !resp
@@ -3416,6 +3420,10 @@ where
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
+        if !self.has_listener() {
+            respond_stopped_503(resp);
+            return;
+        }
         if cfg!(debug_assertions) {
             // NOTE: scoped_log! expands each arg twice (ANSI/no-ANSI branches);
             // copy to owned buffers so the two `&req` borrows in the expansion

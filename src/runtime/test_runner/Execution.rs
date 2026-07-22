@@ -145,11 +145,13 @@ impl ConcurrentGroup {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum ExpectAssertions {
     NotSet,
     AtLeastOne,
-    Exact(u32),
+    /// The raw numeric argument to `expect.assertions(n)`, recorded without
+    /// validation. A value no `expect_call_count` can equal always fails.
+    Exact(f64),
 }
 
 pub struct ExecutionSequence {
@@ -635,7 +637,7 @@ impl Execution {
                 }
             }
             ExpectAssertions::Exact(expected) => {
-                if sequence.expect_call_count != expected
+                if (sequence.expect_call_count as f64) != expected
                     && sequence.result.is_pass(PendingIs::PendingIsPass)
                 {
                     sequence.result = Result::FailBecauseExpectedAssertionCount;

@@ -1682,36 +1682,6 @@ impl Expect {
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
-        if arguments.is_empty() {
-            return Err(global_this.throw_invalid_arguments(format_args!("expect.assertions() takes 1 argument")));
-        }
-
-        let expected: JSValue = arguments[0];
-
-        if !expected.is_number() {
-            let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-            return Err(global_this.throw(format_args!(
-                "Expected value must be a non-negative integer: {}",
-                expected.to_fmt(&mut fmt),
-            )));
-        }
-
-        let expected_assertions: f64 = expected.to_number(global_this)?;
-        if expected_assertions.round() != expected_assertions
-            || expected_assertions.is_infinite()
-            || expected_assertions.is_nan()
-            || expected_assertions < 0.0
-            || expected_assertions > u32::MAX as f64
-        {
-            let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-            return Err(global_this.throw(format_args!(
-                "Expected value must be a non-negative integer: {}",
-                expected.to_fmt(&mut fmt),
-            )));
-        }
-
-        let unsigned_expected_assertions: u32 = expected_assertions as u32;
-
         let Some(buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
@@ -1720,9 +1690,27 @@ impl Expect {
         let Some(execution) = state_data.sequence(buntest) else {
             return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
-        execution.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
 
-        Ok(JSValue::UNDEFINED)
+        // Jest records any numeric argument verbatim and compares it at end-of-test, so a
+        // bogus count (negative, non-integer, NaN, Infinity) fails the test there instead
+        // of throwing here, where a try/catch in the test body would swallow it.
+        let expected = arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
+        if expected.is_number() {
+            execution.expect_assertions = ExpectAssertions::Exact(expected.as_number());
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        // A non-number is recorded as NaN (which no assertion count can equal) before the
+        // TypeError, so the test still fails at the end even when the throw is caught.
+        execution.expect_assertions = ExpectAssertions::Exact(f64::NAN);
+        if arguments.is_empty() {
+            return Err(global_this.throw_invalid_arguments(format_args!("expect.assertions() takes 1 argument")));
+        }
+        let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+        Err(global_this.throw(format_args!(
+            "Expected value must be a number: {}",
+            expected.to_fmt(&mut fmt),
+        )))
     }
 
 

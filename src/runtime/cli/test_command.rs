@@ -821,14 +821,14 @@ impl CommandLineReporter {
                         if let bun_test::ExpectAssertions::Exact(n) = sequence.expect_assertions {
                             n
                         } else {
-                            12345
+                            12345.0
                         };
                     Output::err(
                         crate::Error::AssertionError,
                         "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
                         (
-                            expected_count,
-                            if expected_count == 1 { "" } else { "s" },
+                            bun_fmt::double(expected_count),
+                            if expected_count == 1.0 { "" } else { "s" },
                             sequence.expect_call_count,
                             if sequence.expect_call_count == 1 {
                                 ""

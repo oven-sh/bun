@@ -158,7 +158,6 @@ export type LinuxImageBase = {
   readonly release: string;
   readonly abi: LinuxAbi;
   readonly cloud: "aws";
-  /** FLOATING: the newest AMI matching this glob at bake time. */
   /** The FLOATING base AMI: newest AMI matching nameGlob owned by owner (an
    * AWS owner alias like "amazon" or an owner account ID). sshUsername is
    * the login the base image expects — a per-distro fact, stated here rather

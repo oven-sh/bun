@@ -1308,7 +1308,7 @@ async function getPipelineOptions() {
   }
 
   // BUILDKITE_MESSAGE is the commit subject line only — option tags like
-  // [publish images] must appear in the subject, not the commit body.
+  // [sign windows] must appear in the subject, not the commit body.
   const commitMessage = getCommitMessage();
 
   /**
@@ -1489,8 +1489,8 @@ async function getPipeline(options = {}) {
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });
           testStepKeys.push(step.key);
-          // Test shards run on their native platform image; on [build images]
-          // runs they must wait for that freshly-baked image before starting.
+          // Test shards run on their native platform image; when this build
+          // baked that image they must wait for it before starting.
           const imageKey = getImageKey(target);
           const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
           return getStepWithDependsOn(
@@ -1519,8 +1519,8 @@ async function getPipeline(options = {}) {
   if (shouldSignWindows) {
     const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
     if (windowsPlatforms.length > 0) {
-      // Signing runs on a native Windows x64 box — on [build images] runs it
-      // requests the freshly baked native Windows image, so wait for it.
+      // Signing runs on a native Windows x64 box — when this build baked that
+      // image it requests the fresh one, so wait for it.
       steps.push(
         getStepWithDependsOn(
           getWindowsSignStep(windowsPlatforms, options),

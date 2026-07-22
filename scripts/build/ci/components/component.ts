@@ -8,8 +8,8 @@
 // is the single hashed source of truth" true while every thing lives in
 // its own file:
 //
-//   - change a component's CODE  → hashes do not move (recipe code is
-//     outside the hash, by design — see spec.epoch);
+//   - change a component's CODE  → the recipe hash moves and the images
+//     for that platform re-bake (recipe.ts scopes it per OS);
 //   - change a component's FACTS → the spec entry changed → its images
 //     re-bake automatically.
 //

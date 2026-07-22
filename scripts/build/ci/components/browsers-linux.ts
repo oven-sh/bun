@@ -9,12 +9,9 @@ import type { Component } from "./component.ts";
 import { artifact } from "./component.ts";
 import { installPackages } from "./system-linux.ts";
 
-/**
- * The single predicate for "this image gets Google Chrome (a .deb)": an
- * x64 image with a chrome .deb URL. Both the artifact declaration and the
- * step gate use it, so they can never disagree (a truthy check and a
- * !== null check diverge on an empty string).
- */
+/** The single predicate for "this image ships Google Chrome": an x64
+ * image with a chrome .deb URL. The artifact declaration and the step gate
+ * both use it, so they cannot disagree. */
 function hasChromeDeb(image: LinuxImage): image is LinuxImage & { chromeDebUrl: string } {
   return image.arch === "x64" && !!image.chromeDebUrl;
 }

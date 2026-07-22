@@ -37,6 +37,9 @@ const NON_RECIPE = new Set([
   "scripts/build/ci/check.ts",
   "scripts/build/ci/existence.ts",
   "scripts/build/ci/CLAUDE.md",
+  // The node-fetch shim for the orchestrator/pipeline agents; the bake VM
+  // fetches its own node inline (delivery.ts / packer.ts) and never runs it.
+  "scripts/build/ci/pinned-node.mjs",
 ]);
 
 /** Recipe files that produce only ONE platform's images. Any recipe file

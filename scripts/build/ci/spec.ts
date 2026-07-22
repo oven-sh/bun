@@ -8,8 +8,7 @@
 // referenced by each entry, so there is exactly one place to change them.
 // Nothing else in the repo may re-declare one of these values — bootstrap,
 // ci.mjs, machine.mjs, and scripts/build/* import them from here. URL
-// construction and other logic over this data lives in ./artifacts.ts,
-// deliberately outside the hash.
+// construction and other logic over this data lives in ./artifacts.ts.
 //
 // The types are the checklist: LinuxBuildHostImage requires the cross
 // toolchains that LinuxTestImage may not have; WindowsX64Image requires the
@@ -17,26 +16,24 @@
 // A field that only some images bake exists only on those images' types.
 //
 // An image is named `${entry.key}-${hash}` (see ./naming.ts) where the hash
-// digests `epoch` + that entry — its ENTIRE manifest — and nothing else. So:
+// digests `epoch`, that entry's ENTIRE manifest, the artifacts it resolves
+// to, and the recipe code that produces it (./recipe.ts). So:
 //
-//   - Change a fact an image references → that image's hash changes → CI
-//     bakes it fresh on that branch and reuses it on every later push.
-//     There is no `[build images]` / `[publish images]` step and no version
-//     number to bump; merging to main IS publishing, because main computes
-//     the same hash the branch already baked.
+//   - Change a fact an image references, or the code that builds it → its
+//     hash changes → CI bakes it fresh on that branch and reuses it on every
+//     later push. There is no `[build images]` / `[publish images]` step
+//     and no version number to bump; merging to main IS publishing, because
+//     main computes the same hash the branch already baked.
 //
-//   - Change bootstrap CODE (scripts/build/ci/bootstrap/) or agent code
-//     (scripts/agent.mjs) without changing a fact → hashes do NOT change,
-//     and existing images are reused. When such a change must ship into
-//     images, bump `epoch` below. That is the only manual step left, and
-//     it is deliberate: recipe-code edits ride the next bake by default,
-//     exactly as they always have.
+//   - Whether an image bakes is a mechanical consequence of what changed —
+//     never something to remember, and never possible to fool by editing
+//     code without renaming the image.
 //
 // What a hash means: "same recipe", not "same bytes". Some inputs float by
 // nature (OS package repositories, `latest` cloud base images, installer
 // scripts served from a fixed URL). Those are marked FLOATING below. When one
 // of them drifts underneath us in a way that breaks the image, bump `epoch`
-// to force a re-bake.
+// to force a re-bake — the one input that exists solely to be bumped.
 //
 // This module is imported by both node (>= 25, via type stripping) and bun.
 // Keep it dependency-free, side-effect-free, function-free, and made of
@@ -48,14 +45,14 @@
 
 /**
  * Included in every image's hash. Bump to force every image to re-bake
- * without changing any fact — for a bootstrap/agent code change that must
- * reach the images, or for a floating input that drifted.
+ * without changing any fact or code — for when a FLOATING input drifted
+ * underneath us in a way that broke the image.
  */
 export const epoch = 1;
 
-/** Packer, which bakes every CI image (Linux via amazon-ebs, Windows via
- * azure-arm). One tool, so its pins are shared facts. Bumping these does
- * not change what is ON any image, so hashes are unaffected. */
+/** Packer + provider plugin pins for the Windows bake (azure-arm). These
+ * are recipe inputs: spec.ts is hashed, so bumping a pin renames the images
+ * and rebakes them — a Packer upgrade legitimately can change the result. */
 export const packer = {
   version: "1.15.0",
   amazonPluginVersion: "1.3.9",
@@ -632,7 +629,6 @@ const linuxBuildHostComponents = [
   "cleanup",
 ] as const;
 
-/** The install sequence every windows image shares. */
 /** The install sequence every windows image shares. visual-studio
  * precedes rust and pdb-addr2line: cargo (and rustc's msvc target) link
  * through the MSVC linker and Windows SDK libraries that Visual Studio

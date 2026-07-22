@@ -2658,6 +2658,71 @@ pub(crate) fn install_isolated_packages(
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
 
+        // Populate `packages_with_blocked_scripts` for the "Blocked N postinstalls"
+        // install-summary hint. The hoisted installer fills this per-package during
+        // `install_package_with_name_and_resolution`; isolated tasks skip untrusted
+        // packages without recording anything (worker-thread `Step::Scripts`), so
+        // account for them here on the main thread once all tasks have finished.
+        {
+            let pkg_metas = pkgs.items_meta();
+            let pkg_script_lists = pkgs.items_scripts();
+            let mut log = bun_ast::Log::init();
+            for _entry_id in 0..store.entries.len() {
+                let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
+                let node_id = entry_node_ids[entry_id.get() as usize];
+                let pkg_id = node_pkg_ids[node_id.get() as usize];
+                let dep_id = node_dep_ids[node_id.get() as usize];
+                if dep_id == invalid_dependency_id {
+                    continue;
+                }
+                let pkg_res = pkg_resolutions[pkg_id as usize];
+                if matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+                    continue;
+                }
+                if !pkg_metas[pkg_id as usize].has_install_script() {
+                    continue;
+                }
+                let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
+                let alias = dep.name.slice(string_buf);
+                let truncated_dep_name_hash =
+                    dep.name_hash as crate::TruncatedPackageNameHash;
+                let is_trusted = installer
+                    .trusted_dependencies_from_update_requests
+                    .get(&truncated_dep_name_hash)
+                    .is_some_and(|n| **n == *alias)
+                    || lockfile_ro.has_trusted_dependency(
+                        alias,
+                        pkg_names[pkg_id as usize].slice(string_buf),
+                        &pkg_res,
+                    );
+                if is_trusted {
+                    continue;
+                }
+                let mut pkg_cwd = AbsPath::init_top_level_dir();
+                installer.append_store_path(&mut pkg_cwd, entry_id);
+                let mut pkg_scripts = pkg_script_lists[pkg_id as usize];
+                let count = match pkg_scripts.get_list(
+                    &mut log,
+                    lockfile_ro,
+                    &mut pkg_cwd,
+                    alias,
+                    &pkg_res,
+                ) {
+                    Ok(Some(list)) => list.total as usize,
+                    _ => 0,
+                };
+                if count > 0 {
+                    let entry = summary
+                        .packages_with_blocked_scripts
+                        .get_or_put(truncated_dep_name_hash)?;
+                    if !entry.found_existing {
+                        *entry.value_ptr = 0;
+                    }
+                    *entry.value_ptr += count;
+                }
+            }
+        }
+
         return Ok(summary);
     }
 }

@@ -11,6 +11,7 @@ import {
   readdirSorted,
   runBunInstall,
   stderrForInstall,
+  tmpdirSync,
 } from "harness";
 import { join, sep } from "path";
 
@@ -3999,3 +4000,166 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
   });
 }
+
+// These tests use a self-contained registry instead of verdaccio because the
+// verdaccio fixture set is installed under a hoisted `setupTest()`, and the
+// isolated-linker code path needs a workspace layout.
+describe("pm untrusted/trust under the isolated linker", () => {
+  function makeTarball(pkg: Record<string, unknown>): Uint8Array {
+    const enc = new TextEncoder();
+    const hdr = (name: string, size: number) => {
+      const h = new Uint8Array(512);
+      const put = (s: string, o: number) => h.set(enc.encode(s), o);
+      put(name, 0);
+      put("0000644\0", 100);
+      put("0000000\0", 108);
+      put("0000000\0", 116);
+      put(size.toString(8).padStart(11, "0") + "\0", 124);
+      put("00000000000\0", 136);
+      h.fill(0x20, 148, 156);
+      h[156] = 0x30;
+      put("ustar\0", 257);
+      put("00", 263);
+      let sum = 0;
+      for (let i = 0; i < 512; i++) sum += h[i];
+      put(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+      return h;
+    };
+    const entry = (name: string, data: string) => {
+      const body = enc.encode(data);
+      const pad = new Uint8Array((512 - (body.length % 512)) % 512);
+      return [hdr(name, body.length), body, pad];
+    };
+    const parts = [
+      ...entry("package/package.json", JSON.stringify(pkg)),
+      ...entry("package/index.js", "module.exports = {}"),
+      new Uint8Array(1024),
+    ];
+    const out = new Uint8Array(parts.reduce((a, x) => a + x.length, 0));
+    let off = 0;
+    for (const p of parts) {
+      out.set(p, off);
+      off += p.length;
+    }
+    return Bun.gzipSync(out);
+  }
+
+  test("finds and runs workspace-member dep scripts in node_modules/.bun", async () => {
+    const pkgName = "lifecycle-postinstall-pkg";
+    const pj = {
+      name: pkgName,
+      version: "1.0.0",
+      scripts: {
+        postinstall: `${bunExe()} -e 'require("fs").writeFileSync("RAN-marker","ok")'`,
+      },
+    };
+    const tgz = makeTarball(pj);
+    const integrity =
+      "sha512-" + new Bun.CryptoHasher("sha512").update(tgz).digest("base64");
+
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname.endsWith(".tgz")) return new Response(tgz);
+        return Response.json({
+          name: pkgName,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              ...pj,
+              hasInstallScript: true,
+              dist: { tarball: `${server.url}${pkgName}-1.0.0.tgz`, integrity },
+            },
+          },
+        });
+      },
+    });
+
+    const packageDir = tmpdirSync();
+    const env = {
+      ...baseEnv,
+      BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+    };
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\nregistry = "${server.url}"\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"\nlinker = "isolated"\n`,
+    );
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+    );
+    await mkdir(join(packageDir, "packages", "b"), { recursive: true });
+    await write(
+      join(packageDir, "packages", "b", "package.json"),
+      JSON.stringify({
+        name: "ws-b",
+        version: "1.0.0",
+        dependencies: { [pkgName]: "1.0.0" },
+      }),
+    );
+
+    // install: should report the blocked postinstall
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const out = await stdout.text();
+      const err = stderrForInstall(await stderr.text());
+      expect(err).not.toContain("error:");
+      expect(out).toContain("Blocked 1 postinstall. Run `bun pm untrusted` for details.");
+      expect(await exited).toBe(0);
+    }
+
+    const storePkgDir = join(
+      packageDir,
+      "node_modules",
+      ".bun",
+      `${pkgName}@1.0.0`,
+      "node_modules",
+      pkgName,
+    );
+    expect(await exists(storePkgDir)).toBe(true);
+    expect(await exists(join(storePkgDir, "RAN-marker"))).toBe(false);
+
+    // pm untrusted: should list the dep at its .bun store path
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "pm", "untrusted"],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const out = await stdout.text();
+      expect(await stderr.text()).toContain("bun pm untrusted");
+      expect(out).toContain(join("node_modules", ".bun", `${pkgName}@1.0.0`, "node_modules", pkgName));
+      expect(out).toContain("[postinstall]");
+      expect(await exited).toBe(0);
+    }
+
+    // pm trust: should run the script in the .bun store dir and add to trustedDependencies
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "pm", "trust", pkgName],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const out = await stdout.text();
+      const err = await stderr.text();
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 script ran across 1 package");
+      expect(await exited).toBe(0);
+    }
+
+    expect(await exists(join(storePkgDir, "RAN-marker"))).toBe(true);
+    expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([
+      pkgName,
+    ]);
+  });
+});

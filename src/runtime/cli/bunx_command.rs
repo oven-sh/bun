@@ -695,6 +695,20 @@ impl BunxCommand {
             .put(b"npm_lifecycle_script", opts.package_name)
             .expect("unreachable");
 
+        // `bun create` arms the skip-scanner flag on its own process; propagate
+        // it into the envp we build for every child we launch from bunx (the
+        // `bun add` for the create-* package AND the create-* binary itself,
+        // which then spawns its own `bun install` via `child_process.spawn`
+        // and relies on env inheritance). Without this, on Windows those
+        // grandchildren never see the setenv because `env_loader.load_process`
+        // reads the startup-frozen env snapshot. See oven-sh/bun#31149.
+        if bun_install::SKIP_SECURITY_SCANNER.load(core::sync::atomic::Ordering::Relaxed) {
+            env_loader
+                .map
+                .put(b"BUN_INTERNAL_SKIP_SECURITY_SCANNER", b"true")
+                .expect("oom");
+        }
+
         if opts.package_name == b"bun-repl" {
             env_loader.map.remove(b"BUN_INSPECT_CONNECT_TO");
             env_loader.map.remove(b"BUN_INSPECT_NOTIFY");

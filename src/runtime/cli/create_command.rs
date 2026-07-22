@@ -285,6 +285,19 @@ impl CreateCommand {
 
         env_loader.load_process()?;
 
+        // `bun create` armed `SKIP_SECURITY_SCANNER` in its own process before
+        // getting here; seed the env loader so children we spawn below see it
+        // via the explicit envp we hand `spawn_sync`. On Windows, `load_process`
+        // reads the startup-frozen `environ` snapshot, so the `setenv`/
+        // `SetEnvironmentVariableW` in `set_skip_security_scanner_env` doesn't
+        // reach it — we have to write the var in ourselves. See #31149.
+        if bun_install::SKIP_SECURITY_SCANNER.load(::core::sync::atomic::Ordering::Relaxed) {
+            env_loader
+                .map
+                .put(b"BUN_INTERNAL_SKIP_SECURITY_SCANNER", b"true")
+                .expect("oom");
+        }
+
         let dirname: &[u8] = if positionals.len() == 1 {
             bun_paths::basename(template)
         } else {
@@ -749,7 +762,15 @@ impl CreateCommand {
         let mut preinstall_tasks: Vec<&[u8]> = Vec::new();
         let mut postinstall_tasks: Vec<&[u8]> = Vec::new();
         let mut has_dependencies: bool = false;
-        let path_env = env_loader.map.get(b"PATH").unwrap_or(b"");
+        // Own `PATH` so the shared borrow on `env_loader.map` doesn't prevent
+        // the later `create_null_delimited_env_map(&mut ...)` call for #31149.
+        let path_env_owned: Box<[u8]> = env_loader
+            .map
+            .get(b"PATH")
+            .unwrap_or(b"")
+            .to_vec()
+            .into_boxed_slice();
+        let path_env: &[u8] = &path_env_owned;
 
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
@@ -1503,9 +1524,26 @@ impl CreateCommand {
                 Output::flush();
             }
 
+            // If we armed the skip-scanner flag above we put it into
+            // `env_loader.map`, so build an explicit envp from that map instead
+            // of letting the spawn fall back to `bun_sys::environ_ptr()` (which
+            // on Windows is a startup-frozen snapshot that never sees our
+            // additions). See #31149. `install_envp_storage` keeps the
+            // backing buffers alive for the duration of the spawn.
+            let install_envp_storage = if bun_install::SKIP_SECURITY_SCANNER
+                .load(::core::sync::atomic::Ordering::Relaxed)
+            {
+                Some(env_loader.map.create_null_delimited_env_map()?)
+            } else {
+                None
+            };
+            let install_envp_ptr: Option<*const *const ::core::ffi::c_char> = install_envp_storage
+                .as_ref()
+                .map(|m| m.as_ptr().cast::<*const ::core::ffi::c_char>());
+
             let process = spawn_sync::spawn(&spawn_sync::Options {
                 argv: install_args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-                envp: None,
+                envp: install_envp_ptr,
                 cwd: Box::from(destination),
                 stderr: spawn_sync::SyncStdio::Inherit,
                 stdout: spawn_sync::SyncStdio::Inherit,
@@ -1523,6 +1561,7 @@ impl CreateCommand {
                 ..Default::default()
             })?;
             let _ = process?;
+            drop(install_envp_storage);
         }
 
         if !user_skipped_install && !postinstall_tasks.is_empty() {

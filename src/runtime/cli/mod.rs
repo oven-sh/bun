@@ -1746,6 +1746,56 @@ pub mod command {
         Ok(())
     }
 
+    /// Arm the in-process `bun_install::SKIP_SECURITY_SCANNER` flag and export
+    /// the companion `BUN_INTERNAL_SKIP_SECURITY_SCANNER=true` env var.
+    /// Used by `bun create` to prevent a globally-configured
+    /// `install.security.scanner` from blocking scaffolding. See #31149.
+    ///
+    /// On Windows, `bun_sys::environ()` is a WTF-8 snapshot frozen at startup,
+    /// so a `SetEnvironmentVariableW` call alone isn't enough: `env_loader`
+    /// reads the snapshot and `spawn_sync` with `envp: None` passes the
+    /// snapshot pointer to the child. The static flag is what in-process
+    /// readers (and `bunx_command` when it builds an explicit `envp`) check;
+    /// setenv/SetEnvironmentVariableW is the belt-and-suspenders for Unix
+    /// fork-inherit (e.g. a grandchild `bun install` that `create-next-app`
+    /// spawned directly via `child_process.spawn("bun", …)`).
+    fn set_skip_security_scanner_env() {
+        bun_install::SKIP_SECURITY_SCANNER.store(true, core::sync::atomic::Ordering::Relaxed);
+        #[cfg(unix)]
+        {
+            // SAFETY: both pointers are 'static NUL-terminated byte string
+            // literals; `setenv` copies into libc's environ block.
+            unsafe {
+                libc::setenv(
+                    c"BUN_INTERNAL_SKIP_SECURITY_SCANNER".as_ptr(),
+                    c"true".as_ptr(),
+                    1,
+                );
+            }
+        }
+        #[cfg(windows)]
+        {
+            unsafe extern "C" {
+                fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
+            }
+            // `bun_core::w!` is NOT NUL-terminated — SetEnvironmentVariableW
+            // needs one, so park both in small stack buffers with a trailing 0.
+            let name_w = bun_core::w!("BUN_INTERNAL_SKIP_SECURITY_SCANNER");
+            let value_w = bun_core::w!("true");
+            let mut name_buf = [0u16; 64];
+            let mut value_buf = [0u16; 8];
+            debug_assert!(name_w.len() < name_buf.len());
+            debug_assert!(value_w.len() < value_buf.len());
+            name_buf[..name_w.len()].copy_from_slice(name_w);
+            value_buf[..value_w.len()].copy_from_slice(value_w);
+            // SAFETY: both buffers hold a NUL-terminated wide string; Win32
+            // copies the bytes into its env block and does not retain the pointer.
+            unsafe {
+                let _ = SetEnvironmentVariableW(name_buf.as_ptr(), value_buf.as_ptr());
+            }
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn bun_create(log: &mut bun_ast::Log) -> crate::Result<()> {
@@ -1760,6 +1810,14 @@ pub mod command {
                 b"elysia", b"elysia-buchta", b"stric",
             };
         }
+
+        // A security scanner configured in the global `~/.bunfig.toml` has no
+        // way to be listed as a dependency of a project that does not yet
+        // exist — `bun create` (and the create-* packages it drives) would
+        // fail at the first `bun install` with `SecurityScannerNotInDependencies`.
+        // Export a flag for every child bun process inherited from this one.
+        // See oven-sh/bun#31149.
+        set_skip_security_scanner_env();
 
         // Create command wraps bunx
         let ctx = init(Tag::CreateCommand, log)?;

@@ -264,9 +264,8 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
       //   // @ts-expect-error
       //   this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
       // }
+      process.nextTick(emitOpenReady, this);
       callback();
-      this.emit("open", this.fd);
-      this.emit("ready");
       return;
     }
 
@@ -275,9 +274,8 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
         callback(err);
       } else {
         this.fd = fd;
+        process.nextTick(emitOpenReady, this);
         callback();
-        this.emit("open", this.fd);
-        this.emit("ready");
       }
     });
   }
@@ -286,6 +284,22 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
 readStreamPrototype.open = streamNoop;
 
 readStreamPrototype._construct = streamConstruct;
+
+// _construct's callback schedules the `constructed` flag flip via
+// process.nextTick. Node drains nextTick before microtasks after an I/O
+// callback, so `await once(stream, "open")` resumes with the stream already
+// constructed. Bun drains microtasks first, so emitting "open" synchronously
+// let the awaited continuation observe `constructed === false`; the next
+// write() buffered instead of dispatching, and a same-tick destroy() discarded
+// it (node persists those bytes). Queue "open"/"ready" before the _construct
+// callback so both land in the same nextTick batch as `onConstruct`, with
+// "open" first: "open" still precedes "finish"/"data", and microtasks scheduled
+// from the "open" listener run after `onConstruct` has marked the stream
+// constructed.
+function emitOpenReady(stream) {
+  stream.emit("open", stream.fd);
+  stream.emit("ready");
+}
 
 readStreamPrototype._read = function (n) {
   n = this.pos !== undefined ? $min(this.end - this.pos + 1, n) : $min(this.end - this.bytesRead + 1, n);

@@ -395,13 +395,10 @@ private:
             /* node:http compat: the request arrived while an earlier response on
              * this connection is still in flight.
              * (For !IsNodeHttp, HTTP_RESPONSE_PENDING was handled above and
-             * hasQueuedPipelinedResponses stays false, so this branch is never
-             * taken; the else runs.) */
+             * hasQueuedPipelinedResponses stays false, so the else runs.) */
             bool hasQueuedPipelinedResponses = false;
             if constexpr (IsNodeHttp) hasQueuedPipelinedResponses = httpResponseData->nodeHttpQueuedPipelinedCount > 0;
             if (IsNodeHttp && ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || hasQueuedPipelinedResponses)) {
-                if constexpr (IsNodeHttp) {
-
                 /* node:http supports async pipelining: the request is dispatched
                  * while the previous response is still in flight and the JS layer
                  * queues its response (res.socket === null until it becomes the
@@ -420,7 +417,6 @@ private:
                 if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
                     ((HttpResponse<SSL> *) s)->pause();
-                }
                 }
             } else {
                 /* Reset httpResponse */

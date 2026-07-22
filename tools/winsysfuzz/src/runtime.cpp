@@ -134,6 +134,55 @@ HandleEnt g_handles[kHandleSlots];
 
 inline int HandleSlot(ULONG_PTR h) { return (int)(((uintptr_t)h >> 2) & (kHandleSlots - 1)); }
 
+// --- pending receives: poison peer data at COMPLETION time ---------------
+// An overlapped AFD_RECV returns STATUS_PENDING; the received bytes land
+// LATER, when its completion (same IO_STATUS_BLOCK pointer, Information =
+// byte count) is dequeued by NtRemoveIoCompletionEx. So a garbage rule on
+// a receive records the WSABUF array here at entry, keyed by the IOSB, and
+// the poison is applied when the matching completion is dequeued - real
+// peer data, corrupted the way a hostile/broken remote would send it.
+struct PendingRecv {
+  volatile ULONG_PTR iosb; // 0 = empty slot; the completion's identity
+  ULONG_PTR wsabuf;        // WSABUF array (from AFD_RECV_INFO)
+  ULONG count;             // BufferCount
+  ULONG seed;              // rule status = corruption seed
+};
+constexpr int kPendingSlots = 1024;
+PendingRecv g_pending[kPendingSlots];
+inline int PendingSlot(ULONG_PTR io) { return (int)(((uintptr_t)io >> 4) & (kPendingSlots - 1)); }
+
+void RememberRecv(ULONG_PTR iosb, ULONG_PTR wsabuf, ULONG count, ULONG seed) {
+  if (!iosb || !wsabuf) return;
+  PendingRecv& e = g_pending[PendingSlot(iosb)];
+  e.wsabuf = wsabuf;
+  e.count = count;
+  e.seed = seed;
+  e.iosb = iosb; // publish last
+}
+// Poison the transferred bytes of a completed receive; returns true if the
+// completion matched a pending poisoned recv.
+bool PoisonCompletedRecv(ULONG_PTR iosb, ULONG_PTR transferred) {
+  PendingRecv& e = g_pending[PendingSlot(iosb)];
+  if (e.iosb != iosb) return false;
+  uint32_t st = (uint32_t)e.seed * 2654435761u + (uint32_t)transferred;
+  __try {
+    auto* wsa = (unsigned char*)e.wsabuf; // WSABUF{ULONG len; CHAR* buf;} x count
+    size_t left = (size_t)transferred;
+    for (ULONG w = 0; w < e.count && left > 0; w++) {
+      ULONG len = *(ULONG*)(wsa + w * 16);
+      auto* b = *(unsigned char**)(wsa + w * 16 + 8);
+      size_t take = len < left ? len : left;
+      for (size_t i = 0; i < take; i++) {
+        st = st * 1664525u + 1013904223u;
+        if ((st >> 29) == 0) b[i] ^= (unsigned char)(st >> 21);
+      }
+      left -= take;
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {}
+  e.iosb = 0;
+  return true;
+}
+
 // Classify a decoded NT path into a handle kind, and keep its readable tail.
 void RememberHandle(ULONG_PTR h, const wchar_t* path, size_t units) {
   if (!h || !units) return;
@@ -527,6 +576,25 @@ bool CallCtx::PreFault() {
     fault_ = r.mode;
     mangle_ = r.mangle;
     injected_ = r.status;
+    // A garbage mangle on an overlapped AFD_RECV cannot be applied at exit
+    // (the data arrives later, on completion): record the WSABUF array now,
+    // keyed by the IOSB, and the dequeue hook poisons it when it completes.
+    if (fault_ == Fault::Mangle && mangle_ == MangleKind::Garbage &&
+        sys_ == SYS_NtDeviceIoControlFile) {
+      int8_t xi = kHooks[sys_].ioctlIndex;
+      int8_t ii = kHooks[sys_].iosbIndex;
+      int8_t bi = kHooks[sys_].bufIndex;
+      if (xi >= 0 && ii >= 0 && bi >= 0 && xi < argc_ && ii < argc_ && bi < argc_ &&
+          ((ULONG)args_[xi] == 0x12017 || (ULONG)args_[xi] == 0x1201B)) {
+        __try {
+          auto* info = (ULONG_PTR*)args_[bi]; // AFD_RECV_INFO{WSABUF* arr; ULONG cnt;...}
+          if (info && info[0]) {
+            RememberRecv(args_[ii], info[0], (ULONG)info[1], (ULONG)injected_);
+            deferredRecv_ = true; // poison happens at completion time
+          }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+      }
+    }
     if (fault_ == Fault::Mangle && mangle_ == MangleKind::Short) {
       // Realistic short transfer: shrink the requested Length BEFORE the
       // call so the kernel really moves fewer bytes - the file offset,
@@ -729,6 +797,10 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
                 }
               } __except (EXCEPTION_EXECUTE_HANDLER) {
               }
+            } else if (sys_ == SYS_NtDeviceIoControlFile || sys_ == SYS_NtFsControlFile) {
+              // Any other ioctl: args_[bi] is a request/info struct, never a
+              // payload we may poison. (Overlapped AFD_RECV is handled at
+              // completion time; a non-AFD ioctl gets no garbage at all.)
             } else if (!skip && bi >= 0 && bi < argc_ && args_[bi] && n > 0) {
               applied = true;
               auto* b = (unsigned char*)args_[bi];
@@ -749,6 +821,27 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
       }
       // Honest tagging: an infeasible/inapplicable mangle did not fire.
       if (applied) tag = " !M";
+      // A garbage mangle deferred to completion time DID engage (tag it so
+      // the run counts as fired); the poison lands when the recv completes.
+      if (deferredRecv_) tag = " !M";
+    }
+    // Completion-time poison: a dequeued completion whose IO_STATUS_BLOCK
+    // matches a pending poisoned AFD_RECV gets its transferred bytes
+    // corrupted now, when the data has actually landed. The dequeue's out
+    // array is FILE_IO_COMPLETION_INFORMATION{KeyContext, ApcContext,
+    // IoStatusBlock{Status, Information}} (32 bytes each); AFD echoes the
+    // original IOSB pointer as ApcContext for overlapped socket ops.
+    if (sys_ == SYS_NtRemoveIoCompletionEx && (ULONG)ret == 0 && argc_ > 3) {
+      __try {
+        auto* arr = (unsigned char*)args_[1];
+        ULONG n = args_[3] ? *(ULONG*)args_[3] : 0;
+        if (n > 512) n = 512;
+        for (ULONG i = 0; arr && i < n; i++) {
+          ULONG_PTR apc = *(ULONG_PTR*)(arr + i * 32 + 8);
+          ULONG_PTR info = *(ULONG_PTR*)(arr + i * 32 + 24);
+          if (apc && PoisonCompletedRecv(apc, info)) LogNote("# recv completion poisoned at dequeue\n");
+        }
+      } __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
     char rvas[64];
     char kbuf[24];

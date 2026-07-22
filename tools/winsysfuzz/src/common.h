@@ -64,6 +64,7 @@ class CallCtx {
   ULONG_PTR* args_; // mutable: pre-call arg mutation (mangle:short shrinks Length)
   int argc_;
   bool shrunk_ = false; // mangle:short realized by shrinking the requested Length
+  bool deferredRecv_ = false; // garbage on overlapped recv: applied at completion time
   uintptr_t frames_[kMaxFrames];
   uintptr_t bunFrame_ = 0; // first frame within bun.exe's image, else 0
 };

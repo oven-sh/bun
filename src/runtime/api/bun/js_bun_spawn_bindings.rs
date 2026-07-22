@@ -1062,6 +1062,10 @@ fn spawn_maybe_sync(
                 // (uv_loop_init on Windows, epoll_create1/kqueue on POSIX).
                 // Throw instead of letting the unchecked NULL dereference in
                 // us_create_loop segfault the whole process.
+                #[cfg(windows)]
+                for e in &mut extra_fds {
+                    e.deinit();
+                }
                 return Err(throw_spawn_sync_loop_init_failed(global_this));
             };
             sync_loop.prepare(jsc_vm_ptr.cast());

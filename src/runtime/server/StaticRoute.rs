@@ -549,10 +549,14 @@ impl StaticRoute {
         // SAFETY: caller contract.
         unsafe {
             let etag = (*this).headers.get(b"etag").filter(|v| !v.is_empty());
-            let last_modified = (*this)
-                .headers
-                .get(b"last-modified")
-                .and_then(crate::jsc_hooks::parse_http_date);
+            // Deferred: `parse_http_date` allocates + calls into WTF; only run it
+            // when the client actually sent a date-based conditional header.
+            let last_modified = || {
+                (*this)
+                    .headers
+                    .get(b"last-modified")
+                    .and_then(crate::jsc_hooks::parse_http_date)
+            };
 
             // Step 1: If-Match (strong comparison); step 2: If-Unmodified-Since
             // (only when If-Match is absent).
@@ -563,7 +567,7 @@ impl StaticRoute {
                     .header(b"if-unmodified-since")
                     .and_then(crate::jsc_hooks::parse_http_date)
                 {
-                    matches!(last_modified, Some(lm) if lm / 1000 > ius / 1000)
+                    matches!(last_modified(), Some(lm) if lm / 1000 > ius / 1000)
                 } else {
                     false
                 };
@@ -586,7 +590,7 @@ impl StaticRoute {
             {
                 // §13.1.3: 304 when Last-Modified <= If-Modified-Since. HTTP-date
                 // is second-granular, so compare at second precision.
-                match last_modified {
+                match last_modified() {
                     Some(lm) => lm / 1000 <= ims / 1000,
                     None => false,
                 }

@@ -427,10 +427,6 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     }
   }
   const combinedSourceCodeLength = combinedSourceCode.length;
-  // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
-  // same linked blob carries both the builtin function sources and the internal
-  // module sources.
-  globalThis.internalFunctionCombinedSource = combinedSourceCode;
 
   let additionalPrivateNames = new Set();
 
@@ -881,4 +877,9 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
   globalThis.internalFunctionJSSize = totalJSSize;
   globalThis.internalFunctionCount = files.reduce((acc, { functions }) => acc + functions.length, 0);
   globalThis.internalFunctionFileCount = files.length;
+
+  // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
+  // same linked blob carries both the builtin function sources and the internal
+  // module sources.
+  return { combinedSourceCode };
 }

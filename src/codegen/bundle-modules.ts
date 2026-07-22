@@ -302,7 +302,7 @@ function idToPublicSpecifierOrEnumName(id: string) {
   return idToEnumName(id);
 }
 
-await bundleBuiltinFunctions({
+const { combinedSourceCode: functionsSource } = await bundleBuiltinFunctions({
   requireTransformer,
 });
 
@@ -343,7 +343,6 @@ writeIfNotChanged(
 //
 // In debug builds the module sources are read from disk (BUN_DYNAMIC_JS_LOAD_PATH),
 // so every module offset/length is 0. The functions span is still real in debug.
-const functionsSource: string = globalThis.internalFunctionCombinedSource;
 const moduleSpans: { enumName: string; offset: number; length: number }[] = [];
 let blob: Buffer;
 {

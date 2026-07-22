@@ -99,11 +99,19 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       const frames = [...text.matchAll(/(?:^|\n)([^\n]*0x7[Ff][0-9A-Fa-f]{10,}[^\n]*)/g)]
         .map(x => x[1].trim())
         .slice(0, 24);
+      // The FAULTING frame is the top of the printed backtrace: a crash whose
+      // top frame is a system DLL is that module's code faulting (often on
+      // state we poisoned inside it), even when bun frames sit below - e.g.
+      // mswsock!_WSAFDIsSet <- ... <- bun!accept. Only a top frame inside the
+      // exe means bun's own code faulted.
       let boundary: CrashSig["boundary"] = "unknown";
+      const isExe = (f: string) => /0x7[Ff][Ff][0-9AaBb]/.test(f) || /bun(-debug)?\.exe/i.test(f);
+      const isDll = (f: string) => /0x7[Ff][Ff][C-Fc-f]/.test(f);
       if (frames.length) {
-        const inExe = frames.some(f => /0x7[Ff][Ff][0-9AaBb]/.test(f) || /bun(-debug)?\.exe/i.test(f));
-        const inDll = frames.some(f => /0x7[Ff][Ff][C-Fc-f]/.test(f));
-        boundary = inExe ? "bun" : inDll ? "system-module" : "unknown";
+        const top = frames[0];
+        if (isExe(top)) boundary = "bun";
+        else if (isDll(top)) boundary = "system-module";
+        else boundary = frames.some(isExe) ? "bun" : frames.some(isDll) ? "system-module" : "unknown";
       }
       return { kind, signature, detail, boundary, frames };
     }

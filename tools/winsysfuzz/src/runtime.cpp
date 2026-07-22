@@ -623,6 +623,11 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
             // data-path bugs garbage is for). Data files, pipes and
             // sockets stay in scope.
             bool skip = false; // infeasible target => the mangle does not fire
+            // A call whose immediate caller is another module ('o' key) is
+            // that module operating on ITS OWN private buffer (e.g. mswsock's
+            // internal ioctls inside accept/select). Corrupting it sabotages
+            // system code from inside its machinery - not bun's data path.
+            if (KeyOf(frames_[0]).tag == 'o') skip = true;
             int8_t hi = kHooks[sys_].handleIndex;
             if (hi >= 0 && hi < argc_) {
               const HandleEnt* he = LookupHandle(args_[hi]);

@@ -7038,11 +7038,21 @@ pub mod bv2_impl {
                         .expect("oom");
                     }
 
-                    if let Some(named_exports) = named_exports_for_scb {
-                        if result.use_directive == crate::UseDirective::Server {
-                            bun_core::todo_panic!("\"use server\"");
-                        }
-
+                    // "use server": the parser emits the server-side wrap, but the
+                    // client-side createServerReference proxy is not generated yet.
+                    // Skip the cross-graph boundary and warn instead of crashing.
+                    if result.use_directive == crate::UseDirective::Server
+                        && named_exports_for_scb.is_some()
+                    {
+                        let pretty = this.graph.input_files.items_source()[result_source_index]
+                            .path
+                            .pretty;
+                        bun_core::warn!(
+                            "\"use server\" is partially implemented: the server-side wrap is applied, but client-side server-action proxies are not yet generated. Calling these exports from a client module will fail at runtime. (file: {})",
+                            bstr::BStr::new(pretty)
+                        );
+                        bun_core::Output::flush();
+                    } else if let Some(named_exports) = named_exports_for_scb {
                         let separate_ssr_graph = this
                             .framework
                             .as_ref()

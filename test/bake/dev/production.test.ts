@@ -594,4 +594,83 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  test('"use server" module exports are wrapped with registerServerReference', async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-use-server", {
+      // Disable minification so the server bundle stays greppable.
+      "src/index.tsx": `const bundlerOptions = { minify: { whitespace: false, identifiers: false, syntax: false } };
+export default { app: { framework: "react", bundlerOptions: { server: bundlerOptions, client: bundlerOptions, ssr: bundlerOptions } } };`,
+      // Reference every export (named + default) so tree-shaking keeps each
+      // wrap. typeof avoids serializing a server reference at SSG time.
+      "pages/index.tsx": `import logIt, { greet, increment } from "../app/actions";
+
+export default function IndexPage() {
+  return (
+    <div>
+      <span>{typeof greet}</span>
+      <span>{typeof increment}</span>
+      <span>{typeof logIt}</span>
+    </div>
+  );
+}`,
+      "app/actions.ts": `"use server";
+
+export async function greet(formData: FormData) {
+  return "hi " + formData.get("name");
+}
+
+export async function increment(by: number) {
+  return by + 1;
+}
+
+export default async function logIt(message: string) {
+  console.log(message);
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    // --debug-dump-server-files (gated behind BAKE_DEBUGGING_FEATURES, on for
+    // debug/canary builds) writes the in-memory server chunks to dist/.
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app --debug-dump-server-files ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    const stderrText = stderr.toString();
+
+    // The client-side createServerReference proxy is still unimplemented, so the
+    // bundler warns instead of panicking. This asserts the warn+skip path ran.
+    expect(stderrText).toContain('"use server" is partially implemented');
+
+    // Find the dumped server bundle carrying the wrapped exports.
+    const distFiles = [...new Bun.Glob("dist/**/*.js").scanSync(dir)].map(p => path.join(dir, p));
+    let actionsBundle: string | null = null;
+    for (const file of distFiles) {
+      const content = await Bun.file(file).text();
+      if (content.includes("registerServerReference") && content.includes("greet")) {
+        actionsBundle = content;
+        break;
+      }
+    }
+    expect(actionsBundle).not.toBeNull();
+
+    // Each named export and the default export is the third argument (the action
+    // name) of a wrap call, after the module-id string. Pinning the tail keeps
+    // this robust to the temporary module id (path.pretty, see the parser TODO).
+    expect(actionsBundle!).toMatch(/,\s*"[^"]*",\s*"greet"\)/);
+    expect(actionsBundle!).toMatch(/,\s*"[^"]*",\s*"increment"\)/);
+    expect(actionsBundle!).toMatch(/,\s*"[^"]*",\s*"default"\)/);
+
+    // The symbol is imported, not a free reference — record_usage keeps the
+    // generated import from being tree-shaken.
+    expect(actionsBundle!).toMatch(/import\s*\{[^}]*\bregisterServerReference\b[^}]*\}\s*from/);
+
+    expect(exitCode).toBe(0);
+  });
 });

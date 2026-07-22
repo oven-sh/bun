@@ -2861,6 +2861,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         {
+            // The runtime import for this wrap symbol is emitted by the parse
+            // entry prologue, which selects the import name by the same mode.
             match self.options.features.server_components {
                 options::ServerComponents::None | options::ServerComponents::ClientSide => {}
                 options::ServerComponents::WrapExportsForClientReference => {
@@ -2869,9 +2871,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         b"registerClientReference",
                     );
                 }
-                // TODO: these wrapping modes.
+                options::ServerComponents::WrapExportsForServerReference => {
+                    self.server_components_wrap_ref = self.declare_generated_symbol(
+                        js_ast::symbol::Kind::Other,
+                        b"registerServerReference",
+                    )?;
+                }
+                // TODO: function-level "use server" inside non-"use server" modules.
                 options::ServerComponents::WrapAnonServerFunctions => {}
-                options::ServerComponents::WrapExportsForServerReference => {}
             }
 
             // Server-side components: declare "Response" / "bun:app" upfront.
@@ -7587,26 +7594,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(self.options.features.server_components.wraps_exports());
         debug_assert!(self.current_scope == self.module_scope);
 
-        if self.options.features.server_components
-            == options::ServerComponents::WrapExportsForServerReference
-        {
-            bun_core::todo_panic!("registerServerReference");
-        }
+        // TODO: production should use BundleV2's chunk-path unique_key so the id is
+        // stable across builds and doesn't leak absolute paths. Both sides of the
+        // dispatch only need to agree on a string, which path.pretty provides.
+        let module_path =
+            self.new_expr(E::String::init(self.source.path.pretty), bun_ast::Loc::EMPTY);
 
-        let module_path = self.new_expr(
-            E::String::init(if self.options.jsx.development {
-                self.source.path.pretty
-            } else {
-                bun_core::todo_panic!("unique_key here")
-            }),
-            bun_ast::Loc::EMPTY,
-        );
+        // Without this the linker tree-shakes the generated import as unused.
+        self.record_usage(self.server_components_wrap_ref);
 
-        // registerClientReference(
-        //   Comp,
-        //   "src/filepath.tsx",
-        //   "Comp"
-        // );
         let name_expr = self.new_expr(E::String::init(original_name), bun_ast::Loc::EMPTY);
         self.new_expr(
             E::Call {

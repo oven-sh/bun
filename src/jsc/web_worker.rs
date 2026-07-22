@@ -1317,8 +1317,8 @@ impl WebWorker {
             // The pool-thread callback reads this VM's `EventLoop` and the
             // JSC-heap-backed input/output buffers; both are freed below
             // (teardownJSCVM / step-5 dealloc). Runs before the drain so the
-            // completion each job posts is reclaimed by
-            // `release_queued_tasks_for_shutdown`.
+            // completion each job posts is released by the matching
+            // `__bun_release_task_at_shutdown` arm while JSC is still live.
             vm.event_loop_shared().wait_for_pending_work_pool_tasks();
             // Reclaim queued CppTasks (the per-worker stdio/messaging
             // MessagePort drain tasks that can be in self.tasks mid-tick when

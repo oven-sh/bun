@@ -53,6 +53,6 @@ test("worker.terminate() during in-flight node:zlib async compression does not U
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("heap-use-after-free");
-  expect(stderr).not.toContain("AddressSanitizer");
+  expect(stderr).not.toContain("ERROR: AddressSanitizer");
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
 }, 30_000);

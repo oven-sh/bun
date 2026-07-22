@@ -1213,6 +1213,32 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
             unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
             true
         }
+        // Async `node:zlib` write completion that reached the queue after the
+        // worker's last tick (the `work_pool_pending` barrier guarantees the
+        // post lands before this drain). Release `write()`'s acquisitions
+        // (Strong handle, pinned buffers, poll_ref, +1 ref) without calling
+        // the JS write/error callbacks; JSC is still live here.
+        task_tag::NativeZlib | task_tag::NativeBrotli | task_tag::NativeZstd => {
+            macro_rules! release_compression {
+                ($T:ty) => {
+                    // SAFETY: tag identifies pointee; live m_ctx payload kept
+                    // alive by `write()`'s `ref_()`.
+                    unsafe {
+                        node_zlib_binding::CompressionStream::<$T>::release_unrun(
+                            task.ptr.cast::<$T>(),
+                        )
+                    }
+                };
+            }
+            match task.tag {
+                task_tag::NativeZlib => release_compression!(NativeZlib),
+                task_tag::NativeBrotli => release_compression!(NativeBrotli),
+                task_tag::NativeZstd => release_compression!(NativeZstd),
+                // SAFETY: outer arm guard proves one of the three tags matched.
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            }
+            true
+        }
         // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
         // that were already batch-moved into `self.tasks`. Must run before
         // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks

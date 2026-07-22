@@ -88,7 +88,6 @@ impl PostgresSQLStatement {
     /// next `ReadyForQuery`. Used when the server reports the previous
     /// prepared statement is gone (26000) or its cached plan is stale (0A000).
     pub fn reset_for_reprepare(&mut self, prepared_statement_id: u64) {
-        use std::io::Write;
         self.status = Status::Pending;
         self.error_response = None;
         self.fields = Vec::new();
@@ -96,15 +95,8 @@ impl PostgresSQLStatement {
         self.cached_structure = PostgresCachedStructure::default();
         self.needs_duplicate_check = true;
         self.fields_flags = DataCellFlags::default();
-        let name = &self.signature.name;
-        let mut v: Vec<u8> = Vec::new();
-        let _ = write!(
-            &mut v,
-            "P{}${}",
-            bstr::BStr::new(&name[..name.len().min(40)]),
-            prepared_statement_id,
-        );
-        self.signature.prepared_statement_name = v.into_boxed_slice();
+        self.signature
+            .set_prepared_statement_name(prepared_statement_id);
     }
 
     pub fn check_for_duplicate_fields(&mut self) {

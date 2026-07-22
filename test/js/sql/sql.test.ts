@@ -3130,18 +3130,8 @@ if (isDockerEnabled()) {
     //   ]
     // })
 
-    // t('Recreate prepared statements on RevalidateCachedQuery error', async() => {
-    //   const select = () => sql`select name from test`
-    //   await sql`create table test (name text)`
-    //   await sql`insert into test values ('1')`
-    //   await select()
-    //   await sql`alter table test alter column name type int using name::integer`
-    //   return [
-    //     1,
-    //     (await select())[0].name,
-    //     await sql`drop table test`
-    //   ]
-    // })
+    // "Recreate prepared statements on RevalidateCachedQuery error" is covered
+    // by test/js/sql/postgres-prepared-statement-invalidation.test.ts.
 
     // t('Catches connection config errors', async() => {
     //   const sql = postgres({ ...options, user: { toString: () => { throw new Error('wat') } }, database: 'prut' })

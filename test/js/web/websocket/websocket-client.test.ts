@@ -498,7 +498,11 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
   });
 
   it("Bun.serve ServerWebSocket.ping()/pong() throws RangeError for payloads > 125 bytes", async () => {
-    const { promise: result, resolve, reject: failResult } = Promise.withResolvers<{ errs: unknown[]; ok125: number }>();
+    const {
+      promise: result,
+      resolve,
+      reject: failResult,
+    } = Promise.withResolvers<{ errs: unknown[]; ok125: number }>();
     result.catch(() => {});
     await using server = Bun.serve({
       port: 0,

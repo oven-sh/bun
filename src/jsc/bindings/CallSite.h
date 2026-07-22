@@ -35,6 +35,7 @@ private:
     JSC::WriteBarrier<JSC::Unknown> m_function;
     JSC::WriteBarrier<JSC::Unknown> m_functionName;
     JSC::WriteBarrier<JSC::Unknown> m_sourceURL;
+    JSC::WriteBarrier<JSC::Unknown> m_evalOrigin;
     OrdinalNumber m_lineNumber;
     OrdinalNumber m_columnNumber;
     unsigned int m_flags;
@@ -74,6 +75,7 @@ public:
     JSC::JSValue function() const { return m_function.get(); }
     JSC::JSValue functionName() const { return m_functionName.get(); }
     JSC::JSValue sourceURL() const { return m_sourceURL.get(); }
+    JSC::JSValue evalOrigin() const { return m_evalOrigin.get(); }
     OrdinalNumber lineNumber() const { return m_lineNumber; }
     OrdinalNumber columnNumber() const { return m_columnNumber; }
     bool isEval() const { return m_flags & static_cast<unsigned int>(Flags::IsEval); }
@@ -85,6 +87,7 @@ public:
     void setLineNumber(OrdinalNumber lineNumber) { m_lineNumber = lineNumber; }
     void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }
     void setSourceURL(JSC::VM& vm, JSC::JSString* sourceURL) { m_sourceURL.set(vm, this, sourceURL); }
+    void setEvalOrigin(JSC::VM& vm, JSC::JSValue evalOrigin) { m_evalOrigin.set(vm, this, evalOrigin); }
 
     void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
 

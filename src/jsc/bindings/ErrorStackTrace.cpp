@@ -23,6 +23,7 @@
 #include <wtf/IterationStatus.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
+#include <JavaScriptCore/FunctionExecutable.h>
 
 #include "ErrorStackFrame.h"
 
@@ -231,6 +232,12 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
         if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
             m_isFunctionOrEval = true;
         }
+        auto evalOrigin = evalOriginForCodeBlock(codeBlock);
+        if (evalOrigin.isEval) {
+            m_isInsideEval = true;
+            m_hasEvalSourceURL = evalOrigin.hasSourceURL;
+            m_evalCallerURL = evalOrigin.callerURL;
+        }
     }
 
     // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
@@ -288,6 +295,12 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         auto codeType = codeBlock->codeType();
         if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
             m_isFunctionOrEval = true;
+        }
+        auto evalOrigin = evalOriginForCodeBlock(codeBlock);
+        if (evalOrigin.isEval) {
+            m_isInsideEval = true;
+            m_hasEvalSourceURL = evalOrigin.hasSourceURL;
+            m_evalCallerURL = evalOrigin.callerURL;
         }
     }
 
@@ -349,6 +362,12 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
 
     if (m_isWasmFrame) {
         return String(sourceURLWasmString);
+    }
+
+    if (m_isInsideEval && !m_hasEvalSourceURL) {
+        // Line/column refer to the eval string, not any file on disk. Returning
+        // the caller's URL here would blame those positions on the wrong file.
+        return String();
     }
 
     auto url = Zig::sourceURL(m_codeBlock);
@@ -428,6 +447,50 @@ bool JSCStackFrame::calculateSourcePositions()
     m_sourcePositions.column = location.column();
 
     return true;
+}
+
+EvalOrigin evalOriginForCodeBlock(JSC::CodeBlock* codeBlock)
+{
+    EvalOrigin result;
+    if (!codeBlock)
+        return result;
+    auto* executable = codeBlock->ownerExecutable();
+    if (!executable)
+        return result;
+
+    // For eval(), topLevelExecutable() is the EvalExecutable. For new Function(),
+    // FunctionExecutable::fromGlobalCode links with a null parent, so the
+    // top-level is a FunctionExecutable. Ordinary scripts have a Program or
+    // ModuleProgram top-level.
+    auto* topLevel = executable->topLevelExecutable();
+    if (!topLevel)
+        return result;
+    if (!topLevel->isEvalExecutable() && !topLevel->isFunctionExecutable())
+        return result;
+
+    auto* provider = codeBlock->source().provider();
+    if (!provider)
+        return result;
+
+    if (topLevel->isFunctionExecutable() && !provider->sourceURL().isEmpty()) {
+        // A FunctionExecutable top-level with a real sourceURL is a normal
+        // script function (e.g. node:vm compileFunction with a filename), not
+        // a new Function() body.
+        return result;
+    }
+
+    result.isEval = true;
+    result.hasSourceURL = !provider->sourceURLDirective().isEmpty() || !provider->sourceURL().isEmpty();
+
+    const auto& origin = provider->sourceOrigin();
+    if (!origin.isNull()) {
+        const auto& url = origin.url();
+        if (url.protocolIsFile())
+            result.callerURL = url.fileSystemPath();
+        if (result.callerURL.isEmpty())
+            result.callerURL = origin.string();
+    }
+    return result;
 }
 
 String sourceURL(const JSC::SourceOrigin& origin)

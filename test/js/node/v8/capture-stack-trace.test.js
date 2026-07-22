@@ -461,7 +461,7 @@ test("CallFrame isEval works as expected", () => {
   })()`);
 
   Error.prepareStackTrace = prevPrepareStackTrace;
-  // TODO: 0 and 1 should both return true here.
+  expect(stack[0].isEval()).toBe(true);
   expect(stack[1].isEval()).toBe(true);
   expect(stack[0].getFunctionName()).toBe(name);
 });
@@ -478,7 +478,7 @@ test("CallFrame isTopLevel returns false for Function constructor", () => {
     expect(s[0].getFunction()).toBe(sloppyFn);
 
     expect(s[0].isToplevel()).toBe(false);
-    expect(s[0].isEval()).toBe(false);
+    expect(s[0].isEval()).toBe(true);
 
     // Strict-mode functions shouldn't have getThis or getFunction
     // available.
@@ -1119,5 +1119,78 @@ test("lazy error-info materialization does not store an empty stack value when t
     stdout: JSON.stringify({ first: "msg-boom", secondType: "undefined" }),
     signalCode: null,
   });
+  expect(exitCode).toBe(0);
+});
+
+// Errors thrown from inside eval() / new Function() bodies used to be attributed
+// to the CALLING file at the eval body's own line/column (with a file:// scheme)
+// because Zig::sourceURL fell back to the provider's sourceOrigin() for eval
+// sources. These frames now use <anonymous> for the source name and carry a
+// V8-style "eval at <name> (<caller location>)" origin.
+test("eval frames are labelled <anonymous> with an eval origin, not the caller file", async () => {
+  const src =
+    "const DECOY_LINE_1 = 'a line the eval body positions would otherwise blame';\n" +
+    "const body = ['','','','function work(){ throw new Error(\"boom\") }','work()'].join('\\n');\n" +
+    "function outer() { eval(body); }\n" +
+    "try { outer(); } catch (e) {\n" +
+    "  const lines = e.stack.split('\\n').filter(l => l.trim().startsWith('at '));\n" +
+    "  console.log(JSON.stringify({\n" +
+    "    work: lines[0].split(__filename).join('F').trim(),\n" +
+    "    hasFileScheme: e.stack.includes('file://'),\n" +
+    "  }));\n" +
+    "}\n" +
+    "try { new Function('x', '\\n\\n\\nthrow new Error(\"fn\")')(1); } catch (e) {\n" +
+    "  const first = e.stack.split('\\n').find(l => l.trim().startsWith('at '));\n" +
+    "  console.log(JSON.stringify({ fn: first.split(__filename).join('F').trim() }));\n" +
+    "}\n";
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const out = stdout
+    .trim()
+    .split("\n")
+    .map(l => JSON.parse(l));
+
+  // The eval body's positions must be on <anonymous>, not on the calling file,
+  // and the origin must name the caller at the line where eval() was invoked.
+  expect(out[0].work).toMatch(/^at work \(eval at outer \(F:3:\d+\), <anonymous>:4:\d+\)$/);
+  expect(out[0].hasFileScheme).toBe(false);
+  // new Function(): no EvalCode frame on the stack, so the origin is URL-only.
+  expect(out[1].fn).toMatch(/^at anonymous \(eval at <anonymous> \(F\), <anonymous>:6:\d+\)$/);
+  expect(exitCode).toBe(0);
+});
+
+test("CallSite eval metadata for eval / new Function frames matches Node.js", async () => {
+  const src =
+    "const old = Error.prepareStackTrace;\n" +
+    "Error.prepareStackTrace = (_, s) => s;\n" +
+    "function caller() { return eval('(function inner(){ return new Error().stack })()'); }\n" +
+    "const evalStack = caller();\n" +
+    "const named = eval('new Error().stack\\n//# sourceURL=named.js');\n" +
+    "const fn = new Function('return new Error().stack')();\n" +
+    "Error.prepareStackTrace = old;\n" +
+    "const pick = f => ({ file: f.getFileName(), script: f.getScriptNameOrSourceURL(), isEval: f.isEval(), origin: typeof f.getEvalOrigin() === 'string' ? f.getEvalOrigin().split(__filename).join('F') : f.getEvalOrigin() });\n" +
+    "console.log(JSON.stringify({ inner: pick(evalStack[0]), body: pick(evalStack[1]), named: pick(named[0]), fn: pick(fn[0]) }));\n";
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const out = JSON.parse(stdout.trim());
+
+  expect({
+    inner: { file: out.inner.file, script: out.inner.script, isEval: out.inner.isEval },
+    body: { file: out.body.file, script: out.body.script, isEval: out.body.isEval },
+    named: out.named,
+    fn: { file: out.fn.file, isEval: out.fn.isEval },
+  }).toEqual({
+    inner: { file: undefined, script: undefined, isEval: true },
+    body: { file: undefined, script: undefined, isEval: true },
+    named: { file: undefined, script: "named.js", isEval: true, origin: "named.js" },
+    fn: { file: undefined, isEval: true },
+  });
+  expect(out.inner.origin).toMatch(/^eval at caller \(F:3:\d+\)$/);
+  expect(out.body.origin).toMatch(/^eval at caller \(F:3:\d+\)$/);
+  expect(out.fn.origin).toMatch(/^eval at <anonymous> \(F\)$/);
   expect(exitCode).toBe(0);
 });

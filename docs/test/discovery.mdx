@@ -17,7 +17,7 @@ By default, `bun test` recursively searches the project directory for files that
 - `test-*.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files starting with `test-`
 - `test.{js|jsx|ts|tsx|mjs|cjs|mts|cts}` - Files named exactly `test.js`, `test.ts`, etc.
 
-These patterns are a superset of `node --test`'s default filename patterns, so a `node:test` suite runs under `bun test` without renaming files.
+These cover every default `node --test` filename pattern. Bun does not implement node's `**/test/**` directory rule, so a file like `test/foo.mjs` is only discovered if its basename also matches one of the patterns above.
 
 ## Exclusions
 

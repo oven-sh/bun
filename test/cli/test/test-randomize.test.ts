@@ -27,7 +27,7 @@ async function runFixture(flags: string[]): Promise<{ order: number[]; seed: num
 
 const sortNumbers = (a: number, b: number) => a - b;
 test.concurrent("--randomize and --seed work", async () => {
-  const fixture = import.meta.dir + "/test-randomize.fixture.ts";
+  const fixture = import.meta.dir + "/randomize-fixture.ts";
 
   // with --randomize (and the no-flag run, which is independent)
   const [{ order: randomizedOrder, seed: randomizedSeed }, { order: unseededOrder, seed: unseededSeed }] =

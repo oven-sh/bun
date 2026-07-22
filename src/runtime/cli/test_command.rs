@@ -2643,13 +2643,13 @@ impl TestCommand {
                 if Output::is_ai_agent() {
                     // Be very clear to ai.
                     Output::err_generic(
-                        "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
+                        "0 test files matching {{*.test,*_test,*-test,*.spec,*_spec,test-*,test}}.{{js,ts,jsx,tsx,mjs,cjs,mts,cts}} in --cwd={}",
                         (bun_fmt::quote(FileSystem::instance().top_level_dir),),
                     );
                 } else {
                     // Be friendlier to humans.
                     pretty_errorln!(
-                        "<yellow>No tests found!<r>\n\nTests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>\n"
+                        "<yellow>No tests found!<r>\n\nTest filenames must match *.test.*, *_test.*, *-test.*, *.spec.*, *_spec.*, test-*.*, or test.* <d>(ex: \"MyApp.test.ts\")<r>\n"
                     );
                 }
             } else {
@@ -2686,7 +2686,7 @@ impl TestCommand {
                 }
 
                 pretty_errorln!(
-                    "\n\n<blue>note<r><d>:<r> Tests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>"
+                    "\n\n<blue>note<r><d>:<r> Test filenames must match *.test.*, *_test.*, *-test.*, *.spec.*, *_spec.*, test-*.*, or test.* <d>(ex: \"MyApp.test.ts\")<r>"
                 );
 
                 // print a helpful note

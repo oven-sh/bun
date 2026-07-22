@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 test("snapshot", () => {
   const { stdout, stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "test", join(import.meta.dirname, "test-filter-lifecycle.js"), "-t", "should run test"],
+    cmd: [bunExe(), "test", join(import.meta.dirname, "filter-lifecycle-fixture.js"), "-t", "should run test"],
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -28,7 +28,7 @@ test("snapshot", () => {
     <afterAll>
     <parent afterAll>
 
-    test/cli/test/test-filter-lifecycle.js:
+    test/cli/test/filter-lifecycle-fixture.js:
     (pass) parent > should run > test
     (pass) parent > should run > test 2
 

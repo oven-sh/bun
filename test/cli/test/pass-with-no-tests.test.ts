@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 test("--pass-with-no-tests exits with 0 when no test files found", async () => {
   using dir = tempDir("pass-with-no-tests", {
-    "not-a-test.ts": `console.log("hello");`,
+    "helper.ts": `console.log("hello");`,
   });
 
   const { exited, stderr } = Bun.spawn({
@@ -42,7 +42,7 @@ test("--pass-with-no-tests exits with 0 when filters match no tests", async () =
 
 test("without --pass-with-no-tests, exits with 1 when no test files found", async () => {
   using dir = tempDir("fail-with-no-tests", {
-    "not-a-test.ts": `console.log("hello");`,
+    "helper.ts": `console.log("hello");`,
   });
 
   const { exited, stderr } = Bun.spawn({

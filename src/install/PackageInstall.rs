@@ -2295,16 +2295,6 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    /// `true` iff `subpath` under the cache root is a real directory (not a
-    /// symlink). A cache hit bypasses integrity verification, so a symlink in
-    /// that position must be treated as absent and re-fetched.
-    fn cache_entry_is_dir(cache_dir: Fd, subpath: &ZStr) -> bool {
-        match sys::lstatat(cache_dir, subpath) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
-            Err(_) => false,
-        }
-    }
-
     pub fn package_missing_from_cache(
         &mut self,
         manager: &mut PackageManager,
@@ -2319,7 +2309,7 @@ impl<'a> PackageInstall<'a> {
                     // The entry name itself is attacker-predictable
                     // (name@version@@@N), so refuse a symlink planted there
                     // before looking for package.json beneath it.
-                    if !Self::cache_entry_is_dir(self.cache_dir, self.cache_dir_subpath) {
+                    if !crate::package_manager_real::directories::cache_entry_is_dir(self.cache_dir, self.cache_dir_subpath) {
                         break 'brk true;
                     }
                     let exists = match resolution_tag {
@@ -2380,7 +2370,7 @@ impl<'a> PackageInstall<'a> {
                 // SAFETY: NUL written above.
                 let subpath =
                     ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
-                let exists = Self::cache_entry_is_dir(self.cache_dir, subpath);
+                let exists = crate::package_manager_real::directories::cache_entry_is_dir(self.cache_dir, subpath);
                 if exists {
                     manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                 }
@@ -2394,7 +2384,7 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
     ) -> bool {
-        let exists = Self::cache_entry_is_dir(self.cache_dir, self.cache_dir_subpath);
+        let exists = crate::package_manager_real::directories::cache_entry_is_dir(self.cache_dir, self.cache_dir_subpath);
         if exists {
             manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }

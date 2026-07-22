@@ -2351,9 +2351,9 @@ pub(crate) fn install_isolated_packages(
                                 // The cache entry name is attacker-predictable,
                                 // so require a real directory (not a symlink)
                                 // before probing for package.json beneath it.
-                                let exists = matches!(
-                                    sys::lstatat(cache_dir, pkg_cache_dir_subpath.slice_z()),
-                                    Ok(st) if bun_sys::S::ISDIR(st.st_mode as _)
+                                let exists = crate::package_manager_real::directories::cache_entry_is_dir(
+                                    cache_dir,
+                                    pkg_cache_dir_subpath.slice_z(),
                                 ) && match pkg_res_tag {
                                     ResolutionTag::Npm => {
                                         // Reshaped for borrowck — capture length

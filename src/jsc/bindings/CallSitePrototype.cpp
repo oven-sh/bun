@@ -263,9 +263,11 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject
 {
     ENTER_PROTO_FUNC();
     JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+    auto line = callSite->lineNumber();
+    auto column = callSite->columnNumber();
     obj->putDirect(vm, JSC::Identifier::fromString(vm, "sourceURL"_s), callSite->sourceURL());
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "lineNumber"_s), jsNumber(callSite->lineNumber().oneBasedInt()));
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "columnNumber"_s), jsNumber(callSite->columnNumber().oneBasedInt()));
+    obj->putDirect(vm, JSC::Identifier::fromString(vm, "lineNumber"_s), line == OrdinalNumber::beforeFirst() ? JSC::jsNull() : jsNumber(line.oneBasedInt()));
+    obj->putDirect(vm, JSC::Identifier::fromString(vm, "columnNumber"_s), column == OrdinalNumber::beforeFirst() ? JSC::jsNull() : jsNumber(column.oneBasedInt()));
     obj->putDirect(vm, JSC::Identifier::fromString(vm, "functionName"_s), callSite->functionName());
     return JSC::JSValue::encode(obj);
 }

@@ -58,4 +58,14 @@ describe.skipIf(isWindows)("scp-style git dependency URL rewriting", () => {
     const urls = await cloneUrlsFor("git+deploy@myhost.example:org/repo.git");
     expect(urls).toEqual(["https://deploy@myhost.example/org/repo.git", "ssh://deploy@myhost.example/org/repo.git"]);
   });
+
+  test.concurrent("explicit user@ is kept (colon-less form)", async () => {
+    const urls = await cloneUrlsFor("git+deploy@myhost.example/org/repo.git");
+    expect(urls).toEqual(["https://deploy@myhost.example/org/repo.git", "ssh://deploy@myhost.example/org/repo.git"]);
+  });
+
+  test.concurrent("@ in path does not suppress git@ user", async () => {
+    const urls = await cloneUrlsFor("git+myhost.example:org/name@1.git");
+    expect(urls).toEqual(["https://myhost.example/org/name@1.git", "ssh://git@myhost.example/org/name@1.git"]);
+  });
 });

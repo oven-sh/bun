@@ -590,10 +590,12 @@ impl RepositoryExt for Repository {
         if Dependency::is_scp_like_path(url) {
             let colon_index = strings::index_of_char(url, b':');
 
-            // scp-style is `[user@]host:path`. Only inject a `git@` user when the
+            // scp-style is `[user@]host:path` (is_scp_like_path also accepts the
+            // colon-less `user@host/path` form). Only inject a `git@` user when the
             // input omitted one; otherwise `ssh://git@user@host/...` is sent to git.
-            let has_user = colon_index
-                .map(|c| strings::index_of_char(&url[..c as usize], b'@').is_some())
+            let sep = colon_index.or_else(|| strings::index_of_char(url, b'/'));
+            let has_user = sep
+                .map(|s| strings::index_of_char(&url[..s as usize], b'@').is_some())
                 .unwrap_or(false);
             let prefix: &[u8] = if has_user { b"ssh://" } else { b"ssh://git@" };
 

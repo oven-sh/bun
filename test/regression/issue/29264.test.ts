@@ -14,7 +14,10 @@ test("#29264 bundler survives external + missing imports in same file", { timeou
               setup(build) {
                 build.onResolve({ filter: /^[^.]/ }, args => {
                   if (args.kind === "entry-point-build") return;
-                  return { external: true };
+                  if (args.path === "src") return { external: true };
+                  // "other": fall through to NoMatch -> run_resolver so the
+                  // unchecked import_records[..] access there is still
+                  // exercised against the error-path store (#29264).
                 });
               },
             },
@@ -30,6 +33,7 @@ test("#29264 bundler survives external + missing imports in same file", { timeou
     `,
     "index.js": /* js */ `
       import "src";
+      import "other";
       import "./src";
     `,
   });
@@ -46,11 +50,9 @@ test("#29264 bundler survives external + missing imports in same file", { timeou
 
   // Before the fix, the child crashed in Bun.build — segfault (release) or
   // index-out-of-bounds panic (debug/ASAN) — so "DONE:caught" never printed.
-  // We deliberately don't assert on the bare "src" import; whether the
-  // plugin's `{ external: true }` (with no `path`) falls through to a
-  // resolver error is plugin semantics, not what this test guards against.
   const combined = stdout + stderr;
   expect(combined).toContain("DONE:caught");
   expect(combined).toContain('Could not resolve: "./src"');
+  expect(combined).toContain('Could not resolve: "other"');
   expect(exitCode).toBe(0);
 });

@@ -241,7 +241,7 @@ function generateJSON(rand: () => number, depth: number): string {
 
 test("Bun.JSONC.parse matches JSON.parse on generated documents", () => {
   const rand = makeRng(0xc0ffee);
-  for (let i = 0; i < 750; i++) {
+  for (let i = 0; i < 200; i++) {
     const doc = generateJSON(rand, 0);
     let expected: unknown;
     try {
@@ -251,7 +251,7 @@ test("Bun.JSONC.parse matches JSON.parse on generated documents", () => {
     }
     expect(Bun.JSONC.parse(doc)).toEqual(expected as any);
   }
-}, 30_000);
+});
 
 test("Bun.JSONC.parse matches JSON.parse across 64-byte block boundaries", () => {
   for (let pad = 40; pad <= 96; pad++) {

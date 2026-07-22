@@ -316,19 +316,10 @@ pub fn parse_utf8(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
-    parse_utf8_impl::<true>(source, log, bump)
-}
-
-#[inline]
-pub fn parse_utf8_impl<const CHECK_LEN: bool>(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> crate::Result<Expr> {
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
+    Ok(parse_classic(source, log, bump, JSON_OPTS, true)?.root)
 }
 
 fn parse_classic(

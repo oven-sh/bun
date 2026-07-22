@@ -563,7 +563,7 @@ mod draft {
                     if val.is_empty() {
                         break 'out;
                     }
-                    // `bun_parsers::json::parse_utf8_impl` returns the T2
+                    // `bun_parsers::json::parse_utf8` returns the T2
                     // value-subset `bun_ast::Expr`; lift it into the T4
                     // `bun_ast::Expr` (via the `From` impl in
                     // `bun_ast::expr`) so the rest of this body works
@@ -576,7 +576,7 @@ mod draft {
                     let mut log = Log::init();
                     // Try to parse it and if it fails will just treat it as a string
                     let json_val: Expr =
-                        match bun_parsers::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
+                        match bun_parsers::json::parse_utf8(&src, &mut log, bump) {
                             Ok(v) => v,
                             Err(_) => {
                                 // JSON parse failed (e.g., single-quoted string like '${VAR}')

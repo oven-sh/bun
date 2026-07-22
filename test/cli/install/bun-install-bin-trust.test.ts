@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync } from "fs";
-import { rm, symlink, mkdir } from "fs/promises";
+import { mkdir, rm, symlink } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -201,14 +201,8 @@ describe.concurrent("hoisted linker bin trust gate", () => {
 
       // Simulate a node_modules populated before the gate existed.
       await mkdir(join(packageDir, "node_modules", ".bin"), { recursive: true });
-      await symlink(
-        join("..", "shadow-bin", "shadow.js"),
-        join(packageDir, "node_modules", ".bin", "git"),
-      );
-      await symlink(
-        join("..", "shadow-bin", "shadow.js"),
-        join(packageDir, "node_modules", ".bin", "shadow-bin-tool"),
-      );
+      await symlink(join("..", "shadow-bin", "shadow.js"), join(packageDir, "node_modules", ".bin", "git"));
+      await symlink(join("..", "shadow-bin", "shadow.js"), join(packageDir, "node_modules", ".bin", "shadow-bin-tool"));
       expect(binEntries(packageDir)).toEqual(["git", "shadow-bin-tool"]);
 
       // A reinstall over the existing node_modules should clear them.

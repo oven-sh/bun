@@ -360,8 +360,9 @@ private:
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                     httpResponseData->isConnectRequest = false;
-                    ((HttpResponse<SSL> *) s)->resetTimeout();
+                    /* HttpResponse::pause() also does timeout(0); re-arm after. */
                     ((HttpResponse<SSL> *) s)->pause();
+                    ((HttpResponse<SSL> *) s)->resetTimeout();
                     return s;
                 }
             }

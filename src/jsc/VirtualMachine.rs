@@ -5002,15 +5002,27 @@ impl VirtualMachine {
                 };
             }
             if file.is_empty() {
-                // Builtin JS / WASM frame with no source URL: line/col point
-                // into generated builtin source and are meaningless on their
-                // own. Render a fixed label matching the `.stack` string.
+                // Builtin JS / WASM frame with no source URL: substitute a
+                // fixed label so the location matches the `.stack` string
+                // (FormatStackTraceForJS.cpp) instead of a bare `line:col`.
                 if has_name {
-                    pretty_write!(
-                        "<r>      <d>at <r>{}<d> ({})<r>\n",
-                        frame.name_formatter(allow_ansi_colors),
-                        frame.empty_source_url_label(),
-                    )?;
+                    let label = frame.empty_source_url_label();
+                    let pos = &frame.position;
+                    if pos.line.is_valid() && pos.column.is_valid() {
+                        pretty_write!(
+                            "<r>      <d>at <r>{}<d> ({}:{}:{})<r>\n",
+                            frame.name_formatter(allow_ansi_colors),
+                            label,
+                            pos.line.one_based(),
+                            pos.column.one_based(),
+                        )?;
+                    } else {
+                        pretty_write!(
+                            "<r>      <d>at <r>{}<d> ({})<r>\n",
+                            frame.name_formatter(allow_ansi_colors),
+                            label,
+                        )?;
+                    }
                 }
                 continue;
             }
@@ -6294,12 +6306,20 @@ impl VirtualMachine {
                 };
                 if source_url.slice().is_empty() {
                     if has_name {
-                        let _ = write!(
-                            writer,
-                            "%0A      at {} ({})",
-                            name_fmt,
-                            frame.empty_source_url_label(),
-                        );
+                        let label = frame.empty_source_url_label();
+                        let pos = &frame.position;
+                        if pos.line.is_valid() && pos.column.is_valid() {
+                            let _ = write!(
+                                writer,
+                                "%0A      at {} ({}:{}:{})",
+                                name_fmt,
+                                label,
+                                pos.line.one_based(),
+                                pos.column.one_based(),
+                            );
+                        } else {
+                            let _ = write!(writer, "%0A      at {} ({})", name_fmt, label);
+                        }
                     }
                     continue;
                 }

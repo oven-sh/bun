@@ -63,6 +63,9 @@ impl bun_core::output::ErrName for Error {
 
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
+        if let Some(named) = e.to_named_core_err() {
+            return Self::Core(named);
+        }
         Self::Sys(e.into())
     }
 }

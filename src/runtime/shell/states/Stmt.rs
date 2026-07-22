@@ -23,7 +23,7 @@ impl Stmt {
         io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Stmt(Stmt {
-            base: Base::new(StateKind::Stmt, parent, shell),
+            base: Base::new(parent, shell),
             // SAFETY: `node` is non-null and points into the AST arena
             // (`ShellArgs::__arena`), which the interpreter holds for its
             // entire lifetime — strictly outliving every state node (the

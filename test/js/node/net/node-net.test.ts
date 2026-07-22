@@ -963,9 +963,10 @@ it.skipIf(isWindows)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // Without the balancing deref: +25 pages (release) / +163 pages
-    // (debug+ASAN). With it: 0 ± 2. The threshold sits well clear of both.
-    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(10);
+    // Without the balancing deref: +25 pages (release) / +163 (debug+ASAN).
+    // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
+    // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
+    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
     expect(exitCode).toBe(0);
   },
   60_000,

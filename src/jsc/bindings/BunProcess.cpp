@@ -168,6 +168,7 @@ extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
+extern "C" const char* Bun__sqlite3_version();
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
@@ -255,6 +256,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "icu"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_ICU_VERSION)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "unicode"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_UNICODE_VERSION)))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "sqlite"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__sqlite3_version())))), 0);
 
 #define STRINGIFY_IMPL(x) #x
 #define STRINGIFY(x) STRINGIFY_IMPL(x)
@@ -3359,6 +3361,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     }
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
+    // Node's reallyExit is the raw exit that does not run 'exit' listeners. Arm
+    // m_isExiting so dispatchExitInternal (via Bun__Process__exit) skips them
+    // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
+    zigGlobal->processObject()->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
     // WebWorker exit path it called requests JSC termination (guarded so it's a

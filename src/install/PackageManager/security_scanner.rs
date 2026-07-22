@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::ByteVecExt;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -71,11 +70,6 @@ pub struct SecurityScanResults {
     pub advisories: Box<[SecurityAdvisory]>,
     pub fatal_count: usize,
     pub warn_count: usize,
-    pub packages_scanned: usize,
-    pub duration_ms: i64,
-    // Owned copy of `manager.options.security_scanner`;
-    // owning avoids a struct lifetime and the copy is tiny.
-    pub security_scanner: Box<[u8]>,
 }
 
 impl SecurityScanResults {
@@ -1392,18 +1386,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.remaining_fds -= 1;
     }
 
-    pub fn on_stderr_chunk(&mut self, chunk: &[u8]) {
-        self.stderr_data.extend_from_slice(chunk);
-    }
-
-    pub fn get_read_buffer(&mut self) -> &mut [core::mem::MaybeUninit<u8>] {
-        // Rust forbids `&mut [u8]` over uninit bytes, so
-        // expose `&mut [MaybeUninit<u8>]`. Caller (BufferedReader) only writes
-        // into this region, never reads uninit bytes.
-        // Vec::reserve already amortises by doubling; the explicit cap+4096 dance is unnecessary.
-        self.ipc_data.uv_alloc_spare(4096)
-    }
-
     pub fn on_read_chunk(&mut self, chunk: &[u8], _has_more: ReadState) -> bool {
         self.ipc_data.extend_from_slice(chunk);
         true
@@ -1796,18 +1778,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             advisories,
             fatal_count,
             warn_count,
-            packages_scanned,
-            duration_ms: duration,
-            security_scanner: Box::<[u8]>::from(security_scanner),
         }))
-    }
-}
-
-fn json_type_name(data: &ExprData) -> &'static str {
-    match data {
-        ExprData::EObjectJSON(_) => bun_ast::expr::Tag::EObject.into(),
-        ExprData::EArrayJSON(_) => bun_ast::expr::Tag::EArray.into(),
-        other => other.tag().into(),
     }
 }
 
@@ -1821,7 +1792,7 @@ fn parse_security_advisories_from_expr(
     let ExprData::EArrayJSON(array) = &advisories_expr.data else {
         Output::err_generic(
             "Security scanner 'advisories' field must be an array, got: {}",
-            (json_type_name(&advisories_expr.data),),
+            (advisories_expr.data.tag_name(),),
         );
         return Err(crate::Error::InvalidAdvisoriesFormat);
     };
@@ -1831,7 +1802,7 @@ fn parse_security_advisories_from_expr(
         if !matches!(item.data, ExprData::EObjectJSON(_)) {
             Output::err_generic(
                 "Security advisory at index {} must be an object, got: {}",
-                (i, json_type_name(&item.data)),
+                (i, item.data.tag_name()),
             );
             return Err(crate::Error::InvalidAdvisoryFormat);
         }

@@ -152,13 +152,15 @@ function read(this: NativeReadable, maxToRead: number) {
   var result = ptr.pull(chunk, this[kCloseState]);
   $assert(result !== undefined);
   $debug(
-    `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${result instanceof Promise ? "<pending>" : result}, closeState: ${this[kCloseState][0]}`,
+    `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
   );
   if ($isPromise(result)) {
     this[kPendingRead] = true;
     return result.then(
       result => {
-        $debug(`[${this.debugId}] pull, resolved: ${result}, closeState: ${this[kCloseState][0]}`);
+        $debug(
+          `[${this.debugId}] pull, resolved: ${$isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
+        );
         this[kPendingRead] = false;
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },

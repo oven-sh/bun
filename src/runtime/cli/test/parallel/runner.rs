@@ -22,10 +22,6 @@ use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
 use crate::Command;
-#[cfg(unix)]
-use crate::api::bun::process::PosixStdio as Stdio;
-#[cfg(not(unix))]
-use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
@@ -187,7 +183,6 @@ pub fn run_as_coordinator(
             captured: Vec::new(),
             alive: false,
             exit_status: None,
-            extra_fd_stdio: [Stdio::Ignore],
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)

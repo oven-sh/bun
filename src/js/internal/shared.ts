@@ -57,7 +57,7 @@ class ExceptionWithHostPort extends Error {
   port?: number;
   address: string;
 
-  constructor(err: number, syscall: string, address: string, port?: number) {
+  constructor(err: number, syscall: string, address: string, port?: number, additional?: string) {
     // TODO(joyeecheung): We have to use the type-checked
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
@@ -69,6 +69,9 @@ class ExceptionWithHostPort extends Error {
       details = ` ${address}:${port}`;
     } else if (address) {
       details = ` ${address}`;
+    }
+    if (additional) {
+      details += ` - Local (${additional})`;
     }
 
     super(`${syscall} ${code}${details}`);
@@ -132,13 +135,26 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   return function (...args) {
     if (called) return returnValue;
     called = true;
-    const result = callback.$apply(this, args);
+    const fn = callback;
+    // Drop the reference so the wrapper cannot keep the callback's
+    // closure (and everything it captured) alive once it has run.
+    callback = undefined;
+    const result = fn.$apply(this, args);
     returnValue = preserveReturnValue ? result : undefined;
     return result;
   };
 }
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
+
+// Marks an addEventListener() options object so that dispatch still invokes the
+// listener after an unrelated listener called event.stopImmediatePropagation().
+// `$kResistStopPropagation` is a private symbol the native EventTarget reads, so
+// only these internal modules can reach it.
+function resistStopPropagation<T extends object>(options: T): T {
+  (options as AddEventListenerOptions).$kResistStopPropagation = true;
+  return options;
+}
 
 function getLazy<T>(initializer: () => T) {
   let value: T;
@@ -163,10 +179,53 @@ const observerCounts = new Map();
 const kObservers = new Set();
 
 /** Entry types routed through this JS-side registry instead of the native observer. */
-const kNodeEntryTypes = new Set(["net", "dns", "http"]);
+const kNodeEntryTypes = new Set(["net", "dns", "http", "function"]);
 
 function hasObserver(type) {
   return (observerCounts.get(type) ?? 0) > 0;
+}
+
+/**
+ * Hand a finished entry to every registered observer. Used by callers that
+ * construct the entry themselves (e.g. perf_hooks timerify) instead of the
+ * startPerf/stopPerf pair.
+ */
+function enqueueNodeEntry(entry) {
+  for (const observer of kObservers) {
+    observer.bufferEntry(entry);
+  }
+}
+
+// Node's PerformanceNodeEntry — the shape used by every JS-side entry type
+// ('function', 'net', 'dns', 'http'). Lives here (not in perf_hooks.ts) so
+// stopPerf can construct it without a circular require. The prototype chain
+// is linked to PerformanceEntry by perf_hooks.ts at load time using its
+// captured global (every construction is gated behind hasObserver(), which
+// is only true after perf_hooks has loaded).
+class PerformanceNodeEntry {
+  name;
+  entryType;
+  startTime;
+  duration;
+  detail;
+
+  constructor(name, entryType, startTime, duration, detail) {
+    this.name = name;
+    this.entryType = entryType;
+    this.startTime = startTime;
+    this.duration = duration;
+    this.detail = detail;
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      entryType: this.entryType,
+      startTime: this.startTime,
+      duration: this.duration,
+      detail: this.detail,
+    };
+  }
 }
 
 function startPerf(target, key, context) {
@@ -181,19 +240,11 @@ function stopPerf(target, key, context) {
   }
   target[key] = undefined;
   const startTime = ctx.startTime;
-  const entry = {
-    name: ctx.name,
-    entryType: ctx.type,
-    startTime,
-    duration: performance.now() - startTime,
-    // Node.js merges the detail recorded at startPerf() with the detail
-    // passed to stopPerf() (e.g. http entries carry both req and res).
-    detail:
-      ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined,
-  };
-  for (const observer of kObservers) {
-    observer.bufferEntry(entry);
-  }
+  // Node.js merges the detail recorded at startPerf() with the detail
+  // passed to stopPerf() (e.g. http entries carry both req and res).
+  const detail =
+    ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined;
+  enqueueNodeEntry(new PerformanceNodeEntry(ctx.name, ctx.type, startTime, performance.now() - startTime, detail));
 }
 
 /**
@@ -282,16 +333,18 @@ export default {
   ErrnoException,
   once,
   getLazy,
+  resistStopPropagation,
 
   hasObserver,
   startPerf,
   stopPerf,
+  enqueueNodeEntry,
   kNodeEntryTypes,
   NodeEntryObserver,
+  PerformanceNodeEntry,
 
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
-  kResistStopPropagation: Symbol("kResistStopPropagation"),
   kWeakHandler: Symbol("kWeak"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kEmptyObject,

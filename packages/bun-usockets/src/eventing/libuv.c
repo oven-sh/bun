@@ -16,6 +16,7 @@
  */
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #include "libusockets.h"
 #include <stdlib.h>
 
@@ -145,15 +146,15 @@ static void check_cb(uv_check_t *p) {
 }
 
 /* Not used for polls, since polls need two frees */
-static void close_cb_free(uv_handle_t *h) { free(h->data); }
+static void close_cb_free(uv_handle_t *h) { us_free(h->data); }
 
 /* This one is different for polls, since we need two frees here */
 static void close_cb_free_poll(uv_handle_t *h) {
   /* It is only in case we called us_poll_stop then quickly us_poll_free that we
    * enter this. Most of the time, actual freeing is done by us_poll_free. */
   if (h->data) {
-    free(h->data);
-    free(h);
+    us_free(h->data);
+    us_free(h);
   }
 }
 
@@ -178,7 +179,7 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd,
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
   // poll was resized and dont own uv_poll_t anymore
   if(!p->uv_p) {
-    free(p);
+    us_free(p);
     return;
   }
   /* The idea here is like so; in us_poll_stop we call uv_close after setting
@@ -190,18 +191,53 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
   if (uv_is_closing((uv_handle_t *)p->uv_p)) {
     p->uv_p->data = p;
   } else {
-    free(p->uv_p);
-    free(p);
+    us_free(p->uv_p);
+    us_free(p);
   }
 }
 
-void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  if(!p->uv_p) return;
+int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(!p->uv_p) return 0;
   p->poll_type = us_internal_poll_type(p) |
                  ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
                  ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
-  uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  /* uv_poll_init_socket (win/poll.c) can fail either before uv__handle_init
+   * (ioctlsocket FIONBIO) or after it (getsockopt SO_PROTOCOL_INFOW). The
+   * latter leaves the handle linked into loop->handle_queue with
+   * submitted_events_* still unset. Zero first so, on failure, ->type
+   * distinguishes the two states and the fields uv__poll_close reads are 0
+   * rather than garbage. */
+  memset(p->uv_p, 0, sizeof(uv_poll_t));
+  p->uv_p->data = p;
+
+  int rc;
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+  ssize_t injected = 0;
+  int unused = 0;
+  if (US_FAULT_CHECK(US_FAULT_POLL_START, p->fd, injected, unused)) {
+    rc = (int) injected;
+  } else
+#endif
+  rc = uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  if (rc < 0) {
+    int saved = LIBUS_ERR;
+    if (p->uv_p->type == UV_POLL) {
+      /* uv__handle_init ran: the handle is in loop->handle_queue. Close it
+       * through libuv so it is unlinked; the caller's us_poll_free sees
+       * uv_is_closing and hands ownership to close_cb_free_poll. */
+      p->uv_p->data = 0;
+      uv_close((uv_handle_t *)p->uv_p, close_cb_free_poll);
+    } else {
+      /* Never reached uv__handle_init: uv_p is still our raw block. Free it
+       * here and null the pointer so the caller's us_poll_free takes the
+       * !uv_p fast path (its uv_is_closing check would read garbage). */
+      us_free(p->uv_p);
+      p->uv_p = NULL;
+    }
+    errno = saved ? saved : -rc;
+    return rc;
+  }
   // This unref is okay in the context of Bun's event loop, because sockets have
   // a `Async.KeepAlive` associated with them, which is used instead of the
   // usockets internals. usockets doesnt have a notion of ref-counted handles.
@@ -210,11 +246,11 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
    * writable-only at that moment (a half-closed connection whose reads are
    * paused is exactly the state that otherwise hangs; see poll_cb). */
   uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
+  return 0;
 }
 
-int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  us_poll_start(p, loop, events);
-  return 0;
+void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  us_poll_start_rc(p, loop, events);
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
@@ -265,18 +301,18 @@ struct us_loop_t *us_create_loop(void *hint,
                                  void (*post_cb)(struct us_loop_t *loop),
                                  unsigned int ext_size) {
   struct us_loop_t *loop =
-      (struct us_loop_t *)calloc(1, sizeof(struct us_loop_t) + ext_size);
+      (struct us_loop_t *)us_calloc(1, sizeof(struct us_loop_t) + ext_size);
 
   loop->uv_loop = hint ? hint : uv_loop_new();
   loop->is_default = hint != 0;
 
-  loop->uv_pre = malloc(sizeof(uv_prepare_t));
+  loop->uv_pre = us_malloc(sizeof(uv_prepare_t));
   uv_prepare_init(loop->uv_loop, loop->uv_pre);
   uv_prepare_start(loop->uv_pre, prepare_cb);
   uv_unref((uv_handle_t *)loop->uv_pre);
   loop->uv_pre->data = loop;
 
-  loop->uv_check = malloc(sizeof(uv_check_t));
+  loop->uv_check = us_malloc(sizeof(uv_check_t));
   uv_check_init(loop->uv_loop, loop->uv_check);
   uv_unref((uv_handle_t *)loop->uv_check);
   uv_check_start(loop->uv_check, check_cb);
@@ -316,7 +352,7 @@ void us_loop_free(struct us_loop_t *loop) {
   }
 
   // now we can free our part
-  free(loop);
+  us_free(loop);
 }
 
 extern void Bun__JSC_onBeforeWait(void *jsc_vm, uint64_t now_ns);
@@ -340,8 +376,8 @@ void us_loop_run(struct us_loop_t *loop) {
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
                                  unsigned int ext_size) {
   struct us_poll_t *p =
-      (struct us_poll_t *)malloc(sizeof(struct us_poll_t) + ext_size);
-  p->uv_p = malloc(sizeof(uv_poll_t));
+      (struct us_poll_t *)us_malloc(sizeof(struct us_poll_t) + ext_size);
+  p->uv_p = us_malloc(sizeof(uv_poll_t));
   p->uv_p->data = p;
   return p;
 }
@@ -358,7 +394,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
   unsigned int new_size = sizeof(struct us_poll_t) + ext_size;
   if(new_size <= old_size) return p;
 
-  struct us_poll_t *new_p = calloc(1, new_size);
+  struct us_poll_t *new_p = us_calloc(1, new_size);
   memcpy(new_p, p, old_size);
 
   new_p->uv_p->data = new_p;

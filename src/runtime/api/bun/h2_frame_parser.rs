@@ -107,7 +107,7 @@ enum BunSocket {
     // shared-only deref safe at every read site (all `NewSocket` methods used
     // here take `&self`). LIFETIMES.tsv: SHARED — intrusive refcount, *T
     // crosses FFI; `NewSocket<SSL>` does not implement `bun_ptr::RefCounted`
-    // (hand-rolled `ref_()/deref()` on a `Cell<u32>`), so `IntrusiveArc` cannot
+    // (hand-rolled `ref_()/deref()` on a `Cell<u32>`), so `RefPtr` cannot
     // wrap it.
     Tls(bun_ptr::BackRef<TLSSocket>),
     TlsWriteonly(bun_ptr::BackRef<TLSSocket>),
@@ -752,44 +752,6 @@ fn single_value_headers_index_of(name: &[u8]) -> Option<usize> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[bun_jsc::host_fn]
-pub fn js_get_unpacked_settings(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let mut settings = FullSettingsPayload::default();
-
-    let args_list = callframe.arguments_old::<1>();
-    if args_list.len < 1 {
-        return Ok(settings.to_js(global_object));
-    }
-
-    let data_arg = args_list.ptr[0];
-
-    if let Some(array_buffer) = data_arg.as_array_buffer(global_object) {
-        let payload = array_buffer.byte_slice();
-        let setting_byte_size = SettingsPayloadUnit::BYTE_SIZE;
-        if payload.len() < setting_byte_size || payload.len() % setting_byte_size != 0 {
-            return Err(global_object.throw(format_args!(
-                "Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes"
-            )));
-        }
-
-        let mut i: usize = 0;
-        while i < payload.len() {
-            let mut unit = SettingsPayloadUnit::default();
-            SettingsPayloadUnit::from::<true>(&mut unit, &payload[i..i + setting_byte_size], 0);
-            settings.update_with(unit);
-            i += setting_byte_size;
-        }
-        Ok(settings.to_js(global_object))
-    } else if !data_arg.is_empty_or_undefined_or_null() {
-        Err(global_object.throw(format_args!("Expected buf to be a Buffer")))
-    } else {
-        Ok(settings.to_js(global_object))
-    }
-}
-
-#[bun_jsc::host_fn]
 pub fn js_assert_settings(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
@@ -928,134 +890,6 @@ pub fn js_assert_settings(
         }
     }
     Ok(JSValue::UNDEFINED)
-}
-
-#[bun_jsc::host_fn]
-pub fn js_get_packed_settings(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let mut settings = FullSettingsPayload::default();
-    let args_list = callframe.arguments_old::<1>();
-
-    if args_list.len > 0 && !args_list.ptr[0].is_empty_or_undefined_or_null() {
-        let options = args_list.ptr[0];
-
-        if !options.is_object() {
-            return Err(global_object.throw(format_args!("Expected settings to be a object")));
-        }
-
-        if let Some(header_table_size) = options.get(global_object, "headerTableSize")? {
-            if header_table_size.is_number() {
-                let v = header_table_size.to_int32();
-                if v < 0 {
-                    return Err(global_object.throw(format_args!(
-                        "Expected headerTableSize to be a number between 0 and 2^32-1"
-                    )));
-                }
-                settings.header_table_size = u32::try_from(v).expect("int cast");
-            } else if !header_table_size.is_empty_or_undefined_or_null() {
-                return Err(
-                    global_object.throw(format_args!("Expected headerTableSize to be a number"))
-                );
-            }
-        }
-
-        if let Some(enable_push) = options.get(global_object, "enablePush")? {
-            if enable_push.is_boolean() {
-                settings.enable_push = if enable_push.as_boolean() { 1 } else { 0 };
-            } else if !enable_push.is_empty_or_undefined_or_null() {
-                return Err(
-                    global_object.throw(format_args!("Expected enablePush to be a boolean"))
-                );
-            }
-        }
-
-        if let Some(initial_window_size) = options.get(global_object, "initialWindowSize")? {
-            if initial_window_size.is_number() {
-                let v = initial_window_size.to_int32();
-                if v < 0 {
-                    return Err(global_object.throw(format_args!(
-                        "Expected initialWindowSize to be a number between 0 and 2^32-1"
-                    )));
-                }
-                settings.initial_window_size = u32::try_from(v).expect("int cast");
-            } else if !initial_window_size.is_empty_or_undefined_or_null() {
-                return Err(
-                    global_object.throw(format_args!("Expected initialWindowSize to be a number"))
-                );
-            }
-        }
-
-        if let Some(max_frame_size) = options.get(global_object, "maxFrameSize")? {
-            if max_frame_size.is_number() {
-                let v = max_frame_size.to_int32();
-                if v as u32 > MAX_FRAME_SIZE || v < 16384 {
-                    return Err(global_object.throw(format_args!(
-                        "Expected maxFrameSize to be a number between 16,384 and 2^24-1"
-                    )));
-                }
-                settings.max_frame_size = u32::try_from(v).expect("int cast");
-            } else if !max_frame_size.is_empty_or_undefined_or_null() {
-                return Err(
-                    global_object.throw(format_args!("Expected maxFrameSize to be a number"))
-                );
-            }
-        }
-
-        if let Some(max_concurrent_streams) = options.get(global_object, "maxConcurrentStreams")? {
-            if max_concurrent_streams.is_number() {
-                let v = max_concurrent_streams.to_int32();
-                if v < 0 {
-                    return Err(global_object.throw(format_args!(
-                        "Expected maxConcurrentStreams to be a number between 0 and 2^32-1"
-                    )));
-                }
-                settings.max_concurrent_streams = u32::try_from(v).expect("int cast");
-            } else if !max_concurrent_streams.is_empty_or_undefined_or_null() {
-                return Err(global_object
-                    .throw(format_args!("Expected maxConcurrentStreams to be a number")));
-            }
-        }
-
-        if let Some(max_header_list_size) = options.get(global_object, "maxHeaderListSize")? {
-            if max_header_list_size.is_number() {
-                let v = max_header_list_size.to_int32();
-                if v < 0 {
-                    return Err(global_object.throw(format_args!(
-                        "Expected maxHeaderListSize to be a number between 0 and 2^32-1"
-                    )));
-                }
-                settings.max_header_list_size = u32::try_from(v).expect("int cast");
-            } else if !max_header_list_size.is_empty_or_undefined_or_null() {
-                return Err(
-                    global_object.throw(format_args!("Expected maxHeaderListSize to be a number"))
-                );
-            }
-        }
-
-        if let Some(max_header_size) = options.get(global_object, "maxHeaderSize")? {
-            if max_header_size.is_number() {
-                let v = max_header_size.to_int32();
-                if v < 0 {
-                    return Err(global_object.throw(format_args!(
-                        "Expected maxHeaderSize to be a number between 0 and 2^32-1"
-                    )));
-                }
-                settings.max_header_list_size = u32::try_from(v).expect("int cast");
-            } else if !max_header_size.is_empty_or_undefined_or_null() {
-                return Err(
-                    global_object.throw(format_args!("Expected maxHeaderSize to be a number"))
-                );
-            }
-        }
-    }
-
-    let mut buf = [0u8; FullSettingsPayload::BYTE_SIZE];
-    let mut cursor = FixedBufferStream::new(&mut buf);
-    let _ = settings.write(&mut cursor);
-    let binary_type = BinaryType::Buffer;
-    binary_type.to_js(&buf, global_object)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2272,6 +2106,10 @@ impl Stream {
             client.outbound_queue_size.get()
         );
 
+        // dispatch_write_callback re-enters JS; a destroy there can drop the
+        // socket's ref and free `client` between iterations. Not during
+        // finalize: refcount is already 0 and a ref/deref would re-destroy.
+        let _keepalive = (!FINALIZING).then(|| client.keepalive());
         let mut queue = core::mem::take(&mut self.data_frame_queue);
         while let Some(item) = queue.dequeue() {
             let frame = item;
@@ -3441,6 +3279,15 @@ impl H2FrameParser {
     /// to the socket, so a multi-frame batch carries the already-corked bytes (e.g. the
     /// response HEADERS frame) in the same write.
     fn drain_cork_into(&self, out: &mut Vec<u8>) {
+        // CORK_BUFFER is thread-local across every session: only drain bytes we corked.
+        // send_data()'s multi-frame path reaches here without having called cork(), and
+        // prepending another session's corked frames to this one's batch sends them to
+        // the wrong peer. uncork() clears CORKED_H2 before calling this, so None passes.
+        if let Some(corked) = CORKED_H2.with(|c| c.get())
+            && !std::ptr::eq(corked, self.as_ctx_ptr())
+        {
+            return;
+        }
         let off = CORK_OFFSET.with(|c| c.get()) as usize;
         if off == 0 {
             return;
@@ -7930,20 +7777,7 @@ impl H2FrameParser {
                         return Err(global_object.throw_value(exception));
                     }
 
-                    let value_str = match item.to_js_string(global_object) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            global_object.clear_exception();
-                            let exception = global_object.to_type_error(
-                                bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                format_args!(
-                                    "Invalid value for header \"{}\"",
-                                    BStr::new(validated_name)
-                                ),
-                            );
-                            return Err(global_object.throw_value(exception));
-                        }
-                    };
+                    let value_str = item.to_js_string(global_object)?;
 
                     // All-digit names can't be passed to get_truthy (integer-index-like names
                     // trip a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
@@ -7977,20 +7811,7 @@ impl H2FrameParser {
                     }
                     single_value_headers[idx] = true;
                 }
-                let value_str = match js_value.to_js_string(global_object) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        global_object.clear_exception();
-                        let exception = global_object.to_type_error(
-                            bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                            format_args!(
-                                "Invalid value for header \"{}\"",
-                                BStr::new(validated_name)
-                            ),
-                        );
-                        return Err(global_object.throw_value(exception));
-                    }
-                };
+                let value_str = js_value.to_js_string(global_object)?;
 
                 // All-digit names can't be passed to get_truthy (integer-index-like names trip
                 // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
@@ -8361,18 +8182,7 @@ impl H2FrameParser {
                 if js_value.is_empty_or_undefined_or_null() {
                     continue;
                 }
-                let value_str = match js_value.to_js_string(global_object) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        global_object.clear_exception();
-                        return Err(global_object
-                            .err(
-                                JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                format_args!("Invalid value for header \"{}\"", BStr::new(name)),
-                            )
-                            .throw());
-                    }
-                };
+                let value_str = js_value.to_js_string(global_object)?;
                 // All-digit names can't be passed to get_truthy (integer-index-like names trip
                 // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
                 let never_index = if Self::is_index_like_name(validated_name) {
@@ -8777,21 +8587,7 @@ impl H2FrameParser {
                         single_value_headers[idx] = true;
                     }
 
-                    let value_str = match value_js.to_js_string(global_object) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            global_object.clear_exception();
-                            return Err(global_object
-                                .err(
-                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                    format_args!(
-                                        "Invalid value for header \"{}\"",
-                                        BStr::new(name)
-                                    ),
-                                )
-                                .throw());
-                        }
-                    };
+                    let value_str = value_js.to_js_string(global_object)?;
 
                     let never_index = if Self::is_index_like_name(validated_name) {
                         false
@@ -8964,21 +8760,7 @@ impl H2FrameParser {
                             return Ok(JSValue::ZERO);
                         }
 
-                        let value_str = match item.to_js_string(global_object) {
-                            Ok(s) => s,
-                            Err(_) => {
-                                global_object.clear_exception();
-                                return Err(global_object
-                                    .err(
-                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                        format_args!(
-                                            "Invalid value for header \"{}\"",
-                                            BStr::new(validated_name)
-                                        ),
-                                    )
-                                    .throw());
-                            }
-                        };
+                        let value_str = item.to_js_string(global_object)?;
 
                         let never_index = if Self::is_index_like_name(validated_name) {
                             false
@@ -9054,21 +8836,7 @@ impl H2FrameParser {
                         }
                         single_value_headers[idx] = true;
                     }
-                    let value_str = match js_value.to_js_string(global_object) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            global_object.clear_exception();
-                            return Err(global_object
-                                .err(
-                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                    format_args!(
-                                        "Invalid value for header \"{}\"",
-                                        BStr::new(name)
-                                    ),
-                                )
-                                .throw());
-                        }
-                    };
+                    let value_str = js_value.to_js_string(global_object)?;
 
                     let never_index = if Self::is_index_like_name(validated_name) {
                         false
@@ -9585,6 +9353,10 @@ impl H2FrameParser {
     }
 
     pub(crate) fn on_native_writable(&self) {
+        // flush() re-enters JS (write callbacks, onStreamEnd, onWantTrailers);
+        // that JS can destroy the session and drop the socket's ref, so the
+        // keepalive must span the whole loop, not just each flush() call.
+        let _keepalive = self.keepalive();
         // flush() ends in flush_stream_queue() → write() → cork(), leaving the
         // newly-serialized frames in CORK_BUFFER (not on the wire). Returning
         // here would let loop.c see last_write_failed==0 and disarm WRITABLE,
@@ -9601,6 +9373,9 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
+        // detach_native_socket can drop the socket's last ref (Writeonly deref),
+        // so match on_native_read/on_native_writable and hold our own +1.
+        let _keepalive = self.keepalive();
         self.detach_native_socket();
     }
 

@@ -90,51 +90,6 @@ impl ImportConditions {
         Ok(())
     }
 
-    /// This code does the same thing as `deepClone` right now, but might change in the future so keeping this separate.
-    ///
-    /// So this code is used when we wrap a CSS file in import conditions in the final output chunk:
-    /// ```css
-    /// @layer foo {
-    ///     /* css file contents */
-    /// }
-    /// ```
-    ///
-    /// However, the *prelude* of the condition /could/ contain a URL token:
-    /// ```css
-    /// @supports (background-image: url('example.png')) {
-    ///     /* css file contents */
-    /// }
-    /// ```
-    ///
-    /// In this case, the URL token's import record actually belongs to the /parent/ of the current CSS file (the one who imported it).
-    /// Therefore, we need to copy this import record from the parent into the import record list of this current CSS file.
-    ///
-    /// In actuality, the css parser doesn't create an import record for URL tokens in `@supports` because that's pointless in the context of hte
-    /// @supports rule.
-    ///
-    /// Furthermore, a URL token is not valid in `@media` or `@layer` rules.
-    ///
-    /// But this could change in the future, so still keeping this function.
-    pub fn clone_with_import_records(
-        &self,
-        arena: &Arena,
-        import_records: &mut Vec<ImportRecord>,
-    ) -> ImportConditions {
-        ImportConditions {
-            layer: self.layer.as_ref().map(|layer| Layer {
-                v: layer
-                    .v
-                    .as_ref()
-                    .map(|l| l.clone_with_import_records(arena, import_records)),
-            }),
-            supports: self
-                .supports
-                .as_ref()
-                .map(|supp| supp.clone_with_import_records(arena, import_records)),
-            media: self.media.clone_with_import_records(arena, import_records),
-        }
-    }
-
     pub fn layers_eql(lhs: &Self, rhs: &Self) -> bool {
         match (&lhs.layer, &rhs.layer) {
             (None, None) => true,
@@ -191,47 +146,11 @@ impl Default for ImportRule {
 }
 
 impl ImportRule {
-    pub fn from_url(url: &'static [u8]) -> Self {
-        Self {
-            url,
-            ..Default::default()
-        }
-    }
-
     pub fn from_url_and_import_record_idx(url: &'static [u8], import_record_idx: u32) -> Self {
         Self {
             url,
             import_record_idx,
             ..Default::default()
-        }
-    }
-
-    pub fn from_conditions_and_url(url: &'static [u8], conds: ImportConditions) -> Self {
-        Self {
-            url,
-            layer: conds.layer,
-            supports: conds.supports,
-            media: conds.media,
-            ..Default::default()
-        }
-    }
-
-    pub fn conditions(&self) -> &ImportConditions {
-        // SAFETY: ImportConditions is #[repr(C)] with fields {layer, supports, media}
-        // laid out identically to the {layer, supports, media} field run of ImportRule
-        // (also #[repr(C)]).
-        // The pointer is derived from `self` (not `&self.layer`) so its provenance
-        // covers all three fields — going through a field reference would narrow
-        // provenance to just `layer` and make sibling-field reads UB under SB.
-        //
-        // Long-term, the pun should be replaced with an actual
-        // `conditions: ImportConditions` field on `ImportRule` (see the struct
-        // doc on `ImportConditions`); that touches every `.layer`/`.supports`/
-        // `.media` access crate-wide, so it is deferred.
-        unsafe {
-            &*std::ptr::from_ref(self)
-                .byte_add(core::mem::offset_of!(Self, layer))
-                .cast::<ImportConditions>()
         }
     }
 

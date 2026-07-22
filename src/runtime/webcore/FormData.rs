@@ -1,6 +1,5 @@
 //! HTML `FormData` parsing + JS bridge.
 
-use bun_collections::ArrayHashMap;
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
@@ -15,13 +14,7 @@ use crate::webcore::BlobExt as _;
 
 declare_scope!(FormData, visible);
 
-pub struct FormData<'a> {
-    pub fields: Map<'a>,
-    /// Borrows into caller-owned input.
-    pub buffer: &'a [u8],
-}
-
-pub type Map<'a> = ArrayHashMap<bun_semver::String, FieldEntry<'a>>;
+pub struct FormData {}
 
 // `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
 // lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
@@ -103,29 +96,7 @@ impl Default for Field<'_> {
     }
 }
 
-pub enum FieldEntry<'a> {
-    Field(Field<'a>),
-    List(Vec<Field<'a>>),
-}
-
-#[repr(C)]
-pub struct FieldExternal {
-    pub name: ZigString,
-    pub value: ZigString,
-    pub blob: *mut Blob,
-}
-
-impl Default for FieldExternal {
-    fn default() -> Self {
-        FieldExternal {
-            name: ZigString::default(),
-            value: ZigString::default(),
-            blob: core::ptr::null_mut(),
-        }
-    }
-}
-
-impl FormData<'_> {
+impl FormData {
     pub fn to_js(
         global: &JSGlobalObject,
         input: &[u8],
@@ -354,14 +325,16 @@ pub fn for_each_multipart_entry<C>(
                 b""
             };
             if strings::eql_case_insensitive_ascii(key, b"content-disposition", true) {
-                value = strings::trim(value, b" ");
-                if value.starts_with(b"form-data;") {
+                // OWS after the colon is SP or HTAB (RFC 9112 §5.6.3); the
+                // disposition type is a case-insensitive token (RFC 2183 §2).
+                value = strings::trim(value, b" \t");
+                if strings::starts_with_case_insensitive_ascii(value, b"form-data;") {
                     value = &value[b"form-data;".len()..];
-                    value = strings::trim(value, b" ");
+                    value = strings::trim(value, b" \t");
                 }
 
                 while let Some(eql_start) = strings::index_of(value, b"=") {
-                    let eql_key = strings::trim(&value[..eql_start], b" ;");
+                    let eql_key = strings::trim(&value[..eql_start], b" \t;");
                     value = &value[eql_start + 1..];
                     if value.starts_with(b"\"") {
                         value = &value[1..];

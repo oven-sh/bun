@@ -7,7 +7,6 @@ use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError;
 use bun_collections::VecExt;
-use bun_core::ZigString;
 use bun_core::strings;
 
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
@@ -61,15 +60,6 @@ impl Default for Array {
 }
 // Live subset of `Array` accessors needed by downstream crates.
 impl Array {
-    pub const EMPTY: Array = Array {
-        items: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: crate::Loc::EMPTY,
-        is_single_line: false,
-        is_parenthesized: false,
-        was_originally_macro: false,
-        close_bracket_loc: crate::Loc::EMPTY,
-    };
-
     /// `Vec::append` uses the global arena; `_bump` is kept
     /// for call-site shape parity and the eventual bump-arena Vec.
     pub fn push(&mut self, _bump: &Bump, item: Expr) -> Result<(), AllocError> {
@@ -297,14 +287,6 @@ impl Default for Call {
         }
     }
 }
-impl Call {
-    pub fn has_same_flags_as(&self, b: &Call) -> bool {
-        self.optional_chain == b.optional_chain
-            && self.is_direct_eval == b.is_direct_eval
-            && self.can_be_unwrapped_if_unused == b.can_be_unwrapped_if_unused
-    }
-}
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum CallUnwrap {
@@ -344,24 +326,10 @@ impl Default for Dot {
         }
     }
 }
-impl Dot {
-    pub fn has_same_flags_as(&self, b: &Dot) -> bool {
-        // Compare the three flag fields that exist on Dot.
-        self.optional_chain == b.optional_chain
-            && self.can_be_removed_if_unused == b.can_be_removed_if_unused
-            && self.call_can_be_unwrapped_if_unused == b.call_can_be_unwrapped_if_unused
-    }
-}
-
 pub struct Index {
     pub index: ExprNodeIndex,
     pub target: ExprNodeIndex,
     pub optional_chain: Option<OptionalChain>,
-}
-impl Index {
-    pub fn has_same_flags_as(&self, b: &Index) -> bool {
-        self.optional_chain == b.optional_chain
-    }
 }
 
 pub struct Arrow {
@@ -806,11 +774,6 @@ impl Number {
     }
 
     #[inline]
-    pub fn to_u64(self) -> u64 {
-        self.to::<u64>()
-    }
-
-    #[inline]
     pub fn to_usize(self) -> usize {
         self.to::<usize>()
     }
@@ -818,11 +781,6 @@ impl Number {
     #[inline]
     pub fn to_u32(self) -> u32 {
         self.to::<u32>()
-    }
-
-    #[inline]
-    pub fn to_u16(self) -> u16 {
-        self.to::<u16>()
     }
 
     pub fn to<T: NumberCast>(self) -> T {
@@ -849,7 +807,7 @@ macro_rules! impl_number_cast {
         }
     )*};
 }
-impl_number_cast!(u16, u32, u64, usize);
+impl_number_cast!(u16, u32, usize);
 
 pub struct BigInt {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
@@ -857,9 +815,25 @@ pub struct BigInt {
     pub value: Str,
 }
 impl BigInt {
-    pub const EMPTY: BigInt = BigInt { value: Str::EMPTY };
+    /// `value` may carry a `0x`/`0o`/`0b` prefix. A leading zero is otherwise
+    /// a syntax error, so any literal that starts with `0` and has more than
+    /// one character is a radix literal.
+    #[inline]
+    pub fn has_radix(v: &[u8]) -> bool {
+        v.len() >= 2 && v[0] == b'0'
+    }
 
-    // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
+    /// `Some(equal)` when the comparison is decidable from the source text, or
+    /// `None` when either side has a radix prefix and the values differ.
+    pub fn check_equality(a: &[u8], b: &[u8]) -> Option<bool> {
+        if a == b {
+            return Some(true);
+        }
+        if !Self::has_radix(a) && !Self::has_radix(b) {
+            return Some(false);
+        }
+        None
+    }
 }
 
 // ── immutable JSON nodes ───────────────────────────────────────────────────
@@ -1249,7 +1223,7 @@ impl Default for Object {
     }
 }
 
-/// used in TOML parser to merge properties.
+/// Dotted-key path used by the INI parser (`get_or_put_object`).
 ///
 /// Node types are lifetime-free, so `next` is a raw `*mut Rope`
 /// into the bump arena. Segments are bulk-freed at arena reset.
@@ -1280,7 +1254,7 @@ impl Rope {
 
     /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
     /// the pointee is a bump allocation valid until arena reset. Centralises
-    /// the one `unsafe` so the `set_rope`/`get_or_put_*`/`get_rope` walkers
+    /// the one `unsafe` so the `get_or_put_object`/`get_rope` walkers
     /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
     #[inline]
     pub fn next_ref<'a>(&self) -> Option<&'a Rope> {
@@ -1308,14 +1282,9 @@ impl From<SetError> for crate::Error {
     }
 }
 
-pub struct RopeQuery<'a> {
-    pub expr: Expr,
-    pub rope: &'a Rope,
-}
-
 // ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
-// `set_rope`/`get_or_put_array`/sort helpers stay in the gated impl below.
+// Sort helpers stay in the gated impl below.
 impl Object {
     pub const EMPTY: Object = Object {
         properties: bun_alloc::AstAlloc::vec(),
@@ -1464,15 +1433,10 @@ pub fn own_key_property_flags(key: &Expr) -> crate::flags::PropertySet {
 
 // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 impl Object {
-    pub fn set(&mut self, key: Expr, _bump: &Bump, value: Expr) -> Result<(), SetError> {
-        let head_key = match key.data.e_string() {
-            Some(s) => s.data,
-            None => return Err(SetError::Clobber),
-        };
-        if self.has_property(&head_key) {
-            return Err(SetError::Clobber);
-        }
-        // `&mut self` so the borrow checker tracks the write.
+    /// Appends a property without checking for an existing key. Callers that
+    /// need duplicate detection must check `as_property` with UTF-8 bytes
+    /// first — a UTF-16 EString key's raw `data` view is not byte-comparable.
+    pub fn append_property(&mut self, key: Expr, value: Expr) {
         VecExt::append(
             &mut self.properties,
             G::Property {
@@ -1482,140 +1446,6 @@ impl Object {
                 ..G::Property::default()
             },
         );
-        Ok(())
-    }
-
-    // this is terribly, shamefully slow
-    pub fn set_rope(&mut self, rope: &Rope, bump: &Bump, value: Expr) -> Result<(), SetError> {
-        let head_key = match rope.head.data.e_string() {
-            Some(s) => s.data,
-            None => return Err(SetError::Clobber),
-        };
-        if let Some(existing) = self.get(&head_key) {
-            match existing.data {
-                crate::expr::Data::EArray(mut array) => {
-                    let Some(next) = rope.next_ref() else {
-                        array.push(bump, value)?;
-                        return Ok(());
-                    };
-
-                    if let Some(last) = array.items.last_mut() {
-                        if !matches!(last.data, crate::expr::Data::EObject(_)) {
-                            return Err(SetError::Clobber);
-                        }
-                        last.data
-                            .e_object_mut()
-                            .unwrap()
-                            .set_rope(next, bump, value)?;
-                        return Ok(());
-                    }
-
-                    array.push(bump, value)?;
-                    return Ok(());
-                }
-                crate::expr::Data::EObject(mut object) => {
-                    if let Some(next) = rope.next_ref() {
-                        object.set_rope(next, bump, value)?;
-                        return Ok(());
-                    }
-
-                    return Err(SetError::Clobber);
-                }
-                _ => {
-                    return Err(SetError::Clobber);
-                }
-            }
-        }
-
-        let mut value_ = value;
-        if let Some(next) = rope.next_ref() {
-            let mut obj = Expr::init(Object::default(), rope.head.loc);
-            obj.data
-                .e_object_mut()
-                .unwrap()
-                .set_rope(next, bump, value)?;
-            value_ = obj;
-        }
-
-        VecExt::append(
-            &mut self.properties,
-            G::Property {
-                key: Some(rope.head),
-                value: Some(value_),
-                flags: own_key_property_flags(&rope.head),
-                ..G::Property::default()
-            },
-        );
-        Ok(())
-    }
-
-    pub fn get_or_put_array(&mut self, rope: &Rope, bump: &Bump) -> Result<Expr, SetError> {
-        let head_key = match rope.head.data.e_string() {
-            Some(s) => s.data,
-            None => return Err(SetError::Clobber),
-        };
-        if let Some(existing) = self.get(&head_key) {
-            match existing.data {
-                crate::expr::Data::EArray(mut array) => {
-                    let Some(next) = rope.next_ref() else {
-                        return Ok(existing);
-                    };
-
-                    if let Some(last) = array.items.last_mut() {
-                        if !matches!(last.data, crate::expr::Data::EObject(_)) {
-                            return Err(SetError::Clobber);
-                        }
-                        return last
-                            .data
-                            .e_object_mut()
-                            .unwrap()
-                            .get_or_put_array(next, bump);
-                    }
-
-                    return Err(SetError::Clobber);
-                }
-                crate::expr::Data::EObject(mut object) => {
-                    let Some(next) = rope.next_ref() else {
-                        return Err(SetError::Clobber);
-                    };
-                    return object.get_or_put_array(next, bump);
-                }
-                _ => {
-                    return Err(SetError::Clobber);
-                }
-            }
-        }
-
-        if let Some(next) = rope.next_ref() {
-            let mut obj = Expr::init(Object::default(), rope.head.loc);
-            let out = obj
-                .data
-                .e_object_mut()
-                .unwrap()
-                .get_or_put_array(next, bump)?;
-            VecExt::append(
-                &mut self.properties,
-                G::Property {
-                    key: Some(rope.head),
-                    value: Some(obj),
-                    flags: own_key_property_flags(&rope.head),
-                    ..G::Property::default()
-                },
-            );
-            return Ok(out);
-        }
-
-        let out = Expr::init(Array::default(), rope.head.loc);
-        VecExt::append(
-            &mut self.properties,
-            G::Property {
-                key: Some(rope.head),
-                value: Some(out),
-                flags: own_key_property_flags(&rope.head),
-                ..G::Property::default()
-            },
-        );
-        Ok(out)
     }
 
     /// Assumes each key in the property is a string
@@ -1909,12 +1739,6 @@ impl EString {
         self.len() > 0
     }
 
-    /// Alias for `slice8()` used by some downstream callers.
-    #[inline]
-    pub fn utf8(&self) -> &[u8] {
-        self.slice8()
-    }
-
     /// Flatten any rope and return UTF-8 bytes.
     /// Resolves the rope into the bump arena, then transcodes if UTF-16.
     pub fn slice<'b>(&mut self, bump: &'b Bump) -> &'b [u8] {
@@ -2041,13 +1865,6 @@ impl EString {
         })
     }
 
-    pub fn clone_slice_if_necessary<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
-        if self.is_utf8() {
-            return Ok(bump.alloc_slice_copy(self.string(bump).expect("unreachable")));
-        }
-        self.string(bump)
-    }
-
     pub fn javascript_length(&self) -> Option<u32> {
         if self.rope_len > 0 {
             // We only support ascii ropes for now
@@ -2077,14 +1894,6 @@ impl EString {
         }
     }
 
-    pub fn eql_utf16(&self, other: &[u16]) -> bool {
-        if self.is_utf8() {
-            strings::utf16_eql_string(other, &self.data)
-        } else {
-            other == self.slice16()
-        }
-    }
-
     /// Shallow field-wise copy. `EString` is structurally `Copy` (slice ref +
     /// `Option<NonNull>` rope links + scalars) but does not derive it to keep
     /// rope-ownership intent explicit; use this for field-wise copies.
@@ -2097,17 +1906,6 @@ impl EString {
             end: self.end,
             rope_len: self.rope_len,
             is_utf16: self.is_utf16,
-        }
-    }
-
-    pub fn has_prefix_comptime(&self, value: &'static [u8]) -> bool {
-        if self.data.len() < value.len() {
-            return false;
-        }
-        if self.is_utf8() {
-            &self.data[..value.len()] == value
-        } else {
-            strings::eql_comptime_utf16(&self.slice16()[..value.len()], value)
         }
     }
 
@@ -2145,28 +1943,6 @@ impl EString {
             self.end = Some(other_ref);
         }
     }
-
-    /// Cloning the rope string is rarely needed, see `foldStringAddition`'s
-    /// comments and the 'edgecase/EnumInliningRopeStringPoison' test
-    pub fn clone_rope_nodes(s: &EString) -> EString {
-        let mut root = s.shallow_clone();
-        if let Some(first) = root.next {
-            // Clone the first link, then walk the freshly-cloned chain via
-            // `StoreRef` (safe `Deref`/`DerefMut`) instead of a raw `*mut`
-            // cursor. Each cloned node's `next` still points at the original
-            // chain (shallow clone), so re-clone link-by-link.
-            let mut tail: StoreRef<EString> =
-                crate::expr::data::Store::append(first.get().shallow_clone());
-            root.next = Some(tail);
-            while let Some(next) = tail.next {
-                let cloned = crate::expr::data::Store::append(next.get().shallow_clone());
-                tail.next = Some(cloned);
-                tail = cloned;
-            }
-            root.end = Some(tail);
-        }
-        root
-    }
 }
 
 fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
@@ -2176,34 +1952,6 @@ fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
             .expect("infallible: variant checked")
             .get(),
     )
-}
-
-impl EString {
-    pub fn string_z<'b>(&self, bump: &'b Bump) -> Result<&'b bun_core::ZStr, AllocError> {
-        // Copy into the bump arena with a trailing NUL and wrap as `ZStr`.
-        let bytes: &[u8] = if self.is_utf8() {
-            &self.data
-        } else {
-            let v = strings::to_utf8_alloc(self.slice16());
-            bump.alloc_slice_copy(&v)
-        };
-        let mut buf = bun_alloc::ArenaVec::<u8>::with_capacity_in(bytes.len() + 1, bump);
-        buf.extend_from_slice(bytes);
-        buf.push(0);
-        let s = buf.into_bump_slice();
-        // SAFETY: `s[len-1] == 0` (just pushed) and `s[..len-1]` is readable for `'b`.
-        Ok(bun_core::ZStr::from_slice_with_nul(s))
-    }
-
-    // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
-
-    pub fn to_zig_string(&mut self, bump: &Bump) -> ZigString {
-        if self.is_utf8() {
-            ZigString::from_utf8(self.slice(bump))
-        } else {
-            ZigString::init_utf16(self.slice16())
-        }
-    }
 }
 
 impl fmt::Display for EString {
@@ -2352,7 +2100,9 @@ impl Template {
                     part.value = Expr::init(EString::init(b"undefined"), part.value.loc);
                 }
                 crate::expr::Data::EBigInt(value) => {
-                    part.value = Expr::init(EString::init(&value.value), part.value.loc);
+                    if !BigInt::has_radix(&value.value) {
+                        part.value = Expr::init(EString::init(&value.value), part.value.loc);
+                    }
                 }
                 _ => {}
             }
@@ -2492,11 +2242,6 @@ pub struct RegExp {
     pub flags_offset: Option<u16>,
 }
 impl RegExp {
-    pub const EMPTY: RegExp = RegExp {
-        value: Str::EMPTY,
-        flags_offset: None,
-    };
-
     pub fn pattern(&self) -> &[u8] {
         // rewind until we reach the /foo/gim
         //                               ^

@@ -1,5 +1,4 @@
 use bun_collections::{BoundedArray, VecExt};
-use bun_core::ZStr;
 use bun_ptr::RawSlice;
 
 pub(crate) type InlineStorage = BoundedArray<u8, 15>;
@@ -92,15 +91,6 @@ impl Data {
                 &inline_storage.as_slice()[start_index..end_index],
             )),
         }
-    }
-
-    pub fn slice_z(&self) -> &ZStr {
-        let s = self.slice();
-        if s.is_empty() {
-            return ZStr::EMPTY;
-        }
-        // SAFETY: caller invariant — bytes are NUL-terminated at `len`.
-        unsafe { ZStr::from_raw(s.as_ptr(), s.len()) }
     }
 }
 

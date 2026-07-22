@@ -1186,6 +1186,31 @@ BIOPointer X509View::getValidTo() const
     return bio;
 }
 
+std::optional<std::string_view> X509View::getSignatureAlgorithm() const
+{
+    if (cert_ == nullptr) return std::nullopt;
+    int nid = X509_get_signature_nid(cert_);
+    if (nid == NID_undef) return std::nullopt;
+    const char* ln = OBJ_nid2ln(nid);
+    if (ln == nullptr) return std::nullopt;
+    return std::string_view(ln);
+}
+
+std::optional<std::string> X509View::getSignatureAlgorithmOID() const
+{
+    if (cert_ == nullptr) return std::nullopt;
+    const X509_ALGOR* alg = nullptr;
+    X509_get0_signature(nullptr, &alg, cert_);
+    if (alg == nullptr) return std::nullopt;
+    const ASN1_OBJECT* obj = nullptr;
+    X509_ALGOR_get0(&obj, nullptr, nullptr, alg);
+    if (obj == nullptr) return std::nullopt;
+    char buf[128] {};
+    int len = OBJ_obj2txt(buf, sizeof(buf), obj, 1);
+    if (len < 0 || static_cast<size_t>(len) >= sizeof(buf)) return std::nullopt;
+    return std::string(buf, static_cast<size_t>(len));
+}
+
 int64_t X509View::getValidToTime() const
 {
 #ifdef OPENSSL_IS_BORINGSSL
@@ -2130,8 +2155,7 @@ DataPointer pbkdf2(const Digest& md,
 
 EVPKeyPointer::PrivateKeyEncodingConfig::PrivateKeyEncodingConfig(
     const PrivateKeyEncodingConfig& other)
-    : PrivateKeyEncodingConfig(
-          other.output_key_object, other.format, other.type)
+    : AsymmetricKeyEncodingConfig(other)
 {
     cipher = other.cipher;
     if (other.passphrase.has_value()) {
@@ -2521,7 +2545,6 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
     const PrivateKeyEncodingConfig& config,
     const Buffer<const unsigned char>& buffer)
 {
-    ClearErrorOnReturn clear_error_on_return;
     static constexpr auto keyOrError = [](EVPKeyPointer pkey,
                                            bool had_passphrase = false) {
         if (int err = ERR_peek_error()) {
@@ -2775,7 +2798,9 @@ bool EVPKeyPointer::isOneShotVariant() const
 {
     if (!pkey_) return false;
     int type = id();
-    return type == EVP_PKEY_ED25519 || type == EVP_PKEY_ED448;
+    return type == EVP_PKEY_ED25519 || type == EVP_PKEY_ED448
+        || type == EVP_PKEY_ML_DSA_44 || type == EVP_PKEY_ML_DSA_65
+        || type == EVP_PKEY_ML_DSA_87;
 }
 
 bool EVPKeyPointer::isSigVariant() const

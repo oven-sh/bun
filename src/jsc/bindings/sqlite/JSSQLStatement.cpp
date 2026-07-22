@@ -133,7 +133,10 @@ public:
     }
 };
 
-static void initializeSQLite()
+// One-time sqlite3_config() calls. Must run before the FIRST sqlite3_open_v2
+// from EITHER bun:sqlite or node:sqlite (they share one library, and config
+// is SQLITE_MISUSE after init). extern "C" for the cross-TU forward-declare.
+extern "C" void Bun__initializeSQLite()
 {
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
@@ -270,6 +273,19 @@ static VersionSqlite3* databaseForHandle(int32_t handle)
     return dbs[static_cast<size_t>(handle)];
 }
 
+// Shared with node:sqlite's termination path (Bun__closeAllNodeSqliteDatabasesForTermination):
+// with unfinalized statements close_v2 only zombifies the connection and
+// defers the WAL checkpoint to a finalize that never comes, so flush the WAL
+// into the main database file explicitly. Zero busy_timeout first — TRUNCATE
+// waits on readers via the connection's busy-handler, so a large user-set
+// timeout plus a cross-process reader would stall process.exit(); with a
+// zero handler TRUNCATE degrades to a passive checkpoint immediately.
+extern "C" void Bun__sqliteCheckpointForTermination(sqlite3* db)
+{
+    sqlite3_busy_timeout(db, 0);
+    sqlite3_wal_checkpoint_v2(db, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
+}
+
 extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
 {
     if (!_instance) {
@@ -279,8 +295,17 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
     auto& dbs = _instance->databases;
 
     for (auto& db : dbs) {
-        if (db->db)
-            sqlite3_close(db->db);
+        if (db->db) {
+            Bun__sqliteCheckpointForTermination(db->db);
+            // close_v2: with unfinalized statements still alive, plain
+            // sqlite3_close() returns SQLITE_BUSY and leaves the connection
+            // open, which would leak it once the pointer is nulled below.
+            sqlite3_close_v2(db->db);
+            // Prevent VersionSqlite3::release() (invoked later by the GC
+            // finalizer during VM teardown) from closing the same handle
+            // again, which would be a use-after-free.
+            db->db = nullptr;
+        }
     }
 }
 
@@ -1194,7 +1219,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
     }
 #endif
 
-    initializeSQLite();
+    Bun__initializeSQLite();
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(true)));
 }
@@ -1247,7 +1272,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 #endif
-    initializeSQLite();
+    Bun__initializeSQLite();
 
     size_t byteLength = array->byteLength();
     void* ptr = array->vector();
@@ -1323,12 +1348,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         return {};
     }
 
-    sqlite3* db = versionDB->db;
-    if (!db) [[unlikely]] {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
-        return {};
-    }
-
     WTF::String attachedName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1336,6 +1355,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected attached database name"_s));
         return {};
     }
+
+    // Read after toWTFString: a user toString() may have closed the database.
+    sqlite3* db = versionDB->db;
+    if (!db) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
+        return {};
+    }
+
     sqlite3_int64 length = -1;
     unsigned char* data = sqlite3_serialize(db, attachedName.utf8().data(), &length, 0);
     if (data == nullptr && length) [[unlikely]] {
@@ -1730,7 +1757,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         return {};
     }
 #endif
-    initializeSQLite();
+    Bun__initializeSQLite();
 
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String path = pathValue.toWTFString(lexicalGlobalObject);

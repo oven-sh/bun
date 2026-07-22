@@ -1352,7 +1352,11 @@ unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) 
     // error.JSError => {} }`); the low tier already wrapped this call in
     // `event_loop.enter()/exit()` which clears any pending exception, so
     // dropping the `Err` is correct.
-    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data);
+    let _ = crate::node::node_cluster_binding::handle_internal_message_child(
+        global,
+        data,
+        JSValue::UNDEFINED,
+    );
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —
@@ -1482,6 +1486,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     terminate_all_workers_and_wait,
     retroactively_report_discovered_tests,
     cancel_all_timers,
+    close_dns_for_terminate,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1612,6 +1617,22 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
         crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
+    }
+}
+
+/// `RuntimeHooks::close_dns_for_terminate` — destroy the per-VM global DNS
+/// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
+/// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
+/// are all still live. See `Resolver::close_channel_for_terminate`.
+fn close_dns_for_terminate() {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; shared borrow
+    // of the `OnceCell` only (the resolver's own state is interior-mutable).
+    if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
+        gd.resolver.close_channel_for_terminate();
     }
 }
 
@@ -1829,7 +1850,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
         // native wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &*build }.write_format::<_, _, C>(formatter, &mut w);
+        let _ = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
         return Ok(true);
     }
     if let Some(blob) = value.as_::<Blob>() {
@@ -2110,8 +2131,6 @@ fn transpile_source_code_inner(
             let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
             _ast_scope.enter();
 
-            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            unsafe { (*jsc_vm).transpiled_count += 1 };
             // `Transpiler::reset_store`. Inline only the
             // block-store half; `AstAlloc` gets its own per-transpile state
             // below, so the side module's long-lived state is not touched.
@@ -2401,7 +2420,7 @@ fn transpile_source_code_inner(
                             bun_paths::fs::Path::init_with_namespace(spec_static, b"node");
                         fallback_source = bun_ast::Source {
                             path: fallback_path,
-                            contents: bun_ptr::Cow::Borrowed(code),
+                            contents: std::borrow::Cow::Borrowed(code),
                             ..Default::default()
                         };
                         virtual_source = Some(&fallback_source);
@@ -2502,7 +2521,6 @@ fn transpile_source_code_inner(
                     // `_fd_guard` scopeguard's tag is not invalidated by a
                     // fresh `&mut` (see Note on `_fd_guard`).
                     file_fd_ptr: Some(unsafe { &mut *input_file_fd_ptr }),
-                    file_hash: Some(hash),
                     macro_remappings,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     jsx: unsafe { &*jsc_vm }.transpiler.options.jsx.clone(),
@@ -2875,8 +2893,6 @@ fn transpile_source_code_inner(
                 }
 
                 // Link import records.
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                let start_count = unsafe { &*jsc_vm }.transpiler.linker.import_counter;
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
                 // `origin` is read-only and `linker` is JS-thread-exclusive.
                 unsafe {
@@ -2938,17 +2954,6 @@ fn transpile_source_code_inner(
                     }
                     return Err(crate::Error::AsyncModule);
                 }
-
-                if !macro_mode {
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread
-                    // VM; both fields are JS-thread-exclusive plain integers.
-                    unsafe {
-                        (*jsc_vm).resolved_count +=
-                            (*jsc_vm).transpiler.linker.import_counter - start_count;
-                    }
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                unsafe { (*jsc_vm).transpiler.linker.import_counter = 0 };
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
@@ -3038,12 +3043,9 @@ fn transpile_source_code_inner(
                         )
                     };
                     // The printer never took ownership of `module_info`;
-                    // explicit destroy (not Drop) mirrors the async-path
-                    // error arm.
+                    // drop it here mirroring the async-path error arm.
                     if print_result.is_err() {
-                        if let Some(mi) = module_info.take() {
-                            mi.destroy();
-                        }
+                        drop(module_info.take());
                     }
                     print_result?;
                 }
@@ -3986,7 +3988,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                         // logger-local `fs::Path` (NOT `bun_resolver::fs::Path`
                         // — see logger/lib.rs:32-). Re-init from `path.text`.
                         path: bun_paths::fs::Path::init(path_text),
-                        contents: bun_ptr::Cow::Borrowed(contents),
+                        contents: std::borrow::Cow::Borrowed(contents),
                         ..Default::default()
                     });
                     virtual_source = virtual_source_to_use.as_ref();
@@ -5004,9 +5006,6 @@ unsafe fn _resolve<'a>(
     let Some(result_path) = result.path_const() else {
         return Err(crate::Error::ModuleNotFound);
     };
-    // SAFETY: plain usize field.
-    unsafe { (*vm).resolved_count += 1 };
-
     // Note: `result_path.text` is a `&'_ [u8]` borrowed from the
     // resolver's interned `'static` BSSStringList stores (see resolver/lib.rs
     // §allocators) — the same store `load_preloads` reads from. Transmute the

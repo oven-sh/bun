@@ -264,7 +264,7 @@ impl UpdateInteractiveCommand {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: <b>bun update --interactive<r> requires an interactive terminal."
             );
-            bun_core::pretty_errorln!(
+            bun_core::note!(
                 "Use <cyan>bun update<r> to update non-interactively, or <cyan>bun outdated<r> to list available updates."
             );
             Output::flush();

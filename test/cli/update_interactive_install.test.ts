@@ -210,27 +210,16 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       }),
     });
 
-    const env = {
-      ...bunEnv,
-      BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
-      // Drop the harness bypass so the real isatty gate is exercised.
-      BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: undefined,
-    };
-
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await installProc.exited;
-
-    // stdin is a pipe we never write to. Previously this hung at the menu.
+    // stdin is a pipe we never write to. Previously this reached the menu and
+    // blocked on read(); now the gate fires before any manifest resolution.
     await using updateProc = Bun.spawn({
       cmd: [bunExe(), "update", "--interactive"],
       cwd: String(dir),
-      env,
+      env: {
+        ...bunEnv,
+        // Drop the harness bypass so the real isatty gate is exercised.
+        BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: undefined,
+      },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

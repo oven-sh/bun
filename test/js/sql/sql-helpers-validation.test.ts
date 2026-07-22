@@ -152,4 +152,69 @@ describe("sqlite helper behavior preserved", () => {
     // a null item without a column binds NULL
     expect(await sql`SELECT 1 as num WHERE 1 IN ${sql([null, 1])}`).toEqual([{ num: 1 }]);
   });
+
+  // The insert helper derives its column list from the supplied rows. When a
+  // key is entirely absent from the first row (not merely set to undefined) it
+  // must still be emitted as a column if any later row supplies it; otherwise
+  // that later row's value is silently discarded and NULL is stored.
+  test("batch insert helper unions keys across all rows", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE h (id INTEGER, a TEXT, b TEXT)`;
+
+    const rows = [
+      { id: 1, a: "onlyA" }, // no `b` key at all
+      { id: 2, a: "hasB", b: "IMPORTANT-DATA" },
+      { id: 3, b: "b-only" }, // no `a` key at all
+    ];
+    const result = await sql`INSERT INTO h ${sql(rows)} RETURNING id, a, b`;
+    expect(result).toEqual([
+      { id: 1, a: "onlyA", b: null },
+      { id: 2, a: "hasB", b: "IMPORTANT-DATA" },
+      { id: 3, a: null, b: "b-only" },
+    ]);
+  });
+
+  test("batch insert helper with explicit columns ignores extra keys", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE h (id INTEGER, a TEXT)`;
+    // When the caller names the columns explicitly, keys outside that set are
+    // ignored regardless of which row they appear on.
+    const rows = [{ id: 1, a: "x" }, { id: 2, a: "y", b: "ignored" }];
+    const result = await sql`INSERT INTO h ${sql(rows, "id", "a")} RETURNING id, a`;
+    expect(result).toEqual([
+      { id: 1, a: "x" },
+      { id: 2, a: "y" },
+    ]);
+  });
+});
+
+// sql.array() builds the Postgres array literal up front, so its serialization
+// can be asserted without a server. A JS null must become the unquoted token
+// `null` (SQL NULL in array-literal syntax); previously `typeof null ===
+// "object"` sent it through JSON.stringify and produced the quoted string
+// `"null"`, which a TEXT[] column stores as the four-character string and an
+// INTEGER[] column rejects with 22P02.
+describe("postgres sql.array serialization (no server)", () => {
+  const makeSql = () => new SQL("postgres://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 });
+
+  test("null in a TEXT array serializes as SQL NULL", async () => {
+    await using sql = makeSql();
+    expect(sql.array(["a", null, "b"], "TEXT").serializedValues).toBe('{"a",null,"b"}');
+  });
+
+  test("null in a numeric array serializes as SQL NULL", async () => {
+    await using sql = makeSql();
+    expect(sql.array([1, null, 2], "INTEGER").serializedValues).toBe("{1,null,2}");
+    expect(sql.array([1.5, null], "DOUBLE PRECISION").serializedValues).toBe("{1.5,null}");
+  });
+
+  test("null in a nested array serializes as SQL NULL", async () => {
+    await using sql = makeSql();
+    expect(sql.array([[1, null], [null, 4]], "INTEGER").serializedValues).toBe("{{1,null},{null,4}}");
+  });
+
+  test("undefined still serializes as SQL NULL", async () => {
+    await using sql = makeSql();
+    expect(sql.array(["a", undefined, "b"], "TEXT").serializedValues).toBe('{"a",null,"b"}');
+  });
 });

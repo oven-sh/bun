@@ -154,7 +154,30 @@ class SQLHelper<T> {
 
   constructor(value: T, keys?: (keyof T)[]) {
     if (keys !== undefined && keys.length === 0 && ($isObject(value[0]) || $isArray(value[0]))) {
-      keys = Object.keys(value[0]) as (keyof T)[];
+      // For batch inserts the caller may pass rows whose key sets differ
+      // (a key missing entirely, not just set to undefined). Union the keys
+      // across every row so a column that first appears in a later row is
+      // still emitted; rows that lack it bind null, which is what
+      // buildDefinedColumnsAndQuery already does for explicit `undefined`.
+      if ($isArray(value) && (value as unknown[]).length > 1 && !$isArray(value[0])) {
+        const seen = new Set<keyof T>();
+        const unionKeys: (keyof T)[] = [];
+        for (let i = 0; i < (value as unknown[]).length; i++) {
+          const item = value[i];
+          if (item == null || !$isObject(item)) continue;
+          const itemKeys = Object.keys(item);
+          for (let k = 0; k < itemKeys.length; k++) {
+            const key = itemKeys[k] as keyof T;
+            if (!seen.has(key)) {
+              seen.add(key);
+              unionKeys.push(key);
+            }
+          }
+        }
+        keys = unionKeys;
+      } else {
+        keys = Object.keys(value[0]) as (keyof T)[];
+      }
     }
 
     if (keys !== undefined) {

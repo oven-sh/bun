@@ -997,12 +997,14 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                                     : SSL_VERIFY_PEER,
         us_verify_callback);
 
-  } else if (options.ca && options.ca_count > 0) {
+  } else if (options.ca) {
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
      * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
-     * any client certificate that chains to a public root. */
+     * any client certificate that chains to a public root. ca_count may be 0
+     * (`ca: []`): that leaves the empty store in place so every peer fails
+     * chain verification, matching Node. */
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     for (unsigned int i = 0; i < options.ca_count; i++) {
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
@@ -1011,11 +1013,11 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         return NULL;
       }
       ERR_clear_error();
-      SSL_CTX_set_verify(ssl_context,
-          options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                      : SSL_VERIFY_PEER,
-          us_verify_callback);
     }
+    SSL_CTX_set_verify(ssl_context,
+        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+                                    : SSL_VERIFY_PEER,
+        us_verify_callback);
   } else if (options.request_cert) {
     /* No per-config CAs are added to this store, so the process-wide shared
      * copy (built once) can be used instead of re-parsing the ~150 bundled
@@ -1107,10 +1109,16 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
    * way Node does, so when the store is the shared one - or still empty -
    * replace it with a fresh full default store (bundled roots, NODE_EXTRA_CA
    * certificates, system CAs when enabled) before appending the user's CA. */
+  us_ex_idx_ensure();
   int store_is_empty = 0;
   if (store && !store_is_shared) {
     const STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
     store_is_empty = objs == NULL || sk_X509_OBJECT_num(objs) == 0;
+  }
+  /* An empty store that the user asked for (`ca: []`) is not the "never
+   * configured" default: it replaces the trust set, so extend it alone. */
+  if (store_is_empty && SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
+    store_is_empty = 0;
   }
   if (store_is_shared || store_is_empty) {
     X509_STORE *own = us_get_default_ca_store();
@@ -1123,7 +1131,6 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!store) {
     return 0;
   }
-  us_ex_idx_ensure();
   SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_ex_idx, (void *)1);
   return add_ca_cert_to_ctx_store(ctx, content, store);
 }

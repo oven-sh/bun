@@ -447,15 +447,11 @@ fn send_audit_request(
     headers.append(b"content-type", b"application/json");
     headers.append(b"content-encoding", b"gzip");
     if !pm.options.scope.token.is_empty() {
-        headers.append_fmt(
-            b"authorization",
-            format_args!("Bearer {}", BStr::new(&pm.options.scope.token)),
-        );
+        // `format_args!`/`BStr` Display is lossy for non-UTF-8 credentials (U+FFFD
+        // expands 1->3 bytes) and overruns the byte count reserved above. Raw bytes.
+        headers.append_bytes_value(b"authorization", b"Bearer ", &pm.options.scope.token);
     } else if !pm.options.scope.auth.is_empty() {
-        headers.append_fmt(
-            b"authorization",
-            format_args!("Basic {}", BStr::new(&pm.options.scope.auth)),
-        );
+        headers.append_bytes_value(b"authorization", b"Basic ", &pm.options.scope.auth);
     }
 
     let mut url_str: Vec<u8> = Vec::new();

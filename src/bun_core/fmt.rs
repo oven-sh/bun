@@ -1667,6 +1667,15 @@ impl RedactedKeywords {
             b"_auth" | b"_authToken" | b"token" | b"_password" | b"email"
         )
     }
+
+    /// Whether `s` STARTS WITH a redacted keyword. The ini parser recognizes a
+    /// credential option by substring, so redaction must be at least as loose:
+    /// `_auth` covers `_authToken`, and trailing junk stays redacted.
+    pub fn has_prefix(s: &[u8]) -> bool {
+        [b"_auth".as_slice(), b"token", b"_password", b"email"]
+            .iter()
+            .any(|k| s.starts_with(k))
+    }
 }
 
 impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
@@ -1940,6 +1949,19 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                                 if inner.is_empty() {
                                     break 'try_redact;
+                                }
+
+                                // An ini credential key may be quoted:
+                                // `"//host/:_authToken"=secret`. The identifier path
+                                // never sees it, so arm the value redaction here, at
+                                // least as loosely as the ini parser matches options.
+                                let mut rest: &[u8] = inner;
+                                while let Some(colon) = strings::index_of_char(rest, b':') {
+                                    rest = &rest[colon as usize + 1..];
+                                    if RedactedKeywords::has_prefix(rest) {
+                                        should_redact_value = true;
+                                        break;
+                                    }
                                 }
 
                                 if inner.len() == 36 && strings::is_uuid(inner) {

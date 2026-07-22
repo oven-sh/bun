@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 describe.concurrent("bun info", () => {
   let i = 0;
@@ -338,6 +339,66 @@ describe.concurrent("bun info", () => {
         "0.0.1-security
         "
       `);
+      expect(code).toBe(0);
+    });
+
+    it("sends Basic <_auth> on the manifest request when only .npmrc _auth is configured", async () => {
+      const basic = Buffer.from("alice:hunter2").toString("base64");
+      // The registry sits at a subpath while `_auth` sits at the host root, so the
+      // header only appears if `pm view` resolves credentials by npm's config-key walk.
+      const registryPath = "/npm/sub/";
+      const paths: string[] = [];
+      const authorizations: (string | null)[] = [];
+
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req, server) {
+          paths.push(new URL(req.url).pathname);
+          authorizations.push(req.headers.get("authorization"));
+          return Response.json({
+            "name": "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            "versions": {
+              "1.0.0": {
+                name: "pkg",
+                version: "1.0.0",
+                dist: {
+                  tarball: `http://127.0.0.1:${server.port}${registryPath}pkg/-/pkg-1.0.0.tgz`,
+                  shasum: "0000000000000000000000000000000000000000",
+                },
+              },
+            },
+          });
+        },
+      });
+
+      const host = `127.0.0.1:${registry.port}`;
+      const testDir = tempDirWithFiles("view-auth", {
+        ".npmrc": `registry=http://${host}${registryPath}\n//${host}/:_auth=${basic}\n`,
+        "package.json": JSON.stringify({ name: "probe", version: "0.0.0" }),
+        // An empty home: the developer's own `.npmrc` declares a `registry=` that
+        // would replace the one under test.
+        "home/.gitkeep": "",
+      });
+      const home = join(testDir, "home");
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "pm", "view", "pkg", "version"],
+        cwd: testDir,
+        env: { ...bunEnv, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+      });
+      const [output, error, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+      expect({ paths, authorizations, output, error }).toEqual({
+        paths: [`${registryPath}pkg`],
+        authorizations: [`Basic ${basic}`],
+        output: "1.0.0\n",
+        error: "",
+      });
       expect(code).toBe(0);
     });
 

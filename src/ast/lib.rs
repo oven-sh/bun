@@ -1939,6 +1939,34 @@ impl Log {
         )
     }
 
+    /// `add_warning_opts`, formatted, plus a free-standing `note:` line. The frame
+    /// redaction applies to the warned line; the note carries no source frame.
+    #[cold]
+    pub fn add_warning_fmt_opts_with_note(
+        &mut self,
+        args: fmt::Arguments<'_>,
+        note_args: fmt::Arguments<'_>,
+        opts: AddErrorOptions<'_>,
+    ) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
+        let text = alloc_print(args);
+        self.add_formatted_msg(
+            Kind::Warn,
+            opts.source,
+            Range {
+                loc: opts.loc,
+                len: opts.len,
+            },
+            text,
+            notes,
+            true,
+            opts.redact_sensitive_information,
+        )
+    }
+
     /// Use a bun.sys.Error's message in addition to some extra context.
     pub fn add_sys_error(&mut self, e: &bun_sys::Error, args: fmt::Arguments<'_>) {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
@@ -2230,6 +2258,30 @@ impl Log {
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
+            ..Default::default()
+        })
+    }
+
+    /// `add_warning`, with `AddErrorOptions`. Use when the offending source line can
+    /// contain a credential: `redact_sensitive_information` masks the value in the frame.
+    #[cold]
+    pub fn add_warning_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        self.warnings += 1;
+        let data = self.tracked_range_data(
+            opts.source,
+            Range {
+                loc: opts.loc,
+                len: opts.len,
+            },
+            text,
+        );
+        self.add_msg(Msg {
+            kind: Kind::Warn,
+            data,
+            redact_sensitive_information: opts.redact_sensitive_information,
             ..Default::default()
         })
     }

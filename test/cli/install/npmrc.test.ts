@@ -442,9 +442,51 @@ ${Object.keys(opts)
       dotEnv: { SECRET_AUTH: "" },
     },
     (stdout: string, stderr: string) => {
-      expect(stderr).toContain("received an empty string");
+      expect(stderr).toContain("supplies no credentials");
     },
   );
+
+  test("empty _auth in the home .npmrc is diagnosed against a registry from the project .npmrc", async () => {
+    using dir = tempDir("npmrc-empty-auth-two-files", {
+      "home/.npmrc": `//somehost.com/:_auth=\n`,
+      ".npmrc": `registry=http://somehost.com/\n`,
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+    });
+    const homeDir = join(String(dir), "home");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--dry-run"],
+      cwd: String(dir),
+      env: { ...env, HOME: homeDir, XDG_CONFIG_HOME: homeDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("supplies no credentials");
+    expect(exitCode).toBe(0);
+  });
+
+  test("empty _auth that only matches a registry's path ancestor is not diagnosed", async () => {
+    using dir = tempDir("npmrc-empty-auth-ancestor", {
+      "home/.npmrc": `//somehost.com/:_auth=\n`,
+      ".npmrc": `@myorg:registry=https://somehost.com/api/v4/packages/npm/\n`,
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+    });
+    const homeDir = join(String(dir), "home");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--dry-run"],
+      cwd: String(dir),
+      env: { ...env, HOME: homeDir, XDG_CONFIG_HOME: homeDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("supplies no credentials");
+    expect(exitCode).toBe(0);
+  });
 
   await makeTest([["email", "user@example.com"]], result => {
     expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
@@ -492,6 +534,237 @@ registry=https://somehost.com/org1/npm/registry/
     expect(result.default_registry_url).toEqual("https://somehost.com/org1/npm/registry/");
     // Should be empty since there's no matching token for /org1/npm/registry/
     expect(result.default_registry_token).toBe("");
+  });
+
+  describe("default registry resolves auth by path-segment ancestor", () => {
+    // https://github.com/oven-sh/bun/issues/30311
+    test("host-root auth applies to a deep default registry", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:_authToken=root
+`);
+      expect(result.default_registry_url).toEqual("https://somehost.com/org1/npm/registry/");
+      expect(result.default_registry_token).toBe("root");
+    });
+
+    test("mid-path ancestor auth applies to a deep default registry", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/org1/:_authToken=mid
+`);
+      expect(result.default_registry_token).toBe("mid");
+    });
+
+    test.each([
+      [
+        "shallow first",
+        `
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:_authToken=root
+//somehost.com/org1/:_authToken=mid
+//somehost.com/org1/npm/registry/:_authToken=exact
+`,
+      ],
+      [
+        "deep first",
+        `
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/org1/npm/registry/:_authToken=exact
+//somehost.com/org1/:_authToken=mid
+//somehost.com/:_authToken=root
+`,
+      ],
+    ])("longest matching ancestor wins (%s)", (_name, ini) => {
+      expect(loadNpmrc(ini).default_registry_token).toBe("exact");
+    });
+
+    test.each([
+      ["trailing slash", "//somehost.com/api/v4/projects/12/:_authToken=attacker"],
+      ["no trailing slash", "//somehost.com/api/v4/projects/12:_authToken=attacker"],
+    ])("a path prefix that is not a segment ancestor never matches (%s)", (_name, line) => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/api/v4/projects/123/packages/npm/
+${line}
+`);
+      expect(result.default_registry_url).toEqual("https://somehost.com/api/v4/projects/123/packages/npm/");
+      expect(result.default_registry_token).toBe("");
+    });
+
+    test("host-root _auth applies to a deep default registry", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:_auth=${Buffer.from("bilbo:verysecure").toString("base64")}
+`);
+      // `_auth` is forwarded verbatim; the config layer never decodes it into
+      // username/password (whoami derives the username in `Scope::from_api`).
+      expect(result.default_registry_auth).toBe(Buffer.from("bilbo:verysecure").toString("base64"));
+      expect(result.default_registry_username).toBe("");
+      expect(result.default_registry_password).toBe("");
+    });
+
+    test("host-root username + _password apply to a deep default registry", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:username=bilbo
+//somehost.com/:_password=${Buffer.from("verysecure").toString("base64")}
+`);
+      expect(result.default_registry_username).toBe("bilbo");
+      expect(result.default_registry_password).toBe("verysecure");
+    });
+
+    // `email` is not part of npm's auth (`npm-registry-fetch`'s `getAuth` never reads
+    // it), so it does not walk: only a line naming the registry's own path applies.
+    test("an ancestor's email does not apply to a deeper registry", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:email=bilbo@example.com
+`);
+      expect(result.default_registry_email).toBe("");
+    });
+
+    test("the registry's own email applies", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:email=gandalf@example.com
+//somehost.com/org1/npm/registry/:email=bilbo@example.com
+`);
+      expect(result.default_registry_email).toBe("bilbo@example.com");
+    });
+  });
+
+  describe("credentials that did not come from .npmrc survive resolution", () => {
+    test("an invalid _auth does not discard the registry URL's token", () => {
+      const result = loadNpmrc(`
+registry=https://:TOK@somehost.com/
+//somehost.com/:_auth=not-valid-base64
+`);
+      expect(result.default_registry_token).toBe("TOK");
+    });
+
+    test("an .npmrc username/_password does not discard the registry URL's token", () => {
+      const result = loadNpmrc(`
+registry=https://:TOK@somehost.com/
+//somehost.com/:username=gandalf
+//somehost.com/:_password=${Buffer.from("verysecure").toString("base64")}
+`);
+      expect(result.default_registry_token).toBe("TOK");
+      expect(result.default_registry_username).toBe("gandalf");
+      expect(result.default_registry_password).toBe("verysecure");
+    });
+  });
+
+  test("an empty _auth for an ancestor path of a registry is not an error", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("{}") });
+    const host = `127.0.0.1:${server.port}`;
+    using dir = tempDir("npmrc-empty-auth-ancestor-2", {
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+      ".npmrc": `@myorg:registry=http://${host}/deep/\n//${host}/:_auth=\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-save"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("supplies no credentials");
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+
+  test("an empty _auth naming a registry's own path is still an error", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("{}") });
+    const host = `127.0.0.1:${server.port}`;
+    using dir = tempDir("npmrc-empty-auth-exact", {
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+      ".npmrc": `@myorg:registry=http://${host}/deep/\n//${host}/deep/:_auth=\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-save"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("supplies no credentials");
+    expect(exitCode).toBe(0);
+  });
+
+  // `Scope::from_api` decodes `_auth` solely to derive the identity `bun pm whoami`
+  // prints; the credential itself is always forwarded verbatim.
+  describe("bun pm whoami derives the username from _auth", () => {
+    async function whoamiWith(files: Record<string, string>) {
+      using dir = tempDir("npmrc-whoami-auth", {
+        "home/.gitkeep": "",
+        "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+        ...files,
+      });
+      const homeDir = join(String(dir), "home");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "whoami"],
+        cwd: String(dir),
+        env: { ...env, HOME: homeDir, USERPROFILE: homeDir, XDG_CONFIG_HOME: homeDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    function whoami(authValue: string) {
+      return whoamiWith({
+        ".npmrc": `registry=https://somehost.com/\n//somehost.com/:_auth=${authValue}\n`,
+      });
+    }
+
+    test("a decodable _auth prints its username", async () => {
+      const { stdout, exitCode } = await whoami(Buffer.from("alice:s3cret").toString("base64"));
+      expect(stdout).toBe("alice\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a non-decodable _auth carries no identity", async () => {
+      const { stdout, stderr, exitCode } = await whoami("!!not-base64!!");
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
+
+    test("an _auth with a blank username carries no identity", async () => {
+      const { stdout, stderr, exitCode } = await whoami(Buffer.from(":s3cret").toString("base64"));
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
+
+    test("an _auth with a blank password carries no identity", async () => {
+      const { stdout, stderr, exitCode } = await whoami(Buffer.from("tok:").toString("base64"));
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
+
+    // The wire sends `Basic <_auth>` here (auth beats username+password), so whoami
+    // must not report the bunfig username — an identity from a credential never sent.
+    test.each([
+      ["opaque", "!!not-base64!!"],
+      ["blank-password", Buffer.from("tok:").toString("base64")],
+    ])("bunfig username/password does not leak an identity past _auth (%s)", async (_name, authValue) => {
+      const { stdout, stderr, exitCode } = await whoamiWith({
+        "bunfig.toml": `[install.registry]\nurl = "https://somehost.com/"\nusername = "bunfig-user"\npassword = "bunfig-pass"\n`,
+        ".npmrc": `//somehost.com/:_auth=${authValue}\n`,
+      });
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
   });
 });
 
@@ -571,5 +844,189 @@ describe("scoped registry routing", () => {
     expect(reqsB).toEqual([]);
     // The request must have been attempted against scopeA's own registry.
     expect(reqsA.some(r => r.path.includes("probe"))).toBe(true);
+  });
+
+  // npm keys on a WHATWG URL's `host`, which is lowercased and drops a default port.
+  // The config key's path stays case-sensitive; only its authority is folded.
+});
+
+describe("the config key's authority is normalized like a WHATWG URL", () => {
+  const token = (ini: string) => loadNpmrc(ini).default_registry_token;
+
+  it("matches a lowercase key against an uppercase registry host", () => {
+    expect(token(`registry=https://Registry.Example.COM/api/\n//registry.example.com/:_authToken=T\n`)).toBe("T");
+  });
+
+  // npm compares config keys literally, and its own `nerfDart` lowercases the keys it
+  // writes, so a hand-written uppercase host applies to nothing. Matched, plus a warning.
+  it("does not match an uppercase key, even against an uppercase registry host", () => {
+    expect(token(`registry=https://Registry.Example.COM/api/\n//Registry.Example.COM/:_authToken=T\n`)).toBe("");
+  });
+
+  it("keeps the key's path case-sensitive", () => {
+    expect(token(`registry=https://example.com/API/\n//example.com/api/:_authToken=T\n`)).toBe("");
+  });
+
+  it("drops a default https port from the registry host", () => {
+    expect(token(`registry=https://example.com:443/api/\n//example.com/:_authToken=T\n`)).toBe("T");
+  });
+
+  it("drops a default http port from the registry host", () => {
+    expect(token(`registry=http://example.com:80/api/\n//example.com/:_authToken=T\n`)).toBe("T");
+  });
+
+  it("keeps a non-default port in the registry host", () => {
+    expect(token(`registry=https://example.com:8443/api/\n//example.com:8443/:_authToken=T\n`)).toBe("T");
+    expect(token(`registry=https://example.com:8443/api/\n//example.com/:_authToken=T\n`)).toBe("");
+  });
+
+  it("drops a default port from an uppercase scheme too", () => {
+    expect(token(`registry=HTTPS://example.com:443/api/\n//example.com/:_authToken=T\n`)).toBe("T");
+  });
+
+  // npm's key never spells out a default port, so neither does ours: a key written
+  // as `//host:443/` matches nothing. Released Bun matched it.
+  it("does not match a key that spells out the default port", () => {
+    expect(token(`registry=https://example.com:443/api/\n//example.com:443/:_authToken=T\n`)).toBe("");
+  });
+});
+
+// A key that would have matched but for its host's case is almost always a mistake.
+// Dropping the credential silently is how #30311 went unnoticed, so say something —
+// without echoing the secret into the log.
+describe("a config key that differs from the registry only by host case", () => {
+  async function stderrOf(npmrc: string) {
+    using dir = tempDir("npmrc-case-warning", {
+      ".npmrc": npmrc,
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-cache"],
+      cwd: String(dir),
+      env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return stderr;
+  }
+
+  it("warns, and redacts the credential", async () => {
+    const stderr = await stderrOf(
+      `registry=https://Registry.Example.COM/api/\n//Registry.Example.COM/:_authToken=SECRETTOKEN\n`,
+    );
+    expect(stderr).toContain('the .npmrc key "//Registry.Example.COM/" matches no registry');
+    expect(stderr).toContain('npm writes this key as "//registry.example.com/"');
+    expect(stderr).not.toContain("SECRETTOKEN");
+  });
+
+  it("says nothing when the key already matches", async () => {
+    const stderr = await stderrOf(
+      `registry=https://Registry.Example.COM/api/\n//registry.example.com/:_authToken=SECRETTOKEN\n`,
+    );
+    expect(stderr).not.toContain("matches no registry");
+  });
+
+  it("says nothing about an uppercase key for an unrelated host", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//Other.Example.COM/:_authToken=X\n`);
+    expect(stderr).not.toContain("matches no registry");
+  });
+
+  it("warns about a key that spells out the default port", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//example.com:443/:_authToken=SECRETTOKEN\n`);
+    expect(stderr).toContain('the .npmrc key "//example.com:443/" matches no registry');
+    expect(stderr).toContain('npm writes this key as "//example.com/"');
+    expect(stderr).not.toContain("SECRETTOKEN");
+  });
+
+  it("says nothing about a non-default port spelled out", async () => {
+    const stderr = await stderrOf(`registry=https://example.com:8443/api/\n//example.com:8443/:_authToken=S\n`);
+    expect(stderr).not.toContain("matches no registry");
+  });
+
+  // The warning promises that respelling the key changes something. These are the shapes
+  // where it would not, so it must stay quiet or the advice is a lie.
+  it("says nothing when a deeper lowercase key already wins", async () => {
+    const stderr = await stderrOf(
+      `registry=https://example.com/api/\n//example.com/api/:_authToken=GOOD\n//Example.COM/:_authToken=BAD\n`,
+    );
+    expect(stderr).not.toContain("matches no registry");
+  });
+
+  it("says nothing about an ancestor email, which never walks", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:email=me@x.com\n`);
+    expect(stderr).not.toContain("matches no registry");
+  });
+
+  it("says nothing about an ancestor's lone username, which never applies", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:username=bob\n`);
+    expect(stderr).not.toContain("matches no registry");
+  });
+
+  it("says nothing about an empty value", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:_authToken=\n`);
+    expect(stderr).not.toContain("matches no registry");
+  });
+
+  it("says nothing when the path case differs, since paths are case-sensitive", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//example.com/API/:_authToken=X\n`);
+    expect(stderr).not.toContain("matches no registry");
+  });
+
+  // A default port is a property of the scheme, so a key is only dead if it supplies
+  // nothing to EVERY registry. `:443` is not http's default port.
+  it("says nothing about a :443 key that is legitimate for an http registry", async () => {
+    const npmrc =
+      `registry=http://example.com:443/api/\n` +
+      `@s:registry=https://example.com/api/\n` +
+      `//example.com:443/api/:_authToken=SECRETTOKEN\n`;
+    expect(await stderrOf(npmrc)).not.toContain("matches no registry");
+    expect(loadNpmrc(npmrc).default_registry_token).toBe("SECRETTOKEN");
+  });
+
+  // Respelling only matters when it would change which credential is chosen. `lookup`
+  // takes the last duplicate, so an uppercase twin is only live when it comes last.
+  it("says nothing about an uppercase twin that a lowercase key already outranks", async () => {
+    const stderr = await stderrOf(
+      `registry=https://example.com/\n//Example.COM/:_authToken=A\n//example.com/:_authToken=B\n`,
+    );
+    expect(stderr).not.toContain("matches no registry");
+  });
+
+  // A credential can be arbitrary bytes. `bun pm view` panicked on non-UTF-8 (lossy
+  // Display expanded U+FFFD past the reserved byte count) until the header append went
+  // raw. A JS `\xff` escape lands as valid UTF-8, so the bytes are written raw here.
+  for (const opt of ["_auth", "_authToken"]) {
+    it(`a non-UTF-8 ${opt} does not panic bun pm view`, async () => {
+      using dir = tempDir("npmrc-raw-bytes", {
+        "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+        "home/.gitkeep": "",
+      });
+      const prefix = Buffer.from(`registry=https://example.com/\n//example.com/:${opt}=`);
+      await write(join(String(dir), ".npmrc"), Buffer.concat([prefix, Buffer.from([0xff, 0xfe, 0xfd, 0x0a])]));
+      const home = join(String(dir), "home");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "view", "left-pad"],
+        cwd: String(dir),
+        env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("panic");
+      expect(stderr).not.toContain("invalid _auth");
+    });
+  }
+
+  it("warns about an uppercase twin that would outrank the lowercase key", async () => {
+    const stderr = await stderrOf(
+      `registry=https://example.com/\n//example.com/:_authToken=B\n//Example.COM/:_authToken=A\n`,
+    );
+    expect(stderr).toContain('the .npmrc key "//Example.COM/" matches no registry');
+    expect(stderr).toContain('npm writes this key as "//example.com/"');
   });
 });

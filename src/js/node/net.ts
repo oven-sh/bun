@@ -871,13 +871,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         self.authorized = true;
       }
     }
-    const pauseOnConnect = server?.pauseOnConnect;
-    if (pauseOnConnect) {
-      // onconnection left the native handle reading so the handshake could
-      // proceed; pause it now, before emitting, so the handler sees the socket
-      // paused and a handler that resume()s is not stomped afterwards.
-      self.pause();
-    }
     if (server) {
       const connectionListener = server[bunSocketServerOptions]?.connectionListener;
       if (typeof connectionListener === "function") {
@@ -888,7 +881,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     // after secureConnection event we emmit secure and secureConnect
     self.emit("secure", self);
     self.emit("secureConnect", verifyError);
-    if (!pauseOnConnect) {
+    // onconnection already Duplex-paused for pauseOnConnect (native reads stay on
+    // so FIN/close_notify still arrive; ServerHandlers.data applies backpressure).
+    if (!server?.pauseOnConnect) {
       self.resume();
     }
   },
@@ -1033,8 +1028,9 @@ function onconnection(err, clientHandle) {
 
   if (pauseOnConnect) {
     // For TLS, only pause the JS stream: the native handle must keep reading so
-    // the TLS engine sees the ClientHello. ServerHandlers.handshake pauses the
-    // handle once the handshake has settled (before emitting secureConnection).
+    // the TLS engine sees the handshake and FIN/close_notify; ServerHandlers.data
+    // applies backpressure at the highWaterMark and the paused Duplex buffers
+    // decrypted bytes until the user resume()s.
     if (isTLS) Duplex.prototype.pause.$call(_socket);
     else _socket.pause();
   }

@@ -1327,8 +1327,22 @@ describe("tls.createServer pauseOnConnect", () => {
       expect({ paused, flowing }).toEqual({ paused: true, flowing: false });
 
       let got = "";
-      srv.on("data", d => (got += d));
+      let stopped = true;
+      srv.on("data", d => {
+        if (stopped) throw new Error("data event fired while paused");
+        got += d;
+      });
       cli.write("hello");
+      // Barrier: a round-trip the other way proves the client's write has
+      // traversed the event loop on the server side while still paused.
+      srv.write("ack");
+      await once(cli, "data");
+      expect({ got, flowing: srv.readableFlowing, readableLength: srv.readableLength }).toEqual({
+        got: "",
+        flowing: false,
+        readableLength: 5,
+      });
+      stopped = false;
       const dataP = once(srv, "data");
       srv.resume();
       await dataP;

@@ -59,14 +59,17 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       // Drive GC until the FinalizationRegistry releases the slot; give up
       // after a bounded number of sweeps instead of waiting on wall-clock
       // time.
-      for (let i = 0; i < 400 && result === "pending"; i++) {
+      for (let i = 0; i < 200 && result === "pending"; i++) {
         Bun.gc(true);
         await Bun.sleep(10);
       }
       await Promise.race([probe, Promise.resolve()]);
       expect(result).toBe(42);
     } finally {
-      await sql.close({ timeout: 0 });
+      // timeout: 0 falls through to graceful close today; a small positive
+      // value reaches the forced-close path so a regression surfaces the
+      // assertion instead of hanging here.
+      await sql.close({ timeout: 0.1 });
     }
   });
 

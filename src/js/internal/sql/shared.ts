@@ -1320,7 +1320,17 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         if (idx !== -1) this.waitingQueue.splice(idx, 1);
         else {
           idx = this.reservedQueue.indexOf(wrapped);
-          if (idx !== -1) this.reservedQueue.splice(idx, 1);
+          if (idx !== -1) {
+            this.reservedQueue.splice(idx, 1);
+            // connect(_, true) may have marked a busy connection preReserved
+            // for this waiter; with no reserved waiters left that hold is
+            // unjustified and would keep flushConcurrentQueries() skipping it.
+            if (this.reservedQueue.length === 0) {
+              for (const c of this.connections) {
+                if (c) c.flags &= ~PooledConnectionFlags.preReserved;
+              }
+            }
+          }
         }
         callback(this.acquisitionTimeoutError(connectionTimeout, this.connections.length), null);
         if (this.onAllQueriesFinished && !this.hasPendingQueries()) {

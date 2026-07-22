@@ -120,7 +120,6 @@ impl Image {
             Image::None => Image::None,
             Image::Url(u) => Image::Url(Url {
                 import_record_idx: u.import_record_idx,
-                loc: u.loc,
             }),
             Image::Gradient(g) => Image::Gradient(g.deep_clone(arena)),
             Image::ImageSet(s) => Image::ImageSet(s.deep_clone(arena)),
@@ -382,7 +381,6 @@ pub struct ImageSetOption {
 impl ImageSetOption {
     fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let start_position = input.input.tokenizer.get_position();
-        let loc = input.current_source_location();
         // `expect_url_or_string` returns a borrow of the parser, so
         // it can't be used as a `try_parse` callback directly (the result type
         // `R` may not borrow the closure arg). Erase the borrow via `*const`
@@ -395,7 +393,6 @@ impl ImageSetOption {
             let record_idx = input.add_import_record(url, start_position, ImportKind::Url)?;
             Image::Url(Url {
                 import_record_idx: record_idx,
-                loc: css::dependencies::Location::from_source_location(loc),
             })
         } else {
             Image::parse(input)?

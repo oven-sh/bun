@@ -5,20 +5,16 @@ use css::{CssResult, PrintErr, Printer};
 pub struct Url {
     /// The url string.
     pub(crate) import_record_idx: u32,
-    /// The location where the `url()` was seen in the CSS source file.
-    pub(crate) loc: crate::dependencies::Location,
 }
 
 impl Url {
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Url> {
         let start_pos = input.position();
-        let loc = input.current_source_location();
         let url = input.expect_url_cloned()?;
         let import_record_idx =
             input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
         Ok(Url {
             import_record_idx,
-            loc: crate::dependencies::Location::from_source_location(loc),
         })
     }
 
@@ -75,7 +71,6 @@ impl Url {
     pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         Url {
             import_record_idx: self.import_record_idx,
-            loc: self.loc,
         }
     }
 

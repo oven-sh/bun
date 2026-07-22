@@ -41,12 +41,10 @@ use bun_alloc::Arena;
 // not circularly depend on those modules.
 mod ext {
     use super::*;
-    use crate::dependencies;
 
     /// Inline of `Url::parse`.
     pub(super) fn url_parse(input: &mut Parser) -> Result<Url> {
         let start_pos = input.position();
-        let loc = input.current_source_location();
         let url = input.expect_url()?;
         // SAFETY: `url` borrows the parser source/arena which outlives the
         // `add_import_record` call (same lifetime erasure as `src_str`).
@@ -55,7 +53,6 @@ mod ext {
             input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
         Ok(Url {
             import_record_idx,
-            loc: dependencies::Location::from_source_location(loc),
         })
     }
 
@@ -1342,7 +1339,6 @@ impl Clone for TokenOrValue {
             // `Url` has no `#[derive(Clone)]` but both fields are `Copy`.
             TokenOrValue::Url(u) => TokenOrValue::Url(Url {
                 import_record_idx: u.import_record_idx,
-                loc: u.loc,
             }),
             TokenOrValue::Var(v) => TokenOrValue::Var(v.clone()),
             TokenOrValue::Env(e) => TokenOrValue::Env(e.clone()),

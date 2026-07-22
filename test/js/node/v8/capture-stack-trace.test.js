@@ -1129,6 +1129,7 @@ test("Error.appendStackTrace does not abort when stackTraceLimit is not a number
     const b = new Error();
     Error.appendStackTrace(a, b);
 
+    Error.stackTraceLimit = 10;
     const c = new Error();
     delete Error.stackTraceLimit;
     const d = new Error();

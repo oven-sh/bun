@@ -1734,7 +1734,9 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
     const fd = streamFdOf(item);
     if (fd !== undefined) return fd;
     const kind = isNodeStreamReadable(item) ? "Readable" : "Writable";
-    throw new Error(`TODO: stream.${kind} stdio @ ${index}`);
+    throw new Error(
+      `Passing a stream.${kind} without an underlying file descriptor as stdio[${index}] is not yet implemented in Bun`,
+    );
   }
   const result = nodeToBunLookup[item];
   if (result === undefined) {

@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
+import cp from "node:child_process";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -167,9 +168,9 @@ describe.concurrent("process-stdio", () => {
 // process.stdout.write went through errorOrDestroy with autoDestroy:false and
 // latched after the first emit. https://github.com/oven-sh/bun/issues/7251
 describe.concurrent.skipIf(isWindows)("process.stdout/stderr EPIPE after reader closes", () => {
-  // Parent spawns a child with piped stdout and immediately destroys the read
-  // end; the child waits for that by reading stdin to EOF (the parent closes
-  // it), then writes. Pure event-driven: no timers.
+  // Spawn a child with piped stdout and immediately destroy the read end; the
+  // child waits for that by reading stdin to EOF (we close it), then writes.
+  // Pure event-driven: no timers.
   const childBody = (fn: "log" | "write", withListener: boolean) => `
     const seen = [];
     ${
@@ -189,28 +190,20 @@ describe.concurrent.skipIf(isWindows)("process.stdout/stderr EPIPE after reader 
       process.exit();
     });`;
 
-  const parentFor = (child: string) => `
-    const cp = require("node:child_process");
-    const c = cp.spawn(process.execPath, ["-e", ${JSON.stringify(child)}],
-      { stdio: ["pipe", "pipe", "inherit"] });
-    c.stdout.destroy();
-    c.stdin.end();
-    c.on("close", code => { console.error("child-exit=" + code); process.exit(0); });`;
-
   async function run(fn: "log" | "write", withListener: boolean) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", parentFor(childBody(fn, withListener))],
+    const child = cp.spawn(bunExe(), ["-e", childBody(fn, withListener)], {
+      stdio: ["pipe", "pipe", "pipe"],
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
     });
-    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("");
+    let stderr = "";
+    child.stderr.on("data", d => (stderr += d.toString()));
+    child.stdout.destroy();
+    child.stdin.end();
+    const exitCode = await new Promise<number>(r => child.on("close", code => r(code ?? -1)));
     const lines = stderr.trim().split("\n");
     const result = JSON.parse(lines.find(l => l.startsWith("{"))!);
     expect(lines).toContain("[done]");
-    expect(lines).toContain("child-exit=" + result.exit);
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(result.exit);
     return result as { seen: string[]; exit: number };
   }
 
@@ -243,26 +236,20 @@ describe.concurrent.skipIf(isWindows)("process.stdout/stderr EPIPE after reader 
   });
 
   test("console.log | head with listener can break the loop (#7251)", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
+    const child = cp.spawn(
+      bunExe(),
+      [
         "-e",
-        `const cp = require("node:child_process");
-         const child = cp.spawn(process.execPath, ["-e", \`
-           process.stdout.on("error", e => { process.stderr.write("handler:" + e.code); process.exit(0); });
-           (function go() { console.log("line"); setImmediate(go); })();
-         \`], { stdio: ["ignore", "pipe", "inherit"] });
-         let n = 0;
-         child.stdout.on("data", () => { if (++n === 1) child.stdout.destroy(); });
-         child.on("close", code => { console.error("child-exit=" + code); process.exit(0); });`,
+        `process.stdout.on("error", e => { process.stderr.write("handler:" + e.code + "\\n"); process.exit(0); });
+         (function go() { console.log("line"); setImmediate(go); })();`,
       ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      { stdio: ["ignore", "pipe", "pipe"], env: bunEnv },
+    );
+    let stderr = "";
+    child.stderr.on("data", d => (stderr += d.toString()));
+    child.stdout.once("data", () => child.stdout.destroy());
+    const exitCode = await new Promise<number>(r => child.on("close", code => r(code ?? -1)));
     expect(stderr).toContain("handler:EPIPE");
-    expect(stderr).toContain("child-exit=0");
     expect(exitCode).toBe(0);
   });
 });

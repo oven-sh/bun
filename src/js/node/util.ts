@@ -10,6 +10,7 @@ const {
   validateObject,
   validateInteger,
 } = require("internal/validators");
+const { resistStopPropagation } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
@@ -520,7 +521,7 @@ function aborted(signal: AbortSignal, resource: object) {
     // Do not leak the current scope into the listener.
     // Instead, create a new function.
     unregisterToken,
-    { once: true },
+    resistStopPropagation({ __proto__: null, once: true }),
   );
 
   if (!lazyAbortedRegistry) {

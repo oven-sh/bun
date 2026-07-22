@@ -351,13 +351,6 @@ macro_rules! define_size_shorthand {
             pub end: $inner,
         }
 
-        impl $name {
-            // The table is kept as data for a future shorthand derive to consume.
-            pub const PROPERTY_FIELD_MAP: &[(&str, PropertyIdTag)] = &[
-                ("start", PropertyIdTag::$start_id),
-                ("end", PropertyIdTag::$end_id),
-            ];
-        }
         // parse/to_css via `Size2D<V>`.
         // Shared impl macro lives in `properties/mod.rs`.
         impl_size_shorthand!($name, $inner, start, end);

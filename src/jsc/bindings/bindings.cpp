@@ -3531,12 +3531,6 @@ JSC::EncodedJSValue ZigString__toRangeErrorInstance(const ZigString* str, JSC::J
     return JSC::JSValue::encode(Zig::getRangeErrorInstance(str, globalObject));
 }
 
-static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject,
-    JSC::CallFrame* callFrame)
-{
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 JSC::JSPromise*
 JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
     const BunString* arg1)

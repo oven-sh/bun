@@ -19,6 +19,68 @@ namespace Bun {
 using namespace JSC;
 using namespace ncrypto;
 
+int pqcKeyTypeToNid(const WTF::StringView& name, bool ignoreCase)
+{
+    static constexpr std::pair<ASCIILiteral, int> table[] = {
+        { "ml-dsa-44"_s, EVP_PKEY_ML_DSA_44 },
+        { "ml-dsa-65"_s, EVP_PKEY_ML_DSA_65 },
+        { "ml-dsa-87"_s, EVP_PKEY_ML_DSA_87 },
+        { "ml-kem-768"_s, EVP_PKEY_ML_KEM_768 },
+        { "ml-kem-1024"_s, EVP_PKEY_ML_KEM_1024 },
+    };
+    for (const auto& [candidate, nid] : table) {
+        if (ignoreCase ? WTF::equalIgnoringASCIICase(name, candidate) : name == candidate)
+            return nid;
+    }
+    return 0;
+}
+
+ASCIILiteral pqcNidToKeyTypeName(int nid)
+{
+    switch (nid) {
+    case EVP_PKEY_ML_DSA_44:
+        return "ml-dsa-44"_s;
+    case EVP_PKEY_ML_DSA_65:
+        return "ml-dsa-65"_s;
+    case EVP_PKEY_ML_DSA_87:
+        return "ml-dsa-87"_s;
+    case EVP_PKEY_ML_KEM_768:
+        return "ml-kem-768"_s;
+    case EVP_PKEY_ML_KEM_1024:
+        return "ml-kem-1024"_s;
+    default:
+        return {};
+    }
+}
+
+bool isMlDsaNid(int nid)
+{
+    return nid == EVP_PKEY_ML_DSA_44 || nid == EVP_PKEY_ML_DSA_65 || nid == EVP_PKEY_ML_DSA_87;
+}
+
+bool isMlKemNid(int nid)
+{
+    return nid == EVP_PKEY_ML_KEM_768 || nid == EVP_PKEY_ML_KEM_1024;
+}
+
+const EVP_PKEY_ALG* pqcNidToAlg(int nid)
+{
+    switch (nid) {
+    case EVP_PKEY_ML_DSA_44:
+        return EVP_pkey_ml_dsa_44();
+    case EVP_PKEY_ML_DSA_65:
+        return EVP_pkey_ml_dsa_65();
+    case EVP_PKEY_ML_DSA_87:
+        return EVP_pkey_ml_dsa_87();
+    case EVP_PKEY_ML_KEM_768:
+        return EVP_pkey_ml_kem_768();
+    case EVP_PKEY_ML_KEM_1024:
+        return EVP_pkey_ml_kem_1024();
+    default:
+        return nullptr;
+    }
+}
+
 namespace ExternZigHash {
 struct Hasher;
 
@@ -162,6 +224,8 @@ std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGloba
         .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
         .len = keySpan.size(),
     };
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
     auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
     if (res) {
         ncrypto::EVPKeyPointer keyPtr(WTF::move(res.value));

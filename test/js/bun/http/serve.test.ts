@@ -3094,6 +3094,9 @@ describe("pipelined request behind an async fetch handler", () => {
         "GET /b HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n",
     );
     expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+    // RFC 9112 9.6: the final response on a connection the server is closing
+    // SHOULD carry Connection: close so the client knows not to wait for more.
+    expect(wire).toMatch(/^connection:\s*close\r$/im);
     expect(wire).toContain("FIRST");
     // The pipelined request is dropped without dispatch; only the first handler runs.
     expect(wire).not.toContain("SECOND");

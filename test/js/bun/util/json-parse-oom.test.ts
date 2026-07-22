@@ -16,22 +16,31 @@ test.skipIf(!isLinux || isASAN)(
   async () => {
     const fixture = join(import.meta.dir, "json-parse-oom-fixture.js");
     const limitKiB = 5 * 1024 * 1024;
-    // A single size/limit can miss the window on a given machine's address-space
-    // layout. Sweep a few sizes; every run that reaches INPUT-OK must either
-    // succeed or throw RangeError, never crash.
-    const sizes = [200, 300, 400, 500].map(mb => mb * 1024 * 1024);
+    // The filler loop in the fixture exhausts address space down to N/4, so any
+    // size should hit the OOM path, but mimalloc's arena layout varies. Sweep a
+    // couple of sizes and every parsePrimitiveValue caller (top-level literal,
+    // array element, object property value); every run that reaches INPUT-OK
+    // must either succeed or throw RangeError, never crash.
+    const cases: Array<[shape: string, mb: number]> = [
+      ["root", 200],
+      ["root", 400],
+      ["array", 300],
+      ["object", 300],
+    ];
     let sawCaught = false;
     let sawInputOK = false;
 
-    for (const size of sizes) {
+    for (const [shape, mb] of cases) {
+      const size = mb * 1024 * 1024;
       await using proc = Bun.spawn({
         cmd: [
           "/bin/sh",
           "-c",
-          `ulimit -v ${limitKiB} && ulimit -c 0 && exec "$0" "$1" "$2"`,
+          `ulimit -v ${limitKiB} && ulimit -c 0 && exec "$0" "$1" "$2" "$3"`,
           bunExe(),
           fixture,
           String(size),
+          shape,
         ],
         env: bunEnv,
         stdout: "pipe",
@@ -44,17 +53,19 @@ test.skipIf(!isLinux || isASAN)(
       sawInputOK = true;
 
       // Once the input is built, JSON.parse must not kill the process.
-      expect({ size, stdout: stdout.trim(), stderr: stderr.trim(), exitCode, signal: proc.signalCode }).toMatchObject({
+      expect({ shape, size, stdout: stdout.trim(), stderr: stderr.trim(), exitCode, signal: proc.signalCode }).toMatchObject({
+        shape,
         size,
         signal: null,
       });
-      expect([0, 1]).toContain(exitCode);
 
       if (stdout.includes("CAUGHT:")) {
         expect(stdout).toContain("CAUGHT:RangeError:Out of memory");
+        expect(exitCode).toBe(0);
         sawCaught = true;
       } else {
         expect(stdout).toContain("PARSED");
+        expect(exitCode).toBe(1);
       }
     }
 

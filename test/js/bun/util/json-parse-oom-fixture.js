@@ -1,7 +1,12 @@
 // Force JSON.parse to hit allocator failure for its string-value copy.
-// Prepare a quoted JSON input of N bytes, then fill remaining address
-// space with buffers >= N/4 so an N-byte allocation cannot succeed while
-// smaller allocations (thread stacks, GC bookkeeping) still can.
+// Prepare a JSON input containing an N-byte string, then fill remaining
+// address space with buffers >= N/4 so an N-byte allocation cannot succeed
+// while smaller allocations (thread stacks, GC bookkeeping) still can.
+//
+// argv: <N> <shape>
+//   shape "root"   => "xxxx..."
+//   shape "array"  => ["xxxx..."]
+//   shape "object" => {"k":"xxxx..."}
 //
 // Outcomes, written to stdout:
 //   SETUP-FAIL  the address-space limit was too tight to build the input
@@ -9,15 +14,18 @@
 //   PARSED      JSON.parse succeeded (enough memory for the copy)
 //   CAUGHT:<name>:<message>   JSON.parse threw
 const N = Number(process.argv[2]);
+const shape = process.argv[3] || "root";
+const prefix = shape === "array" ? '["' : shape === "object" ? '{"k":"' : '"';
+const suffix = shape === "array" ? '"]' : shape === "object" ? '"}' : '"';
 let buf;
 try {
-  buf = Buffer.alloc(N + 2, 0x78);
+  buf = Buffer.alloc(prefix.length + N + suffix.length, 0x78);
 } catch {
   process.stdout.write("SETUP-FAIL\n");
   process.exit(2);
 }
-buf[0] = 0x22;
-buf[N + 1] = 0x22;
+buf.write(prefix, 0, "latin1");
+buf.write(suffix, prefix.length + N, "latin1");
 let input;
 try {
   input = buf.toString("latin1");

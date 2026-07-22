@@ -218,6 +218,8 @@ const leakSurplus = (leaksByProc: string[][]): string[] => {
 
 // --- one file, one schedule -------------------------------------------------
 type Hit = { file: string; schedule: string[]; outcome: string; key: string; detail: string; stacks: string[] };
+// Set by the pass loop: receives (fired, outcome) for every completed run.
+let onFate: (fired: number, outcome: string, exitCode: number | null) => void = () => {};
 async function runFile(file: string, idx: number): Promise<Hit | null> {
   const schedule = drawSchedule();
   const dir = join(workRoot, "runs", `w${String(idx).padStart(5, "0")}`);
@@ -249,6 +251,7 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
     // per-program baseline, and no standing set can cover every program's
     // legitimate exit-time handles. Crash and hang stand alone here.
   }
+  onFate(rr.fired, outcome ?? (rr.outcome === "hang" ? "HANG" : "exit"), rr.exitCode);
   if (!outcome || rr.fired === 0) {
     try {
       rmSync(dir, { recursive: true, force: true });
@@ -277,7 +280,27 @@ while (pass++ < passes) {
   let next = 0;
   let hits = 0;
   let queued = 0;
+  // Fate of every run: a pass is only worth what actually FIRED. no-fire
+  // = no rule ever matched (the fault never reached the program); baseline
+  // states (clean/error-exit without a hit) show the oracles saw a real run.
+  const fate: Record<string, number> = { fired: 0, noFire: 0, hang: 0, crash: 0, errorExit: 0, driverError: 0 };
+  const reportFate = () => {
+    const n = fate.fired + fate.noFire + fate.driverError;
+    if (!n) return;
+    const pct = (k: number) => `${Math.round((100 * k) / n)}%`;
+    console.log(
+      `  -- ${n} run(s): fired ${fate.fired} (${pct(fate.fired)}), NO-FIRE ${fate.noFire} (${pct(fate.noFire)}), ` +
+        `crash ${fate.crash}, hang ${fate.hang}, error-exit ${fate.errorExit}, driver-error ${fate.driverError}`,
+    );
+  };
   const t0 = Date.now();
+  onFate = (firedN, outcome, exitCode) => {
+    if (firedN === 0) fate.noFire++;
+    else fate.fired++;
+    if (outcome === "CRASH") fate.crash++;
+    else if (outcome === "HANG") fate.hang++;
+    else if (exitCode !== 0 && exitCode !== null) fate.errorExit++;
+  };
   const worker = async () => {
     for (;;) {
       const i = next++;
@@ -287,8 +310,10 @@ while (pass++ < passes) {
       try {
         h = await runFile(file, (pass - 1) * files.length + i);
       } catch (e) {
+        fate.driverError++;
         console.log(`  ! ${basename(file)}: ${String(e).slice(0, 80)}`);
       }
+      if ((i + 1) % 25 === 0) reportFate();
       if (!h) continue;
       hits++;
       console.log(`  [${h.outcome}] ${basename(h.file)}  <-  ${h.schedule.join(" ; ")}`);
@@ -323,5 +348,6 @@ while (pass++ < passes) {
   };
   await Promise.all(Array.from({ length: jobs }, worker));
   const min = ((Date.now() - t0) / 60000).toFixed(1);
+  reportFate();
   console.log(`pass ${pass} done in ${min}m: ${files.length} file(s), ${hits} hit(s), ${queued} new queued`);
 }

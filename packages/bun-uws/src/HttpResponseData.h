@@ -140,6 +140,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * into the shared word so the shared response-end path (internalEnd) never
          * has to touch the node-only field. */
         HTTP_NODE_HAS_RESPONSE_TRAILERS = 1 << 16,
+        /* A pipelined request arrived while the previous Bun.serve response was
+         * still pending and was dropped: the connection closes after the
+         * in-flight response drains. Distinct from HTTP_CONNECTION_CLOSE so the
+         * Connection: close header-write guards (internalEnd,
+         * uws_res_end_without_body) still fire; those guards key off
+         * HTTP_CONNECTION_CLOSE meaning "the client already knows / a caller
+         * already wrote it". */
+        HTTP_PIPELINED_DROP = 1 << 17,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -210,7 +218,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
-        return (state & HTTP_CONNECTION_CLOSE)
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_PIPELINED_DROP))
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0);
     }
 

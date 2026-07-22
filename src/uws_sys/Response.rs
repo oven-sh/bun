@@ -1005,6 +1005,7 @@ bitflags::bitflags! {
         const HTTP_RESPONSE_PENDING            = 8;
         const HTTP_CONNECTION_CLOSE            = 16;
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
+        const HTTP_PIPELINED_DROP              = 1 << 17;
     }
 }
 
@@ -1036,7 +1037,7 @@ impl State {
 
     #[inline]
     pub fn is_http_connection_close(self) -> bool {
-        self.bits() & State::HTTP_CONNECTION_CLOSE.bits() != 0
+        self.bits() & (State::HTTP_CONNECTION_CLOSE.bits() | State::HTTP_PIPELINED_DROP.bits()) != 0
     }
 }
 

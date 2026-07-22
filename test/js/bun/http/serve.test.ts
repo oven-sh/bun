@@ -3053,6 +3053,86 @@ server.listen(0, "127.0.0.1", () => {
   expect(exitCode).toBe(0);
 });
 
+// uWS has one HttpResponseData per socket, so a request that arrives while the
+// previous fetch handler is still producing its response cannot be dispatched
+// (async pipelining). The in-flight response must still reach the wire; the
+// socket closes once it drains and the client retries the dropped request on a
+// new connection (RFC 9112 9.3.2). Previously the socket was hard-closed with
+// the cork buffer discarded, so zero bytes were written.
+describe("pipelined request behind an async fetch handler", () => {
+  // idleTimeout: 0 so a regression in the close-after-drain path cannot be
+  // masked by the idle timer closing the socket.
+  async function pipelined(segment: string): Promise<{ wire: string; calls: number }> {
+    let calls = 0;
+    await using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch(req) {
+        calls++;
+        await new Promise(r => setImmediate(r));
+        return new Response(new URL(req.url).pathname === "/a" ? "FIRST" : "SECOND");
+      },
+    });
+    const wire = await new Promise<string>((resolve, reject) => {
+      const socket = net.connect(server.port!, "127.0.0.1");
+      let data = "";
+      socket.on("connect", () => socket.write(segment));
+      socket.on("data", chunk => (data += chunk));
+      socket.on("close", () => resolve(data));
+      socket.on("error", reject);
+      socket.setTimeout(3000, () => {
+        socket.destroy();
+        reject(new Error("server did not close the connection after draining"));
+      });
+    });
+    return { wire, calls };
+  }
+
+  it("delivers the in-flight response and closes for pipelined GETs", async () => {
+    const { wire, calls } = await pipelined(
+      "GET /a HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n" +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n",
+    );
+    expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+    // RFC 9112 9.6: the final response on a connection the server is closing
+    // SHOULD carry Connection: close so the client knows not to wait for more.
+    expect(wire).toMatch(/^connection:\s*close\r$/im);
+    expect(wire).toContain("FIRST");
+    // The pipelined request is dropped without dispatch; only the first handler runs.
+    expect(wire).not.toContain("SECOND");
+    expect(calls).toBe(1);
+  });
+
+  // The dropped request may carry a body; its Content-Length must not let a
+  // third pipelined request reach the handler once the connection is marked
+  // for close.
+  it("drops a pipelined POST body and a third pipelined request", async () => {
+    const { wire, calls } = await pipelined(
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" +
+        "POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello" +
+        "GET /c HTTP/1.1\r\nHost: x\r\n\r\n",
+    );
+    expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(wire).toContain("FIRST");
+    expect(wire).not.toContain("SECOND");
+    expect(calls).toBe(1);
+  });
+
+  // A parse error in the dropped request's bytes (here, an invalid chunked
+  // size) must not write a 4xx ahead of the in-flight response: its bytes have
+  // not reached the wire yet, so a 4xx would be read as the first request's
+  // answer and onClose would abort it.
+  it("still delivers the in-flight response when the dropped request's bytes are malformed", async () => {
+    const { wire, calls } = await pipelined(
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + "POST /b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\n",
+    );
+    expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(wire).toContain("FIRST");
+    expect(wire).not.toMatch(/HTTP\/1\.1 4\d\d/);
+    expect(calls).toBe(1);
+  });
+});
+
 it("only serves /bun:info to loopback clients in development mode", async () => {
   using server = Bun.serve({
     port: 0,

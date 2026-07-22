@@ -1187,3 +1187,67 @@ test("file route serves a burst of concurrent requests after reloads", async () 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
 });
+
+// On POSIX, FileResponseStream reads a regular file with a blocking read()
+// inside the request handler, so the response is complete before the parser
+// moves on to the second pipelined request. On Windows the read goes to the
+// libuv threadpool and completes on a later loop tick, so the second request
+// is parsed while HTTP_RESPONSE_PENDING is still set. The in-flight response
+// must still reach the wire; the pipelined request may be dropped with the
+// connection closing afterwards (RFC 9112 9.3.2) or, like on POSIX, served.
+test("Bun.file route answers pipelined HTTP/1.1 requests without dropping the in-flight response", async () => {
+  using dir = tempDir("serve-file-pipelined", {
+    "hello.txt": "hello",
+    "fixture.ts": /* ts */ `
+import { connect } from "node:net";
+import { join } from "node:path";
+
+const server = Bun.serve({
+  port: 0,
+  routes: { "/": new Response(Bun.file(join(import.meta.dir, "hello.txt"))) },
+  fetch: () => new Response("fallback"),
+});
+
+const socket = connect({ port: server.port, host: "127.0.0.1" });
+socket.on("error", () => {});
+await new Promise((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
+// Two pipelined requests in one TCP segment.
+socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+let data = "";
+socket.on("data", chunk => {
+  data += chunk;
+  // POSIX keeps the connection open (both served synchronously); end from the
+  // client once the first response body is on the wire so both platforms
+  // converge.
+  if (data.includes("hello")) socket.end();
+});
+await new Promise(r => socket.once("close", r));
+
+const firstLine = data.slice(0, data.indexOf("\\r\\n"));
+const responses = data.split("HTTP/1.1 ").length - 1;
+console.log(JSON.stringify({ firstLine, body: data.includes("hello"), responses }));
+server.stop(true);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const result = JSON.parse(stdout.trim() || "{}");
+  expect({ firstLine: result.firstLine, body: result.body, stderr, exitCode }).toEqual({
+    firstLine: "HTTP/1.1 200 OK",
+    body: true,
+    stderr: "",
+    exitCode: 0,
+  });
+  // At least one full response. POSIX serves both (sync file read); Windows
+  // serves the first and closes.
+  expect(result.responses).toBeGreaterThanOrEqual(1);
+});

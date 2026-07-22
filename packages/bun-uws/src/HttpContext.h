@@ -340,11 +340,36 @@ private:
         auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
 
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
+
+            /* Are we not ready for another request yet? Bun.serve has one
+             * HttpResponseData per socket (no queue): drop this request and
+             * mark the in-flight response for connection-close so the socket
+             * closes once it drains. Closing here would lose the in-flight
+             * response before it reaches the wire. RFC 9112 9.3.2: a
+             * pipelining client must be prepared to retry unanswered requests
+             * on a new connection.
+             * Runs before the timeout clear below so a dropped request cannot
+             * disarm the in-flight request's idleTimeout; pause() stops
+             * further segments so the connection cannot be held open by a
+             * pipelined flood or a dropped request's body bytes that extend
+             * past this segment. getHeaders() writes isConnectRequest via
+             * bool& for every parsed request; reset it so a dropped CONNECT
+             * cannot switch the in-flight response into tunnel handling. */
+            if constexpr (!IsNodeHttp) {
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_PIPELINED_DROP;
+                    httpResponseData->isConnectRequest = false;
+                    /* HttpResponse::pause() also does timeout(0); re-arm after. */
+                    ((HttpResponse<SSL> *) s)->pause();
+                    ((HttpResponse<SSL> *) s)->resetTimeout();
+                    return s;
+                }
+            }
+
             /* For every request we reset the timeout and hang until user makes action */
             /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
             us_socket_timeout((us_socket_t *) s, 0);
-
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
             /* node:http compat: the JS layer stopped HTTP processing on this
              * connection (the user emitted 'close' on the socket - Node frees
@@ -367,17 +392,13 @@ private:
                 nodeHttpResponseData->headersCompleted = true;
             }
 
-            /* Are we not ready for another request yet? Terminate the connection.
-             * Important for denying async pipelining until, if ever, we want to support it.
-             * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
+            /* node:http compat: the request arrived while an earlier response on
+             * this connection is still in flight.
+             * (For !IsNodeHttp, HTTP_RESPONSE_PENDING was handled above and
+             * hasQueuedPipelinedResponses stays false, so the else runs.) */
             bool hasQueuedPipelinedResponses = false;
             if constexpr (IsNodeHttp) hasQueuedPipelinedResponses = httpResponseData->nodeHttpQueuedPipelinedCount > 0;
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || hasQueuedPipelinedResponses) {
-                if constexpr (!IsNodeHttp) {
-                    us_socket_close((us_socket_t *) s, 0, nullptr);
-                    return nullptr;
-                } else {
-
+            if (IsNodeHttp && ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || hasQueuedPipelinedResponses)) {
                 /* node:http supports async pipelining: the request is dispatched
                  * while the previous response is still in flight and the JS layer
                  * queues its response (res.socket === null until it becomes the
@@ -396,7 +417,6 @@ private:
                 if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
                     ((HttpResponse<SSL> *) s)->pause();
-                }
                 }
             } else {
                 /* Reset httpResponse */
@@ -575,6 +595,19 @@ private:
             }
             if(httpContextData->onClientError) {
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
+            }
+            /* A parse error in bytes trailing a dropped pipelined request must
+             * not overwrite the in-flight response: its bytes have not reached
+             * the wire yet, so a 4xx here would be read as the answer to the
+             * first (valid) request. The drop path already marked the
+             * connection for close-after-drain and paused reads; leave the
+             * in-flight response to finish and close. */
+            if constexpr (!IsNodeHttp) {
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_PIPELINED_DROP) {
+                    us_socket_unref(s);
+                    ((AsyncSocket<SSL> *) s)->uncork();
+                    return s;
+                }
             }
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
             us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());

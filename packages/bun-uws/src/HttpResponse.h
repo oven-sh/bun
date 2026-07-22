@@ -187,8 +187,10 @@ public:
             }
             httpResponseData->markDone(this);
 
-            /* We need to check if we should close this socket here now */
-            if (!Super::isCorked()) {
+            /* keepCorked=true (only upgrade()) means the caller is adopting the
+             * socket right after this returns; closing here would destruct the
+             * ext block out from under it. */
+            if (!keepCorked && !Super::isCorked()) {
                 if (httpResponseData->shouldCloseConnection()) {
                     if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                         if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
@@ -253,8 +255,10 @@ public:
             if (httpResponseData->offset == totalSize) {
                 httpResponseData->markDone(this);
 
-                /* We need to check if we should close this socket here now */
-                if (!Super::isCorked()) {
+                /* keepCorked=true (only upgrade()) means the caller is adopting
+                 * the socket right after this returns; closing here would
+                 * destruct the ext block out from under it. */
+                if (!keepCorked && !Super::isCorked()) {
                     if (httpResponseData->shouldCloseConnection()) {
                         if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                             if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
@@ -366,6 +370,10 @@ public:
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
+
+        /* A pipelined request dropped behind this handshake may have paused
+         * reads; the adopted WebSocket needs them. No-op if not paused. */
+        Super::resume();
 
         /* Move any backpressure out of HttpResponse */
         auto* responseData = getHttpResponseData();
@@ -834,6 +842,10 @@ public:
     HttpResponse *cork(MoveOnlyFunction<void()> &&handler) {
         if (!Super::isCorked()) {
             LoopData *loopData = Super::getLoopData();
+            /* Captured before handler(): an upgrade inside the handler moves
+             * the socket to the WebSocket group (in-place) or marks the old
+             * allocation closed (reallocated). */
+            us_socket_group_t *httpGroup = us_socket_group((us_socket_t *) this);
             Super::cork();
             handler();
 
@@ -845,6 +857,23 @@ public:
              * The upgrade case is handled by HttpContext's uncork or the drain
              * loop. */
             if (loopData->findCorkSlot(this) == LoopData::INVALID_CORK_SLOT) {
+                /* (a) from an async handler completing outside this socket's
+                 * onData (which corks it, so that socket takes the else branch
+                 * below) lands here via internalEnd()'s uncork with a
+                 * connection-close mark nothing else acts on. For (b) the ext
+                 * is still HttpResponseData and PENDING is still set; for (c)
+                 * the group changed (in-place adopt) or this allocation was
+                 * marked closed (reallocated adopt). */
+                if (!us_socket_is_closed((us_socket_t *) this)
+                    && us_socket_group((us_socket_t *) this) == httpGroup) {
+                    HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+                    if (httpResponseData->shouldCloseConnection()
+                        && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0
+                        && ((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                        ((AsyncSocket<SSL> *) this)->shutdown();
+                        ((AsyncSocket<SSL> *) this)->close();
+                    }
+                }
                 return this;
             }
 

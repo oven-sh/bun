@@ -38,7 +38,9 @@ function notImplemented() {
 // Dispatchers in Bun's undici shim translate to the native fetch `proxy` option.
 // A dispatcher that can express itself as a proxy exposes this method; it
 // receives the target URL and returns the value to pass as `proxy` (string,
-// URL, `{url, headers}` object, "" for forced-direct) or `undefined` to defer.
+// URL, `{url, headers}` object, "" for direct) or `undefined` to defer. Native
+// fetch still applies ambient NO_PROXY to a non-empty proxy value (see
+// ProxySettings::from_explicit), so ProxyAgent inherits that behaviour.
 const kProxyFor = Symbol("kProxyFor");
 
 function resolveProxy(dispatcher, url) {
@@ -476,7 +478,7 @@ class RetryAgent extends Dispatcher {
   }
 
   [kProxyFor](url) {
-    return resolveProxy(this.#inner, url);
+    return this.#inner?.[kProxyFor]?.(url);
   }
 }
 

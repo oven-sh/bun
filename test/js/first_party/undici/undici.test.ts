@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import {
@@ -452,6 +453,35 @@ describe("undici ProxyAgent / dispatcher", () => {
     expect(() => new (ProxyAgent as any)()).toThrow("Proxy uri is mandatory");
     expect(() => new (ProxyAgent as any)({})).toThrow("Proxy uri is mandatory");
     expect(() => new (ProxyAgent as any)(123)).toThrow("Proxy uri is mandatory");
+  });
+
+  it("EnvHttpProxyAgent noProxy match goes direct even with ambient HTTP_PROXY set", async () => {
+    // The dispatcher signals "direct" via proxy:""; native fetch must treat
+    // that as an explicit opt-out and not fall back to ambient HTTP_PROXY. Run
+    // in a subprocess so the ambient env is visible to the native getenv read.
+    await using origin = Bun.serve({ port: 0, fetch: () => new Response("DIRECT") });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { EnvHttpProxyAgent, fetch } = require("undici");
+         const agent = new EnvHttpProxyAgent({ noProxy: "127.0.0.1" });
+         const res = await fetch("http://127.0.0.1:${origin.port}/", { dispatcher: agent });
+         console.log(await res.text());`,
+      ],
+      env: {
+        ...bunEnv,
+        HTTP_PROXY: "http://127.0.0.1:1",
+        http_proxy: "http://127.0.0.1:1",
+        NO_PROXY: "",
+        no_proxy: "",
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("DIRECT");
+    expect(exitCode).toBe(0);
   });
 
   it("Client/Pool store constructor origin and close()/destroy() resolve (#14498, #21944, #7920)", async () => {

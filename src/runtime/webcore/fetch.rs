@@ -1004,6 +1004,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(proxy_arg) = obj.get(global_this, "proxy")? {
+                    if proxy_arg.is_string() && proxy_arg.get_length(ctx)? == 0 {
+                        // proxy: "" is an explicit direct connection (skip the
+                        // ambient HTTP_PROXY env fallback); FetchTasklet already
+                        // maps Some(empty) → direct, this makes it reachable.
+                        proxy = Some(ZigURL::default());
+                        break 'extract_proxy url_proxy_buffer;
+                    }
                     // A URL instance has no `.url` own property, so the `{url, headers}`
                     // branch below would silently ignore it. Treat it as its href here.
                     let is_url_instance =

@@ -334,7 +334,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
                         return d;
                     }
                     bun_core::pretty_errorln!(
-                        "<r><yellow>warn<r>: ignoring install cache at <b>{}<r> because it is writable by other users. Set $BUN_INSTALL_CACHE_DIR to a directory you own, or remove it.",
+                        "<r><yellow>warn<r>: ignoring install cache at <b>{}<r> because it is not a directory owned by the current user or is writable by other users. Set $BUN_INSTALL_CACHE_DIR to a directory only you can write to, or remove it.",
                         bun_fmt::s(&cache_dir.path)
                     );
                     drop(d);
@@ -788,16 +788,20 @@ pub fn cached_tarball_folder_name(
     )
 }
 
-pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    // A cache hit short-circuits the tarball download and its integrity check,
-    // so the entry itself must be a real directory we put there: a symlink
-    // planted under the expected name would otherwise be followed and linked
-    // into node_modules. `lstatat` (AT_SYMLINK_NOFOLLOW) answers "is this a
-    // directory", not "does this resolve to a directory".
-    match sys::lstatat(get_cache_directory(this), folder_path) {
+/// `true` iff `subpath` under `dir` is a real directory (not a symlink).
+/// A cache hit short-circuits the tarball download and its integrity check, so
+/// a symlink planted under the expected entry name must be treated as absent
+/// and re-fetched. `lstatat` (AT_SYMLINK_NOFOLLOW) answers "is this a
+/// directory", not "does this resolve to a directory".
+pub fn cache_entry_is_dir(dir: Fd, subpath: &ZStr) -> bool {
+    match sys::lstatat(dir, subpath) {
         Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
         Err(_) => false,
     }
+}
+
+pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
+    cache_entry_is_dir(get_cache_directory(this), folder_path)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

@@ -142,6 +142,7 @@ describe("install extraction cache trust", () => {
       using _ = dispose;
 
       const r1 = await runInstall(dir, env);
+      expect(r1.stderr).toContain("Saved lockfile");
       expect(r1.exitCode).toBe(0);
       expect(registry.tarballHits).toBe(1);
 
@@ -160,6 +161,7 @@ describe("install extraction cache trust", () => {
       await rm(join(dir, "node_modules"), { recursive: true, force: true });
 
       const r2 = await runInstall(dir, env, ["--frozen-lockfile"]);
+      expect(r2.stderr).not.toContain("error:");
       expect(r2.exitCode).toBe(0);
 
       // The symlink must not have been followed as a cache hit: the tarball was
@@ -185,8 +187,8 @@ describe("install extraction cache trust", () => {
       using _ = dispose;
 
       const r1 = await runInstall(dir, env);
-      expect(r1.exitCode).toBe(0);
       expect(r1.stderr).toContain("writable by other users");
+      expect(r1.exitCode).toBe(0);
 
       // The shared cache must not have been populated; the fallback
       // per-project cache under node_modules/.cache is used instead.

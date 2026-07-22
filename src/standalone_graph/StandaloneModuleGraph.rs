@@ -1512,8 +1512,8 @@ pub(crate) fn inject(
     }
 }
 
+use bun_core::Environment::Architecture as CompileTargetArch;
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
-use bun_core::env::Architecture as CompileTargetArch;
 pub use bun_options_types::compile_target::CompileTarget;
 
 /// Validate that the executable at `path` has a header (ELF / Mach-O / PE
@@ -1523,8 +1523,21 @@ pub use bun_options_types::compile_target::CompileTarget;
 ///
 /// On mismatch, returns a user-facing `CompileResult` error describing the
 /// detected vs. expected target and naming the offending file.
-fn validate_base_binary_header(target: &CompileTarget, path: &ZStr) -> Option<CompileResult> {
+///
+/// `from_explicit_path` selects the remedy hint: an explicit
+/// `--compile-executable-path` has no cache entry to delete.
+fn validate_base_binary_header(
+    target: &CompileTarget,
+    path: &ZStr,
+    from_explicit_path: bool,
+) -> Option<CompileResult> {
     use bun_exe_format::{DetectedArch, DetectedFormat, detect_header};
+
+    let remedy = if from_explicit_path {
+        "Pass a --compile-executable-path that matches the requested target."
+    } else {
+        "The cache entry may be corrupt or tampered with; delete it and try again."
+    };
 
     let expected_format = match target.os {
         CompileTargetOs::Mac => DetectedFormat::MachO,
@@ -1565,34 +1578,34 @@ fn validate_base_binary_header(target: &CompileTarget, path: &ZStr) -> Option<Co
 
     let Some(detected) = detect_header(&buf[..n]) else {
         return Some(CompileResult::fail_fmt(format_args!(
-            "Base executable for '{}' at {} is not a recognized {} file. \
-             The cache entry may be corrupt or tampered with; delete it and try again.",
+            "Base executable for '{}' at {} is not a recognized {} file. {}",
             target,
             bstr::BStr::new(path.as_bytes()),
             expected_format.name(),
+            remedy,
         )));
     };
 
     if detected.format != expected_format {
         return Some(CompileResult::fail_fmt(format_args!(
-            "Base executable for '{}' at {} is a {} file, expected {}. \
-             The cache entry may be corrupt or tampered with; delete it and try again.",
+            "Base executable for '{}' at {} is a {} file, expected {}. {}",
             target,
             bstr::BStr::new(path.as_bytes()),
             detected.format.name(),
             expected_format.name(),
+            remedy,
         )));
     }
 
     if detected.arch != expected_arch {
         return Some(CompileResult::fail_fmt(format_args!(
-            "Base executable for '{}' at {} is {} {}, expected {}. \
-             The cache entry may be corrupt or tampered with; delete it and try again.",
+            "Base executable for '{}' at {} is {} {}, expected {}. {}",
             target,
             bstr::BStr::new(path.as_bytes()),
             detected.format.name(),
             detected.arch.name(),
             expected_arch.name(),
+            remedy,
         )));
     }
 
@@ -1865,7 +1878,9 @@ pub fn to_executable(
     // embedding it verbatim. A wrong-arch or wrong-format file here becomes the
     // runtime of every produced executable.
     if self_exe_path.is_some() || !target.is_default() {
-        if let Some(failure) = validate_base_binary_header(target, &self_exe) {
+        if let Some(failure) =
+            validate_base_binary_header(target, &self_exe, self_exe_path.is_some())
+        {
             return Ok(failure);
         }
     }

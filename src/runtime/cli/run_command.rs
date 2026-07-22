@@ -1715,6 +1715,82 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.global_exit();
 }
 
+/// `--watch` restart is an `execve` (POSIX) / child respawn (Windows). When the
+/// entrypoint file is transiently absent at the moment of restart — editors
+/// that save by delete-then-write, `git checkout`, build output not yet
+/// written — `RunCommand::exec` lands in its failure tail before the file
+/// watcher is ever installed. Instead of exiting, park and poll for the file to
+/// (re)appear, then call `reload_process()` so the next restart runs the full
+/// resolver again. The VM does not exist yet so there are no signal handlers
+/// installed; Ctrl+C terminates the poll loop normally.
+///
+/// `target_name` is the raw CLI positional, not the resolved path the previous
+/// process was running, so the probe mirrors the resolver's own candidate set
+/// (literal path → `+ext` → `index.ext`) enough to see `./entry` → `entry.ts`
+/// and `.` → `./index.ts` reappear. Anything more exotic (package.json `main`,
+/// tsconfig paths) just keeps sleeping, which is the pre-existing behaviour
+/// less the exit.
+#[cold]
+#[inline(never)]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
+fn wait_for_entrypoint_and_reload(target_name: &[u8]) -> ! {
+    pretty_errorln!(
+        "<r><d>Waiting for \"<b>{}<r><d>\" before restarting...<r>",
+        bstr::BStr::new(target_name),
+    );
+    Output::flush();
+
+    let mut buf = paths::path_buffer_pool::get();
+
+    let is_file = |buf: &mut PathBuffer, parts: &[&[u8]]| -> bool {
+        let mut len = 0usize;
+        for p in parts {
+            if len + p.len() >= buf.0.len() {
+                return false;
+            }
+            buf.0[len..len + p.len()].copy_from_slice(p);
+            len += p.len();
+        }
+        buf.0[len] = 0;
+        // SAFETY: NUL-terminated at `len` above.
+        let z = ZStr::from_buf(&buf.0[..], len);
+        matches!(
+            sys::exists_at_type(Fd::cwd(), z),
+            Ok(sys::ExistsAtType::File)
+        )
+    };
+
+    loop {
+        // Sleep first so a misclassification below is rate-limited, not a hot
+        // execve spin.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let found = 'probe: {
+            if is_file(&mut buf, &[target_name]) {
+                break 'probe true;
+            }
+            for ext in bun_bundler::options::bundle_options_defaults::EXTENSION_ORDER {
+                if is_file(&mut buf, &[target_name, ext]) {
+                    break 'probe true;
+                }
+                if is_file(
+                    &mut buf,
+                    &[target_name, paths::SEP_STR.as_bytes(), b"index", ext],
+                ) {
+                    break 'probe true;
+                }
+            }
+            false
+        };
+        if found {
+            bun_core::reload_process(false, false);
+        }
+    }
+}
+
 /// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.
 #[cold]
 #[inline(never)]
@@ -2755,14 +2831,14 @@ impl RunCommand {
                 );
             } else {
                 let default_loader = Self::default_loader_for(target_name);
-                if default_loader
+                let looks_like_file = default_loader
                     .map(Loader::is_javascript_like_or_json)
                     .unwrap_or(false)
                     || (!target_name.is_empty()
                         && (target_name[0] == b'.'
                             || target_name[0] == b'/'
-                            || paths::is_absolute(target_name)))
-                {
+                            || paths::is_absolute(target_name)));
+                if looks_like_file {
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>Module not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
@@ -2777,6 +2853,11 @@ impl RunCommand {
                         "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
+                }
+                if (looks_like_file || default_loader.is_some())
+                    && ctx.debug.hot_reload == cli::command::HotReload::Watch
+                {
+                    wait_for_entrypoint_and_reload(target_name);
                 }
             }
             Global::exit(1);

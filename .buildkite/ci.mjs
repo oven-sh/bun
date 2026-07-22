@@ -761,33 +761,46 @@ function getVerifyBaselineStep(platform, options) {
 }
 
 /**
+ * Targets whose build lane cross-compiles (so `canTraceOrderFile()` is false)
+ * but whose test fleet is native. A `-trace-order` step runs there, downloads
+ * the cross-built `bun-profile`, traces it, and uploads the `.order` artifact
+ * that the next build's `inheritOrderFile()` picks up. One build of lag.
+ *
+ * linux-aarch64 is absent because its build lane runs on the aarch64 host and
+ * traces itself; `packageAndUpload()` is its sole publisher.
+ */
+const traceOrderTargets = [
+  { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
+  { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
+];
+
+/**
  * Trace the symbol order file for a cross-compiled target on a native-arch
  * host, so the next build's `inheritOrderFile()` has something to download.
  *
- * The build lane cross-compiles from debian and cannot run the binary it
- * linked, so it cannot trace. This step runs on the mac test fleet, downloads
- * that lane's unstripped `bun-profile`, runs it under `scripts/orderfile/
- * generate.ts` (the traced binary doubles as the interpreter), and uploads the
- * result. One build of lag: build N's trace is consumed by build N+1's link.
+ * The build lane cross-compiles from the aarch64 `buildHostPlatform` and cannot
+ * run the binary it linked. This step runs on the target-arch test fleet,
+ * downloads that lane's unstripped `bun-profile`, runs it under `scripts/
+ * orderfile/generate.ts` (the traced binary doubles as the interpreter), and
+ * uploads the result.
  *
  * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
- * no consumer and would occupy a bare-metal mac for nothing. Soft-fail: the
- * order file is an optimization, and a broken tracer must not fail a build.
- *
- * darwin-aarch64 only at present; the same shape seeds any target whose build
- * lane cross-compiles but whose test fleet is native.
- * @param {Target} platform
+ * no consumer. Soft-fail: the order file is an optimization, and a broken
+ * tracer must not fail a build.
+ * @param {Target} target
+ * @param {Platform} tracePlatform
+ * @param {PipelineOptions} options
  * @returns {CommandStep}
  */
-function getTraceOrderStep(platform) {
-  const targetKey = getTargetKey(platform);
-  const triplet = getTargetTriplet(platform);
+function getTraceOrderStep(target, tracePlatform, options) {
+  const targetKey = getTargetKey(target);
+  const triplet = getTargetTriplet(target);
   const profileDir = `${triplet}-profile`;
   return {
     key: `${targetKey}-trace-order`,
-    label: `${getTargetLabel(platform)} - trace-order`,
+    label: `${getTargetLabel(target)} - trace-order`,
     depends_on: [`${targetKey}-build-bun`],
-    agents: { queue: "test-darwin", os: "darwin", arch: "aarch64", "release-tier": "latest" },
+    agents: getTestAgent(tracePlatform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     soft_fail: true,
@@ -1547,12 +1560,14 @@ async function getPipeline(options = {}) {
         // chain stays fed, and anywhere else on commit-message opt-in so a PR
         // that changes the tracer can prove the step works before merge — the
         // same `[generate symbol order]` tag ci.ts already honours.
-        if (
-          target.os === "darwin" &&
-          target.arch === "aarch64" &&
-          (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))
-        ) {
-          steps.push(getTraceOrderStep(target));
+        const traceOn = traceOrderTargets.find(t => t.os === target.os && t.arch === target.arch && !target.abi);
+        if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
+          // The trace host's image, same as verify-baseline: on the step, so
+          // build-cpp/build-bun don't wait for it. Darwin has no cloud image.
+          const traceImageKey = getImageKey(traceOn.on);
+          const traceDeps =
+            traceImageKey !== imageKey && imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
+          steps.push(getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps));
         }
 
         return getStepWithDependsOn(

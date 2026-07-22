@@ -5023,6 +5023,23 @@ pub fn write_file_internal(
         }
     }
 
+    // Embedded files inside a `bun build --compile` binary are read-only. A
+    // `/$bunfs/` (`B:\~BUN\` on Windows) path would otherwise resolve via
+    // `find_or_create_file_from_path` to a bytes-backed store and reach the
+    // Bytes-destination branches (silent Blob-valued fulfillment, no write).
+    if let PathOrBlob::Path(ref path_or_fd) = *path_or_blob {
+        let path = path_or_fd.slice();
+        // SAFETY: bun_vm() is live for the duration of a host call.
+        if global_this.bun_vm().standalone_module_graph.is_some()
+            && bun_standalone_graph::is_bun_standalone_file_path(path)
+        {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Cannot write to {} because embedded files in a compiled executable are read-only",
+                bun_core::fmt::quote(path),
+            )));
+        }
+    }
+
     let input_store: Option<StoreRef> = if let PathOrBlob::Blob(ref b) = *path_or_blob {
         b.store.get().clone()
     } else {

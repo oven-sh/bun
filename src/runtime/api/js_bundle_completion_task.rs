@@ -58,9 +58,15 @@ pub struct JSBundleCompletionTask {
     // `unsafe impl Send` below for the thread-affinity constraint this imposes.
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
-    // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
-    // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
+    /// The owning VM's event loop; kept alive by `vm_pin` (or re-checked via
+    /// `vm_gate` for unpinned plugin builds).
     pub jsc_event_loop: BackRef<EventLoop>,
+    /// The owning VM's shutdown gate, for the unpinned plugin-build enqueue.
+    pub vm_gate: std::sync::Arc<bun_threading::ShutdownGate>,
+    /// Holds the VM's shutdown gate open from creation until the completion
+    /// is enqueued back (plugin builds drop it in `begin_run` — see
+    /// `CompletionStruct::begin_run`).
+    pub vm_pin: Option<bun_threading::GateGuest>,
     pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
@@ -82,6 +88,15 @@ pub struct JSBundleCompletionTask {
 }
 
 impl JSBundleCompletionTask {
+    /// Release a queued-but-unrun completion during the terminate drain
+    /// (JS thread, VM alive): drop the queue's ref like `on_complete_anytask`
+    /// would have. An `html_build_task` route ref (released by the normal
+    /// completion path via JS) is left held — bounded, dies with the VM.
+    fn release_unrun(this: *mut Self) {
+        // SAFETY: the queue owned this entry; releasing on the JS thread.
+        unsafe { <Self as bun_ptr::AnyRefCounted>::rc_deref(this) };
+    }
+
     /// `RefCounted` destructor — last ref dropped.
     ///
     /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
@@ -115,16 +130,21 @@ pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,
-    event_loop: *mut EventLoop,
 ) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
     let env = global_this.bun_vm().transpiler.env;
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
-        // `event_loop` is the live JS-thread loop (caller derives it from
-        // `vm.event_loop()`); never null once `Bun.build` is reachable.
-        jsc_event_loop: BackRef::from(core::ptr::NonNull::new(event_loop).expect("event_loop")),
+        jsc_event_loop: BackRef::new(global_this.bun_vm().as_mut().event_loop_shared()),
+        vm_gate: std::sync::Arc::clone(
+            global_this
+                .bun_vm()
+                .shutdown_gate
+                .as_ref()
+                .expect("gate live on the JS thread"),
+        ),
+        vm_pin: None,
         task: AnyTask::default(),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
@@ -141,8 +161,12 @@ pub(crate) fn create_and_schedule_completion_task(
     }));
     // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
     unsafe {
-        (*completion).task =
-            AnyTask::from_typed(completion, JSBundleCompletionTask::on_complete_anytask);
+        (*completion).vm_pin = Some((*vm).pin());
+        (*completion).task = AnyTask::from_typed_with_dispose(
+            completion,
+            JSBundleCompletionTask::on_complete_anytask,
+            JSBundleCompletionTask::release_unrun,
+        );
         if let Some(plugin) = (*completion).plugins {
             (*plugin.as_ptr()).set_config(completion.cast());
         }
@@ -761,14 +785,31 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
-        // passed through from the bundler vtable; the queue takes ownership.
-        unsafe {
-            from_completion_handle(c)
-                .jsc_event_loop
-                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
-        }
+        // `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
+        // passed through from the bundler vtable; on success the queue takes
+        // ownership. A pinned build's gate entry always succeeds; an
+        // unpinned plugin build re-enters the gate and, on a lost race with
+        // terminate, drops the item (stranding `pending_items` wedges the
+        // BundleThread and leaks the completion — documented residual, see
+        // `begin_run`'s FIXME).
+        let completion = from_completion_handle(c);
+        let guest = match &completion.vm_pin {
+            Some(_) => None, // pin held: VM guaranteed alive
+            None => match bun_threading::GateGuest::enter(&completion.vm_gate) {
+                Some(g) => Some(g),
+                None => {
+                    // SAFETY: the queue never took the item; sole owner here.
+                    drop(unsafe { bun_core::heap::take(task) });
+                    return;
+                }
+            },
+        };
+        completion.jsc_event_loop.enqueue_task_concurrent(
+            // SAFETY: `task` is non-null per the vtable contract (fresh heap
+            // allocation from the bundler side).
+            unsafe { core::ptr::NonNull::new_unchecked(task) },
+        );
+        drop(guest);
     },
 };
 
@@ -979,13 +1020,31 @@ impl CompletionStruct for JSBundleCompletionTask {
         Ok(())
     }
 
-    fn complete_on_bundle_thread(&mut self) {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // `ConcurrentTask::create` heap-allocates a fresh task; the
-        // queue takes ownership of it.
-        self.jsc_event_loop
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
+    fn begin_run(&mut self) {
+        if self.plugins.is_some() {
+            // Plugin builds round-trip through the owning JS thread
+            // mid-bundle; holding the pin would deadlock worker terminate.
+            drop(self.vm_pin.take());
+        }
     }
+
+    fn complete_on_bundle_thread(&mut self) {
+        // Enqueue while the pin (taken at creation) is still held so it
+        // lands on a live VM, then release it. Unpinned plugin builds
+        // re-enter the gate for the enqueue; losing that race to terminate
+        // leaks the completion with the wedged bundle (documented residual).
+        let any_task = self.task.task();
+        let pin = match self.vm_pin.take() {
+            Some(pin) => Some(pin),
+            None => bun_threading::GateGuest::enter(&self.vm_gate),
+        };
+        if pin.is_some() {
+            self.jsc_event_loop
+                .enqueue_task_concurrent(jsc::ConcurrentTask::create(any_task));
+        }
+        drop(pin);
+    }
+
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;
     }

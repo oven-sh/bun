@@ -498,8 +498,7 @@ impl Route {
         }
         config.source_map = bundler_options::SourceMapOption::Linked;
 
-        let completion_task =
-            create_and_schedule_completion_task(config, plugins, global, vm.event_loop())?;
+        let completion_task = create_and_schedule_completion_task(config, plugins, global)?;
         // SAFETY: `completion_task` is the freshly-boxed allocation (refcount==1); sole owner.
         unsafe {
             (*completion_task).started_at_ns =

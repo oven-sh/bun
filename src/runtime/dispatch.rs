@@ -1163,13 +1163,27 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
         // posted this entry, then deref'd its own +1 if final; the JS-side
         // +1 it expected `on_progress_update` to drop is the one we release
         // here. Runs on the JS thread, so the plain `deref` (→ `deinit` on
-        // 1→0) is the right teardown path; the HTTP daemon is already
-        // parked (`shutdown_for_exit` precedes `destroy`), so the
-        // `Box<AsyncHTTP>` and any `metadata` it owns are exclusively ours.
+        // 1→0) is the right teardown path. On the main-exit caller the HTTP
+        // daemon is already parked; on the worker-shutdown caller it is not,
+        // but the HTTP side then still holds its own ref, so the deref here
+        // cannot free the tasklet under it.
         task_tag::FetchTasklet => {
-            // SAFETY: `task.ptr` is the live heap `FetchTasklet`; HTTP daemon is
-            // already parked so we hold the sole reference.
-            FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
+            let tasklet = task.ptr.cast::<FetchTasklet>();
+            // Worker terminate: no JS-side consumer remains, so abort the
+            // transfer. The flag this entry left set steers later HTTP-thread
+            // callbacks onto the CAS-fail path, whose single `is_done` deref
+            // balances the refs. On the main-exit caller the HTTP daemon has
+            // already been parked and its requests reclaimed — scheduling a
+            // shutdown against reclaimed state is unsound, and the registry
+            // walk already aborted the transfer, so skip the abort there.
+            // SAFETY: `task.ptr` is the live heap `FetchTasklet`; the ref this
+            // queued entry owns is released just below, on this (JS) thread.
+            unsafe {
+                if !(*tasklet).javascript_vm.is_main_thread {
+                    (*tasklet).abort_task();
+                }
+            }
+            FetchTasklet::deref(tasklet);
             true
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
@@ -1213,6 +1227,136 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
             unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
             true
         }
+        // Producer pins guarantee these transfers/jobs completed before the
+        // worker drain; the main-exit drain has no such barrier, so a
+        // mid-stream entry (HTTP thread still active) is left alone.
+        task_tag::S3HttpDownloadStreamingTask => {
+            let s3 = task.ptr.cast::<S3HttpDownloadStreamingTask>();
+            // SAFETY: queue-owned entry, live box.
+            unsafe {
+                if crate::webcore::s3::download_stream::State(
+                    (*s3).state.load(core::sync::atomic::Ordering::Acquire),
+                )
+                .has_more()
+                {
+                    return false;
+                }
+                // Barrier: a losing CAS callback may still be inside its
+                // mutex-guarded buffer append.
+                (*s3).mutex.lock();
+                (*s3).mutex.unlock();
+                (*s3).callback_context_release.run((*s3).callback_context.as_ptr().cast());
+                drop(bun_core::heap::take(s3));
+            }
+            true
+        }
+        task_tag::S3HttpSimpleTask => {
+            let s3 = task.ptr.cast::<S3HttpSimpleTask>();
+            // SAFETY: queue-owned entry; `is_done` enqueue means the HTTP
+            // side is finished — sole owner.
+            unsafe {
+                (*s3).callback_context_release.run((*s3).callback_context);
+                drop(bun_core::heap::take(s3));
+            }
+            true
+        }
+        task_tag::NativeZlib => {
+            // SAFETY: releases the in-flight write()'s ref on the JS thread.
+            unsafe {
+                <NativeZlib as node_zlib_binding::CompressionStreamImpl>::deref(task.ptr.cast())
+            };
+            true
+        }
+        task_tag::NativeBrotli => {
+            // SAFETY: as NativeZlib above.
+            unsafe {
+                <NativeBrotli as node_zlib_binding::CompressionStreamImpl>::deref(task.ptr.cast())
+            };
+            true
+        }
+        task_tag::NativeZstd => {
+            // SAFETY: as NativeZlib above.
+            unsafe {
+                <NativeZstd as node_zlib_binding::CompressionStreamImpl>::deref(task.ptr.cast())
+            };
+            true
+        }
+        task_tag::AsyncGlobWalkTask => {
+            // SAFETY: queue-owned completed task; destroy drops the box (and
+            // its ctx) on the JS thread with the VM alive.
+            unsafe { AsyncGlobWalkTask::destroy(task.ptr.cast()) };
+            true
+        }
+        task_tag::AsyncTransformTask => {
+            // SAFETY: as AsyncGlobWalkTask above.
+            unsafe { AsyncTransformTask::destroy(task.ptr.cast()) };
+            true
+        }
+        task_tag::AsyncImageTask => {
+            // SAFETY: as AsyncGlobWalkTask above.
+            unsafe { AsyncImageTask::destroy(task.ptr.cast()) };
+            true
+        }
+        task_tag::CopyFilePromiseTask => {
+            // SAFETY: as AsyncGlobWalkTask above.
+            unsafe { CopyFilePromiseTask::destroy(task.ptr.cast()) };
+            true
+        }
+        // WorkTask shells: destroy frees the shell; the heap ctx is dropped
+        // too (its completion-handler box is a known small leak here).
+        task_tag::ReadFileTask => {
+            // SAFETY: queue-owned completed task; sole owner.
+            unsafe {
+                let ctx = (*task.ptr.cast::<ReadFileTask>()).ctx;
+                ReadFileTask::destroy(task.ptr.cast());
+                bun_core::heap::destroy(ctx);
+            }
+            true
+        }
+        task_tag::WriteFileTask => {
+            // SAFETY: as ReadFileTask above.
+            unsafe {
+                let ctx = (*task.ptr.cast::<WriteFileTask>()).ctx;
+                WriteFileTask::destroy(task.ptr.cast());
+                bun_core::heap::destroy(ctx);
+            }
+            true
+        }
+        #[cfg(not(windows))]
+        task_tag::GetAddrInfoRequestTask => {
+            // SAFETY: queue-owned completed request; `release_unrun` frees
+            // the chained lookup boxes too (VM alive — their Drops are safe).
+            unsafe {
+                let ctx = (*task.ptr.cast::<get_addr_info_request::Task>()).ctx;
+                get_addr_info_request::Task::destroy(task.ptr.cast());
+                crate::dns_jsc::GetAddrInfoRequest::release_unrun(ctx);
+            }
+            true
+        }
+        task_tag::ArchiveExtractTask => {
+            // SAFETY: queue-owned completed task; destroy drops the box on
+            // the JS thread with the VM alive.
+            unsafe { ArchiveAsyncTask::release_unrun(task.ptr.cast::<ArchiveExtractTask>()) };
+            true
+        }
+        task_tag::ArchiveBlobTask => {
+            // SAFETY: as ArchiveExtractTask above.
+            unsafe { ArchiveAsyncTask::release_unrun(task.ptr.cast::<ArchiveBlobTask>()) };
+            true
+        }
+        task_tag::ArchiveWriteTask => {
+            // SAFETY: as ArchiveExtractTask above.
+            unsafe { ArchiveAsyncTask::release_unrun(task.ptr.cast::<ArchiveWriteTask>()) };
+            true
+        }
+        task_tag::ArchiveFilesTask => {
+            // SAFETY: as ArchiveExtractTask above.
+            unsafe { ArchiveAsyncTask::release_unrun(task.ptr.cast::<ArchiveFilesTask>()) };
+            true
+        }
+        // NapiAsyncWork is NOT reclaimed here: the work handle itself is
+        // addon-owned (`napi_delete_async_work`); freeing it would double
+        // free when the addon's destructor runs. Re-queued (leaks bounded).
         // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
         // that were already batch-moved into `self.tasks`. Must run before
         // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks

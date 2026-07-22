@@ -42,6 +42,8 @@ mod _impl {
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+        /// Per-write shutdown-gate pin (see `CompressionStreamImpl::vm_pin`).
+        pub vm_pin: JsCell<Option<bun_threading::GateGuest>>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
@@ -93,6 +95,7 @@ mod _impl {
                 ref_count: Cell::new(1),
                 // JSC_BORROW backref — the global outlives this m_ctx payload.
                 global_this: bun_ptr::BackRef::new(global),
+                vm_pin: JsCell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),

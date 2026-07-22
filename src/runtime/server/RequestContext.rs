@@ -2578,6 +2578,7 @@ where
                         path,
                         Self::on_s3_size_resolved_thunk,
                         std::ptr::from_mut::<Self>(this).cast::<c_void>(),
+                        crate::webcore::s3::simple_request::ContextRelease::NONE,
                         proxy_url,
                         s3.request_payer,
                     ); // TODO: properly propagate exception upwards

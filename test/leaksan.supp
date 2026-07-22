@@ -130,3 +130,8 @@ leak:bun_runtime::cli::multi_run::run
 # NAPI weak finalizers which enqueue Box<NapiFinalizerTask> into the event
 # loop; the loop is already exiting so they never drain.
 leak:napi_internal_enqueue_finalizer
+# test/js/web/workers/worker-terminate-lifetime.test.ts — the per-worker
+# node:fs Binding box is GC-owned; workers terminated mid-tick skip the
+# Heap::lastChanceToFinalize sweep for it. Pre-existing on main; tracked
+# separately.
+leak:bun_runtime::node::node_fs_binding::create_binding

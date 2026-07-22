@@ -7,13 +7,13 @@ use bun_io::KeepAlive;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
 };
-// `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
+// `bun_jsc::{AnyTask, ConcurrentTask}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
-use bun_jsc::event_loop::EventLoop;
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
 use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
+use bun_jsc::event_loop::EventLoop;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{JSPromise, JSPromiseStrong};
@@ -549,7 +549,12 @@ struct PasswordJob<Op: PasswordOp> {
     op: Op,
     password: Box<[u8]>,
     promise: JSPromiseStrong,
+    /// JSC_BORROW: kept alive across the job by `vm_pin` below (worker
+    /// terminate waits for the pin).
     event_loop: *mut EventLoop,
+    /// Holds the worker's shutdown gate open until the completion is
+    /// enqueued (dropped on the pool thread in `run_owned`).
+    vm_pin: Option<bun_threading::GateGuest>,
     global: *const JSGlobalObject,
     r#ref: KeepAlive,
     task: WorkPoolTask,
@@ -583,16 +588,23 @@ impl<Op: PasswordOp> PasswordJob<Op> {
         // SAFETY: `result` was just heap-allocated and is not yet shared
         // (enqueue happens after this write).
         unsafe {
-            (*result).task = AnyTask::from_typed(result, PasswordResult::<Op>::run_from_js_erased);
+            (*result).task = AnyTask::from_typed_with_dispose(
+                result,
+                PasswordResult::<Op>::run_from_js_erased,
+                PasswordResult::<Op>::release_unrun,
+            );
         }
-        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
-        // job; ownership of `result` transfers to the event loop here. `task` is
-        // an intrusive field at a stable address.
+        // Ownership of `result` transfers to the event loop. The pin (held
+        // since creation) keeps the VM alive across the enqueue.
+        let pin = self.vm_pin.take();
+        // SAFETY: `event_loop` was stored from the JS-thread VM, kept alive
+        // by `pin`; `result` is the live heap allocation initialised above.
         unsafe {
             (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
                 core::ptr::addr_of_mut!((*result).task),
             ));
         }
+        drop(pin);
         // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
     }
 }
@@ -606,6 +618,13 @@ struct PasswordResult<Op: PasswordOp> {
 }
 
 impl<Op: PasswordOp> PasswordResult<Op> {
+    /// Release a queued-but-unrun completion during the terminate drain
+    /// (JS thread, VM alive): plain drop releases everything.
+    fn release_unrun(p: *mut Self) {
+        // SAFETY: queue-owned heap result popped by the drain; sole owner.
+        drop(unsafe { bun_core::heap::take(p) });
+    }
+
     fn run_from_js_erased(p: *mut Self) -> AnyTaskJsResult<()> {
         Self::run_from_js(p)
             .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
@@ -666,12 +685,13 @@ impl JSPasswordObject {
         let promise = JSPromiseStrong::init(global_object);
         let promise_value = promise.value();
 
+        let vm = global_object.bun_vm();
         let mut job = Box::new(PasswordJob::<Op> {
             op,
             password,
             promise,
-            // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            event_loop: global_object.bun_vm().event_loop(),
+            event_loop: vm.event_loop(),
+            vm_pin: Some(vm.pin()),
             global: std::ptr::from_ref(global_object),
             r#ref: KeepAlive::default(),
             task: WorkPoolTask::default(),

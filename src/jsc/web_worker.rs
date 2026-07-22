@@ -1312,10 +1312,24 @@ impl WebWorker {
             // or observes m_isShuttingDown under m_lock and drops. Idempotent;
             // teardownJSCVM sets it again.
             Bun__JSCTaskScheduler__markShuttingDown(vm.global());
+            // Abort registered in-flight transfers (fetch/S3) while JSC is
+            // alive so the HTTP side finishes promptly and its producer pins
+            // drop; must precede the gate close below.
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: sole owner (unpublished above); JS thread, pre-teardown.
+                unsafe { (hooks.abort_pending_transfers)(vm_ptr) };
+            }
+            // Wait for every async producer to finish: once the gate closes,
+            // all completions are in the queue and nothing can enqueue again.
+            vm.shutdown_gate
+                .as_ref()
+                .expect("gate live until destroy()")
+                .close_and_wait();
             // Reclaim queued CppTasks (the per-worker stdio/messaging
             // MessagePort drain tasks that can be in self.tasks mid-tick when
             // terminate() lands, and any Worker dispatchExit close task from a
-            // sub-worker) while JSC is still live: ~Ref<Worker> walks
+            // sub-worker) and every producer completion parked by the gate
+            // close, while JSC is still live: ~Ref<Worker> walks
             // ~JSEventListener Weak<> handles, and after teardownJSCVM the
             // worker VM is dealloc'd-without-Drop so anything still in
             // self.tasks leaks. Mirrors the global_exit() ordering.

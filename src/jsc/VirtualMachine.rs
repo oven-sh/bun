@@ -274,6 +274,19 @@ pub struct VirtualMachine {
     pub regular_event_loop: EventLoop,
     pub event_loop: *mut EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
 
+    /// Counted gate async producers hold open (see [`Self::pin`]) from job
+    /// creation until their completion is enqueued back to this VM. Worker
+    /// terminate closes it — blocking until every producer has finished —
+    /// before draining the queue and freeing the VM box. Lives in an `Arc`
+    /// so a guest may outlive the box; `Option` so [`Self::destroy`] can
+    /// drop the VM's ref explicitly (worker boxes are freed without `Drop`).
+    pub shutdown_gate: Option<std::sync::Arc<bun_threading::ShutdownGate>>,
+
+    /// In-flight abortable transfers; see
+    /// [`crate::terminate_abort::TerminateAbortRegistry`].
+    pub terminate_abort_registry:
+        core::cell::RefCell<crate::terminate_abort::TerminateAbortRegistry>,
+
     pub ref_strings: crate::ref_string::Map,
     pub ref_strings_mutex: bun_threading::Mutex,
 
@@ -971,6 +984,19 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
+    /// Pin this VM's shutdown gate open: [`Self::destroy`] / worker terminate
+    /// will wait for the returned guest before tearing the VM down, so the
+    /// holder may enqueue completions from other threads without racing
+    /// teardown. Call on the JS thread when scheduling async work; drop on
+    /// the completing thread right after the completion enqueue.
+    pub fn pin(&self) -> bun_threading::GateGuest {
+        bun_threading::GateGuest::enter(
+            self.shutdown_gate.as_ref().expect("pin() after destroy()"),
+        )
+        .expect("pin() on a closed gate: producers are created on the live JS thread")
+    }
+
+
     pub fn has_run_cleanup_hooks(&self) -> bool {
         self.has_run_cleanup_hooks
     }
@@ -1572,6 +1598,14 @@ impl VirtualMachine {
                 (hooks.close_dns_for_terminate)();
             }
 
+            // Abort registered in-flight transfers while JSC is alive so
+            // their producer pins drop and their completions land before the
+            // queue drain below.
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: live per-thread VM on the JS thread, pre-teardown.
+                unsafe { (hooks.abort_pending_transfers)(core::ptr::from_mut(self)) };
+            }
+
             // The HTTP daemon thread holds a `Box<ThreadlocalAsyncHTTP>` per
             // in-flight request; with the JS thread exiting those never reach
             // a terminal state. Ask it to reclaim them now (waits up to 1s).
@@ -1809,6 +1843,13 @@ pub struct RuntimeHooks {
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub close_dns_for_terminate: fn(),
+    /// Worker-terminate / process-exit walk over
+    /// `vm.terminate_abort_registry`: aborts each registered transfer while
+    /// the VM is still alive so producer pins drop promptly.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM on its own JS thread, pre-teardown.
+    pub abort_pending_transfers: unsafe fn(vm: *mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -2114,6 +2155,12 @@ impl VirtualMachine {
             (*regular).virtual_machine = NonNull::new(vm);
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
+
+            addr_of_mut!((*vm).terminate_abort_registry)
+                .write(core::cell::RefCell::new(Default::default()));
+            addr_of_mut!((*vm).shutdown_gate).write(Some(std::sync::Arc::new(
+                bun_threading::ShutdownGate::new(),
+            )));
 
             // `source_mappings.map` is a sibling-field backref onto
             // `saved_source_map_table`.
@@ -4372,6 +4419,21 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
+        // Backstop for non-worker teardown paths (global_exit, bake): refuse
+        // new producer pins. Main-VM exit must NOT wait — a pin stranded by
+        // an un-acked HTTP park would hang the process, and the main VM's
+        // box is never freed anyway. Worker shutdown already did the full
+        // close-and-wait before its drain.
+        if let Some(gate) = &self.shutdown_gate {
+            if self.is_main_thread {
+                gate.close_without_waiting();
+            } else {
+                gate.close_and_wait();
+            }
+        }
+        // Drop the VM's ref explicitly — worker boxes are freed without
+        // running `Drop`, which would leak the `Arc` allocation.
+        drop(self.shutdown_gate.take());
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 

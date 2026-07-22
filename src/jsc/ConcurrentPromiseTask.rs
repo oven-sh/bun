@@ -32,8 +32,12 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     pub ctx: Box<Context>,
     pub task: WorkPoolTask,
     /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
-    /// `EventLoop`) outlives every task scheduled on it.
+    /// `EventLoop`) outlives every task scheduled on it (the pin below is
+    /// what enforces that for worker VMs).
     pub event_loop: BackRef<EventLoop>,
+    /// Holds the VM's shutdown gate open until the completion is enqueued
+    /// (dropped on the pool thread in `on_finish`); see `VirtualMachine::pin`.
+    pub vm_pin: Option<bun_threading::GateGuest>,
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
     pub concurrent_task: ConcurrentTask,
@@ -59,9 +63,11 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     pub fn create_on_js_thread(global_this: &'a JSGlobalObject, value: Box<Context>) -> Box<Self> {
         // `VirtualMachine::get()` returns the JS-thread singleton; the VM and
         // its `EventLoop` outlive every task scheduled on it.
-        let event_loop = BackRef::new(VirtualMachine::get().as_mut().event_loop_shared());
+        let vm = VirtualMachine::get();
+        let event_loop = BackRef::new(vm.as_mut().event_loop_shared());
         let mut this = Box::new(Self {
             event_loop,
+            vm_pin: Some(vm.pin()),
             ctx: value,
             task: WorkPoolTask {
                 node: Default::default(),
@@ -109,6 +115,9 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // the pointer (does not dereference it).
         let this_ref = unsafe { &mut *this };
         let event_loop = this_ref.event_loop;
+        // Take the pin into a local first — the enqueue hands the job to the
+        // JS thread, which may free it before this thread returns.
+        let pin = this_ref.vm_pin.take();
         let task = core::ptr::NonNull::from(
             this_ref
                 .concurrent_task
@@ -117,6 +126,9 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // `task` is the live `concurrent_task` field of the heap-allocated
         // job; the queue takes ownership of its intrusive `next` link.
         event_loop.enqueue_task_concurrent(task);
+        // Completion enqueued: dropping the pin lets terminate proceed to
+        // drain it with the VM still alive.
+        drop(pin);
     }
 
     /// Frees the heap allocation backing this task.

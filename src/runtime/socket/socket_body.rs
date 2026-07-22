@@ -4566,6 +4566,8 @@ pub fn js_upgrade_duplex_to_tls(
         // `AnyTask::New` can't take the callback as a type parameter (see the
         // notes in AnyTask.rs), so hand-write the `*mut c_void → run_event` shim.
         ptr::addr_of_mut!((*duplex_context).task).write(AnyTask {
+            // Owned by the duplex context, not the queue.
+            dispose: None,
             ctx: NonNull::new(duplex_context.cast::<c_void>()),
             callback: |p| {
                 // SAFETY: `p` is the `*mut DuplexUpgradeContext` stored in

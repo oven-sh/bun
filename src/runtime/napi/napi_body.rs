@@ -1752,7 +1752,11 @@ pub struct napi_async_work {
     pub task: WorkPoolTask,
     pub concurrent_task: ConcurrentTask,
     // Note: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
+    // Kept alive across the job by `vm_pin` below (terminate waits for it).
     pub event_loop: bun_ptr::BackRef<EventLoop>,
+    /// Holds the worker's shutdown gate open from `schedule` until the
+    /// completion is enqueued (dropped on the pool thread).
+    pub vm_pin: Option<bun_threading::GateGuest>,
     pub global: GlobalRef, // JSC_BORROW (lives for vm lifetime)
     pub env: NapiEnvRef,
     pub execute: napi_async_execute_callback,
@@ -1784,10 +1788,10 @@ impl napi_async_work {
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
-            // SAFETY: bun_vm() never null for a Bun-owned global.
             // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
-            // stable address) and outlives every napi_async_work.
+            // outlives the work while `vm_pin` is held).
             event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
+            vm_pin: None,
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1811,6 +1815,8 @@ impl napi_async_work {
         }
         self.scheduled = true;
         self.poll_ref.ref_(bun_io::js_vm_ctx());
+        // Terminate blocks until this work's completion is enqueued.
+        self.vm_pin = Some(VirtualMachine::get().pin());
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -1829,6 +1835,9 @@ impl napi_async_work {
             Ordering::SeqCst,
         ) {
             if state == AsyncWorkStatus::Cancelled as u32 {
+                // Take the pin into a local first — the enqueue hands the
+                // work to the JS thread, which may free it before we return.
+                let pin = self.vm_pin.take();
                 // `concurrent_task` is the live inline field of this heap work;
                 // the queue takes ownership of its `next` link.
                 self.event_loop
@@ -1836,6 +1845,7 @@ impl napi_async_work {
                         self.concurrent_task
                             .from(self_ptr, AutoDeinit::ManualDeinit),
                     ));
+                drop(pin);
                 return;
             }
         }
@@ -1843,6 +1853,9 @@ impl napi_async_work {
         self.status
             .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
 
+        // Take the pin (held since `schedule`) into a local first — the
+        // enqueue hands the work to the JS thread, which may free it.
+        let pin = self.vm_pin.take();
         // `concurrent_task` is the live inline field of this heap work; the
         // queue takes ownership of its `next` link.
         self.event_loop
@@ -1850,6 +1863,7 @@ impl napi_async_work {
                 self.concurrent_task
                     .from(self_ptr, AutoDeinit::ManualDeinit),
             ));
+        drop(pin);
     }
 
     pub fn cancel(&mut self) -> bool {

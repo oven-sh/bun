@@ -581,6 +581,7 @@ impl S3BlobStatTask {
         Ok(())
     }
 
+
     pub(crate) fn exists(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
@@ -602,6 +603,7 @@ impl S3BlobStatTask {
             path,
             S3BlobStatTask::on_s3_exists_resolved,
             this.cast::<core::ffi::c_void>(),
+            crate::webcore::s3::simple_request::ContextRelease::drop_box::<S3BlobStatTask>(),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
@@ -629,6 +631,7 @@ impl S3BlobStatTask {
             path,
             S3BlobStatTask::on_s3_stat_resolved,
             this.cast::<core::ffi::c_void>(),
+            crate::webcore::s3::simple_request::ContextRelease::drop_box::<S3BlobStatTask>(),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
@@ -656,6 +659,7 @@ impl S3BlobStatTask {
             path,
             S3BlobStatTask::on_s3_size_resolved,
             this.cast::<core::ffi::c_void>(),
+            crate::webcore::s3::simple_request::ContextRelease::drop_box::<S3BlobStatTask>(),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;

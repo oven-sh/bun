@@ -7,9 +7,6 @@
 //! `WorkTask`) — those go through the central `TaskTag` dispatch table, not
 //! the type-erased `AnyTask` path, and would need a per-instantiation tag.
 
-use core::ffi::c_void;
-use core::ptr::NonNull;
-
 use bun_event_loop::AnyTask::AnyTask;
 use bun_io::KeepAlive;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
@@ -49,6 +46,9 @@ pub trait AnyTaskJobCtx: Sized {
 /// e.g. a `JSPromiseStrong` field after scheduling.
 pub struct AnyTaskJob<C> {
     vm: bun_ptr::BackRef<VirtualMachine>,
+    /// Holds the VM's shutdown gate open until the completion is enqueued
+    /// (dropped on the pool thread in `run_task`); see `VirtualMachine::pin`.
+    vm_pin: Option<bun_threading::GateGuest>,
     task: WorkPoolTask,
     any_task: AnyTask,
     poll: KeepAlive,
@@ -74,6 +74,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     pub fn create(global: &JSGlobalObject, ctx: C) -> JsResult<*mut Self> {
         let vm = bun_ptr::BackRef::new(global.bun_vm());
         let job = bun_core::heap::into_raw(Box::new(Self {
+            vm_pin: Some(vm.pin()),
             vm,
             task: WorkPoolTask {
                 node: Default::default(),
@@ -88,10 +89,11 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // SAFETY: `job` was just allocated and is exclusively owned here.
         // Build the erased AnyTask directly with a non-capturing shim.
         unsafe {
-            (*job).any_task = AnyTask {
-                ctx: NonNull::new(job.cast::<c_void>()),
-                callback: |p: *mut c_void| Self::run_from_js(p.cast::<Self>()).map_err(Into::into),
-            };
+            (*job).any_task = AnyTask::from_typed_with_dispose(
+                job,
+                Self::run_from_js_erased,
+                Self::release_unrun,
+            );
         }
         // `ctx.init` may throw (e.g. CryptoJob<Scrypt>); on error, reclaim the
         // box so `Drop for C` releases any resources `ctx` already owns.
@@ -141,10 +143,25 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         let job = unsafe { &mut *Self::from_task_ptr(task) };
         let vm = job.vm;
         job.ctx.run(vm.global);
+        // Take the pin into a local first — the enqueue hands the job to the
+        // JS thread, which may free it before this thread returns.
+        let pin = job.vm_pin.take();
         // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes
         // ownership of it.
         vm.event_loop_shared()
             .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
+        drop(pin);
+    }
+
+    fn run_from_js_erased(this: *mut Self) -> bun_event_loop::AnyTask::JsResult<()> {
+        Self::run_from_js(this).map_err(Into::into)
+    }
+
+    /// Reclaim a queued-but-unrun completion during the shutdown drain
+    /// (JS thread, VM alive): normal drop glue releases everything.
+    fn release_unrun(this: *mut Self) {
+        // SAFETY: queue-owned heap job popped by the drain; sole owner.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// `AnyTask` callback — runs ON the JS thread. Reclaims the heap
@@ -155,7 +172,10 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // uniquely owned here (the `AnyTask` fires exactly once).
         let mut this = unsafe { bun_core::heap::take(this) };
         let vm = this.vm;
-        if vm.is_shutting_down() {
+        // Bail while worker shutdown / terminate is pending: `then` resolves
+        // promises, and entering JSC with the termination exception set trips
+        // exception-scope asserts.
+        if vm.script_execution_status() != crate::ScriptExecutionStatus::Running {
             return Ok(());
         }
         this.ctx.then(vm.global())

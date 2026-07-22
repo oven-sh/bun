@@ -35,8 +35,12 @@ pub struct WorkTask<Context: WorkTaskContext> {
     pub ctx: *mut Context,
     pub task: WorkPoolTask,
     /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
-    /// `EventLoop`) outlives every task scheduled on it.
+    /// `EventLoop`) outlives every task scheduled on it (the pin below is
+    /// what enforces that for worker VMs).
     pub event_loop: BackRef<EventLoop>,
+    /// Holds the VM's shutdown gate open until the completion is enqueued
+    /// (dropped on the pool thread in `on_finish`); see `VirtualMachine::pin`.
+    pub vm_pin: Option<bun_threading::GateGuest>,
     // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
     pub global_this: BackRef<JSGlobalObject>,
     pub concurrent_task: ConcurrentTask,
@@ -64,6 +68,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         let event_loop = BackRef::new(vm.event_loop_shared());
         let mut this = Box::new(Self {
             event_loop,
+            vm_pin: Some(vm.pin()),
             ctx: value,
             global_this: BackRef::new(global_this),
             task: WorkPoolTask {
@@ -131,6 +136,9 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // stores the pointer (does not dereference it).
         let event_loop = this.event_loop;
         let this_ptr: *mut Self = this;
+        // Take the pin into a local first — the enqueue hands the task to
+        // the JS thread, which may free it before this thread returns.
+        let pin = this.vm_pin.take();
         let task = core::ptr::NonNull::from(
             this.concurrent_task
                 .from(this_ptr, AutoDeinit::ManualDeinit),
@@ -138,5 +146,6 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // `task` is the inline `concurrent_task` field of the live
         // heap-allocated `*this`; `event_loop` is the JS-thread loop stored at init.
         event_loop.enqueue_task_concurrent(task);
+        drop(pin);
     }
 }

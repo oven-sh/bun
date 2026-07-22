@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::{self, ThreadId};
@@ -60,6 +59,10 @@ pub struct StatWatcherScheduler {
     /// concurrent-task queue at process exit).
     is_shutdown: AtomicBool,
     task: WorkPoolTask,
+    /// Holds the VM's shutdown gate open across the work-pool hop (set on
+    /// the JS thread in `timer_callback`, taken by `work_pool_callback`) so
+    /// terminate waits for in-flight restat enqueues.
+    vm_pin: std::cell::Cell<Option<bun_threading::GateGuest>>,
     main_thread: ThreadId,
     // JSC_BORROW per LIFETIMES.tsv — VM outlives the scheduler. `BackRef` gives
     // safe `&VirtualMachine` projection (Deref) at every read site;
@@ -179,6 +182,7 @@ impl StatWatcherScheduler {
 
     pub fn init(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
         RefPtr::new(StatWatcherScheduler {
+            vm_pin: std::cell::Cell::new(None),
             current_interval: AtomicI32::new(0),
             work_pool_in_flight: AtomicBool::new(false),
             is_shutdown: AtomicBool::new(false),
@@ -300,9 +304,9 @@ impl StatWatcherScheduler {
             task: AnyTask,
         }
 
-        fn update_timer(self_: *mut c_void) -> bun_event_loop::JsResult<()> {
+        fn update_timer(self_: *mut Holder) -> bun_event_loop::JsResult<()> {
             // SAFETY: `self_` was heap-allocated below; reclaim and drop at end of scope.
-            let self_ = unsafe { bun_core::heap::take(self_.cast::<Holder>()) };
+            let self_ = unsafe { bun_core::heap::take(self_) };
             // `scheduler` is the refcounted singleton, kept alive across the
             // hop by the triggering `StatWatcher`'s `RefPtr` (ParentRef
             // invariant).
@@ -326,11 +330,17 @@ impl StatWatcherScheduler {
         // SAFETY: `holder_ptr` was just `heap::alloc`'d and is exclusively owned here
         // until `update_timer` reclaims it; `vm` is the live per-thread VM (JSC_BORROW).
         // `addr_of_mut!` so the field pointer inherits whole-Box provenance.
+        // Reclaimed unrun by the terminate drain: the box owns no refs (the
+        // scheduler is kept alive by the StatWatcher's RefPtr) — plain free.
+        fn release_unrun(holder: *mut Holder) {
+            // SAFETY: queue-owned box popped by the drain; sole owner.
+            drop(unsafe { bun_core::heap::take(holder) });
+        }
+        // SAFETY: `holder_ptr` was just `heap::alloc`'d and is exclusively
+        // owned here until `update_timer` (or the drain) reclaims it.
         unsafe {
-            (*holder_ptr).task = AnyTask {
-                ctx: core::ptr::NonNull::new(holder_ptr.cast()),
-                callback: update_timer,
-            };
+            (*holder_ptr).task =
+                AnyTask::from_typed_with_dispose(holder_ptr, update_timer, release_unrun);
             (*this)
                 .vm
                 .event_loop_shared()
@@ -382,6 +392,9 @@ impl StatWatcherScheduler {
         // of accumulating one leak per `set_interval(0)` / re-arm.
         // SAFETY: `self` is live (`&mut self`).
         Self::ref_(core::ptr::from_mut(self));
+        // Terminate blocks until the pool hop (and every restat completion it
+        // enqueues) has finished; dropped by `work_pool_callback`'s guard.
+        self.vm_pin.set(Some(VirtualMachine::get().pin()));
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -400,6 +413,10 @@ impl StatWatcherScheduler {
         // BACKREF — `this` is alive (ref'd when the timer was scheduled);
         // `ParentRef` Deref gives safe `&Self` for the queue/interval reads.
         let this_ref = ParentRef::from(NonNull::new(this).expect("work_pool_callback: scheduler"));
+        // Take the pin (set in `timer_callback`) into a local: it keeps the
+        // VM alive for every restat completion enqueued below and drops when
+        // this callback returns.
+        let _vm_pin = this_ref.vm_pin.take();
 
         // Instant.now will not fail on our target platforms.
         let now = Instant::now();
@@ -1187,6 +1204,9 @@ pub(crate) struct InitialStatTask {
     // payload). We hold the strong ref via `ref_()`/`deref()` and keep the
     // raw `*mut`.
     watcher: *mut StatWatcher,
+    /// Holds the VM's shutdown gate open until the completion is enqueued
+    /// (dropped on the pool thread).
+    vm_pin: Option<bun_threading::GateGuest>,
     task: WorkPoolTask,
 }
 
@@ -1202,6 +1222,7 @@ impl InitialStatTask {
         StatWatcher::ref_(watcher);
         WorkPool::schedule_new(InitialStatTask {
             watcher,
+            vm_pin: Some(VirtualMachine::get().pin()),
             task: WorkPoolTask::default(),
         });
     }
@@ -1209,10 +1230,13 @@ impl InitialStatTask {
     // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
     // is a false positive on this macro contract.
     #[allow(clippy::boxed_local)]
-    fn run_owned(self: Box<Self>) {
+    fn run_owned(mut self: Box<Self>) {
         // `watcher` is a raw `*mut` (Copy), so dropping the Box does not touch
         // the refcount.
         let this: *mut StatWatcher = self.watcher;
+        // Keeps the VM alive across the enqueue below; dropped at scope exit
+        // (after the enqueue, or immediately on the `closed` early return).
+        let _vm_pin = self.vm_pin.take();
         // BACKREF — `this` is kept alive by the intrusive ref taken in
         // `create_and_schedule`. We only need shared access here — `closed` is
         // read-only, `path` is borrowed, and `set_last_stat`/

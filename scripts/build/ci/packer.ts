@@ -157,12 +157,13 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
           valid_exit_codes: [0],
         },
         // Step 3: run the bootstrap. It installs everything the spec entry
-        // lists (Scoop packages, VS Build Tools, SDE, ...). 3010 = "reboot
-        // required" from the VS installer, not a failure.
+        // lists (Scoop packages, VS Build Tools, SDE, ...); the VS installer's
+        // "reboot required" code is absorbed inside the bootstrap, which
+        // exits 0 or 1.
         {
           type: "powershell",
           inline: [`Write-Output '>>> Running bootstrap: ${bootstrapCommand.replace(/'/g, "''")}'`, bootstrapCommand],
-          valid_exit_codes: [0, 3010],
+          valid_exit_codes: [0],
         },
         // Step 4: upload the bundled agent to its spec path and install it as
         // an nssm service (agent.mjs `install` registers itself).

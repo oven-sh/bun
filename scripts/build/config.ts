@@ -16,6 +16,7 @@ import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
+import { crossToolchains } from "./ci/spec.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
@@ -539,7 +540,7 @@ export const ANDROID_API_LEVEL_DEFAULT = 28;
  * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
  * compat within a major).
  */
-export const FREEBSD_VERSION_DEFAULT = "14.3";
+export const FREEBSD_VERSION_DEFAULT = crossToolchains.freebsdSysroot.version;
 
 /**
  * Locate a FreeBSD sysroot (extracted base.txz). Checks env var then

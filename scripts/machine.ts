@@ -1127,29 +1127,22 @@ async function getAzureToken(tenantId, clientId, clientSecret) {
 }
 
 /**
- * Build a Windows image using Packer (Azure only).
- * Packer handles VM creation, bootstrap, sysprep, and gallery capture via WinRM.
- * This eliminates all the Azure Run Command issues (output truncation, x64 emulation,
- * PATH not refreshing, stderr false positives, quote escaping).
- */
-/**
  * Build a Windows CI image with Packer (Azure only). Packer handles VM
  * creation, WinRM provisioning, sysprep, and gallery capture. Everything
  * that varies — base image, bake VM, disk, gallery destination, replication
  * regions, the pinned node, the bootstrap command — comes from the image's
  * spec entry via scripts/build/ci/packer.ts, which renders the template as
- * JSON in memory (no checked-in .pkr.hcl).
+ * JSON in memory (no checked-in .pkr.hcl). The gallery image definition
+ * name (`${key}-${hash}`) and the architecture are derived from `image`.
  *
  * @param {object} options
- * @param {string} options.imageName exact gallery image definition name (`${key}-${hash}`)
- * @param {"x64" | "aarch64"} options.arch
+ * @param {WindowsImage} options.image the spec entry to bake
  * @param {boolean} options.ci
  * @param {string} options.repoRef
  * @param {string} options.agentPath esbuild-bundled agent.mjs
  * @param {string} options.bootstrapDir directory holding scripts/build/ci
  */
 async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, bootstrapDir }) {
-  const { getSecret } = await import("./utils.mjs");
   if (image.os !== "windows") {
     throw new Error(`buildWindowsImageWithPacker: ${image.key} is not a windows image entry`);
   }

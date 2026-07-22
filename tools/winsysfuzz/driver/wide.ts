@@ -15,8 +15,9 @@
 
 import { appendFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { FAULTS } from "./faults";
-import { detectCrash, digestStacks, ensureDir, readTraceDir, replayCoordinate, stamp } from "./lib";
+import { FAULTS, faultsFor, GENERIC_FAULTS, NEVER_FAULT } from "./faults";
+import { detectCrash, digestStacks, ensureDir, manifest, readTraceDir, replayCoordinate, stamp } from "./lib";
+const manifestNames = manifest.map(m => m.name);
 
 const argv = process.argv.slice(2);
 const flag = (n: string, d?: string) => {
@@ -85,12 +86,18 @@ console.log(`wide: ${files.length} test file(s) across ${roots.length} root(s), 
 // "<syscall> * <hit> <mode> <status>": any callsite of that syscall, the
 // Nth (or every) occurrence. Hits are drawn low-to-mid (short tests have
 // few of any given call) with a chance of '*' = every occurrence.
-const menu = Object.entries(FAULTS);
+// Universal surface: the curated menu (preferred, drawn at full weight)
+// plus every other syscall the runtime hooks under the generic fault set
+// (drawn at lower weight) - nothing observed is un-faultable.
+const genericNames = manifestNames.filter(n => !(n in FAULTS) && !NEVER_FAULT.has(n));
+const curatedMenu: [string, typeof GENERIC_FAULTS][] = Object.entries(FAULTS);
+const drawSyscall = (): [string, typeof GENERIC_FAULTS] =>
+  rnd() < 0.7 ? pick(curatedMenu) : [pick(genericNames), GENERIC_FAULTS];
 function drawSchedule(): string[] {
   const rules = new Set<string>();
   let guard = 0;
   while (rules.size < nRules && guard++ < nRules * 6) {
-    const [sysName, faults] = pick(menu);
+    const [sysName, faults] = drawSyscall();
     const f = pick(faults);
     const r = rnd();
     let hit: string | number = r < 0.15 ? "*" : 1 + Math.floor(rnd() * (r < 0.6 ? 4 : 24));

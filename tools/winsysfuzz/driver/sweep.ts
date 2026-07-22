@@ -16,7 +16,7 @@
 
 import { appendFileSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
-import { ALPC_OK, DELAY_MS, F, FAULTS, type Fault, type Mode } from "./faults";
+import { ALPC_OK, DELAY_MS, F, FAULTS, faultsFor, type Fault, type Mode } from "./faults";
 import {
   classifySym,
   digestStacks,
@@ -182,7 +182,7 @@ const coords = new Map<string, Coord>();
 for (const r of baseTrace.recs) {
   if (r.entryOnly) continue;
   const sysName = nameOf(r.sys);
-  if (!(sysName in FAULTS)) continue;
+  if (!faultsFor(sysName)) continue; // universal surface: every faultable syscall
   if (sysFilter && !sysFilter.includes(sysName)) continue;
   const id = `${r.sys}:${r.key}`;
   const c = coords.get(id);
@@ -266,11 +266,11 @@ for (const c of candidates) {
   if (startupMask.has(c.id)) {
     // startup infrastructure: one representative injection, no more
     startupCoords++;
-    const f = FAULTS[c.sysName][0];
+    const f = faultsFor(c.sysName)![0];
     plan.push({ id: plan.length, coord: c, status: f.status, mode: f.mode, expect: f.expect ?? "must-handle", hit: 1 });
     continue;
   }
-  for (const f of FAULTS[c.sysName])
+  for (const f of faultsFor(c.sysName)!)
     for (const hit of spreadHits(c.hits, maxHits)) {
       // A delayed CLOSE at hit 1 is always a process-startup close: the
       // pause only slows startup and yields marginal timeout-grazing

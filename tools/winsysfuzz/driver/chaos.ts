@@ -15,7 +15,7 @@
 
 import { appendFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { ALPC_OK, FAULTS } from "./faults";
+import { ALPC_OK, faultsFor, isCurated } from "./faults";
 import {
   detectCrash,
   digestStacks,
@@ -85,7 +85,7 @@ const coordMap = new Map<string, Coord>();
 baseTrace.recs.forEach((r, i) => {
   if (r.entryOnly) return;
   const sysName = nameOf(r.sys);
-  if (!(sysName in FAULTS)) return;
+  if (!faultsFor(sysName)) return; // universal surface: every faultable syscall
   const id = `${r.sys}:${r.key}`;
   const c = coordMap.get(id);
   if (c) {
@@ -127,7 +127,9 @@ console.log(
 // they live (their LAST occurrence), so faults land in the meat, and pick
 // hits biased toward the deep end of each site's lifetime.
 const totalRecs = baseTrace.recs.length;
-const weights = coords.map(c => 1 + (9 * c.last) / totalRecs); // 1..10 by depth
+// Depth weight, boosted for curated (preferred-realistic) syscalls; generic
+// surface calls still draw, at lower weight - never zero.
+const weights = coords.map(c => (1 + (9 * c.last) / totalRecs) * (isCurated(c.sysName) ? 1 : 0.35));
 const weightSum = weights.reduce((a, b) => a + b, 0);
 const pickCoord = (): Coord => {
   let t = rnd() * weightSum;
@@ -152,7 +154,7 @@ function drawSchedule(): string[] {
   let guard = 0;
   while (rules.size < n && guard++ < n * 8) {
     const c = pickCoord();
-    const f = pick(FAULTS[c.sysName]);
+    const f = pick(faultsFor(c.sysName)!);
     // hit biased deep: sqrt of a uniform skews toward the late end
     let hit = Math.min(c.hits, 1 + Math.floor(Math.sqrt(rnd()) * c.hits));
     // The first event/semaphore creations are WTF/JSC threading primitives

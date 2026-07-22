@@ -152,3 +152,45 @@ export const FAULTS: Record<string, Fault[]> = {
   // used to carry an abort-expected fault; removed.)
 };
 
+// --- UNIVERSAL FAULT SURFACE ------------------------------------------------
+// The curated FAULTS menu is a WEIGHTING of preferred realistic
+// (syscall, status) pairs - not the boundary of what can be faulted. A
+// hand-picked menu left 480+ observed syscalls with zero probability of ever
+// being perturbed. Every syscall NOT in the menu gets this generic realistic
+// error set (weighted lower by the planners), except a short denylist of
+// pure infrastructure where a fault only manufactures artifacts:
+// waits/parks/futexes (deadlocks that are ours), scheduling internals, the
+// loader continue, and memory management (OOM policy: not a finding).
+export const GENERIC_FAULTS: Fault[] = [
+  F("C0000022"), // ACCESS_DENIED
+  F("C000009A"), // INSUFFICIENT_RESOURCES
+  F("C0000185"), // IO_DEVICE_ERROR
+  F("C0000008"), // INVALID_HANDLE
+];
+export const NEVER_FAULT = new Set([
+  // waits / thread parking / futex primitives - faulting them fabricates
+  // deadlocks and lost wakeups that no environment produces
+  "NtWaitForSingleObject", "NtWaitForMultipleObjects", "NtWaitForAlertByThreadId",
+  "NtAlertThreadByThreadId", "NtDelayExecution", "NtYieldExecution", "NtTestAlert",
+  "NtWaitForWorkViaWorkerFactory", "NtReleaseWorkerFactoryWorker", "NtSignalAndWaitForSingleObject",
+  // control-flow / loader / callbacks
+  "NtContinue", "NtCallbackReturn", "NtRaiseException", "NtRaiseHardError",
+  // memory management (crash-on-OOM is by design; not a finding)
+  "NtAllocateVirtualMemory", "NtAllocateVirtualMemoryEx", "NtFreeVirtualMemory",
+  "NtProtectVirtualMemory", "NtQueryVirtualMemory", "NtLockVirtualMemory", "NtUnlockVirtualMemory",
+  "NtFlushInstructionCache", "NtFlushVirtualMemory", "NtMapUserPhysicalPages",
+  // process/thread teardown and pure timekeeping/introspection
+  "NtTerminateProcess", "NtTerminateThread", "NtQueryPerformanceCounter",
+  "NtQuerySystemTime", "NtQueryTimerResolution", "NtGetCurrentProcessorNumber",
+  // scheduler / thread-attribute internals
+  "NtSetInformationThread", "NtSetInformationWorkerFactory", "NtCreateWorkerFactory",
+  "NtSetTimerResolution",
+]);
+// The fault menu for ANY syscall: curated entries where we have them,
+// otherwise the generic set - never empty for a faultable call.
+export function faultsFor(sysName: string): Fault[] | null {
+  if (NEVER_FAULT.has(sysName)) return null;
+  return FAULTS[sysName] ?? GENERIC_FAULTS;
+}
+// Curated entries are the preferred draws; generic ones are the fallback.
+export const isCurated = (sysName: string) => sysName in FAULTS;

@@ -1312,6 +1312,12 @@ impl WebWorker {
             // or observes m_isShuttingDown under m_lock and drops. Idempotent;
             // teardownJSCVM sets it again.
             Bun__JSCTaskScheduler__markShuttingDown(vm.global());
+            // Same fence for work-pool completions (`AnyTaskJob`: node:crypto
+            // KDFs, Bun.secrets, Bun.zstd*). `close()`'s write lock waits out
+            // any pool-thread `enqueue_task_concurrent` reader so the push is
+            // visible to the drain below; completions landing after this
+            // observe `closed` and never dereference `vm` (which step 5 frees).
+            vm.any_task_gate().close();
             // Reclaim queued CppTasks (the per-worker stdio/messaging
             // MessagePort drain tasks that can be in self.tasks mid-tick when
             // terminate() lands, and any Worker dispatchExit close task from a

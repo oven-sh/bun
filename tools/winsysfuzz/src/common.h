@@ -29,10 +29,7 @@ enum class Fault : uint8_t {
 
 // Mangle kinds — all target the IO_STATUS_BLOCK a synchronous I/O
 // syscall filled in on success. Real filter drivers do exactly these.
-enum class MangleKind : uint8_t {
-  Short, // Information (bytes transferred) reported smaller than actual
-  Zero,  // "successful" zero-byte transfer where data was expected
-};
+enum class MangleKind : uint8_t { Short, Zero, Garbage };
 
 // Per-syscall-invocation context. Constructed at hook entry; drives the
 // fault decision and writes the trace record at exit.

@@ -563,6 +563,7 @@ struct HookEntry {
   int8_t lengthIndex; // arg index of a ULONG Length (bytes requested), -1 if none
   int8_t hOutIndex;   // arg index of the PHANDLE created by an open/create, -1 if none
   int8_t apcIndex;    // arg index of the ApcContext (OVERLAPPED*), -1 if none: non-null => completion posted
+  int8_t bufIndex;    // arg index of the transfer output buffer (mangle:garbage target), -1 if none
 };
 
 extern HookEntry kHooks[SYS__COUNT];

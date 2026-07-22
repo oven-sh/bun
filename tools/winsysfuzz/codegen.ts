@@ -146,6 +146,7 @@ H.push("  int8_t handleIndex; // arg index of the primary in-HANDLE (File/Socket
 H.push("  int8_t lengthIndex; // arg index of a ULONG Length (bytes requested), -1 if none");
 H.push("  int8_t hOutIndex;   // arg index of the PHANDLE created by an open/create, -1 if none");
 H.push("  int8_t apcIndex;    // arg index of the ApcContext (OVERLAPPED*), -1 if none: non-null => completion posted");
+H.push("  int8_t bufIndex;    // arg index of the transfer output buffer (mangle:garbage target), -1 if none");
 H.push("};");
 H.push("");
 H.push("extern HookEntry kHooks[SYS__COUNT];");
@@ -213,10 +214,14 @@ for (const s of syscalls) {
   // posted (even on synchronous success), so a lying post-fault would
   // create the impossible "failed AND completed" world - dropped at runtime.
   const apc = s.args.findIndex(a => a.name === "ApcContext");
+  // The transfer's OUTPUT buffer: mangle:garbage corrupts what really landed
+  // in it after a successful transfer (the lying-driver / bad-hardware
+  // class that produces well-formed success with poisoned data).
+  const buf = s.args.findIndex(a => (a.name === "Buffer" || a.name === "OutputBuffer") && a.dir !== "in");
   C.push(
     `  {${JSON.stringify(s.name)}, (void**)&Real_${s.name}, (void*)&Hook_${s.name}, ${s.args.length}, ` +
       `${s.ret === "NTSTATUS" ? "true" : "false"}, ${s.name}_types, ${s.name}_names, ${s.name}_dirs, ` +
-      `${JSON.stringify(s.category)}, ${iosb}, ${oa}, ${ioctl}, ${handle}, ${length}, ${hOut}, ${apc}},`,
+      `${JSON.stringify(s.category)}, ${iosb}, ${oa}, ${ioctl}, ${handle}, ${length}, ${hOut}, ${apc}, ${buf}},`,
   );
 }
 C.push("};");

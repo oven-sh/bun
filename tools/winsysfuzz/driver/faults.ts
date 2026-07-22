@@ -12,7 +12,7 @@
 //                    CRASH(), Rust alloc abort). A crash here is expected.
 //   judgment       — lying-API (post-mode) / edge cases where "correct"
 //                    behavior is a human call.
-export type Mode = "pre" | "post" | "mangle:short" | "mangle:zero" | "delay";
+export type Mode = "pre" | "post" | "mangle:short" | "mangle:zero" | "mangle:garbage" | "delay";
 export type Fault = { status: string; mode: Mode; expect?: "must-handle" | "abort-expected" | "judgment" };
 export const F = (status: string, mode: Mode = "pre", expect: Fault["expect"] = "must-handle"): Fault => ({
   status,
@@ -30,7 +30,17 @@ export const DELAY_MS = "250";
 export const FAULTS: Record<string, Fault[]> = {
   NtCreateFile: [F("C0000034"), F("C0000022"), F("C0000043")],
   NtOpenFile: [F("C0000034"), F("C0000022")],
-  NtReadFile: [F("C0000185"), F("C0000185", "post", "judgment"), F("0", "mangle:short"), F("0", "mangle:zero")],
+  NtReadFile: [
+    F("C0000185"),
+    F("C0000185", "post", "judgment"),
+    F("0", "mangle:short"),
+    F("0", "mangle:zero"),
+    // garbage: the read really succeeds, the bytes are corrupted (lying
+    // driver / bad hardware) - the mode that reaches parsers and buffers.
+    // Status field = corruption seed.
+    F("A5", "mangle:garbage"),
+    F("3C", "mangle:garbage"),
+  ],
   NtWriteFile: [
     F("C000007F"),
     F("C000007F", "post", "judgment"),
@@ -39,8 +49,8 @@ export const FAULTS: Record<string, Fault[]> = {
   ],
   NtQueryInformationFile: [F("C0000185")],
   NtSetInformationFile: [F("C0000022")],
-  NtQueryDirectoryFile: [F("C0000185"), F("0", "mangle:short")],
-  NtQueryDirectoryFileEx: [F("C0000185"), F("0", "mangle:short")],
+  NtQueryDirectoryFile: [F("C0000185"), F("0", "mangle:short"), F("A5", "mangle:garbage")],
+  NtQueryDirectoryFileEx: [F("C0000185"), F("0", "mangle:short"), F("A5", "mangle:garbage")],
   NtQueryVolumeInformationFile: [F("C0000185")],
   NtQueryAttributesFile: [F("C0000034")],
   NtQueryFullAttributesFile: [F("C0000034")],
@@ -52,6 +62,8 @@ export const FAULTS: Record<string, Fault[]> = {
     F("C000009A", "post", "judgment"),
     F("0", "mangle:short"),
     F(DELAY_MS, "delay", "judgment"),
+    // corrupted socket/ioctl output: the AFD receive path with poisoned bytes
+    F("A5", "mangle:garbage"),
   ],
   NtCreateEvent: [F("C000009A")],
   NtCreateSection: [F("C000009A")],

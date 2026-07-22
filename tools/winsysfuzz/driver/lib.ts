@@ -63,6 +63,9 @@ const CRASH_SIGNATURES: { re: RegExp; kind: string }[] = [
   { re: /(panic: [^\n]{0,120})/, kind: "rust-panic" },
   { re: /(RangeError: Out of memory[^\n]{0,80})/, kind: "oom" },
   { re: /(oh no: Bun has crashed[^\n]{0,80})/, kind: "crash-banner" },
+  // Self-verifying workloads print this when data flowed through WRONG
+  // without any crash - the silent-corruption class garbage faults expose.
+  { re: /(WSF-CORRUPTION: [^\n]{0,120})/, kind: "corruption" },
 ];
 export interface CrashSig {
   kind: string;

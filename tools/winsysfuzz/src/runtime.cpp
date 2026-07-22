@@ -357,7 +357,9 @@ void LoadSchedule(const char* path) {
     // status field is hex for statuses; for delay it is decimal milliseconds.
     if (strncmp(modeTok, "mangle", 6) == 0) {
       r.mode = Fault::Mangle;
-      r.mangle = strstr(modeTok, "zero") ? MangleKind::Zero : MangleKind::Short;
+      r.mangle = strstr(modeTok, "zero")      ? MangleKind::Zero
+                 : strstr(modeTok, "garbage") ? MangleKind::Garbage
+                                               : MangleKind::Short;
       r.status = 0;
     } else if (strncmp(modeTok, "delay", 5) == 0) {
       r.mode = Fault::Delay;
@@ -589,7 +591,26 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
         auto* iosb = (IO_STATUS_BLOCK*)args_[idx];
         if (iosb) {
           if (mangle_ == MangleKind::Zero) iosb->Information = 0;
-          else if (iosb->Information > 1) iosb->Information /= 2; // short (fallback)
+          else if (mangle_ == MangleKind::Garbage) {
+            // The transfer really succeeded; corrupt what landed. The lying
+            // filter driver / bad hardware class: well-formed success,
+            // poisoned data. XOR pattern from a rule-seeded LCG (injected_ =
+            // seed) so every replay corrupts the identical bytes. Flip a
+            // sparse ~1/8 of the buffer, never past the transferred count.
+            int8_t bi = kHooks[sys_].bufIndex;
+            size_t n = (size_t)iosb->Information;
+            if (bi >= 0 && bi < argc_ && args_[bi] && n > 0) {
+              auto* b = (unsigned char*)args_[bi];
+              uint32_t st = (uint32_t)injected_ * 2654435761u + (uint32_t)n;
+              __try {
+                for (size_t i = 0; i < n; i++) {
+                  st = st * 1664525u + 1013904223u;
+                  if ((st >> 29) == 0) b[i] ^= (unsigned char)(st >> 21);
+                }
+              } __except (EXCEPTION_EXECUTE_HANDLER) {
+              }
+            }
+          } else if (iosb->Information > 1) iosb->Information /= 2; // short (fallback)
         }
       }
     }

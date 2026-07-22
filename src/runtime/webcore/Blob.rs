@@ -1900,6 +1900,25 @@ impl BlobExt for Blob {
 
         #[cfg(not(windows))]
         {
+            let is_stdout_or_stderr = 'brk: {
+                let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
+                    break 'brk false;
+                };
+                if let Some(rare) = global_this.bun_vm().rare_data.as_ref() {
+                    let store_ptr = store.as_ptr().cast::<c_void>();
+                    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                        break 'brk true;
+                    }
+                    if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                        break 'brk true;
+                    }
+                }
+                matches!(
+                    fd.stdio_tag(),
+                    Some(bun_core::Stdio::StdOut) | Some(bun_core::Stdio::StdErr)
+                )
+            };
+
             let sink = webcore::FileSink::init(
                 bun_sys::Fd::INVALID,
                 jsc::EventLoopHandle::init(
@@ -1911,6 +1930,19 @@ impl BlobExt for Blob {
                         .cast::<()>(),
                 ),
             );
+
+            if is_stdout_or_stderr {
+                // Match the Windows arm and `process.stdout`/`process.stderr`
+                // (see `Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio`):
+                // stdout/stderr sinks write synchronously so small writes aren't
+                // buffered in a per-sink buffer and reordered relative to writes
+                // through other sinks on the same fd. `setup()` propagates this
+                // to `open_for_writing`, which clears O_NONBLOCK on the dup'd fd
+                // and sets `writer.force_sync`.
+                // SAFETY: `init` returned a freshly-allocated +1 *mut FileSink;
+                // sole owner here, no concurrent access.
+                unsafe { (*sink).force_sync.set(true) };
+            }
 
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                 PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),

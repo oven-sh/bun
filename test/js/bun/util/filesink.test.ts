@@ -345,6 +345,48 @@ it("start() without path/fd on an already-open writer does not crash", async () 
   expect(await Bun.file(path).text()).toBe("hello");
 });
 
+// https://github.com/oven-sh/bun/issues/11553
+// On POSIX, a FileSink on stdout/stderr buffered small writes (< page size) and
+// only flushed them via a deferred task, so a large write through a *second*
+// sink on the same fd reached the kernel first. Windows already forced stdout/
+// stderr sinks into sync mode; POSIX now does the same.
+describe.concurrent("stdout/stderr sinks write synchronously", () => {
+  // A small write followed by a large write through separate FileSink
+  // instances on fd 1/2 must appear in program order. Before the fix the
+  // 4-byte write was buffered until the deferred auto-flush ran, landing
+  // after the 64 KiB body.
+  for (const expr of ["Bun.file(1)", "Bun.stdout", "Bun.file(2)", "Bun.stderr"] as const) {
+    it(`${expr}.writer()`, async () => {
+      const isStderr = expr.includes("2") || expr.includes("stderr");
+      const src = `
+        const header = Uint8Array.of(0xde, 0xad, 0xbe, 0xef);
+        const body = new Uint8Array(64 * 1024).fill(0x2e);
+        ${expr}.writer().write(header);
+        ${expr}.writer().write(body);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdoutBuf, stderrBuf, exitCode] = await Promise.all([
+        new Response(proc.stdout).arrayBuffer(),
+        new Response(proc.stderr).arrayBuffer(),
+        proc.exited,
+      ]);
+      const stdout = new Uint8Array(stdoutBuf);
+      const stderr = new Uint8Array(stderrBuf);
+      const out = isStderr ? stderr : stdout;
+      expect(out.length).toBe(4 + 64 * 1024);
+      expect(Array.from(out.subarray(0, 4))).toEqual([0xde, 0xad, 0xbe, 0xef]);
+      expect(Array.from(out.subarray(-4))).toEqual([0x2e, 0x2e, 0x2e, 0x2e]);
+      expect((isStderr ? stdout : stderr).length).toBe(0);
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {
   const dir = tmpdirSync();
   const target = join(dir, "ro.txt");

@@ -545,9 +545,12 @@ if (findings.length) {
     const slow = outcomes.filter(o => o === "slow").length;
     const fired = outcomes.filter(o => o !== "no-fire").length;
     // "crawls twice, hangs once" is bad EVERY time (borderline on the
-    // watchdog), so slow counts toward confirmation once any replay hangs.
+    // watchdog), so slow counts toward confirmation once any replay hangs -
+    // but for a STALLED finding slow already IS the bad outcome, so don't
+    // double-count it: one slow replay must not confirm itself. Stalled
+    // needs a genuine majority of stall replays.
     const verdict: Verdict =
-      bad >= 2 || (bad >= 1 && bad + slow >= 2)
+      bad >= 2 || (f.outcome !== "stalled" && bad >= 1 && bad + slow >= 2)
         ? "confirmed"
         : bad === 0 && slow >= 2
           ? "slow"

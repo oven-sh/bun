@@ -2979,6 +2979,7 @@ impl PostgresSQLConnection {
                     debug!("ErrorResponse: {}", err);
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
+                let invalidates = err.invalidates_prepared_statement();
                 // Convert to JS while we still own `err` — materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
                 let js_err =
@@ -2998,6 +2999,66 @@ impl PostgresSQLConnection {
                             // request still holds its own ref so this cannot drop to 0.
                             unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
                         }
+                    } else if stmt.status == StatementStatus::Prepared
+                        && invalidates
+                        && !stmt.signature.prepared_statement_name.is_empty()
+                    {
+                        // 26000 / 0A000 on a named statement we already
+                        // prepared: the server-side object is gone or its
+                        // cached plan is stale. Evict it so the next query
+                        // with this signature re-prepares instead of binding
+                        // the dead name forever. Unnamed statements Parse on
+                        // every execution and are never cached, so nothing to
+                        // evict or retry there.
+                        if self
+                            .statements
+                            .with_mut(|m| m.remove(&stmt.signature.name[..]))
+                            .is_some()
+                        {
+                            // SAFETY: the request still holds its own ref; see above.
+                            unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
+                        }
+                        // Re-prepare transparently when this is the only
+                        // exchange in flight (no later Bind/Execute already on
+                        // the wire whose responses would be misattributed to
+                        // the reset request) and we have not retried already.
+                        if !request.flags.get().reprepared
+                            && self.pipelined_requests.get() <= 1
+                            && self.nonpipelinable_requests.get() == 0
+                        {
+                            debug!("re-preparing invalidated statement (SQLSTATE {})", err);
+                            self.finish_request(&request);
+                            let id = self.prepared_statement_id.get();
+                            self.prepared_statement_id.set(id + 1);
+                            stmt.reset_for_reprepare(id);
+                            let slot = self.statements.with_mut(|m| {
+                                m.get_or_put(&stmt.signature.name).map(|e| {
+                                    core::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr)
+                                })
+                            });
+                            if let Ok(slot) = slot {
+                                stmt.ref_();
+                                // SAFETY: `slot` points into `self.statements`
+                                // and the map has not been mutated since
+                                // `get_or_put`; the `ref_()` above is its ref.
+                                unsafe { *slot = core::ptr::from_mut(stmt) };
+                            }
+                            request.status.set(QueryStatus::Pending);
+                            request.update_flags(|f| {
+                                f.reprepared = true;
+                                f.pipelined = false;
+                                f.binary = false;
+                            });
+                            self.note_request_pending();
+                            self.update_ref();
+                            return Ok(());
+                        }
+                        // Not retrying this one (other Bind/Execute for the
+                        // same stale name are still on the wire, or this
+                        // request already retried once). Leave the statement
+                        // Prepared so the last pipelined sibling's
+                        // ErrorResponse can still re-prepare it; the cache
+                        // entry is already gone so nothing new attaches to it.
                     }
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.

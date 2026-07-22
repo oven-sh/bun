@@ -718,9 +718,12 @@ private:
             }
         }
 
-        /* Should we close this connection after a response - and is this response really done? */
+        /* Should we close this connection after a response - and is this response really done?
+         * HTTP_NODE_SOCKET_ENDED: node:http socket.end() already promised the FIN, so shut
+         * down once the buffer has drained even if res.end() was never called. */
         if (httpResponseData->shouldCloseConnection()) {
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0
+                || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SOCKET_ENDED)) {
                 if (asyncSocket->getBufferedAmount() == 0) {
 
                     asyncSocket->shutdown();

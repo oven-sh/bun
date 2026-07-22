@@ -340,6 +340,75 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     expect(exitCode).toBe(0);
   });
 
+  // In Node res.write() and socket.end() share one Writable, so FIN is ordered
+  // after every queued byte. The pinned tail sits outside AsyncSocketData::buffer;
+  // socket.end() must spill it so the full body reaches the client before FIN.
+  describe.each([
+    // Chunked adds a hex size + CRLF around the payload (no 0 chunk, since
+    // res.end() was never called); Content-Length delivers exactly the payload.
+    ["with Content-Length", { "Content-Length": String(RESIZABLE_CHUNK_SIZE) }, 0, "Connection: close\\r\\n"],
+    ["chunked", {}, RESIZABLE_CHUNK_SIZE.toString(16).length + 4, "Connection: close\\r\\n"],
+    // Two pipelined keep-alive requests in one write: the second request must
+    // take the queued pipelined branch (HTTP_RESPONSE_PENDING left intact).
+    [
+      "pipelined keep-alive",
+      { "Content-Length": String(RESIZABLE_CHUNK_SIZE) },
+      0,
+      "\\r\\nGET / HTTP/1.1\\r\\nHost: x\\r\\n",
+    ],
+  ] as const)(
+    "req.socket.end() without res.end() delivers the full pinned body (%s)",
+    (_name, extraHeaders, framingOverhead, trailer) => {
+      test.concurrent.skipIf(isWindows)("body reaches the client before FIN", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const http = require("node:http");
+            const net = require("node:net");
+            const { once } = require("node:events");
+            const CHUNK_SIZE = ${RESIZABLE_CHUNK_SIZE};
+            const payload = Buffer.alloc(CHUNK_SIZE, 0x61);
+            const server = http.createServer((req, res) => {
+              res.writeHead(200, ${JSON.stringify({ "Content-Type": "application/octet-stream", ...extraHeaders })});
+              res.write(payload);
+              req.socket.end();
+            });
+            await once(server.listen(0, "127.0.0.1"), "listening");
+            const socket = net.connect(server.address().port, "127.0.0.1");
+            await once(socket, "connect");
+            const chunks = [];
+            socket.on("data", c => chunks.push(c));
+            socket.on("error", () => {});
+            socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n${trailer}\\r\\n");
+            await new Promise(r => socket.once("close", r));
+            const received = Buffer.concat(chunks);
+            const headerEnd = received.indexOf("\\r\\n\\r\\n");
+            const body = received.subarray(headerEnd + 4);
+            let as = 0;
+            for (let i = 0; i < body.length; i++) if (body[i] === 0x61) as++;
+            console.log(JSON.stringify({ bodyLength: body.length, as }));
+            server.close();
+          `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const result = JSON.parse(stdout.trim());
+        expect({ bodyLength: result.bodyLength, as: result.as, exitCode, stderr }).toEqual({
+          bodyLength: RESIZABLE_CHUNK_SIZE + framingOverhead,
+          as: RESIZABLE_CHUNK_SIZE,
+          exitCode: 0,
+          stderr: expect.any(String),
+        });
+      });
+    },
+  );
+
   test("a second write before drain releases the pin on the first buffer", async () => {
     let detachedAfterSecondWrite: boolean | undefined;
     const total = CHUNK_SIZE + 1024;

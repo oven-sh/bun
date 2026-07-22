@@ -136,6 +136,26 @@ test.concurrent(
 );
 
 test.concurrent(
+  "parentPort.unref() still delivers messages while another handle holds the loop",
+  async () => {
+    // unref() must drop the loop ref without removing the forwarder — the whole reason the
+    // compensating incEventLoopRef path exists. If unref() were reimplemented as
+    // dropForwarder(), 'go' would never be dispatched and this test would fail.
+    check(
+      await run(/* js */ `
+        import { parentPort } from "node:worker_threads";
+        parentPort.on("message", (m) => console.log("worker: got", m));
+        parentPort.unref();
+        // Hold the loop so 'go' has time to arrive; parentPort is NOT what keeps us alive.
+        setTimeout(() => {}, 200);
+      `),
+      ["worker: got go", "parent: exit 0"],
+    );
+  },
+  TEST_TIMEOUT,
+);
+
+test.concurrent(
   "parentPort.unref() lets the worker exit while a listener is still installed",
   async () => {
     check(

@@ -907,9 +907,9 @@ function fakeParentPort() {
     syncRef();
   }
 
-  function removeEventListener(type: string, listener?) {
+  function removeEventListener(type: string, listener?, options?) {
     if (type !== "message" && type !== "messageerror") {
-      self.removeEventListener(type, listener);
+      self.removeEventListener(type, listener, options);
       return;
     }
     // DOM §2.8: a null/undefined callback is a no-op. Pre-PR this went through the native
@@ -1003,13 +1003,11 @@ function fakeParentPort() {
       process.nextTick(() => {
         self.dispatchEvent(new Event("close"));
       });
-      // Don't truncate listeners.message / listeners.messageerror: dispatch()'s per-entry
-      // liveness check aliases those arrays, so clearing them here would skip every
-      // not-yet-reached handler when close() is called mid-dispatch. Node's MessagePort.close()
-      // doesn't touch the listener list; closed=true + dropForwarder already make the arrays
-      // unreachable for future events.
-      onmessageEntry.message = null;
-      onmessageEntry.messageerror = null;
+      // Don't touch listeners.message / listeners.messageerror / onmessageEntry: dispatch()'s
+      // per-entry liveness check aliases the listener arrays (clearing them would skip every
+      // not-yet-reached handler when close() is called mid-dispatch), and Node's
+      // MessagePort.close() leaves the onmessage getter returning the last-set handler.
+      // closed=true + dropForwarder already make the port inert for future events.
       dropForwarder("message");
       dropForwarder("messageerror");
       syncRef();

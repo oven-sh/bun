@@ -6312,7 +6312,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     headWritten = true;
     const statusCode = head?.statusCode ?? 200;
     let statusMessage = head?.statusMessage;
-    if (typeof statusMessage !== "string" || statusMessage === "") {
+    if (typeof statusMessage !== "string") {
       statusMessage = STATUS_CODES[statusCode] || "unknown";
     }
     let out = `HTTP/1.1 ${statusCode} ${statusMessage}\r\n`;
@@ -6401,7 +6401,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       }
     }
     out += "\r\n";
-    socket.write(out);
+    socket.write(out, "latin1");
   }
 
   function toBuffer(chunk, encoding) {

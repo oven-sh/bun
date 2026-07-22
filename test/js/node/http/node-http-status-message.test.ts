@@ -52,6 +52,25 @@ describe("node:http ServerResponse statusMessage wire bytes", () => {
     expect(line).toBe("HTTP/1.1 200 OK");
   });
 
+  test("statusMessage = '' with an overridden writeHead still defaults the reason phrase", async () => {
+    // on-headers/compression/morgan wrap ServerResponse.prototype.writeHead;
+    // Node's _implicitHeader calls the override with one arg (statusCode), so
+    // reason reaches _writeHead as undefined and the falsy default applies.
+    const orig = http.ServerResponse.prototype.writeHead;
+    http.ServerResponse.prototype.writeHead = function (this: http.ServerResponse, ...a: Parameters<typeof orig>) {
+      return orig.apply(this, a);
+    };
+    try {
+      const line = await rawStatusLine((req, res) => {
+        res.statusMessage = "";
+        res.end("x");
+      });
+      expect(line).toBe("HTTP/1.1 200 OK");
+    } finally {
+      http.ServerResponse.prototype.writeHead = orig;
+    }
+  });
+
   test("writeHead(200, obs-text) writes latin1 bytes", async () => {
     const line = await rawStatusLine((req, res) => {
       res.writeHead(200, "Ünïcödé");

@@ -3699,7 +3699,10 @@ function callWriteHeadIfObservable(self, headerState) {
     headerState === NodeHTTPHeaderState.none &&
     !(self.writeHead === OriginalWriteHeadFn && self._implicitHeader === OriginalImplicitHeadFn)
   ) {
-    self.writeHead(self.statusCode, self.statusMessage);
+    // One arg, like Node's _implicitHeader: _writeHead's else branch then
+    // applies `if (!statusMessage) STATUS_CODES[code]` so a falsy
+    // res.statusMessage defaults instead of snapshotting "".
+    self.writeHead(self.statusCode);
   }
 }
 

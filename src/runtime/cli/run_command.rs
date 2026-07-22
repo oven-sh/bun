@@ -1744,7 +1744,6 @@ fn wait_for_entrypoint_and_reload(target_name: &[u8]) -> ! {
     Output::flush();
 
     let mut buf = paths::path_buffer_pool::get();
-    let has_extension = !paths::extension(target_name).is_empty();
 
     let is_file = |buf: &mut PathBuffer, parts: &[&[u8]]| -> bool {
         let mut len = 0usize;
@@ -1774,7 +1773,7 @@ fn wait_for_entrypoint_and_reload(target_name: &[u8]) -> ! {
                 break 'probe true;
             }
             for ext in bun_bundler::options::bundle_options_defaults::EXTENSION_ORDER {
-                if !has_extension && is_file(&mut buf, &[target_name, ext]) {
+                if is_file(&mut buf, &[target_name, ext]) {
                     break 'probe true;
                 }
                 if is_file(

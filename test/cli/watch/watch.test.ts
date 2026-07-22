@@ -58,6 +58,7 @@ async function nextMatching(iter: AsyncGenerator<string>, needle: string): Promi
 for (const { label, arg, file } of [
   { label: "explicit path", arg: "entry.ts", file: "entry.ts" },
   { label: "extensionless path", arg: "./entry", file: "entry.ts" },
+  { label: "dotted extensionless path", arg: "./vite.config", file: "vite.config.ts" },
   { label: "directory path", arg: ".", file: "index.ts" },
 ]) {
   it(`should survive the entrypoint being transiently deleted (${label})`, async () => {

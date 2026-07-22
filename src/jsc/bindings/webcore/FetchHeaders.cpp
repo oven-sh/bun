@@ -213,11 +213,7 @@ ExceptionOr<void> FetchHeaders::fill(const Init& headerInit)
 ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 {
     if (this->size() == 0) {
-        HTTPHeaderMap headers;
-        headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
-        headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
-        headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
-        setInternalHeaders(WTF::move(headers));
+        m_headers = otherHeaders.m_headers;
         m_updateCounter++;
         return {};
     }

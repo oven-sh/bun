@@ -625,11 +625,11 @@ describe("Headers", () => {
 
     // get()/has() on an uncommon name used to scan the whole vector, so the
     // cost of a single lookup grew with the number of distinct names. Probe
-    // the last N names of an N-entry map and an 8N-entry map: if the lookup
-    // scales with entry count the second run is ~8x slower; with the hash
-    // index it is O(1) and both runs take the same time. The ratio is
-    // self-calibrating across release/debug/ASAN builds so no absolute time
-    // budget is needed.
+    // the last N names of an N-entry map and an 8N-entry map: with a linear
+    // scan the second run does ~15x the work (average scan depth ~7.5N vs
+    // ~N/2); with the hash index it is O(1) and both runs take the same time.
+    // The ratio self-calibrates across release/debug/ASAN builds so no
+    // absolute time budget is needed.
     test("per-name lookup is independent of distinct-name count", () => {
       const N = 1500;
 

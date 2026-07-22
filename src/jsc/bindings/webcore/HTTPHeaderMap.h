@@ -254,11 +254,6 @@ public:
     const CommonHeadersVector &commonHeaders() const { return m_commonHeaders; }
     const UncommonHeadersVector &uncommonHeaders() const { return m_uncommonHeaders; }
     CommonHeadersVector &commonHeaders() { return m_commonHeaders; }
-    UncommonHeadersVector &uncommonHeaders()
-    {
-        m_uncommonHeadersIndex = nullptr;
-        return m_uncommonHeaders;
-    }
     Vector<String, 0> &getSetCookieHeaders() { return m_setCookieHeaders; }
 
     const_iterator begin() const { return const_iterator(*this, m_commonHeaders.begin(), m_uncommonHeaders.begin(), m_setCookieHeaders.begin()); }

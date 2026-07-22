@@ -487,20 +487,10 @@ class BunWebSocket extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.ping();
-      else this.#ws.ping(data);
-    } catch (error) {
-      // npm ws throws RangeError synchronously from Sender.prototype.ping for a
-      // >125-byte payload; it never reaches cb or an 'error' event.
-      if (error instanceof RangeError) throw error;
-      if (typeof cb === "function") {
-        cb(error);
-        return;
-      }
-      this.emit("error", error);
-      return;
-    }
+    // npm ws has no try/catch here: Sender.prototype.ping throws RangeError
+    // synchronously for a >125-byte payload and never reaches cb.
+    if (data === undefined) this.#ws.ping();
+    else this.#ws.ping(data);
 
     if (typeof cb === "function") cb();
   }
@@ -520,18 +510,8 @@ class BunWebSocket extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.pong();
-      else this.#ws.pong(data);
-    } catch (error) {
-      if (error instanceof RangeError) throw error;
-      if (typeof cb === "function") {
-        cb(error);
-        return;
-      }
-      this.emit("error", error);
-      return;
-    }
+    if (data === undefined) this.#ws.pong();
+    else this.#ws.pong(data);
 
     if (typeof cb === "function") cb();
   }
@@ -922,14 +902,8 @@ class BunWebSocketMocked extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.ping();
-      else this.#ws.ping(data);
-    } catch (error) {
-      if (error instanceof RangeError) throw error;
-      if (typeof cb === "function") cb(error);
-      return;
-    }
+    if (data === undefined) this.#ws.ping();
+    else this.#ws.ping(data);
 
     if (typeof cb === "function") cb();
   }
@@ -949,14 +923,8 @@ class BunWebSocketMocked extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.pong();
-      else this.#ws.pong(data);
-    } catch (error) {
-      if (error instanceof RangeError) throw error;
-      if (typeof cb === "function") cb(error);
-      return;
-    }
+    if (data === undefined) this.#ws.pong();
+    else this.#ws.pong(data);
 
     if (typeof cb === "function") cb();
   }

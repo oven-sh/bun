@@ -470,11 +470,10 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
   it("require('ws') client throws RangeError synchronously for oversized ping/pong", async () => {
     const srv = await rawHandshakeServer();
     const ws = new NodeWS(`ws://127.0.0.1:${srv.port}/`);
+    const errorEvents: unknown[] = [];
+    ws.on("error", (e: unknown) => errorEvents.push(e));
     try {
       await once(ws, "open");
-      ws.on("error", (e: unknown) => {
-        throw new Error("unexpected 'error' event: " + e);
-      });
 
       // 125 is the boundary: cb invoked with no error.
       let cbErr: unknown = "not called";
@@ -490,6 +489,8 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
 
       await srv.waitForFrames(1);
       expect(srv.frames).toEqual([{ opcode: 0x9, payloadLen: 125, extendedLen: false }]);
+      // the shim must not have routed the RangeError to an 'error' event
+      expect(errorEvents).toEqual([]);
     } finally {
       ws.terminate();
       await srv.close();
@@ -497,7 +498,8 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
   });
 
   it("Bun.serve ServerWebSocket.ping()/pong() throws RangeError for payloads > 125 bytes", async () => {
-    const { promise: result, resolve } = Promise.withResolvers<{ errs: unknown[]; ok125: number }>();
+    const { promise: result, resolve, reject: failResult } = Promise.withResolvers<{ errs: unknown[]; ok125: number }>();
+    result.catch(() => {});
     await using server = Bun.serve({
       port: 0,
       fetch(req, server) {
@@ -506,24 +508,31 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
       },
       websocket: {
         open(ws) {
-          const errs: unknown[] = [];
-          for (const fn of [
-            () => ws.ping(new Uint8Array(126)),
-            () => ws.ping(Buffer.alloc(300, "c").toString()),
-            () => ws.pong(new Uint8Array(200)),
-            () => ws.pong(Buffer.alloc(126, "d").toString()),
-          ]) {
-            try {
-              fn();
-              errs.push(undefined);
-            } catch (e) {
-              errs.push(e);
+          try {
+            const errs: unknown[] = [];
+            for (const fn of [
+              () => ws.ping(new Uint8Array(126)),
+              () => ws.ping(Buffer.alloc(300, "c").toString()),
+              () => ws.pong(new Uint8Array(200)),
+              () => ws.pong(Buffer.alloc(126, "d").toString()),
+            ]) {
+              try {
+                fn();
+                errs.push(undefined);
+              } catch (e) {
+                errs.push(e);
+              }
             }
+            const ok125 = ws.ping(new Uint8Array(125));
+            resolve({ errs, ok125 });
+          } catch (e) {
+            failResult(e);
           }
-          const ok125 = ws.ping(new Uint8Array(125));
-          resolve({ errs, ok125 });
         },
         message() {},
+        close(_ws, code) {
+          failResult(new Error(`server ws closed ${code} before result`));
+        },
       },
     });
 

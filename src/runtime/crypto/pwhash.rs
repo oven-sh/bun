@@ -398,33 +398,49 @@ pub mod bcrypt {
             return Err(invalid());
         }
 
-        // salt / hash — standard no-pad base64.
-        let (salt_b64, hash_b64) = rest.split_once('$').ok_or_else(invalid)?;
+        // salt / hash — standard no-pad base64. phc_format.deserialize tokenizes
+        // on `$` in struct-field order, decoding each BinValue field as its
+        // token is consumed; a missing hash token is caught by the post-loop
+        // `set_fields < expected_fields` check, and the loop `break`s
+        // unconditionally after the hash so trailing `$`-segments are ignored.
+        let (salt_b64, hash_b64) = match rest.split_once('$') {
+            Some((salt, rest)) => (salt, Some(rest.split_once('$').map_or(rest, |(h, _)| h))),
+            None => (rest, None),
+        };
         let decoder = &bun_base64::zig_base64::STANDARD_NO_PAD.decoder;
 
+        // phc_format.BinValue(N).fromB64: `calcSizeForSlice` failure and
+        // `decode` failure surface as `InvalidEncoding`; a decoded length
+        // overflowing the N-byte bounded buffer surfaces as `NoSpaceLeft`;
+        // undersized input (len < N) is accepted at this stage.
         let mut salt = [0u8; SALT_LENGTH];
-        if decoder
+        let salt_len = decoder
             .calc_size_for_slice(salt_b64.as_bytes())
-            .map_err(|_| invalid())?
-            != SALT_LENGTH
-        {
-            return Err(invalid());
+            .map_err(|_| invalid())?;
+        if salt_len > SALT_LENGTH {
+            return Err(bun_core::err!("NoSpaceLeft"));
         }
         decoder
-            .decode(&mut salt, salt_b64.as_bytes())
+            .decode(&mut salt[..salt_len], salt_b64.as_bytes())
             .map_err(|_| invalid())?;
 
+        let hash_b64 = hash_b64.ok_or_else(invalid)?;
         let mut expected = [0u8; DK_LENGTH];
-        if decoder
+        let hash_len = decoder
             .calc_size_for_slice(hash_b64.as_bytes())
-            .map_err(|_| invalid())?
-            != DK_LENGTH
-        {
-            return Err(invalid());
+            .map_err(|_| invalid())?;
+        if hash_len > DK_LENGTH {
+            return Err(bun_core::err!("NoSpaceLeft"));
         }
         decoder
-            .decode(&mut expected, hash_b64.as_bytes())
+            .decode(&mut expected[..hash_len], hash_b64.as_bytes())
             .map_err(|_| invalid())?;
+
+        // bcrypt.zig `PhcFormatHasher.verify` rejects undersized salt/hash
+        // after `deserialize` has parsed both fields.
+        if salt_len != SALT_LENGTH || hash_len != DK_LENGTH {
+            return Err(invalid());
+        }
 
         // The crate's raw `bcrypt()` asserts `cost < 32`, so reject the
         // out-of-range tail here rather than panic. (Values <4 or ≥32 never

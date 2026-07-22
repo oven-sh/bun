@@ -41,10 +41,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, O
 ///
 /// Default ordering is **Acquire/Release**, not Relaxed — at least six of the
 /// data-race findings that motivated this type were "Relaxed gives no
-/// happens-before for the init it guards". Telemetry / best-effort hints can
-/// opt out via [`load_relaxed`](Self::load_relaxed) /
-/// [`store_relaxed`](Self::store_relaxed), named so grep finds every site
-/// that opted out of ordering.
+/// happens-before for the init it guards".
 #[repr(C)]
 pub struct AtomicCell<T: Copy> {
     // ZST that forces 8-byte alignment so `inner`'s address is valid for
@@ -63,7 +60,7 @@ pub struct AtomicCell<T: Copy> {
 // pointers are `!Send`. What the receiving thread *does* with a loaded pointer
 // is on the caller, same as `AtomicPtr`. A plain `T: Copy` bound would be
 // unsound: `&Cell<u32>` is `Copy + !Send`, and shipping one to another thread
-// via `into_inner()` would be a data race.
+// via `load()` would be a data race.
 unsafe impl<T: Atom> Sync for AtomicCell<T> {}
 // SAFETY: see the `Sync` justification above — the same invariants apply to
 // moving the cell itself across threads; `T: Copy` has no drop glue to race.

@@ -95,7 +95,7 @@ thread_local! {
 /// Returns the thread-local `*mut MiniEventLoop`.
 ///
 /// Returning `&'static mut`
-/// here would let two calls (or `init_global` + `MiniKind::get_vm`) hold
+/// here would let two calls (or `init_global` + any reader of `GLOBAL`) hold
 /// overlapping `&mut` to the same allocation — UB. Return the raw pointer;
 /// callers reborrow `&mut` for the scope they need.
 pub fn init_global(
@@ -115,7 +115,7 @@ pub fn init_global(
     // SAFETY: `global_ptr` was just allocated via `heap::alloc`; this thread
     // holds the only reference for the duration of first-init. The `GLOBAL`
     // thread-local is NOT yet published (set below, after this `&mut` is dropped),
-    // so neither `MiniKind::get_vm()` nor a re-entrant `init_global()` can observe
+    // so no reader of `GLOBAL` nor a re-entrant `init_global()` can observe
     // the pointer while this exclusive borrow is live. The `&mut` is scoped to
     // this function body — NOT `'static` — and ends before we publish/return the
     // raw ptr.
@@ -168,11 +168,10 @@ pub fn init_global(
     }
 
     // Publish the thread-local pointer only AFTER the scoped `&mut *global_ptr`
-    // above is no longer used — `MiniKind::get_vm()` reads `GLOBAL` without
-    // checking `GLOBAL_INITIALIZED`, so publishing earlier would let a callee
-    // re-derive a `&mut` aliasing `global` (UB). Nothing between the `&mut`
-    // borrow and here reads `GLOBAL` (`EventLoopHandle::init_mini`/`into_tag_ptr`
-    // only copy the pointer value).
+    // above is no longer used — publishing earlier would let a callee that reads
+    // `GLOBAL` re-derive a `&mut` aliasing `global` (UB). Nothing between the
+    // `&mut` borrow and here reads `GLOBAL` (`EventLoopHandle::init_mini` /
+    // `into_tag_ptr` only copy the pointer value).
     GLOBAL.with(|g| g.set(global_ptr));
     GLOBAL_INITIALIZED.with(|g| g.set(true));
     global_ptr

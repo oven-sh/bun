@@ -2144,6 +2144,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_usockets"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bun_boringssl_sys",
+ "bun_core",
+ "bun_errno",
+ "bun_libuv_sys",
+ "bun_opaque",
+ "bun_windows_sys",
+ "libc",
+]
+
+[[package]]
 name = "bun_uws"
 version = "0.0.0"
 dependencies = [
@@ -2177,6 +2191,7 @@ dependencies = [
  "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",
+ "bun_usockets",
  "bun_windows_sys",
  "const_format",
  "enum-map",

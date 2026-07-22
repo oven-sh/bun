@@ -14,6 +14,8 @@
 //! module name (the names downstream `bun_uws` expects). Crate-root re-exports
 //! flatten the common handle types.
 
+use bun_usockets as _;
+
 // ───────────────────────── crate-root FFI primitives ─────────────────────────
 
 /// `LIBUS_SOCKET_DESCRIPTOR` — `int` on POSIX, `SOCKET` (`uintptr`) on Windows.

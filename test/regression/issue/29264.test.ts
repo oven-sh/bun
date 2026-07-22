@@ -12,7 +12,10 @@ test("#29264 bundler survives external + missing imports in same file", { timeou
             {
               name: "mark-bare-external",
               setup(build) {
-                build.onResolve({ filter: /^[^.]/ }, () => ({ external: true }));
+                build.onResolve({ filter: /^[^.]/ }, args => {
+                  if (args.kind === "entry-point-build") return;
+                  return { external: true };
+                });
               },
             },
           ],

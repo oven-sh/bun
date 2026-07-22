@@ -7302,13 +7302,16 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// Windows tail — `NtQueryAttributesFile` against an
-/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path. Shared by the
-/// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
-/// width dispatch does not
-/// duplicate the syscall body.
+/// `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES built from an already
+/// NT-prefixed wide path, relative to `dir`. Shared syscall body for
+/// `exists_at_type` / `exists_at_type_w` / `get_file_attributes_at` so the
+/// OBJECT_ATTRIBUTES setup lives in one place.
 #[cfg(windows)]
-fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
+fn nt_query_basic_attrs_at(
+    dir: Fd,
+    mut path: &[u16],
+) -> core::result::Result<bun_windows_sys::externs::FILE_BASIC_INFORMATION, bun_windows_sys::externs::NTSTATUS>
+{
     use bun_windows_sys::externs as w;
     // Trim leading `.\` — NtQueryAttributesFile expects relative paths
     // without it.
@@ -7338,27 +7341,37 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     let mut basic_info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: FFI; attr/basic_info valid for the call duration.
     let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
-    if rc != w::NTSTATUS::SUCCESS {
+    if rc == w::NTSTATUS::SUCCESS {
+        Ok(basic_info)
+    } else {
+        Err(rc)
+    }
+}
+
+#[cfg(windows)]
+fn exists_at_type_nt(dir: Fd, path: &[u16]) -> Maybe<ExistsAtType> {
+    use bun_windows_sys::externs as w;
+    match nt_query_basic_attrs_at(dir, path) {
+        Ok(basic_info) => Ok(
+            // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
+            // marker (OneDrive sets it) and does not affect directory-ness; only
+            // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
+            if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+                ExistsAtType::Directory
+            } else {
+                ExistsAtType::File
+            },
+        ),
         // `errnoSys` for `NTSTATUS` routes through the curated
         // `translateNTStatusToErrno` table first (so `OBJECT_PATH_NOT_FOUND`
         // deterministically maps to `ENOENT`, which `directory_exists_at()`
         // branches on), then falls back to `RtlNtStatusToDosError` for
         // unmapped codes.
-        return Err(Error::from_code(
+        Err(rc) => Err(Error::from_code(
             windows::translate_nt_status_to_errno(rc),
             Tag::access,
-        ));
+        )),
     }
-    // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
-    // marker (OneDrive sets it) and does not affect directory-ness; only
-    // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
-    Ok(
-        if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
-            ExistsAtType::Directory
-        } else {
-            ExistsAtType::File
-        },
-    )
 }
 /// `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
@@ -7397,40 +7410,12 @@ pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
 pub fn get_file_attributes_at(dir: Fd, sub: &ZStr) -> Option<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let mut path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
-    if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
-        path = &path[2..];
-    }
-    let path_len_bytes = (path.len() * 2) as u16;
-    let mut nt_name = w::UNICODE_STRING {
-        Length: path_len_bytes,
-        MaximumLength: path_len_bytes,
-        Buffer: path.as_ptr().cast_mut().cast::<u16>(),
-    };
-    let attr = w::OBJECT_ATTRIBUTES {
-        Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if is_nt_object_name(path) {
-            core::ptr::null_mut()
-        } else if dir.is_valid() {
-            dir.native()
-        } else {
-            Fd::cwd().native()
-        },
-        Attributes: 0,
-        ObjectName: &mut nt_name,
-        SecurityDescriptor: core::ptr::null_mut(),
-        SecurityQualityOfService: core::ptr::null_mut(),
-    };
-    let mut basic_info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
-    // SAFETY: FFI; attr/basic_info valid for the call duration.
-    let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
-    if rc != w::NTSTATUS::SUCCESS {
-        return None;
-    }
+    let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+    let bi = nt_query_basic_attrs_at(dir, path).ok()?;
     Some(WindowsFileAttributes {
-        is_directory: (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
-        is_reparse_point: (basic_info.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
-        raw: basic_info.FileAttributes,
+        is_directory: (bi.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
+        is_reparse_point: (bi.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+        raw: bi.FileAttributes,
     })
 }
 /// `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.

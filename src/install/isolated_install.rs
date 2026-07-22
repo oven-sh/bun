@@ -2345,7 +2345,18 @@ pub(crate) fn install_isolated_packages(
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
                         install::PreinstallState::Done => false,
-                        _ if installer.manager().options.enable.force_install() => true,
+                        _ if installer.manager().options.enable.force_install() => {
+                            // The derived `<entry>_patch_hash=<h>` cache directory
+                            // is what lands in the store; remove it now so the
+                            // post-download `apply_package_patch` regenerates it
+                            // from the freshly-verified base instead of reusing
+                            // the stale contents.
+                            if matches!(patch_info, installer::PatchInfo::Patch(_)) {
+                                let _ = bun_sys::Dir::borrow(&cache_dir)
+                                    .delete_tree(pkg_cache_dir_subpath.slice_z().as_bytes());
+                            }
+                            true
+                        }
                         _ => 'missing_from_cache: {
                             if matches!(patch_info, installer::PatchInfo::None) {
                                 // The cache entry name is attacker-predictable,

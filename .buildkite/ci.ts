@@ -329,7 +329,7 @@ function getPriority() {
  * @param {Ec2Options} ec2Options
  * @returns {Agent}
  */
-function getEc2Agent(platform, options, ec2Options) {
+function getEc2Agent(platform, ec2Options) {
   const { os, arch, abi, distro, release, crossCompile } = platform;
   const { instanceType, cpuCount, threadsPerCore } = ec2Options;
   // Cross-compiled targets run on a Linux EC2 box; the agent tag must match
@@ -360,7 +360,7 @@ function getCppAgent(platform, options) {
   // Every build lane runs on the single debian-13 aarch64 host image
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
-  return getEc2Agent(buildHostPlatform, options, {
+  return getEc2Agent(buildHostPlatform, {
     instanceType: "c8g.4xlarge",
   });
 }
@@ -371,7 +371,7 @@ function getCppAgent(platform, options) {
  * @returns {string}
  */
 function getLinkBunAgent(platform, options) {
-  return getEc2Agent(buildHostPlatform, options, {
+  return getEc2Agent(buildHostPlatform, {
     // rust-and-link runs cargo (~200 crates) then ThinLTO-links the full graph
     // on one box; r8g.xlarge is too tight. ASAN's -Zbuild-std cargo pass
     // doubles the IR, so size that lane for cores.
@@ -403,7 +403,7 @@ function getTestAgent(platform, options) {
 
   // TODO: delete this block when we upgrade to mimalloc v3
   if (os === "windows") {
-    return getEc2Agent(platform, options, {
+    return getEc2Agent(platform, {
       instanceType: getAzureVmSize(os, arch, "test"),
       cpuCount: 2,
       threadsPerCore: 1,
@@ -421,13 +421,13 @@ function getTestAgent(platform, options) {
       // ASAN needs ~1:8 shadow memory plus a 256 MB quarantine per process
       // plus LSan loading the binary's DWARF; the c-family's 16 GB OOMs the
       // agent. r-family has 4× the RAM at the same vCPU.
-      return getEc2Agent(platform, options, {
+      return getEc2Agent(platform, {
         instanceType: "r8g.2xlarge",
         cpuCount: 2,
         threadsPerCore: 1,
       });
     }
-    return getEc2Agent(platform, options, {
+    return getEc2Agent(platform, {
       instanceType: musl ? "m8g.xlarge" : "c8g.xlarge",
       cpuCount: 2,
       threadsPerCore: 1,
@@ -436,13 +436,13 @@ function getTestAgent(platform, options) {
 
   if (profile === "asan") {
     // Same rationale as the aarch64 asan branch above.
-    return getEc2Agent(platform, options, {
+    return getEc2Agent(platform, {
       instanceType: "r7i.2xlarge",
       cpuCount: 2,
       threadsPerCore: 1,
     });
   }
-  return getEc2Agent(platform, options, {
+  return getEc2Agent(platform, {
     instanceType: musl ? "m7i.xlarge" : "c7i.xlarge",
     cpuCount: 2,
     threadsPerCore: 1,
@@ -721,8 +721,8 @@ function getVerifyBaselineStep(platform, options) {
   const host = getVerifyBaselineHost(platform);
   const agents =
     os === "windows"
-      ? getEc2Agent(host, options, { instanceType: getAzureVmSize("windows", platform.arch) })
-      : getEc2Agent(host, options, {
+      ? getEc2Agent(host, { instanceType: getAzureVmSize("windows", platform.arch) })
+      : getEc2Agent(host, {
           instanceType: platform.arch === "aarch64" ? "r8g.2xlarge" : "r7i.2xlarge",
         });
 
@@ -902,7 +902,7 @@ function getWindowsSignStep(windowsPlatforms, options) {
     key: "windows-sign",
     label: `${getBuildkiteEmoji("windows")} sign`,
     depends_on: windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
-    agents: getEc2Agent({ os: "windows", arch: "x64", release: "2019" }, options, {
+    agents: getEc2Agent({ os: "windows", arch: "x64", release: "2019" }, {
       instanceType: getAzureVmSize("windows", "x64", "test"),
     }),
     retry: getRetry(),
@@ -935,7 +935,7 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
   return {
     key: "binary-size",
     label: `${getBuildkiteEmoji("package")} binary-size`,
-    agents: getEc2Agent(buildHostPlatform, options, { instanceType: "c8g.large" }),
+    agents: getEc2Agent(buildHostPlatform, { instanceType: "c8g.large" }),
     depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
     allow_dependency_failure: true,
     soft_fail: !!options.skipSizeCheck,
@@ -974,7 +974,7 @@ function getReleaseStep(releasePlatforms, options, { signed = false, testStepKey
   return {
     key: "release",
     label: getBuildkiteEmoji("rocket"),
-    agents: getEc2Agent(buildHostPlatform, options, { instanceType: "c8g.large" }),
+    agents: getEc2Agent(buildHostPlatform, { instanceType: "c8g.large" }),
     depends_on,
     env: {
       CANARY: revision,

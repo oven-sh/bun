@@ -80,18 +80,14 @@ export function imageKey(platform: {
   arch: string;
   release: string;
   distro?: string;
-  features?: string[];
   abi?: string;
   crossCompile?: boolean;
 }): string {
-  const { os, arch, distro, release, features, abi, crossCompile } = platform;
+  const { os, arch, distro, release, abi, crossCompile } = platform;
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
   let key = `${hostOs}-${arch}-${release.replace(/\./g, "")}`;
   if (distro) {
     key += `-${distro}`;
-  }
-  if (features?.length) {
-    key += `-with-${features.join("-")}`;
   }
   if (abi && abi !== "android") {
     key += `-${abi}`;
@@ -112,9 +108,4 @@ export function imageEntry(key: string): Image {
     );
   }
   return entry;
-}
-
-/** The entry for a raw os/arch/distro/release (machine.mjs's CLI shape). */
-export function imageEntryFor(os: string, arch: Arch, distro: string | undefined, release: string): Image {
-  return imageEntry(imageKey(distro === undefined ? { os, arch, release } : { os, arch, release, distro }));
 }

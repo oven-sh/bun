@@ -755,7 +755,10 @@ describe("weak certificate signature digests", () => {
     const server = tls.createServer(leaf(md), c => c.end());
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
-      const { promise, resolve, reject } = Promise.withResolvers<{ authorized: boolean; authorizationError: unknown }>();
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        authorized: boolean;
+        authorizationError: unknown;
+      }>();
       const socket = tls.connect(
         {
           port: (server.address() as AddressInfo).port,

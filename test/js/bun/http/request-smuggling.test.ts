@@ -660,11 +660,13 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
   });
 
-  // TE.TE desync: the last-chunk "0\r\n" must be followed by a strict "\r\n"
-  // (end-of-body). Consuming arbitrary bytes there lets an attacker smuggle a
-  // second request while an upstream proxy parses the same bytes as a valid
-  // trailer line. See https://github.com/oven-sh/bun/issues/29732.
-  test("rejects arbitrary bytes in place of final CRLF after zero-chunk", async () => {
+  // TE.TE desync (https://github.com/oven-sh/bun/issues/29732): upstream uWS
+  // blindly consumed two bytes after "0\r\n" as the terminating CRLF, so
+  // "0\r\nX:POST /admin ..." stripped "X:" and then parsed the rest as a
+  // second pipelined request. The bytes after the last-chunk are the RFC 7230
+  // trailer-part (header-field lines then an empty line); they belong to the
+  // current message, so "POST /admin ..." must never be seen as a request.
+  test("trailer-part bytes after zero-chunk are not parsed as a pipelined request", async () => {
     const urls: string[] = [];
     await using server = Bun.serve({
       port: 0,
@@ -679,12 +681,13 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
 
     const client = net.connect(server.port, "127.0.0.1");
 
-    // The bytes "X:" replace the required "\r\n" after the zero-chunk.
-    // A vulnerable server consumes "X:" as the terminator and then parses
-    // "POST /admin HTTP/1.1" as a second (smuggled) request.
+    // Three trailer header-field lines and the terminating empty line.
+    // A vulnerable server that consumes "X:" as the terminator would then
+    // parse "POST /admin HTTP/1.1" as a second (smuggled) request.
     const smuggleAttempt =
       "POST / HTTP/1.1\r\n" +
       "Host: localhost\r\n" +
+      "Connection: close\r\n" +
       "Transfer-Encoding: chunked\r\n" +
       "\r\n" +
       "0\r\n" +
@@ -701,9 +704,8 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
         responseData += data.toString();
       });
       client.on("close", () => {
-        expect(responseData).toContain("HTTP/1.1 400");
         // The smuggled second request must never reach the handler.
-        expect(urls).not.toContain("/admin");
+        expect(urls).toEqual(["/"]);
         // No ADMIN-ACCESS body should have been produced.
         expect(responseData).not.toContain("ADMIN-ACCESS");
         resolve();
@@ -712,8 +714,9 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
   });
 
-  test("rejects zero-chunk terminator with wrong first byte", async () => {
-    // First byte of the terminator must be '\r'. Anything else must be rejected.
+  test("rejects zero-chunk trailer line containing bare LF", async () => {
+    // A bare LF (not preceded by CR) in the trailer-part is rejected so that
+    // the end of the trailer section cannot desync with a stricter front-end.
     await using server = Bun.serve({
       port: 0,
       fetch() {
@@ -724,7 +727,8 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     const client = net.connect(server.port, "127.0.0.1");
 
     const maliciousRequest =
-      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "A\n"; // 'A' instead of '\r'
+      // "A" opens a trailer field name; the bare LF after it is the violation.
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "A\n";
 
     await new Promise<void>((resolve, reject) => {
       let responseData = "";
@@ -740,8 +744,8 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
   });
 
-  test("rejects zero-chunk terminator with CR but wrong second byte", async () => {
-    // Second byte of the terminator must be '\n'. Anything else must be rejected.
+  test("rejects CR not followed by LF in the trailer section", async () => {
+    // Every CR in the trailer-part must be immediately followed by LF.
     await using server = Bun.serve({
       port: 0,
       fetch() {
@@ -752,7 +756,8 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     const client = net.connect(server.port, "127.0.0.1");
 
     const maliciousRequest =
-      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\rA"; // '\r' followed by 'A' instead of '\n'
+      // The CR right after the last-chunk is followed by "A" rather than LF.
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\rA";
 
     await new Promise<void>((resolve, reject) => {
       let responseData = "";
@@ -810,14 +815,10 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
   test("accepts zero-chunk with correct CRLF terminator split across segments", async () => {
     // Control for the fragmentation test above: a valid split must still work.
     //
-    // Tricky bit: the parser emits the FIN chunk as soon as it sees the
-    // zero-chunk size line (`0\r\n`) — before the terminator bytes are
-    // consumed. That means the server can respond to request 1 based on just
-    // the first segment. To prove the `\n` in the second segment *does* get
-    // validated (rather than being ignored or causing an error), we pipeline
-    // a second request after it: if the drop-trailer loop rejected the `\n`
-    // as malformed, the state would go to STATE_IS_ERROR, the connection
-    // would be torn down, and the pipelined GET would never complete.
+    // We pipeline a second request after the split terminator: if the
+    // trailer-part parser rejected the `\n` as malformed, the state would
+    // go to STATE_IS_ERROR, the connection would be torn down, and the
+    // pipelined GET would never complete.
     const seen: string[] = [];
     await using server = Bun.serve({
       port: 0,

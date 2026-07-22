@@ -196,6 +196,12 @@ namespace uWS {
     constexpr uint64_t STATE_IS_TRAILERS = STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_WAITING_FOR_LF;
     constexpr uint64_t STATE_IS_TRAILERS_DONE = STATE_HAS_SIZE | STATE_WAITING_FOR_LF;
 
+    /* Sub-states of the non-capturing trailer-part scan (Bun.serve path, where
+     * no trailerSection buffer is supplied), stored in the low bits while
+     * STATE_HAS_SIZE is set and STATE_IS_CHUNKED is clear. */
+    constexpr uint64_t TRAILER_AT_LINE_START = 1;
+    constexpr uint64_t TRAILER_MID_LINE      = 2;
+
     /* Default cap on the raw size of a captured trailer section. Node counts
      * trailer bytes against the same max-header-size budget as request headers
      * in llhttp, so node:http callers thread the per-server maxHeaderSize
@@ -214,12 +220,18 @@ namespace uWS {
     }
 
     /* Returns next chunk (empty or not), or if all data was consumed, nullopt is returned. */
-    static std::optional<std::string_view> getNextChunk(std::string_view &data, uint64_t &state, bool trailer = false, uint64_t *chunkExtensionsConsumed = nullptr, std::string *trailerSection = nullptr, uint64_t maxTrailerSectionSize = MAX_TRAILER_SECTION_SIZE) {
+    static std::optional<std::string_view> getNextChunk(std::string_view &data, uint64_t &state, uint64_t *chunkExtensionsConsumed = nullptr, std::string *trailerSection = nullptr, uint64_t maxTrailerSectionSize = MAX_TRAILER_SECTION_SIZE) {
         /* node:http compat: the previous call emitted the fin chunk for a message
          * whose trailer section completed; this call only resets the state and
          * leaves the remaining bytes (the next request, or tunnel data) untouched. */
         if (trailerSection && state == STATE_IS_TRAILERS_DONE) [[unlikely]] {
             state = 0;
+            return std::nullopt;
+        }
+        /* state == 0 means the chunked body (including trailer-part) has been
+         * fully consumed. Any remaining bytes in data belong to the next
+         * pipelined request, not to us. */
+        if (state == 0) {
             return std::nullopt;
         }
         while (data.length()) {
@@ -259,34 +271,49 @@ namespace uWS {
                 return std::nullopt;
             }
 
-            // if in "drop trailer mode", consume the terminator bytes after the
-            // zero-chunk. This is 2 bytes (\r\n) with no trailer, or 4 bytes
-            // (\r\n\r\n) with trailer=true. Upstream uWS consumed these bytes
-            // blindly, which let attackers smuggle a second request by placing
-            // arbitrary bytes (e.g. "X:POST /admin HTTP/1.1\r\n") where the
-            // final CRLF belongs. Strict validation closes that desync.
-            //
-            // chunkSize() starts at 2 or 4 and counts down as bytes arrive; its
-            // parity gives the expected byte (even -> \r, odd -> \n). The parity
-            // rule is the same for both initial sizes, so TCP segment
-            // boundaries that split the terminator are handled naturally.
+            /* Non-capturing trailer-part scan (RFC 7230 4.1): reached when the
+             * last-chunk "0\r\n" was consumed without a trailerSection buffer
+             * (the Bun.serve path). Scans zero or more non-empty header-field
+             * lines followed by one empty line, discarding the bytes, and
+             * emits fin only once the terminating empty line is seen so a
+             * valid trailer section neither errors nor completes the body
+             * early. Sub-state in the low bits (chunkSize()):
+             *   TRAILER_AT_LINE_START  - just after a CRLF; an immediate CRLF
+             *                            here is the terminating empty line.
+             *   TRAILER_MID_LINE       - at least one non-CRLF byte seen on
+             *                            the current line.
+             * STATE_WAITING_FOR_LF marks "\r seen, need \n". Any CR not
+             * followed by LF, any bare LF, and NUL are rejected to prevent
+             * desync with a stricter front-end. */
             if (((state & STATE_IS_CHUNKED) == 0) && hasChunkSize(state) && chunkSize(state)) {
-                while (data.length() && chunkSize(state)) {
-                    char expected = (chunkSize(state) & 1) ? '\n' : '\r';
-                    if (data[0] != expected) {
+                while (data.length()) {
+                    unsigned char c = (unsigned char) data[0];
+                    data.remove_prefix(1);
+                    if (state & STATE_WAITING_FOR_LF) {
+                        if (c != '\n') {
+                            state = STATE_IS_ERROR;
+                            return std::nullopt;
+                        }
+                        state &= ~STATE_WAITING_FOR_LF;
+                        if (chunkSize(state) == TRAILER_AT_LINE_START) {
+                            /* Empty line: trailer-part complete. Emit fin. */
+                            state = 0;
+                            return std::string_view(nullptr, 0);
+                        }
+                        state = TRAILER_AT_LINE_START | STATE_HAS_SIZE;
+                        continue;
+                    }
+                    if (c == '\r') {
+                        state |= STATE_WAITING_FOR_LF;
+                        continue;
+                    }
+                    if (c == '\n' || c == '\0') {
                         state = STATE_IS_ERROR;
                         return std::nullopt;
                     }
-                    data.remove_prefix(1);
-                    decChunkSize(state, 1);
-
-                    if (chunkSize(state) == 0) {
-                        /* Terminator fully consumed — parsing is complete. */
-                        state = 0;
-                        return std::nullopt;
-                    }
+                    state = TRAILER_MID_LINE | STATE_HAS_SIZE;
                 }
-                continue;
+                return std::nullopt;
             }
 
             if (!hasChunkSize(state)) {
@@ -295,25 +322,18 @@ namespace uWS {
                     return std::nullopt;
                 }
                 if (hasChunkSize(state) && chunkSize(state) == 2) {
-
-                    //printf("Setting state to trailer-parsing and emitting empty chunk\n");
-
-                    /* node:http compat: the message is not complete until the trailer
-                     * section has been consumed; capture it and emit the fin chunk
-                     * from the trailer-section branch above instead of here. */
+                    /* last-chunk ("0" [chunk-ext] CRLF) consumed. The message
+                     * is not complete until the trailer-part is consumed; fin
+                     * is emitted from the matching branch above once the
+                     * terminating CRLF is seen. With a trailerSection buffer
+                     * the bytes are captured for req.trailers; without one
+                     * (Bun.serve) they are scanned and discarded. */
                     if (trailerSection) {
                         state = STATE_IS_TRAILERS;
-                        continue;
-                    }
-
-                    // set trailer state and increase size to 4
-                    if (trailer) {
-                        state = 4 /*| STATE_IS_CHUNKED*/ | STATE_HAS_SIZE;
                     } else {
-                        state = 2 /*| STATE_IS_CHUNKED*/ | STATE_HAS_SIZE;
+                        state = TRAILER_AT_LINE_START | STATE_HAS_SIZE;
                     }
-
-                    return std::string_view(nullptr, 0);
+                    continue;
                 }
                 if (!hasChunkSize(state)) [[unlikely]] {
                     /* Incomplete chunk-size line — need more data from the network. */
@@ -419,16 +439,15 @@ namespace uWS {
         std::string_view *data;
         std::optional<std::string_view> chunk;
         uint64_t *state;
-        bool trailer;
         uint64_t *chunkExtensionsConsumed;
         std::string *trailerSection;
         uint64_t maxTrailerSectionSize;
 
-        ChunkIterator(std::string_view *data, uint64_t *state, bool trailer = false, uint64_t *chunkExtensionsConsumed = nullptr, std::string *trailerSection = nullptr, uint64_t maxTrailerSectionSize = MAX_TRAILER_SECTION_SIZE) : data(data), state(state), trailer(trailer), chunkExtensionsConsumed(chunkExtensionsConsumed), trailerSection(trailerSection), maxTrailerSectionSize(maxTrailerSectionSize) {
-            chunk = uWS::getNextChunk(*data, *state, trailer, chunkExtensionsConsumed, trailerSection, maxTrailerSectionSize);
+        ChunkIterator(std::string_view *data, uint64_t *state, uint64_t *chunkExtensionsConsumed = nullptr, std::string *trailerSection = nullptr, uint64_t maxTrailerSectionSize = MAX_TRAILER_SECTION_SIZE) : data(data), state(state), chunkExtensionsConsumed(chunkExtensionsConsumed), trailerSection(trailerSection), maxTrailerSectionSize(maxTrailerSectionSize) {
+            chunk = uWS::getNextChunk(*data, *state, chunkExtensionsConsumed, trailerSection, maxTrailerSectionSize);
         }
 
-        ChunkIterator() : data(nullptr), state(nullptr), trailer(false), chunkExtensionsConsumed(nullptr), trailerSection(nullptr), maxTrailerSectionSize(MAX_TRAILER_SECTION_SIZE) {
+        ChunkIterator() : data(nullptr), state(nullptr), chunkExtensionsConsumed(nullptr), trailerSection(nullptr), maxTrailerSectionSize(MAX_TRAILER_SECTION_SIZE) {
 
         }
 
@@ -452,7 +471,7 @@ namespace uWS {
         }
 
         ChunkIterator &operator++() {
-            chunk = uWS::getNextChunk(*data, *state, trailer, chunkExtensionsConsumed, trailerSection, maxTrailerSectionSize);
+            chunk = uWS::getNextChunk(*data, *state, chunkExtensionsConsumed, trailerSection, maxTrailerSectionSize);
             return *this;
         }
 

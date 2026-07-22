@@ -2792,7 +2792,7 @@ mod posix_impl {
                 )
             };
             if rc != 0 {
-                let errno = unsafe { *crate::errno() };
+                let errno = unsafe { *crate::linux::errno() };
                 return Err(Error::from_code_int(errno, Tag::fchmodat)
                     .with_path(path.as_bytes()));
             }

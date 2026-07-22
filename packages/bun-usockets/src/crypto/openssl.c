@@ -889,6 +889,48 @@ static void ssl_ctx_build_fail(SSL_CTX *ctx) {
   SSL_CTX_free(ctx);
 }
 
+/* BoringSSL's cipher-list parser knows the TLS 1.3 suite names but cannot act on
+ * them: TLS 1.3 has a built-in preference order, and "functions to set cipher
+ * lists do not affect TLS 1.3" (include/openssl/ssl.h). Node routes the names to
+ * SSL_CTX_set_ciphersuites, an API BoringSSL does not have. */
+static const char *const tls13_cipher_suite_names[] = {
+    TLS1_3_RFC_AES_128_GCM_SHA256,
+    TLS1_3_RFC_AES_256_GCM_SHA384,
+    TLS1_3_RFC_CHACHA20_POLY1305_SHA256,
+};
+
+static int is_tls13_cipher_suite_name(const char *name, size_t len) {
+  for (size_t i = 0; i < sizeof(tls13_cipher_suite_names) / sizeof(tls13_cipher_suite_names[0]); i++) {
+    const char *candidate = tls13_cipher_suite_names[i];
+    if (strncmp(candidate, name, len) == 0 && candidate[len] == '\0') {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/* A list naming nothing but TLS 1.3 suites leaves the TLS<=1.2 parser no rule to
+ * apply, which it reports as NO_CIPHER_MATCH. Node ends up with an empty TLS<=1.2
+ * list instead, so split on ':' the way its processCiphers() does to spot that.
+ * Any other list keeps its TLS 1.3 names: the parser only ever matches them
+ * against ciphers a cipher list cannot contain. */
+static int is_tls13_only_cipher_string(const char *ciphers) {
+  int saw_tls13_suite = 0;
+  const char *entry = ciphers;
+  for (;;) {
+    const char *separator = strchr(entry, ':');
+    size_t len = separator ? (size_t)(separator - entry) : strlen(entry);
+    if (is_tls13_cipher_suite_name(entry, len)) {
+      saw_tls13_suite = 1;
+    } else if (len > 0) {
+      return 0;
+    }
+    if (!separator) break;
+    entry = separator + 1;
+  }
+  return saw_tls13_suite;
+}
+
 /* Exported for quic.c (lsquic configures ALPN/transport-params on the SSL_CTX
  * directly) and as the body of us_ssl_ctx_from_options. */
 SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
@@ -1054,16 +1096,28 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   }
 
   if (options.ssl_ciphers) {
-    if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
+    const int tls13_only = is_tls13_only_cipher_string(options.ssl_ciphers);
+    /* "" is how a TLS<=1.2 cipher list is cleared; the TLS 1.3 suites stay. */
+    const char *cipher_list = tls13_only ? "" : options.ssl_ciphers;
+    if (!SSL_CTX_set_cipher_list(ssl_context, cipher_list)) {
       /* Peek, don't consume: the caller decomposes the queued reason
        * (NO_CIPHER_MATCH, INVALID_COMMAND) into the JS error. */
       unsigned long ssl_err = ERR_peek_error();
-      if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
+      if (!(cipher_list[0] == '\0' && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;
         ssl_ctx_build_fail(ssl_context);
         return NULL;
       }
       ERR_clear_error();
+    }
+    /* Without a TLS<=1.2 cipher a TLS 1.2 handshake has nothing to negotiate, so
+     * raise the floor rather than serve a context that can only fail, the way
+     * Node's configSecureContext() does. SSL_CTX_new() seeds both bounds from
+     * TLS_method(), so neither getter reports the "unset" 0 that ssl_max_version
+     * above uses: they read back TLS1_2_VERSION and TLS1_3_VERSION. */
+    if (tls13_only && SSL_CTX_get_min_proto_version(ssl_context) < TLS1_3_VERSION &&
+        SSL_CTX_get_max_proto_version(ssl_context) > TLS1_2_VERSION) {
+      SSL_CTX_set_min_proto_version(ssl_context, TLS1_3_VERSION);
     }
   }
 

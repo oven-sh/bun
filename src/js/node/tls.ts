@@ -29,6 +29,16 @@ const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
 const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
+
+// `honorCipherOrder` is nothing but SSL_OP_CIPHER_SERVER_PREFERENCE in
+// secureOptions: with the bit set BoringSSL negotiates the first cipher the
+// server's list allows, without it the first the client offers. Node's
+// createSecureContext() folds the option in the same way.
+const { SSL_OP_CIPHER_SERVER_PREFERENCE } = $processBindingConstants.crypto;
+function secureOptionsWithCipherOrder(secureOptions, honorCipherOrder) {
+  return honorCipherOrder ? (secureOptions || 0) | SSL_OP_CIPHER_SERVER_PREFERENCE : secureOptions;
+}
+
 let _VALID_CIPHERS_SET: Set<string> | undefined;
 function getValidCiphersSet() {
   if (!_VALID_CIPHERS_SET) {
@@ -695,6 +705,13 @@ var InternalSecureContext = class SecureContext {
             privateKeyIdentifier,
           );
       }
+      const honorCipherOrder = options.honorCipherOrder;
+      if (honorCipherOrder) {
+        options = {
+          ...options,
+          secureOptions: secureOptionsWithCipherOrder(options.secureOptions, honorCipherOrder),
+        };
+      }
     }
     // The native handle (SSL_CTX wrapper) is what's memoised — not this JS
     // object — so per-call fields like `servername` come from THIS call's
@@ -1142,6 +1159,7 @@ function Server(options, secureConnectionListener): void {
   this.ca = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
+  this.honorCipherOrder = true;
   this._rejectUnauthorized = rejectUnauthorizedDefault();
   this._requestCert = undefined;
   this.servername = undefined;
@@ -1273,6 +1291,8 @@ function Server(options, secureConnectionListener): void {
         throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
       }
       this.secureOptions = secureOptions;
+      // Servers honor their own cipher order unless asked not to.
+      this.honorCipherOrder = options.honorCipherOrder !== undefined ? !!options.honorCipherOrder : true;
 
       const requestCert = options.requestCert || false;
 
@@ -1334,7 +1354,7 @@ function Server(options, secureConnectionListener): void {
         cert: this.cert,
         ca: this.ca,
         passphrase: this.passphrase,
-        secureOptions: this.secureOptions,
+        secureOptions: secureOptionsWithCipherOrder(this.secureOptions, this.honorCipherOrder),
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,

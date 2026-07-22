@@ -185,6 +185,20 @@ async function minimize(schedule: string[], dir: string): Promise<string[]> {
   return cur;
 }
 
+// --- known signatures: skip what triage already knows ------------------------
+const knownKeys = new Set<string>();
+for (const f of ["triaged.jsonl", "queue.jsonl"]) {
+  const path = join(queueDir, f);
+  if (!(await Bun.file(path).exists())) continue;
+  for (const line of (await Bun.file(path).text()).split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const e = JSON.parse(line);
+      if (e.dedupeKey) knownKeys.add(e.dedupeKey);
+    } catch {}
+  }
+}
+
 // --- the loop -------------------------------------------------------------------
 let iter = 0;
 let findings = 0;
@@ -200,6 +214,15 @@ async function worker(w: number) {
     console.log(`${mark} [${n}] ${outcome.padEnd(9)} rules=${schedule.length} fired=${rr.fired} ${rr.ms}ms`);
     if (!isFinding(outcome)) {
       // not a case: nothing worth keeping
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {}
+      continue;
+    }
+    // A crash whose signature triage already knows: no verify, no
+    // minimization, no queue - the answer is already recorded.
+    if (rr.crashSig && knownKeys.has(`crash: ${rr.crashSig.signature}`)) {
+      console.log(`   [${n}] known signature - skipping (${rr.crashSig.signature.slice(0, 50)})`);
       try {
         rmSync(dir, { recursive: true, force: true });
       } catch {}
@@ -251,9 +274,15 @@ async function worker(w: number) {
       })
       .join(" + ");
     const crash = rr.crashSig ?? (rr.stdout || rr.stderr ? detectCrash(rr.stdout, rr.stderr) : null);
+    const dedupeKey = crash ? `crash: ${crash.signature}` : `chaos ${outcome} @ ${where}`;
+    if (knownKeys.has(dedupeKey)) {
+      console.log(`   [${n}] finding matches known ${dedupeKey.slice(0, 50)} - not re-queued`);
+      continue;
+    }
+    knownKeys.add(dedupeKey);
     const entry = {
       queuedAt: stamp,
-      dedupeKey: crash ? `crash: ${crash.signature}` : `chaos ${outcome} @ ${where}`,
+      dedupeKey,
       verdict: "confirmed",
       outcome,
       boundary: crash?.boundary ?? null,

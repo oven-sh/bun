@@ -68,6 +68,29 @@ const keepAllTraces = argv.includes("--keep-all-traces");
 const runsDir = join(workRoot, "runs");
 ensureDir(runsDir);
 
+// Known signatures: everything already triaged or already queued. A crash
+// whose signature is in here is KNOWN - re-verifying and re-queueing it
+// is pure waste (the queue would dedupe it anyway, an hour later). Loaded
+// once per sweep from the queue directory's ledgers.
+const queueDirEarly = flag("--queue", "C:\\wsfqueue") as string;
+const knownKeys = new Set<string>();
+for (const f of ["triaged.jsonl", "queue.jsonl"]) {
+  const path = join(queueDirEarly, f);
+  if (!existsSync(path)) continue;
+  try {
+    for (const line of (await Bun.file(path).text()).split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const e = JSON.parse(line);
+        if (e.dedupeKey) knownKeys.add(e.dedupeKey);
+        if (e.crashDetail) knownKeys.add(`detail: ${e.crashDetail}`);
+      } catch {}
+    }
+  } catch {}
+}
+const isKnownCrash = (sig: { signature: string; detail: string } | null | undefined) =>
+  !!sig && (knownKeys.has(`crash: ${sig.signature}`) || knownKeys.has(`detail: ${sig.detail}`));
+
 // --- baseline -----------------------------------------------------------------
 console.log(`baseline: ${bun} ${progArgs.join(" ")}`);
 const base = await runOnce({
@@ -276,7 +299,8 @@ async function worker(w: number) {
       // record of a possibly-huge trace materialized.
       const tr = await readTraceDir(rr.dir, { faultsOnly: true });
       fired = tr ? tr.recs.filter(r => r.fault).length : 0;
-      if (rr.outcome === "hang") outcome = "HANG";
+      if (rr.crash && isKnownCrash(rr.crashSig)) outcome = "known-crash";
+      else if (rr.outcome === "hang") outcome = "HANG";
       else if (rr.crash) {
         // A crash. Sort out what is NOT a bun bug before reporting: an
         // allocator-failure abort is by design, and a fault whose every
@@ -310,7 +334,7 @@ async function worker(w: number) {
     // its complete directory for triage and replay, as do baselines and
     // the verify replays. --keep-all-runs opts out. Without this,
     // continuous fuzzing fills the disk within hours.
-    if (!keepAllRuns && ["clean", "no-fire", "diverged", "error-exit"].includes(outcome)) {
+    if (!keepAllRuns && ["clean", "no-fire", "diverged", "error-exit", "known-crash"].includes(outcome)) {
       try {
         rmSync(rr.dir, { recursive: true, force: true });
       } catch {}
@@ -357,6 +381,7 @@ const rank: Record<string, number> = {
   CRASH: 1,
   stalled: 2, // an awaited op never completed (a test timed out) - hang class
   slow: 3,
+  "known-crash": 4, // signature already triaged/queued: nothing new to learn
   "expected-abort": 4,
   "error-exit": 5,
   diverged: 6,
@@ -374,7 +399,34 @@ for (const k of ["HANG", "CRASH", "slow", "expected-abort", "error-exit", "diver
   if (counts.has(k)) console.log(`  ${k.padEnd(15)} ${counts.get(k)}`);
 
 const findingsPath = join(workRoot, "findings.md");
-const findings = results.filter(r => r.outcome === "CRASH" || r.outcome === "HANG" || r.outcome === "stalled");
+const rawFindings = results.filter(r => r.outcome === "CRASH" || r.outcome === "HANG" || r.outcome === "stalled");
+// Verification budget with clustering: 46 near-identical HANGs must not
+// cost 46 x 3 replays. Cluster findings by (outcome, syscall, mode, crash
+// signature) and verify one REPRESENTATIVE per cluster - crashes first,
+// then stalls, then hangs - up to VERIFY_BUDGET. Cluster mates inherit the
+// representative's verdict (logged as such). This is what keeps a heavy
+// sweep from spending an hour re-confirming the same thing.
+const VERIFY_BUDGET = 12;
+const clusterKey = (r: Result) =>
+  `${r.outcome}|${r.job.coord.sysName}|${r.job.mode}|${r.crashSig?.signature ?? ""}`;
+const byCluster = new Map<string, Result[]>();
+for (const r of rawFindings) {
+  const k = clusterKey(r);
+  const arr = byCluster.get(k) ?? [];
+  arr.push(r);
+  byCluster.set(k, arr);
+}
+const classPri: Record<string, number> = { CRASH: 0, stalled: 1, HANG: 2 };
+const reps = [...byCluster.values()]
+  .map(g => g[0])
+  .sort((a, b) => (classPri[a.outcome] ?? 9) - (classPri[b.outcome] ?? 9))
+  .slice(0, VERIFY_BUDGET);
+const findings = reps; // representatives are what get verified/reported
+if (rawFindings.length > reps.length)
+  console.log(
+    `\n${rawFindings.length} finding sighting(s) in ${byCluster.size} cluster(s); verifying ` +
+      `${reps.length} representative(s) (budget ${VERIFY_BUDGET})`,
+  );
 
 // --- auto-verify: no false positives ------------------------------------------
 // A HANG or CRASH observed during the parallel sweep may be load-induced (a
@@ -395,6 +447,49 @@ interface Verify {
   termChain: string[]; // in-process terminating stack, symbolized (abort/crash chain)
 }
 const verdicts = new Map<Result, Verify>();
+const queueDir = flag("--queue", "C:\\wsfqueue") as string;
+ensureDir(queueDir);
+let queuedCount = 0;
+// Stream one verified finding into the triage queue, applying the
+// admission rules (artifact classes stay in the roll-up only) and the
+// known-signature dedupe (already-triaged/queued signatures are silent).
+async function queueFinding(r: Result, v: Verify) {
+  if (v.verdict === "load-dependent" && v.outcomes.every(o => o === "clean")) return;
+  if (r.job.expect === "abort-expected" && v.outcomes.every(o => o !== "HANG" && o !== "CRASH")) return;
+  if (r.job.mode.startsWith("mangle") && v.verdict === "slow") return;
+  if (v.verdict === "not-reproduced") return;
+  if (v.verdict === "slow" && r.outcome !== "stalled") return;
+  const dedupeKey = r.crashSig
+    ? `crash: ${r.crashSig.signature}`
+    : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;
+  if (knownKeys.has(dedupeKey)) return; // already triaged or already queued
+  knownKeys.add(dedupeKey);
+  const line = JSON.stringify({
+    queuedAt: stamp,
+    dedupeKey,
+    verdict: v.verdict,
+    outcome: r.outcome,
+    boundary: r.crashSig?.boundary ?? null,
+    crashKind: r.crashSig?.kind ?? null,
+    crashDetail: r.crashSig?.detail ?? null,
+    expect: r.job.expect,
+    target: progArgs.join(" "),
+    schedule: `${r.job.coord.sysName} ${r.job.coord.key} ${r.job.hit} ${r.job.mode} ${r.job.status}`,
+    symbol: ownerFrame(r.job.coord),
+    module: coordModule(r.job.coord),
+    standalone: v.outcomes,
+    lastStage: v.stage,
+    termChain: v.termChain,
+    stacks: v.stacks.slice(0, 12),
+    findings: findingsPath,
+    workDir: workRoot,
+  });
+  const qfile = join(queueDir, "queue.jsonl");
+  const prev = (await Bun.file(qfile).exists()) ? await Bun.file(qfile).text() : "";
+  await Bun.write(qfile, prev + line + "\n");
+  queuedCount++;
+  console.log(`  -> queued: ${dedupeKey}`);
+}
 if (findings.length) {
   console.log(`\n=== verifying ${findings.length} finding(s) standalone (x3, ${(2 * timeoutMs) / 1000}s timeout) ===`);
   for (const f of findings) {
@@ -452,6 +547,7 @@ if (findings.length) {
             ? "load-dependent"
             : "not-reproduced";
     verdicts.set(f, { verdict, outcomes, stage, stacks, termChain });
+    await queueFinding(f, { verdict, outcomes, stage, stacks, termChain });
     console.log(
       `  ${verdict.padEnd(15)} ${f.outcome} ${f.job.coord.sysName} @${f.job.coord.key} ` +
         `standalone: ${outcomes.join(",")}` +
@@ -663,59 +759,10 @@ if (!keepAllTraces) {
 }
 
 // --- the queue: global append-only feed of verified findings ---------------
-// The fuzzer runs continuously and the triager drains this file, so every
-// verified finding lands here as one JSON line with a stable dedupeKey (a
-// crash signature, else syscall@owning-symbol) - one bug appears once no
-// matter how many targets/hunts hit it. Append-only, never deleted; the
-// triager's verdicts live in the sibling triaged.jsonl.
-const queueDir = flag("--queue", "C:\\wsfqueue") as string;
-ensureDir(queueDir);
-const queueLines: string[] = [];
-for (const r of results) {
-  const v = verdicts.get(r);
-  if (!v) continue; // only verified findings enter the queue
-  // Admission: a HANG whose every standalone replay came back clean is a
-  // sweep-load artifact, not something worth a human look - it stays in
-  // the roll-up but does not enter the triage queue.
-  if (v.verdict === "load-dependent" && v.outcomes.every(o => o === "clean")) continue;
-  // An allocator-failure fault whose replays exit with an error is
-  // crash-on-OOM by design, not a finding worth a human look.
-  if (r.job.expect === "abort-expected" && v.outcomes.every(o => o !== "HANG" && o !== "CRASH")) continue;
-  // A short/mangled transfer that only makes the program SLOW is a
-  // correct retry loop paying its retry cost - expected, not a bug.
-  if (r.job.mode.startsWith("mangle") && v.verdict === "slow") continue;
-  // Nothing to look at when no replay reproduced anything.
-  if (v.verdict === "not-reproduced") continue;
-  // Plain slowness (no test timed out) is latency, not a bug - roll-up only.
-  // The interesting subset (a stalled operation) is its own outcome.
-  if (v.verdict === "slow" && r.outcome !== "stalled") continue;
-  const dedupeKey = r.crashSig ? `crash: ${r.crashSig.signature}` : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;
-  queueLines.push(
-    JSON.stringify({
-      queuedAt: stamp,
-      dedupeKey,
-      verdict: v.verdict,
-      outcome: r.outcome,
-      boundary: r.crashSig?.boundary ?? null,
-      crashKind: r.crashSig?.kind ?? null,
-      crashDetail: r.crashSig?.detail ?? null,
-      expect: r.job.expect,
-      target: progArgs.join(" "),
-      schedule: `${r.job.coord.sysName} ${r.job.coord.key} ${r.job.hit} ${r.job.mode} ${r.job.status}`,
-      symbol: ownerFrame(r.job.coord),
-      module: coordModule(r.job.coord),
-      standalone: v.outcomes,
-      lastStage: v.stage,
-      termChain: v.termChain,
-      stacks: v.stacks.slice(0, 12),
-      findings: findingsPath,
-      workDir: workRoot,
-    }),
-  );
-}
-if (queueLines.length) {
-  const qfile = join(queueDir, "queue.jsonl");
-  const prev = (await Bun.file(qfile).exists()) ? await Bun.file(qfile).text() : "";
-  await Bun.write(qfile, prev + queueLines.join("\n") + "\n");
-  console.log(`queued ${queueLines.length} verified finding(s) -> ${qfile}`);
-}
+// The fuzzer runs continuously and the triager drains this file. A finding
+// is appended THE MOMENT its verification completes (streamed from inside
+// the verify loop above via queueFinding) - not at end-of-sweep - so a new
+// crash reaches the triager in minutes, not after an hour of hang
+// verification. dedupeKey (crash signature, else syscall@owning-symbol) is
+// stable; anything already in the ledgers is not re-queued. Append-only.
+if (queuedCount) console.log(`\nqueued ${queuedCount} new verified finding(s) -> ${join(queueDir, "queue.jsonl")}`);

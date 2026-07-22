@@ -57,13 +57,15 @@ export const FAULTS: Record<string, Fault[]> = {
   NtDeleteFile: [F("C0000022")],
   NtFsControlFile: [F("C000009A")],
   NtCreateNamedPipeFile: [F("C000009A")],
+  // No mangle modes here: for AFD socket ioctls the transfer buffers are
+  // INDIRECT (WSABUF arrays inside the input info struct), so shrinking or
+  // poisoning Input/OutputBufferLength never models a short or corrupted
+  // transfer - it hands AFD a truncated request struct, a call the OS never
+  // makes on its own. (A stall from exactly that was triaged not-real.)
   NtDeviceIoControlFile: [
     F("C000009A"),
     F("C000009A", "post", "judgment"),
-    F("0", "mangle:short"),
     F(DELAY_MS, "delay", "judgment"),
-    // corrupted socket/ioctl output: the AFD receive path with poisoned bytes
-    F("A5", "mangle:garbage"),
   ],
   // Directory watchers (fs.watch -> ReadDirectoryChangesW). The field's
   // top actionable Windows crash is a use-after-free of the watcher context

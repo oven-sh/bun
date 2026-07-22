@@ -1303,3 +1303,29 @@ it("tls.connect honors secureOptions when negotiating the protocol version", asy
   }
   await once(server, "close");
 });
+
+// Node's tlsConnectionListener attaches onSocketTLSError to every accepted
+// TLSSocket so a socket error before 'secureConnection' is reported through
+// 'tlsClientError', and a socket error after it does not throw (user code only
+// sees the socket at 'secureConnection'). The listener is observable as a
+// non-zero listenerCount before any user code runs.
+it("accepted TLSSocket has an internal 'error' listener (onSocketTLSError)", async () => {
+  let count = -1;
+  const server = createServer(COMMON_CERT, socket => {
+    count = socket.listenerCount("error");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  let client: TLSSocket | undefined;
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const secureConn = once(server, "secureConnection");
+    client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    client.on("error", () => {});
+    await secureConn;
+    expect(count).toBe(1);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});

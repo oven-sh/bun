@@ -149,6 +149,7 @@ it.each([["tab", "\t", "/ab"]])(
   async (_name, char, expectedTarget) => {
     const requests: string[] = [];
     const server = net.createServer(socket => {
+      socket.on("error", () => {});
       let data = "";
       socket.on("data", chunk => {
         data += chunk.toString("latin1");
@@ -190,6 +191,7 @@ it.each([
 ])("fetch() rejects a redirect response whose Location contains a raw %s character", async (_name, char) => {
   const requests: string[] = [];
   const server = net.createServer(socket => {
+    socket.on("error", () => {});
     socket.on("data", chunk => {
       requests.push(chunk.toString("latin1"));
       socket.end(`HTTP/1.1 302 Found\r\nLocation: /a${char}b\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);

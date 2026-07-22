@@ -45,14 +45,15 @@ app.post("/aborted", express.raw({ limit: "100mb" }), (req, res) => {
   res.status(200).end();
 });
 
-// Start the server
-const server = app.listen(port, () => {
+// Start the server on 127.0.0.1 so the load generator's fetch() goes straight
+// to one address instead of racing IPv4 and IPv6 via happy-eyeballs.
+const server = app.listen(port, "127.0.0.1", () => {
   const address = server.address();
 
   // Send the port back to the parent process via IPC
   process.send({
     type: "listening",
-    host: address.address === "::" ? "localhost" : address.address,
+    host: address.address,
     port: address.port,
   });
 });

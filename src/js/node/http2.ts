@@ -6764,9 +6764,9 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
 
 function onErrorSecureServerSession(err, socket) {
   if (!this.emit("clientError", err, socket)) {
-    // The handshake-failed socket has no 'error' listener yet; destroying it with the error
-    // would crash the process with an uncaught exception. The failure has already been
-    // surfaced through 'tlsClientError'/'clientError'.
+    // No error argument: tlsClientError already reported it, and net's
+    // onServerSocketTLSError listener is inert once the tlsClientError guard is
+    // set so destroy(err) would be swallowed.
     if (!socket.destroyed) socket.destroy();
   }
 }

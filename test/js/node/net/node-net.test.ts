@@ -739,6 +739,7 @@ it("should not hang after FIN", async () => {
   const net = require("node:net");
   const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
   const server = net.createServer(c => {
+    c.on("error", () => {});
     c.write("Hello client");
     c.end();
   });
@@ -1131,4 +1132,137 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   } finally {
     target.close();
   }
+});
+
+// An unhandled socket 'error' must reach process.on('uncaughtException'), the
+// same as any EventEmitter 'error' with no listener. Node's onStreamRead does
+// `stream.destroy(errnoException(nread, 'read'))` for a read error with no
+// listener check; the EventEmitter default-error path does the throwing.
+describe.concurrent("unhandled socket 'error' throws (reaches uncaughtException)", () => {
+  it("client socket: peer RST with no listeners", async () => {
+    const fixture = `
+      const net = require("node:net");
+      process.on("uncaughtException", (e) => {
+        console.log("UNCAUGHT", e.code, e.syscall);
+        process.exit(0);
+      });
+      const srv = net.createServer((c) => {
+        c.on("error", () => {});
+        // Reset only once the client is fully connected (its byte arrived), so
+        // the RST lands on an established socket and is reported as a read
+        // error on both runtimes.
+        c.once("data", () => c.resetAndDestroy());
+      });
+      srv.listen(0, "127.0.0.1", () => {
+        // No 'error' (or any other) listener on the outgoing socket.
+        net.connect(srv.address().port, "127.0.0.1").write("x");
+      });
+      srv.unref();
+      // Sentinel: if the error was swallowed we fall through to a clean exit
+      // instead of the uncaughtException handler above.
+      process.on("beforeExit", () => {
+        console.log("SWALLOWED");
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("UNCAUGHT ECONNRESET read");
+    expect(exitCode).toBe(0);
+  });
+
+  it("server-accepted socket: peer RST with no listeners", async () => {
+    const fixture = `
+      const net = require("node:net");
+      process.on("uncaughtException", (e) => {
+        console.log("UNCAUGHT", e.code, e.syscall);
+        process.exit(0);
+      });
+      // No 'error' listener on the accepted socket. Writing one byte lets the
+      // client wait until the accept is fully processed before resetting, so
+      // the RST lands on an established server socket on every platform.
+      const srv = net.createServer((c) => { c.write("x"); });
+      srv.listen(0, "127.0.0.1", () => {
+        const s = net.connect(srv.address().port, "127.0.0.1");
+        s.on("error", () => {});
+        s.once("data", () => s.resetAndDestroy());
+      });
+      srv.unref();
+      process.on("beforeExit", () => {
+        console.log("SWALLOWED");
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("UNCAUGHT ECONNRESET read");
+    expect(exitCode).toBe(0);
+  });
+
+  it("no uncaughtException handler: process exits non-zero with the error", async () => {
+    const fixture = `
+      const net = require("node:net");
+      const srv = net.createServer((c) => {
+        c.on("error", () => {});
+        c.once("data", () => c.resetAndDestroy());
+      });
+      srv.listen(0, "127.0.0.1", () => {
+        net.connect(srv.address().port, "127.0.0.1").write("x");
+      });
+      srv.unref();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("ECONNRESET");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  // Node checks maxConnections on the raw handle before wrapping; Bun wraps
+  // first. The wrapper that was dropped before 'connection' fires must not
+  // surface a late RST from the dropped peer as uncaughtException.
+  it("maxConnections-dropped connection: peer RST does not crash the server", async () => {
+    const fixture = `
+      const net = require("node:net");
+      process.on("uncaughtException", (e) => {
+        console.log("UNCAUGHT", e.code);
+        process.exit(7);
+      });
+      const srv = net.createServer(c => { c.on("error", () => {}); });
+      srv.maxConnections = 0;
+      srv.on("drop", () => console.log("DROPPED"));
+      srv.listen(0, "127.0.0.1", () => {
+        const c = net.connect(srv.address().port, "127.0.0.1");
+        c.on("error", () => {});
+        c.on("end", () => c.resetAndDestroy());
+        c.on("close", () => { srv.close(); console.log("DONE"); });
+      });
+      srv.unref();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("DROPPED\nDONE");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -799,7 +799,10 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
         if (c) {
             for (struct us_socket_t *next = c->connecting_head; next; next = next->connect_next) {
                 if (next != s) {
-                    us_socket_close(next, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+                    /* A losing attempt the peer already accepted should see a clean
+                     * FIN, not a reset: a net.Server that accepted it would otherwise
+                     * observe ECONNRESET on a connection that never sent anything. */
+                    us_socket_close(next, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
                 }
             }
             /* Attach TLS now that we know which candidate won. */

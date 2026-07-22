@@ -387,6 +387,7 @@ test("unsupported protocol", async () => {
 async function createAuthCapturingProxy() {
   const capturedAuths: string[] = [];
   const server = net.createServer((clientSocket: net.Socket) => {
+    clientSocket.on("error", () => {});
     clientSocket.once("data", data => {
       const request = data.toString();
       const lines = request.split("\r\n");
@@ -711,6 +712,7 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different crede
   const sockets = new Set<net.Socket>();
   const upstreamSockets = new Set<net.Socket>();
   const proxy = net.createServer(clientSocket => {
+    clientSocket.on("error", () => {});
     sockets.add(clientSocket);
     clientSocket.once("data", data => {
       const req = data.toString();
@@ -1231,6 +1233,7 @@ describe.concurrent("proxy object format with headers", () => {
     // Create a proxy server that captures headers
     const capturedHeaders: string[] = [];
     const proxyServerWithCapture = net.createServer((clientSocket: net.Socket) => {
+      clientSocket.on("error", () => {});
       clientSocket.once("data", data => {
         const request = data.toString();
         // Capture headers
@@ -1306,6 +1309,7 @@ describe.concurrent("proxy object format with headers", () => {
     // Create a proxy server that captures headers
     const capturedHeaders: string[] = [];
     const proxyServerWithCapture = net.createServer((clientSocket: net.Socket) => {
+      clientSocket.on("error", () => {});
       clientSocket.once("data", data => {
         const request = data.toString();
         // Capture headers
@@ -1446,6 +1450,7 @@ describe.concurrent("proxy object format with headers", () => {
   test("proxy object with headers as Headers instance", async () => {
     const capturedHeaders: string[] = [];
     const proxyServerWithCapture = net.createServer((clientSocket: net.Socket) => {
+      clientSocket.on("error", () => {});
       clientSocket.once("data", data => {
         const request = data.toString();
         const lines = request.split("\r\n");
@@ -1514,6 +1519,7 @@ describe.concurrent("proxy object format with headers", () => {
   test("user-provided Proxy-Authorization header overrides URL credentials", async () => {
     const capturedHeaders: string[] = [];
     const proxyServerWithCapture = net.createServer((clientSocket: net.Socket) => {
+      clientSocket.on("error", () => {});
       clientSocket.once("data", data => {
         const request = data.toString();
         const lines = request.split("\r\n");
@@ -1835,6 +1841,7 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
           // origin-form and forward to the endpoint.
           let proxyHits = 0;
           const proxy = net.createServer(client => {
+            client.on("error", () => {});
             client.once("data", data => {
               proxyHits++;
               const text = data.toString();

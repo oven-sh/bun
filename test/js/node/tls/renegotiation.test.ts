@@ -262,6 +262,7 @@ it("should terminate the connection when the peer exceeds the renegotiation limi
   });
   raw.on("data", (chunk: Buffer) => duplex.push(chunk));
   raw.on("end", () => duplex.push(null));
+  raw.on("error", () => {});
   raw.on("close", () => duplex.destroy());
 
   const { promise: outcome, resolve } = Promise.withResolvers<string>();

@@ -19,6 +19,24 @@ impl fmt::Display for ErrorResponse {
 }
 
 impl ErrorResponse {
+    /// SQLSTATE codes whose ErrorResponse means the server no longer holds (or
+    /// no longer accepts) the prepared statement this query was bound to. The
+    /// client-side cache entry for that statement must be dropped so the next
+    /// execution re-prepares instead of failing forever.
+    ///
+    /// - 26000 invalid_sql_statement_name: statement was deallocated
+    ///   (DEALLOCATE / DISCARD ALL, or a pooler recycled the backend).
+    /// - 0A000 feature_not_supported: "cached plan must not change result
+    ///   type" after DDL altered a referenced table.
+    pub fn is_prepared_statement_invalid(&self) -> bool {
+        for msg in &self.messages {
+            if let FieldMessage::Code(code) = msg {
+                return code.eql_comptime(b"26000") || code.eql_comptime(b"0A000");
+            }
+        }
+        false
+    }
+
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {

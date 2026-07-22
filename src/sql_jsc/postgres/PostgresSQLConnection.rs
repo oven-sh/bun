@@ -2983,12 +2983,30 @@ impl PostgresSQLConnection {
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
                 let js_err =
                     crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
+                let invalidates_cache = err.is_prepared_statement_invalid();
                 if let Some(stmt) = request.statement_mut() {
                     if stmt.status == StatementStatus::Parsing {
                         stmt.status = StatementStatus::Failed;
                         stmt.error_response = Some(
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
+                        if self
+                            .statements
+                            .with_mut(|m| m.remove(&stmt.signature.name[..]))
+                            .is_some()
+                        {
+                            // SAFETY: `stmt` is a live `Box`-allocated statement; the
+                            // request still holds its own ref so this cannot drop to 0.
+                            unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
+                        }
+                    } else if invalidates_cache {
+                        // SQLSTATE 26000/0A000 on an already-parsed statement:
+                        // the server dropped or rejected the prepared plan
+                        // (DEALLOCATE, DISCARD ALL, pooler backend swap, or
+                        // DDL changed the result type). Evict it so the next
+                        // execution re-prepares instead of failing forever on
+                        // this connection.
+                        stmt.status = StatementStatus::Failed;
                         if self
                             .statements
                             .with_mut(|m| m.remove(&stmt.signature.name[..]))

@@ -2,18 +2,14 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
 import { join } from "node:path";
 
-// `bun:internal-for-testing` (and the native TestingAPIs bindings it references)
-// is only bundled for debug and canary builds. Non-canary release builds omit
-// it entirely so the module source and testing-only native code are absent from
-// the shipped binary.
+// `bun:internal-for-testing` is only bundled for debug and canary builds so the
+// module source and its native TestingAPIs bindings are absent from shipped binaries.
 
 const repoRoot = join(import.meta.dir, "..", "..", "..", "..");
 
-// Codegen-level: the internal module registry scanner must honor
-// `includeInternalForTesting: false` so bundle-modules.ts can drop the module
-// (and every $newRustFunction / $newCppFunction binding it references) from
-// the js2native table for non-canary release builds.
-test("internal-module-registry-scanner honors includeInternalForTesting", async () => {
+// Codegen-level: the scanner must honor `includeInternalForTesting: false` so
+// bundle-modules.ts can drop the module (and its js2native bindings) for non-canary release.
+test.concurrent("internal-module-registry-scanner honors includeInternalForTesting", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -51,11 +47,8 @@ test("internal-module-registry-scanner honors includeInternalForTesting", async 
   expect(exitCode).toBe(0);
 });
 
-// Runtime-level: the built binary's gating must match its build config.
-//
-// PR CI only builds debug and canary, so `isBundled` is always true there and
-// the "missing" branch of the first runtime test is only exercised when this
-// file is run against a local `bun run build:release --canary=false` binary.
+// Runtime-level: PR CI only builds debug and canary, so the "missing" branch is only
+// exercised against a local `bun run build:release --canary=false` binary.
 const isCanary = Bun.version_with_sha.includes("canary");
 const isBundled = isDebug || isCanary;
 
@@ -65,9 +58,10 @@ const cleanEnv = { ...bunEnv };
 delete (cleanEnv as Record<string, unknown>).BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING;
 delete (cleanEnv as Record<string, unknown>).BUN_GARBAGE_COLLECTOR_LEVEL;
 
-const probe = `try { require("bun:internal-for-testing"); console.log("ok"); } catch { console.log("missing"); }`;
+const probe = `try { require("bun:internal-for-testing"); console.log("ok"); } catch (e) { console.log("missing:" + e.name + ":" + String(e.message).split(" ")[0]); }`;
+const missing = "missing:BuildMessage:ENOENT";
 
-test("bun:internal-for-testing with --expose-internals matches build config", async () => {
+test.concurrent("bun:internal-for-testing with --expose-internals matches build config", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--expose-internals", "-e", probe],
     env: cleanEnv,
@@ -75,12 +69,12 @@ test("bun:internal-for-testing with --expose-internals matches build config", as
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe(isBundled ? "ok" : "missing");
+  expect(stdout.trim()).toBe(isBundled ? "ok" : missing);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
-test("bun:internal-for-testing without --expose-internals", async () => {
+test.concurrent("bun:internal-for-testing without --expose-internals", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", probe],
     env: cleanEnv,
@@ -89,7 +83,7 @@ test("bun:internal-for-testing without --expose-internals", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Debug builds always allow it; release builds (canary or not) require the flag.
-  expect(stdout.trim()).toBe(isDebug ? "ok" : "missing");
+  expect(stdout.trim()).toBe(isDebug ? "ok" : missing);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

@@ -3518,7 +3518,13 @@ it("upgrade with a body: a mid-body client FIN closes the upgraded socket and le
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: JSON.stringify(["upgrade", "end", "write-cb:ERR_STREAM_WRITE_AFTER_END", "error:ERR_STREAM_WRITE_AFTER_END", "close"]),
+    stdout: JSON.stringify([
+      "upgrade",
+      "end",
+      "write-cb:ERR_STREAM_WRITE_AFTER_END",
+      "error:ERR_STREAM_WRITE_AFTER_END",
+      "close",
+    ]),
     stderr: expect.not.stringContaining("error"),
     exitCode: 0,
   });

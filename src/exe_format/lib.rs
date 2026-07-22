@@ -139,7 +139,8 @@ pub fn detect_header(data: &[u8]) -> Option<DetectedHeader> {
     // PE: "MZ" at 0, e_lfanew (u32) at 0x3c points to "PE\0\0" followed by COFF
     // header whose first u16 is Machine.
     if data.len() >= 0x40 && &data[0..2] == b"MZ" {
-        let e_lfanew = u32::from_le_bytes([data[0x3c], data[0x3d], data[0x3e], data[0x3f]]) as usize;
+        let e_lfanew =
+            u32::from_le_bytes([data[0x3c], data[0x3d], data[0x3e], data[0x3f]]) as usize;
         if let Some(pe) = data.get(e_lfanew..e_lfanew.checked_add(6)?) {
             if &pe[0..4] == b"PE\0\0" {
                 let machine = u16::from_le_bytes([pe[4], pe[5]]);

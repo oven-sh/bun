@@ -5588,7 +5588,6 @@ impl H2FrameParser {
         });
     }
 
-    /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     /// Mirror the engine's frame counters into plain Cells so getFrameCounters() never
     /// contends with the engine borrow (destroy can run inside a dispatch).
     fn sync_engine_frame_counters(&self) {
@@ -5600,6 +5599,7 @@ impl H2FrameParser {
         }
     }
 
+    /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
         // Re-entrancy guard: receive() dispatches into JS between frames, and user code can feed

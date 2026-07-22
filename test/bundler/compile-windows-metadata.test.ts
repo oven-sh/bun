@@ -15,14 +15,13 @@ function cleanup(outfile: string) {
   };
 }
 
-// Drain stdout/stderr and assert exit 0, surfacing stderr when the build fails.
-// These tests run concurrently and spawn many `bun build --compile` processes
-// from the same cwd; asserting stderr first means a flake shows the real error
+// Drain stdout/stderr and assert the build succeeded. These tests run
+// concurrently and spawn many `bun build --compile` processes from the same
+// cwd; asserting on the combined object means a flake shows the real stderr
 // instead of just "Expected: 0, Received: 1".
 async function expectBuildOk(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   return { stdout, stderr, exitCode };
 }
 

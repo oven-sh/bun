@@ -133,7 +133,7 @@ describe.concurrent("install extraction cache trust", () => {
     });
   }
 
-  test.skipIf(isWindows)("symlinked cache entry is not trusted", async () => {
+  test("linked cache entry is not trusted", async () => {
     const registry = await startRegistry();
     try {
       using scratch = tempDir("cache-trust-scratch", {});
@@ -146,7 +146,10 @@ describe.concurrent("install extraction cache trust", () => {
       expect(r1.exitCode).toBe(0);
       expect(registry.tarballHits).toBe(1);
 
-      // Replace the cache entry with a symlink to an attacker-controlled dir.
+      // Replace the cache entry with a link to an attacker-controlled dir. On
+      // Windows, junctions do not require SeCreateSymbolicLinkPrivilege and
+      // carry FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT, which is
+      // exactly what cache_entry_is_dir must reject.
       const entry = await findCacheEntry(cacheDir);
       const attacker = join(String(scratch), "attacker");
       await mkdir(attacker, { recursive: true });
@@ -156,7 +159,7 @@ describe.concurrent("install extraction cache trust", () => {
         JSON.stringify({ name: "baz", version: "0.0.3", bin: { "baz-run": "index.js" } }),
       );
       await rm(entry, { recursive: true, force: true });
-      await symlink(attacker, entry, "dir");
+      await symlink(attacker, entry, isWindows ? "junction" : "dir");
 
       await rm(join(dir, "node_modules"), { recursive: true, force: true });
 
@@ -164,7 +167,7 @@ describe.concurrent("install extraction cache trust", () => {
       expect(r2.stderr).not.toContain("error:");
       expect(r2.exitCode).toBe(0);
 
-      // The symlink must not have been followed as a cache hit: the tarball was
+      // The link must not have been followed as a cache hit: the tarball was
       // re-fetched and node_modules carries the registry bytes.
       expect(registry.tarballHits).toBe(2);
       const installed = await file(join(dir, "node_modules", "baz", "index.js")).text();

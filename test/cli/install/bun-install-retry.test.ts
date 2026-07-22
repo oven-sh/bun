@@ -1,7 +1,17 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
+import * as net from "node:net";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -39,6 +49,61 @@ beforeEach(async () => {
 afterEach(async () => {
   await dummyAfterEach();
 });
+
+// A registry that accepts the TCP connection but never writes a byte back
+// should fail after ONE idle-timeout, not be retried `max_retry_count` times.
+// With the default 5-minute idle timeout and 5 retries that was ~30 minutes of
+// silent hang at "Resolving dependencies"; now it's one timeout.
+it("does not retry a manifest request that idle-timed out against a silent registry", async () => {
+  let connects = 0;
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer(socket => {
+    connects++;
+    sockets.add(socket);
+    socket.on("data", () => {});
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => {});
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const silentPort = (server.address() as net.AddressInfo).port;
+
+  try {
+    using dir = tempDir("install-silent-registry", {
+      "package.json": JSON.stringify({
+        name: "x",
+        version: "1.0.0",
+        dependencies: { "any-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${silentPort}/"\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-progress"],
+      env: {
+        ...env,
+        // Trip the idle timer in seconds instead of the 5-minute default so
+        // the single attempt (and, on a regressed build, all 6) completes
+        // inside the test timeout.
+        BUN_CONFIG_HTTP_IDLE_TIMEOUT: "2",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ connects, stderr, exitCode }).toEqual({
+      connects: 1,
+      stderr: expect.stringContaining("Timeout"),
+      exitCode: 1,
+    });
+    expect(stdout).not.toContain("installed");
+  } finally {
+    for (const s of sockets) s.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+}, 60_000);
 
 // Manifest request 302-redirects and the redirect target answers a retryable
 // 500 once. The install retry must restart from the original manifest URL.

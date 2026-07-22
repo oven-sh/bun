@@ -391,7 +391,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::HTTPError);
 
-                    if task.retried < manager.options.max_retry_count {
+                    // An idle-timeout means the socket sat with zero bytes in
+                    // either direction for the full `BUN_CONFIG_HTTP_IDLE_TIMEOUT`
+                    // (default 5 min). Retrying against the same wedged endpoint
+                    // just burns another full timeout per attempt, stretching a
+                    // silent-registry failure to ~30 min with the default 5
+                    // retries. Fail fast instead; transient transport errors
+                    // (ConnectionRefused/Closed, DNS) still retry.
+                    let is_idle_timeout =
+                        matches!(task.response.fail, Some(http::Error::Timeout));
+
+                    if !is_idle_timeout && task.retried < manager.options.max_retry_count {
                         task.retried += 1;
                         enqueue::enqueue_network_task(manager, task_ptr);
 
@@ -660,7 +670,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::TarballFailedToDownload);
 
-                    if task.retried < manager.options.max_retry_count {
+                    // See the manifest arm above: a full idle-timeout is not a
+                    // transient blip, so don't multiply it by `max_retry_count`.
+                    let is_idle_timeout =
+                        matches!(task.response.fail, Some(http::Error::Timeout));
+
+                    if !is_idle_timeout && task.retried < manager.options.max_retry_count {
                         task.retried += 1;
                         // Streaming never committed (asserted above), so
                         // the pre-allocated stream is safe to reuse for

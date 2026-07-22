@@ -1280,6 +1280,13 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         return true;
     }
     case DataViewType: {
+        if constexpr (!checkPrototypes) {
+            // Bun.deepEquals / bun:test have always compared DataViews as
+            // plain objects (own properties only); keep that surface
+            // unchanged and reserve the byte comparison for the node-parity
+            // instantiations.
+            break;
+        }
         if (c2Type != DataViewType) {
             return false;
         }

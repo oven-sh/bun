@@ -2906,6 +2906,11 @@ impl RunCommand {
     fn exec_stdin(ctx: &mut ContextData) -> crate::Result<bool> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
+        if Output::is_stdin_tty() {
+            prettyln!("<r><yellow>Reading input from stdin...<r>\n");
+            Output::flush();
+        }
+
         // read from stdin
         // PERF: could swap to
         // `SmallVec<[u8; 2048]>` if profiled hot; cold CLI path here.

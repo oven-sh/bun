@@ -810,6 +810,34 @@ describe.concurrent("bun run", () => {
     expect(res).toBe(`hello\n`);
   });
 
+  it.skipIf(isWindows)("should show message when bun - is run with a TTY", async () => {
+    let output = "";
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_term, chunk: Uint8Array) {
+        output += new TextDecoder().decode(chunk);
+        if (output.includes("Reading input from stdin")) resolve();
+      },
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv_,
+      terminal,
+    });
+
+    await promise;
+    // Send Ctrl+D (EOF) to stdin so bun exits
+    terminal.write(new TextEncoder().encode("\x04"));
+    await proc.exited;
+    terminal.close();
+
+    expect(output).toContain("Reading input from stdin");
+  });
+
   describe.todo("run from stdin", async () => {
     // TODO: write this test
     // note limit of around 1gb when running from stdin

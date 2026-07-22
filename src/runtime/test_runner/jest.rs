@@ -545,20 +545,26 @@ pub(crate) fn js_file_generation(
 /// Reached only from `node:test` on each top-level `test()`/`describe()`
 /// registration. Marks the file so the per-file loop drains the event loop
 /// after `Phase::Done` (Node keeps running while a ref'd timer is pending and
-/// accepts late registrations), and tells the shim whether collection is over
-/// so it can run the late test inline instead of tripping bun:test's
-/// "Cannot call test() inside a test" error.
+/// accepts late registrations), and tells the shim which phase bun:test is in
+/// so it can register with bun:test during collection, queue inline execution
+/// behind collection-phase tests during execution, and run inline once done.
+/// Returns 0 = collection (or no active file), 1 = execution, 2 = done.
 pub(crate) fn js_node_test_want_drain(
     _global: &JSGlobalObject,
     _callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let Some(buntest_strong) = bun_test::clone_active_strong() else {
-        return Ok(JSValue::FALSE);
+        return Ok(JSValue::from(0i32));
     };
     // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
     let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
     buntest.node_test_drain = true;
-    Ok(JSValue::from(buntest.phase != bun_test::Phase::Collection))
+    let phase = match buntest.phase {
+        bun_test::Phase::Collection => 0i32,
+        bun_test::Phase::Execution => 1i32,
+        bun_test::Phase::Done => 2i32,
+    };
+    Ok(JSValue::from(phase))
 }
 
 /// Reached only from `node:test` when a top-level test is registered after

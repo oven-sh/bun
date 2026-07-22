@@ -300,6 +300,17 @@ describe("node:test", () => {
     expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });
+
+  test("should queue a late test registered during Phase::Execution behind the running test", async () => {
+    const { exitCode, stderr } = await runTests(["30d-late-during-execution.js"]);
+    expect(stderr).toContain("(pass) slow");
+    expect(stderr).toContain("(pass) late");
+    // The late body must not run until the collection-phase tests finish; the
+    // slow test would otherwise fail because beforeEach re-fired under it.
+    expect(stderr).toContain("ORDER=slow-start,slow-end,late");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

@@ -923,15 +923,17 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
 // Marks the file so the runner drains the event loop after tests finish (Node
-// keeps running late-registered top-level tests). Returns true when bun:test is
-// past collection so the shim runs the late test inline instead of registering.
-const wantDrainAndIsPastCollection = $newRustFunction("jest.rs", "jsNodeTestWantDrain", 0);
+// keeps running late-registered top-level tests). Returns bun:test's phase
+// (0 collection, 1 execution, 2 done) so the shim registers with bun:test
+// during collection and runs inline once past it, gated on the execution phase
+// finishing so late bodies never overlap collection-phase tests.
+const wantDrainAndPhase = $newRustFunction("jest.rs", "jsNodeTestWantDrain", 0);
 const lateBegin = $newRustFunction("jest.rs", "jsNodeTestLateBegin", 0);
 const lateReport = $newRustFunction("jest.rs", "jsNodeTestLateReport", 3);
 // Mark the file that first evaluates this module so a test file whose only
 // registrations arrive from a macrotask still drains. Subsequent files are
 // marked via `fileGeneration()` on their first node:test call.
-wantDrainAndIsPastCollection();
+wantDrainAndPhase();
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -1704,8 +1706,25 @@ function bunTest() {
 // Top-level tests registered after bun:test left the collection phase (from a
 // macrotask: setTimeout, callback-driven fixture list) cannot be handed to
 // bun:test, so run them here. Node's root serializes late subtests; chain them
-// through one promise so overlapping late registrations do not interleave.
+// through one promise so overlapping late registrations do not interleave, and
+// seed the chain per file on a gate that opens at Phase::Done so a late body
+// never overlaps a collection-phase test that is still awaiting.
+const realSetImmediate = setImmediate;
 let lateChain: Promise<void> = Promise.resolve();
+let lateChainGeneration = -1;
+
+function seedLateChain(): void {
+  const generation = fileGeneration();
+  if (lateChainGeneration === generation) return;
+  lateChainGeneration = generation;
+  lateChain = (async function awaitDone() {
+    // node_test_pending_late > 0 (set by lateBegin below) keeps the per-file
+    // loop spinning, so one setImmediate per tick is enough to observe Done.
+    while (wantDrainAndPhase() === 1) {
+      await new Promise<void>(resolve => realSetImmediate(resolve));
+    }
+  })();
+}
 
 // lateReport's third argument: matches the summary counter the native hook
 // bumps. "pass" is implicit (mode 0 with failure undefined).
@@ -1713,6 +1732,7 @@ const kLateModeSkip = 1;
 const kLateModeTodo = 2;
 
 function runLateTopLevel(node: TestNode, fn: TestFn, declaredMode: "skip" | "todo" | undefined): Promise<undefined> {
+  seedLateChain();
   lateBegin();
   const run = async () => {
     let failure: unknown;
@@ -1830,8 +1850,8 @@ function addTest(
   // A top-level test() registered from a macrotask after module evaluation
   // reaches here (no ALS context), but bun:test would throw "inside a test" /
   // "after the test run has completed". Node runs it as a root subtest.
-  if (wantDrainAndIsPastCollection()) {
-    const declaredMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+  if (wantDrainAndPhase() !== 0) {
+    const declaredMode = mode ?? (options.todo ? "todo" : options.skip ? "skip" : undefined);
     return runLateTopLevel(node, fn, declaredMode);
   }
 
@@ -1924,8 +1944,9 @@ function addSuite(
 
   // A late top-level describe() is built and run inline like a suite subtest
   // of the root so its children's failures reach the summary.
-  if (wantDrainAndIsPastCollection()) {
-    const declaredMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+  if (wantDrainAndPhase() !== 0) {
+    const declaredMode = mode ?? (options.todo ? "todo" : options.skip ? "skip" : undefined);
+    seedLateChain();
     if (declaredMode === "skip") {
       lateBegin();
       const run = () => void lateReport(suiteNode.fullName, undefined, kLateModeSkip);
@@ -1960,6 +1981,11 @@ function addSuite(
           recordSuiteFailure(suiteNode, err);
         }
       }
+      try {
+        await runOwnBeforeHooks(suiteNode);
+      } catch (err) {
+        recordSuiteFailure(suiteNode, err);
+      }
       await drainSubtestChain(suiteNode);
       for (const hook of suiteNode.hooks.after) {
         try {
@@ -1968,6 +1994,8 @@ function addSuite(
           recordSuiteFailure(suiteNode, err);
         }
       }
+      suiteNode.finished = true;
+      suiteNode.passed = suiteNode.failedSubtests === 0;
       const failed = suiteNode.failedSubtests > 0 && !suiteNode.todoFlag;
       lateReport(
         suiteNode.fullName,

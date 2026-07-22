@@ -4230,19 +4230,20 @@ declare module "bun" {
     compact?: boolean;
   }
 
-  type WebSocketOptionsProtocolsOrProtocol =
-    | {
-        /**
-         * Protocols to use for the WebSocket connection
-         */
-        protocols?: string | string[];
-      }
-    | {
-        /**
-         * Protocol to use for the WebSocket connection
-         */
-        protocol?: string;
-      };
+  // Flat type (was a union) to avoid TypeScript's excess-property check flagging
+  // `headers` as unknown when checking object literals against Bun.WebSocketOptions.
+  // TypeScript separately checks each member of a union inside an intersection, and
+  // `headers` (from WebSocketOptionsHeaders) is not present in either union branch.
+  type WebSocketOptionsProtocolsOrProtocol = {
+    /**
+     * Protocols to use for the WebSocket connection
+     */
+    protocols?: string | string[];
+    /**
+     * Protocol to use for the WebSocket connection
+     */
+    protocol?: string;
+  };
 
   type WebSocketOptionsTLS = {
     /**

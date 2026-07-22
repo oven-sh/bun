@@ -179,7 +179,10 @@ describe("sqlite helper behavior preserved", () => {
     await sql`CREATE TABLE h (id INTEGER, a TEXT)`;
     // When the caller names the columns explicitly, keys outside that set are
     // ignored regardless of which row they appear on.
-    const rows = [{ id: 1, a: "x" }, { id: 2, a: "y", b: "ignored" }];
+    const rows = [
+      { id: 1, a: "x" },
+      { id: 2, a: "y", b: "ignored" },
+    ];
     const result = await sql`INSERT INTO h ${sql(rows, "id", "a")} RETURNING id, a`;
     expect(result).toEqual([
       { id: 1, a: "x" },
@@ -210,7 +213,15 @@ describe("postgres sql.array serialization (no server)", () => {
 
   test("null in a nested array serializes as SQL NULL", async () => {
     await using sql = makeSql();
-    expect(sql.array([[1, null], [null, 4]], "INTEGER").serializedValues).toBe("{{1,null},{null,4}}");
+    expect(
+      sql.array(
+        [
+          [1, null],
+          [null, 4],
+        ],
+        "INTEGER",
+      ).serializedValues,
+    ).toBe("{{1,null},{null,4}}");
   });
 
   test("undefined still serializes as SQL NULL", async () => {

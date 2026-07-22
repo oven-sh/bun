@@ -216,7 +216,13 @@ async function worker(w: number) {
     const rr = await replayCoordinate({ bun, args: progArgs, schedule: schedule.join("\n"), dir, timeoutMs, capture: false });
     const outcome = classify(rr);
     const mark = isFinding(outcome) ? "!!" : "  ";
-    console.log(`${mark} [${n}] ${outcome.padEnd(9)} rules=${schedule.length} fired=${rr.fired} ${rr.ms}ms`);
+    // The drawn coordinates ride along on every line: draws must be
+    // auditable from the console alone (a name grep once proved nothing
+    // because the schedule was never printed).
+    console.log(
+      `${mark} [${n}] ${outcome.padEnd(9)} rules=${schedule.length} fired=${rr.fired} ${rr.ms}ms  ` +
+        schedule.map(r => r.split(" ").slice(0, 2).join(" ")).join(" ; "),
+    );
     if (!isFinding(outcome)) {
       // not a case: nothing worth keeping
       try {

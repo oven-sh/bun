@@ -230,19 +230,20 @@ mod static_adapters {
         // re-enters the VM).
         let _a0_guard = a0.protected();
         let _a1_guard = a1.protected();
-        let Some(mut input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
-            return Err(g.throw_invalid_arguments(format_args!(
-                "expected string, buffer, TypedArray, or Blob",
-            )));
-        };
+        // Coerce the output argument first: `StringOrBuffer::from_js` can call a
+        // boxed String's `toString`, which may detach the input's ArrayBuffer.
         let output = if a1.is_undefined_or_null() {
             None
         } else {
             StringOrBuffer::from_js(g, a1)?
         };
-        // `StringOrBuffer::from_js` above may call a boxed String's `toString`,
-        // which can detach `input`'s backing ArrayBuffer (use-after-free).
-        input.refresh_buffer(g);
+        // `from_js_no_string_object` never runs user JS, so `output`'s buffer
+        // (captured above) stays valid.
+        let Some(input) = BlobOrStringOrBuffer::from_js_no_string_object(g, a0)? else {
+            return Err(g.throw_invalid_arguments(format_args!(
+                "expected string, buffer, TypedArray, or Blob",
+            )));
+        };
         Crypto::SHA512_256::hash_(g, &input, output)
     }
 }

@@ -37,9 +37,9 @@ describe("input buffer detached by output argument's toString", () => {
     expect(got).toBe(Bun.sha(new Uint8Array(0), "hex"));
   });
 
-  test("Bun.CryptoHasher.hash (output=Uint8Array, input=String object)", () => {
-    // Reverse direction: input's toString detaches the output buffer, which
-    // is then captured at length 0 and rejected by the length check.
+  test("Bun.CryptoHasher.hash rejects boxed String as input", () => {
+    // Boxed `String` inputs are rejected so the input decode never runs user
+    // JS, keeping the already-captured output buffer valid.
     const out = Buffer.from(new ArrayBuffer(32));
     const evilInput = Object.assign(new String("A"), {
       toString() {
@@ -48,9 +48,9 @@ describe("input buffer detached by output argument's toString", () => {
       },
     });
     expect(() => Bun.CryptoHasher.hash("sha256", evilInput as unknown as string, out)).toThrow(
-      /TypedArray must be at least 32 bytes/,
+      /expected blob, string or buffer/,
     );
-    expect(out.byteLength).toBe(0);
+    expect(out.byteLength).toBe(32);
   });
 });
 

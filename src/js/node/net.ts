@@ -977,23 +977,9 @@ function onconnection(err, clientHandle) {
 
   _socket[kAttach](clientHandle.localPort, clientHandle);
 
-  const blockList = self.blockList;
-  if (blockList) {
-    const addressType = isIP(clientHandle.remoteAddress);
-    if (addressType && blockList.check(clientHandle.remoteAddress, `ipv${addressType}`)) {
-      const data = {
-        localAddress: _socket.localAddress,
-        localPort: _socket.localPort || clientHandle.localPort,
-        localFamily: _socket.localFamily,
-        remoteAddress: _socket.remoteAddress,
-        remotePort: _socket.remotePort,
-        remoteFamily: _socket.remoteFamily || "IPv4",
-      };
-      clientHandle.end();
-      self.emit("drop", data);
-      return;
-    }
-  }
+  // 'drop' means the connection count reached maxConnections, nothing else.
+  // A blockList rejection closes the socket silently, and is checked second:
+  // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L2314
   if (self.maxConnections != null && self._connections >= self.maxConnections) {
     const data = {
       localAddress: _socket.localAddress,
@@ -1007,6 +993,15 @@ function onconnection(err, clientHandle) {
     clientHandle.end();
     self.emit("drop", data);
     return;
+  }
+
+  const blockList = self.blockList;
+  if (blockList) {
+    const addressType = isIP(clientHandle.remoteAddress);
+    if (addressType && blockList.check(clientHandle.remoteAddress, `ipv${addressType}`)) {
+      clientHandle.end();
+      return;
+    }
   }
 
   const bunTLS = _socket[bunTlsSymbol];

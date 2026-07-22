@@ -121,8 +121,14 @@ bool g_logArgs = false;
 struct HandleEnt {
   volatile ULONG_PTR h; // 0 = empty
   char kind;            // 'f' file, 's' socket(AFD), 'p' pipe, 'k' key, 'o' other
+  bool own;             // file lives under bun's own executable directory
   char tail[46];        // trailing bytes of the object name (ASCII-narrowed)
 };
+
+// bun's own image directory (NT-path form, lowercase, no trailing slash),
+// e.g. "\??\c:\bun\build\debug". A file whose full path is under it is
+// part of the runtime itself: infeasible to corrupt, so garbage skips it.
+wchar_t g_exeDirW[MAX_PATH] = L"";
 constexpr int kHandleSlots = 4096;
 HandleEnt g_handles[kHandleSlots];
 
@@ -133,6 +139,10 @@ void RememberHandle(ULONG_PTR h, const wchar_t* path, size_t units) {
   if (!h || !units) return;
   HandleEnt& e = g_handles[HandleSlot(h)];
   char kind = 'o';
+  // Under bun's own exe directory? (case-insensitive NT-path prefix)
+  bool own = false;
+  size_t dl = wcslen(g_exeDirW);
+  if (dl && units > dl && _wcsnicmp(path, g_exeDirW, dl) == 0) own = true;
   // \Device\Afd = a socket; \Device\NamedPipe or \??\pipe\ = a pipe.
   for (size_t i = 0; i + 3 < units; i++) {
     if ((path[i] == L'A' || path[i] == L'a') && path[i + 1] == L'f' && path[i + 2] == L'd') { kind = 's'; break; }
@@ -148,6 +158,7 @@ void RememberHandle(ULONG_PTR h, const wchar_t* path, size_t units) {
   }
   e.tail[o] = 0;
   e.kind = kind;
+  e.own = own;
   e.h = h; // publish last
 }
 
@@ -581,25 +592,57 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
       Sleep((DWORD)injected_);
       tag = " !D";
     } else if (fault_ == Fault::Mangle) {
-      tag = " !M";
+      bool applied = false;
       // Only a synchronous success has a filled IO_STATUS_BLOCK to mangle;
       // a pending async op's IOSB is written by the kernel later.
       // A shrunk-Length short transfer is already coherent; only the
       // no-Length-arg fallback and mangle:zero touch the IOSB here.
       int8_t idx = kHooks[sys_].iosbIndex;
+      if (shrunk_) applied = true;
       if (!shrunk_ && (ULONG)ret == 0 && idx >= 0 && idx < argc_) {
         auto* iosb = (IO_STATUS_BLOCK*)args_[idx];
         if (iosb) {
-          if (mangle_ == MangleKind::Zero) iosb->Information = 0;
-          else if (mangle_ == MangleKind::Garbage) {
+          if (mangle_ == MangleKind::Zero) {
+            iosb->Information = 0;
+            applied = true;
+          } else if (mangle_ == MangleKind::Garbage) {
             // The transfer really succeeded; corrupt what landed. The lying
             // filter driver / bad hardware class: well-formed success,
             // poisoned data. XOR pattern from a rule-seeded LCG (injected_ =
             // seed) so every replay corrupts the identical bytes. Flip a
             // sparse ~1/8 of the buffer, never past the transferred count.
+            // Never corrupt a read of bun's own installation files (its
+            // bundled JS, its own binary/pdb): poisoning the runtime's own
+            // image is infeasible - no user environment does that - and only
+            // manufactures release-asserts in the module loader.
             int8_t bi = kHooks[sys_].bufIndex;
             size_t n = (size_t)iosb->Information;
-            if (bi >= 0 && bi < argc_ && args_[bi] && n > 0) {
+            // Skip infeasible corruption targets: bun's own installation
+            // files, and code/config the module graph loads (corrupting
+            // those manufactures parse errors / loader asserts, not the
+            // data-path bugs garbage is for). Data files, pipes and
+            // sockets stay in scope.
+            bool skip = false; // infeasible target => the mangle does not fire
+            int8_t hi = kHooks[sys_].handleIndex;
+            if (hi >= 0 && hi < argc_) {
+              const HandleEnt* he = LookupHandle(args_[hi]);
+              if (he) {
+                if (he->own) skip = true;
+                if (he->kind == 'f') {
+                  static const char* kCodeExt[] = {
+                    ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".tsx", ".jsx",
+                    ".json", ".jsonc", ".toml", ".node", ".dll", ".exe", ".pdb",
+                    ".map", ".d.ts", ".lockb", ".yaml", ".yml"};
+                  size_t tl = strlen(he->tail);
+                  for (const char* ext : kCodeExt) {
+                    size_t el = strlen(ext);
+                    if (tl >= el && _stricmp(he->tail + tl - el, ext) == 0) { skip = true; break; }
+                  }
+                }
+              }
+            }
+            if (!skip && bi >= 0 && bi < argc_ && args_[bi] && n > 0) {
+              applied = true;
               auto* b = (unsigned char*)args_[bi];
               uint32_t st = (uint32_t)injected_ * 2654435761u + (uint32_t)n;
               __try {
@@ -610,9 +653,14 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
               } __except (EXCEPTION_EXECUTE_HANDLER) {
               }
             }
-          } else if (iosb->Information > 1) iosb->Information /= 2; // short (fallback)
+          } else if (iosb->Information > 1) {
+            iosb->Information /= 2; // short (fallback)
+            applied = true;
+          }
         }
       }
+      // Honest tagging: an infeasible/inapplicable mangle did not fire.
+      if (applied) tag = " !M";
     }
     char rvas[64];
     char kbuf[24];
@@ -777,6 +825,19 @@ bool RuntimeInit() {
         LogLine("# mod %llx %llx %s\n", (unsigned long long)(uintptr_t)mods[i],
                 (unsigned long long)ImageSize(mods[i]), nm);
       }
+    }
+  }
+
+  // bun's own directory in NT-path form for the own-file test.
+  {
+    wchar_t img[MAX_PATH] = L"";
+    if (GetModuleFileNameW(nullptr, img, MAX_PATH)) {
+      wchar_t nt[MAX_PATH + 8];
+      _snwprintf(nt, MAX_PATH + 8, L"\\??\\%s", img);
+      wchar_t* slash = wcsrchr(nt, L'\\');
+      if (slash) *slash = 0;
+      _wcslwr(nt);
+      wcsncpy(g_exeDirW, nt, MAX_PATH - 1);
     }
   }
 

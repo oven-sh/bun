@@ -3,9 +3,9 @@
 // That form costs clang's frontend ~15s to parse on the release critical path;
 // the header is now just an {offset, length} table into a linked `.incbin` blob.
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { bunEnv, bunExe } from "harness";
 
 const codegenDir = join(dirname(bunExe()), "codegen");
 const header = join(codegenDir, "InternalModuleRegistryConstants.h");
@@ -14,18 +14,15 @@ const header = join(codegenDir, "InternalModuleRegistryConstants.h");
 // check is for local `bun bd test` and the gate, which build from source.
 const hasBuildArtifacts = existsSync(header);
 
-test.skipIf(!hasBuildArtifacts)(
-  "InternalModuleRegistryConstants.h is an offset table, not a byte-array dump",
-  () => {
-    const size = statSync(header).size;
-    const text = readFileSync(header, "utf8");
+test.skipIf(!hasBuildArtifacts)("InternalModuleRegistryConstants.h is an offset table, not a byte-array dump", () => {
+  const size = statSync(header).size;
+  const text = readFileSync(header, "utf8");
 
-    expect(text).toContain("bun_internal_modules_data");
-    expect(text).not.toMatch(/static constexpr const char \w+Bytes\[/);
-    // Old release header was ~6 MB of comma-separated decimals.
-    expect(size).toBeLessThan(100 * 1024);
-  },
-);
+  expect(text).toContain("bun_internal_modules_data");
+  expect(text).not.toMatch(/static constexpr const char \w+Bytes\[/);
+  // Old release header was ~6 MB of comma-separated decimals.
+  expect(size).toBeLessThan(100 * 1024);
+});
 
 // Functional check: a representative set of JS-backed builtins (the modules
 // whose sources live in the linked blob in release builds) load and evaluate.

@@ -119,8 +119,8 @@ JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, c
 // see the generated InternalModuleRegistryConstants.S); each module is a span at
 // a known offset/length. createWithoutCopying is the same path the old
 // ASCIILiteral → String conversion took.
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString)                        \
-    return generateModule(globalObject, vm,                                                                                       \
+#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString)                         \
+    return generateModule(globalObject, vm,                                                                                        \
         WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + (OFFSET), (LENGTH)))), \
         moduleId, urlString)
 #endif

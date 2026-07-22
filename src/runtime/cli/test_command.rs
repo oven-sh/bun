@@ -2899,6 +2899,17 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
+        // Run `process.on('exit')` handlers like `bun run` does. Node's test
+        // harness verifies mustCall() counts from one, so skipping them made
+        // those assertions silently pass. Must precede the GC-root release
+        // below: handlers are user JS and may touch still-live state.
+        {
+            let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only, so the closure holds the
+            // unique mutable access on this single-threaded path.
+            vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        }
         vm.is_shutting_down = true;
         // Release `bun:test` GC roots before `global_exit()` so
         // `destructOnExit()`'s `collectNow()` can reach the closures they pin

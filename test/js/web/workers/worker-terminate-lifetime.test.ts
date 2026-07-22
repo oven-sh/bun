@@ -121,7 +121,6 @@ test(
   timeout,
 );
 
-// Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
 // The per-VM `node:fs` native binding (a Box<Binding> created once by
 // internal/fs/binding.ts) is anchored only by the GC wrapper's m_ctx slot,
 // which lives in the JSC heap (bmalloc). LSan does not scan bmalloc pages as
@@ -148,6 +147,7 @@ test.skipIf(!isASAN)(
   timeout,
 );
 
+// Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
 // (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
 // ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-
 // state callbacks, which then dereferenced the freed JSGlobalObject and the

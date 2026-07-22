@@ -438,8 +438,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         let flags = self.flags.get();
         let reading = !flags.intersects(Flags::IS_PAUSED | Flags::READ_EOF);
         let write_pending = self.buffered_data_for_node_net.get().len() > 0;
+        // A pending connect is an active request (libuv's uv_connect_t counts
+        // toward active_reqs), so a paused-before-connect socket still holds
+        // the loop until on_open/connect_error runs.
+        let connecting = matches!(self.socket.get().socket, uws::InternalSocket::Connecting(_));
         self.poll_ref.with_mut(|p| {
-            if reading || write_pending {
+            if reading || write_pending || connecting {
                 p.ref_(js_loop_ctx());
             } else {
                 p.unref(js_loop_ctx());
@@ -1527,6 +1531,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             let paused = this.socket.get().pause_stream();
             this.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
         }
+        // The connect request has settled; re-evaluate now that `connecting` is
+        // false so a paused socket no longer holds the loop.
+        this.recompute_poll_ref();
 
         let handlers = this.get_handlers();
         let callback = handlers.on_open();

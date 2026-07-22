@@ -85,6 +85,10 @@ const ciEnv = { ...bunEnv };
 
 if (isASAN) {
   bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
+  // Leak fixtures spawned as subprocesses can't import from "harness", so
+  // surface the detectASAN() result through the environment and let them
+  // branch their RSS thresholds on `process.env.BUN_TEST_IS_ASAN`.
+  bunEnv.BUN_TEST_IS_ASAN = "1";
 }
 
 if (isWindows) {

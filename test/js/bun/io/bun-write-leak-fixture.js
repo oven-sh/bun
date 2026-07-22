@@ -2,14 +2,9 @@
 // debug builds of JavaScriptCore
 // ASAN's quarantine retains freed allocations (default 256 MB) and shadow memory
 // raises the absolute RSS floor, so widen the cap to avoid false positives.
-// Probe the runtime (same as harness.ts) because a local `bun bd` debug build
-// is ASAN-instrumented but named `bun-debug`, not `bun-asan`.
-const isASAN = (() => {
-  try {
-    return require("bun:internal-for-testing").isASANEnabled();
-  } catch {}
-  return process.execPath.includes("bun-asan");
-})();
+// harness.ts sets BUN_TEST_IS_ASAN in bunEnv when the parent test process is
+// ASAN-instrumented (covers both CI's `bun-asan` and local `bun bd` debug builds).
+const isASAN = process.env.BUN_TEST_IS_ASAN === "1";
 const MAX_ALLOWED_MEMORY_USAGE = isASAN ? 768 : 256;
 const dest = process.argv.at(-1);
 

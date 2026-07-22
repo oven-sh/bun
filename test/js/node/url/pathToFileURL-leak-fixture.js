@@ -2,14 +2,9 @@ var longPath = Buffer.alloc(1021, "Z").toString();
 const isDebugBuildOfBun = globalThis?.Bun?.revision?.includes("debug");
 // ASAN's quarantine retains freed allocations (default 256 MB) and shadow
 // memory raises the absolute RSS floor; widen the cap to avoid false positives.
-// Probe the runtime (same as harness.ts) because a local `bun bd` debug build
-// is ASAN-instrumented but named `bun-debug`, not `bun-asan`.
-const isASAN = (() => {
-  try {
-    return require("bun:internal-for-testing").isASANEnabled();
-  } catch {}
-  return process.execPath.includes("bun-asan");
-})();
+// harness.ts sets BUN_TEST_IS_ASAN in bunEnv when the parent test process is
+// ASAN-instrumented (covers both CI's `bun-asan` and local `bun bd` debug builds).
+const isASAN = process.env.BUN_TEST_IS_ASAN === "1";
 import { pathToFileURL } from "url";
 for (let i = 0; i < 1024 * (isDebugBuildOfBun ? 32 : 256); i++) {
   pathToFileURL(longPath);

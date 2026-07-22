@@ -149,33 +149,9 @@ const kSNIError = Symbol("kSNIError");
 const kALPNError = Symbol("kALPNError");
 const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
-const kUserUnrefed = Symbol("kUserUnrefed");
-// Set when pause() dropped the handle's hold on the loop, so the read paths
-// only restore a hold they actually removed - re-refing a handle that never
-// held the loop (a wrapped duplex with no fd) would pin the process.
-const kPausedUnref = Symbol("kPausedUnref");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
-// Whether the native handle's poll_ref should be touched for this socket: a
-// TLS wrapper over a generic Duplex has no fd-backed poll_ref; re-refing it
-// would newly pin the process (see Socket.prototype.pause).
-function hasNativeLoopHold(self) {
-  const upgraded = self[kupgraded];
-  return !upgraded || upgraded instanceof Socket;
-}
-// libuv deactivates the handle at UV_EOF/readStop and a pending uv_write holds
-// the loop via active_reqs; mirror that: unref once reading has stopped (kended
-// or kPausedUnref) and no native write is pending. _write re-refs on backpressure.
-function maybeUnrefIdle(self, socket) {
-  if ((self[kended] || self[kPausedUnref]) && !self[kwriteCallback] && !self[kUserUnrefed]) socket.unref();
-}
-function pauseOnBackpressure(self, socket) {
-  socket.pause();
-  if (!hasNativeLoopHold(self)) return;
-  self[kPausedUnref] = true;
-  maybeUnrefIdle(self, socket);
-}
 // A completed write whose status is a negative errno: Node hands it to the write
 // callback as errnoException(status, 'write') and destroys the stream when no
 // callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
@@ -341,7 +317,7 @@ const SocketHandlers: SocketHandler = {
     self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
-      pauseOnBackpressure(self, socket);
+      socket.pause();
     }
   },
   drain(socket) {
@@ -358,7 +334,6 @@ const SocketHandlers: SocketHandler = {
       } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
-        maybeUnrefIdle(self, socket);
       } else {
         self._pendingData = null;
       }
@@ -372,7 +347,6 @@ const SocketHandlers: SocketHandler = {
 
     // we just reuse the same code but we can push null or enqueue right away
     SocketEmitEndNT(self);
-    maybeUnrefIdle(self, socket);
   },
   // A new resumable TLS session arrived (the peer's NewSessionTicket was just
   // processed). Mirrors Node's onnewsessionclient: emit once the handshake has
@@ -683,7 +657,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
-      pauseOnBackpressure(self, socket);
+      socket.pause();
     }
   },
   keylog(socket, line) {
@@ -1125,7 +1099,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) pauseOnBackpressure(self, socket);
+    if (!self.push(buffer)) socket.pause();
   },
   drain(socket) {
     $debug("Bun.Socket drain");
@@ -1143,7 +1117,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
-        maybeUnrefIdle(self, socket);
       } else {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
@@ -1158,7 +1131,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
-    maybeUnrefIdle(self, socket);
   },
   // See SocketHandlers.session.
   session(socket, session) {
@@ -1736,8 +1708,16 @@ Socket.prototype.connect = function connect(...args) {
     if (pauseOnConnect) {
       this.pause();
     } else {
-      // afterConnect kicks native reads via read(0); readableFlowing stays
-      // null so bytes arriving before a 'data' listener buffer.
+      process.nextTick(() => {
+        // Honor pause()/resume() calls made while connecting — only start
+        // reading if the user hasn't explicitly paused the stream. Matches
+        // Node's afterConnect, which calls socket.read(0) only when not paused:
+        // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1649
+        // read(0) starts the handle reading without switching the stream into
+        // flowing mode, so data that arrives before a 'data' listener is
+        // attached stays buffered instead of being emitted to nobody.
+        if (!this.isPaused()) this.read(0);
+      });
       this.connecting = true;
     }
     if (fd) {
@@ -2100,28 +2080,12 @@ Socket.prototype.resume = function resume() {
   if (!this.connecting) {
     this._handle?.resume?.();
   }
-  // Restore the hold pause() removed - even while still connecting, so the
-  // pause-then-resume sequence is symmetric. Gated on the pause flag so a
-  // socket that was never paused (e.g. a wrapped duplex with no fd) is not
-  // newly pinned to the loop.
-  if (this[kPausedUnref]) {
-    this[kPausedUnref] = false;
-    if (!this[kUserUnrefed]) this._handle?.ref?.();
-  }
   return Duplex.prototype.resume.$call(this);
 };
 
 Socket.prototype.pause = function pause() {
   if (!this.destroyed) {
-    const handle = this._handle;
-    handle?.pause?.();
-    // libuv only counts a stream handle as active - and therefore as keeping
-    // the event loop alive - while it is reading. A paused socket lets the
-    // process exit; resume() re-refs it unless the user explicitly unref'd.
-    if (handle && hasNativeLoopHold(this)) {
-      this[kPausedUnref] = true;
-      maybeUnrefIdle(this, handle);
-    }
+    this._handle?.pause?.();
   }
   return Duplex.prototype.pause.$call(this);
 };
@@ -2178,13 +2142,6 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 Socket.prototype.read = function read(size) {
   if (!this.connecting) {
     this._handle?.resume?.();
-    // Restarting kernel reads makes the handle hold the loop open again;
-    // mirror resume()'s re-ref or a paused-then-read() socket waits for
-    // data without keeping the process alive.
-    if (this[kPausedUnref]) {
-      this[kPausedUnref] = false;
-      if (!this[kUserUnrefed]) this._handle?.ref?.();
-    }
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -2195,12 +2152,6 @@ Socket.prototype._read = function _read(size) {
     this.once("connect", () => this._read(size));
   } else {
     socket?.resume?.();
-    // See read() above - the Readable machinery's pull path must also
-    // restore the handle's hold on the loop.
-    if (this[kPausedUnref]) {
-      this[kPausedUnref] = false;
-      if (!this[kUserUnrefed]) socket?.ref?.();
-    }
   }
 };
 
@@ -2251,7 +2202,6 @@ Object.defineProperty(Socket.prototype, "readyState", {
 });
 
 Socket.prototype.ref = function ref() {
-  this[kUserUnrefed] = false;
   const socket = this._handle;
   if (!socket) {
     this.once("connect", this.ref);
@@ -2445,7 +2395,6 @@ Socket.prototype._unrefTimer = function _unrefTimer() {
 };
 
 Socket.prototype.unref = function unref() {
-  this[kUserUnrefed] = true;
   const socket = this._handle;
   if (!socket) {
     this.once("connect", this.unref);
@@ -2557,10 +2506,6 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     callback(new Error("overlapping _write()"));
   } else {
     this[kwriteCallback] = callback;
-    // A pending native write holds the loop the way a libuv uv_write request
-    // does, so a write issued after FIN or read backpressure (handle already
-    // unref'd) still flushes. maybeUnrefIdle releases it once drain clears.
-    if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed] && hasNativeLoopHold(this)) socket.ref();
   }
 };
 

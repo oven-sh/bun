@@ -419,6 +419,29 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.flags.set(v);
     }
 
+    /// libuv's loop-alive check is `active_handles || active_reqs`: a stream
+    /// handle counts as active only while reading, and a pending uv_write is a
+    /// separate request. Mirror that here so a socket that has received FIN or
+    /// been paused, with no queued write, does not hold the event loop — and a
+    /// queued write after either still does. Called at every read/write state
+    /// transition (pause/resume, on_end, buffered write, drain).
+    pub fn recompute_poll_ref(&self) {
+        if !self.ref_pollref_on_connect.get() {
+            // user called socket.unref(); never re-ref on their behalf
+            return;
+        }
+        let flags = self.flags.get();
+        let reading = !flags.intersects(Flags::IS_PAUSED | Flags::READ_EOF);
+        let write_pending = self.buffered_data_for_node_net.get().len() > 0;
+        self.poll_ref.with_mut(|p| {
+            if reading || write_pending {
+                p.ref_(js_loop_ctx());
+            } else {
+                p.unref(js_loop_ctx());
+            }
+        });
+    }
+
     /// `self`'s address as `*mut Self` for uSockets ext slots / refcount FFI.
     /// All mutated fields are `UnsafeCell`-backed, so the `*mut` spelling is
     /// purely to match C signatures; callbacks deref it as `&*const` (shared).
@@ -679,9 +702,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
-        }
         log!("resume");
         // The raw half of an upgradeTLS pair is an observation tap; flow
         // control belongs to the TLS half. Pausing the shared fd here would
@@ -690,8 +710,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::UNDEFINED);
         }
         if this.flags.get().contains(Flags::IS_PAUSED) {
-            let resumed = this.socket.get().resume_stream();
+            // A detached socket has no stream to resume; record the intent so
+            // connect_finish's recompute_poll_ref sees it once connected.
+            let resumed = this.socket.get().is_detached() || this.socket.get().resume_stream();
             this.update_flags(|f| f.set(Flags::IS_PAUSED, !resumed));
+            if resumed {
+                this.recompute_poll_ref();
+            }
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -703,16 +728,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
-        }
         log!("pause");
         if this.flags.get().contains(Flags::BYPASS_TLS) {
             return Ok(JSValue::UNDEFINED);
         }
         if !this.flags.get().contains(Flags::IS_PAUSED) {
-            let paused = this.socket.get().pause_stream();
+            // A detached socket has no stream to pause; record the intent so
+            // connect_finish's recompute_poll_ref sees it once connected.
+            let paused = this.socket.get().is_detached() || this.socket.get().pause_stream();
             this.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
+            if paused {
+                this.recompute_poll_ref();
+            }
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -954,6 +981,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.buffered_data_for_node_net.get().len() > 0 || this.socket.get().is_detached() {
             return;
         }
+
+        // The native write queue is empty: re-evaluate the loop hold now that
+        // write_pending has dropped to false.
+        this.recompute_poll_ref();
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
@@ -1481,6 +1512,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             unsafe { *ctx = this_ptr.cast::<c_void>() };
         }
 
+        // pause() may have run while the socket was still detached (node:net's
+        // connect-then-pause pattern); apply it to the live stream now.
+        if this.flags.get().contains(Flags::IS_PAUSED) {
+            let paused = this.socket.get().pause_stream();
+            this.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
+        }
+
         let handlers = this.get_handlers();
         let callback = handlers.on_open();
         let handshake_callback = handlers.on_handshake();
@@ -1615,6 +1653,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         // Ensure the socket remains alive until this is finished
         let _keepalive = this.ref_guard();
+
+        this.update_flags(|f| f.insert(Flags::READ_EOF));
+        this.recompute_poll_ref();
 
         let callback = handlers.on_end();
         let vm = handlers.vm;
@@ -2485,6 +2526,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                     } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
                         JSValue::TRUE
                     } else {
+                        // Partial write queued into buffered_data_for_node_net:
+                        // the pending bytes hold the loop like a uv_write req.
+                        this.recompute_poll_ref();
                         JSValue::FALSE
                     }
                 }
@@ -3135,28 +3179,22 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub fn js_ref(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        if this.socket.get().is_detached() {
-            this.ref_pollref_on_connect.set(true);
-        }
+        let _ = global;
+        // Always record the user's intent so recompute_poll_ref can re-ref at
+        // state transitions (pause/resume, EOF, buffered write/drain).
+        this.ref_pollref_on_connect.set(true);
         if this.socket.get().is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        let _ = global;
-        this.poll_ref.with_mut(|p| {
-            p.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        this.recompute_poll_ref();
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn js_unref(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        if this.socket.get().is_detached() {
-            this.ref_pollref_on_connect.set(false);
-        }
         let _ = global;
+        this.ref_pollref_on_connect.set(false);
         this.poll_ref.with_mut(|p| {
             p.unref(bun_io::posix_event_loop::get_vm_ctx(
                 bun_io::AllocatorType::Js,
@@ -4013,6 +4051,9 @@ bitflags::bitflags! {
         /// even though its `Handlers` mode is `Client` (no listener), so the
         /// client-only server-identity check must not run against its peer.
         const TLS_SERVER_ROLE      = 1 << 14;
+        /// The peer's FIN has been delivered (on_end fired). Together with
+        /// IS_PAUSED this is the "not reading" half of `recompute_poll_ref`.
+        const READ_EOF             = 1 << 15;
     }
 }
 

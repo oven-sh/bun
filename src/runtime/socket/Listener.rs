@@ -577,7 +577,7 @@ impl Listener {
         // Each accepted socket holds the loop via its own poll_ref so
         // node:net's per-socket unref() is meaningful. Balanced in
         // mark_inactive, or in on_client_connect's accept-failure branch.
-        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        s.recompute_poll_ref();
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
@@ -623,7 +623,7 @@ impl Listener {
         s.ref_();
         // Each accepted socket holds the loop via its own poll_ref so
         // node:net's per-socket unref() is meaningful (balanced in mark_inactive).
-        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        s.recompute_poll_ref();
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.global_object;
@@ -1542,13 +1542,9 @@ fn connect_finish<const IS_SSL: bool>(
         return Ok(promise_value);
     }
 
-    // if this is from node:net there's surface where the user can .ref() and .deref()
-    // before the connection starts. make sure we honor that here.
-    if socket_ref.ref_pollref_on_connect.get() {
-        socket_ref
-            .poll_ref
-            .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-    }
+    // node:net can .ref()/.unref()/.pause() before the connection starts;
+    // recompute honours ref_pollref_on_connect and IS_PAUSED together.
+    socket_ref.recompute_poll_ref();
 
     Ok(promise_value)
 }

@@ -1673,11 +1673,6 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
       clearTimeout(timer);
       this[kSocketTimeoutTimer] = undefined;
     }
-    const pendingCallback = this.#pendingCallback;
-    if (pendingCallback) {
-      this.#pendingCallback = null;
-      pendingCallback($ERR_STREAM_DESTROYED("write"));
-    }
 
     // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
     // that are still in `state.incoming` — i.e. requests whose response has

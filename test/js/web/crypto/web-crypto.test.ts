@@ -363,10 +363,14 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
         crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(size) }, key, new Uint8Array(4)),
       ).rejects.toThrow("algorithm.iv must contain exactly 12 bytes");
     }
-    const ct = await crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(12) }, key, new Uint8Array(4));
-    expect(
-      crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(16) }, key, ct),
-    ).rejects.toThrow("algorithm.iv must contain exactly 12 bytes");
+    const ct = await crypto.subtle.encrypt(
+      { name: "ChaCha20-Poly1305", iv: new Uint8Array(12) },
+      key,
+      new Uint8Array(4),
+    );
+    expect(crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(16) }, key, ct)).rejects.toThrow(
+      "algorithm.iv must contain exactly 12 bytes",
+    );
   });
 
   it("importKey('raw') still rejects for ChaCha20-Poly1305 like Node", async () => {

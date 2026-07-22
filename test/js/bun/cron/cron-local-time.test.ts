@@ -101,6 +101,27 @@ describe.concurrent("Bun.cron.parse — DST transitions", () => {
     expect(next).toBe("2025-11-02T06:00:00.000Z");
   });
 
+  test("fall-back: every-minute chained from the transition walks the repeated hour", async () => {
+    // From 05:59Z, chaining * * * * * must hit every real-time minute through
+    // the repeated 1:xx EST window (06:00Z..06:59Z), not jump to 07:00Z.
+    expect(await chainInTZ("America/New_York", "* * * * *", "2025-11-02T05:59:00Z", 4)).toEqual([
+      "2025-11-02T06:00:00.000Z",
+      "2025-11-02T06:01:00.000Z",
+      "2025-11-02T06:02:00.000Z",
+      "2025-11-02T06:03:00.000Z",
+    ]);
+  });
+
+  test("fall-back: */15 chained from the transition fires at each quarter-hour", async () => {
+    expect(await chainInTZ("America/New_York", "*/15 * * * *", "2025-11-02T05:59:00Z", 5)).toEqual([
+      "2025-11-02T06:00:00.000Z",
+      "2025-11-02T06:15:00.000Z",
+      "2025-11-02T06:30:00.000Z",
+      "2025-11-02T06:45:00.000Z",
+      "2025-11-02T07:00:00.000Z",
+    ]);
+  });
+
   test("spring-forward: only the first match in the gap fires shifted (croner semantics)", async () => {
     // "*/15 2 * * *" has 4 occurrences in the missing hour. Bun fires the first
     // shifted to 3:00, then skips to next day. cron-parser shifts all four.

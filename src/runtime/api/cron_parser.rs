@@ -184,12 +184,14 @@ impl CronExpression {
             tz.gregorian_to_ms(global_object, dt.year, dt.month, dt.day, dt.hour, dt.minute)?;
         // During fall-back, `result` is the FORMER occurrence and the wall-clock
         // walk steps over the second one. For schedules with `*` minute or `*`
-        // hour, scan real-time minutes (capped at the largest DST shift) for an
-        // earlier match in the repeated window. The scan can only find a match
-        // when more real minutes elapsed than wall-clock minutes (i.e. a
-        // fall-back transition lies in (from_ms, result]); the UTC-distance of
-        // the two local breakdowns gives the wall-clock delta without a TZ
-        // lookup.
+        // hour, scan real-time minutes (capped at the largest DST shift) to
+        // recover the repeated window. Two cases need the scan:
+        //   (a) result > from_ms but a fall-back transition lies in
+        //       (from_ms, result] — detected by more real than wall-clock
+        //       minutes having elapsed (UTC-distance of the two local
+        //       breakdowns gives the wall-clock delta without a TZ lookup).
+        //   (b) result <= from_ms — `dt` is ambiguous and mapped to its
+        //       earlier instant, already past; the later instant may match.
         if self.minutes == ALL_MINUTES || self.hours == ALL_HOURS {
             let wall_from = global_object.gregorian_date_time_to_ms_utc(
                 from_dt.year,
@@ -203,9 +205,12 @@ impl CronExpression {
             let wall_dt = global_object.gregorian_date_time_to_ms_utc(
                 dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0,
             )?;
-            if result - from_ms > wall_dt - wall_from {
+            if result <= from_ms || result - from_ms > wall_dt - wall_from {
                 let mut probe = ((from_ms / MINUTE_MS).floor() + 1.0) * MINUTE_MS;
-                let cap = result.min(from_ms + (MAX_DST_SHIFT_MIN + 1.0) * MINUTE_MS);
+                let mut cap = from_ms + (MAX_DST_SHIFT_MIN + 1.0) * MINUTE_MS;
+                if result > from_ms {
+                    cap = cap.min(result);
+                }
                 while probe < cap {
                     if self.matches_instant(global_object, tz, probe) {
                         return Ok(Some(probe));

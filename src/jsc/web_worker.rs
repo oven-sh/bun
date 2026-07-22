@@ -1633,8 +1633,13 @@ unsafe fn resolve_entry_point_specifier<'s>(
 ) -> Option<&'s [u8]> {
     // SAFETY: per fn contract; read-only field.
     if let Some(graph) = unsafe { (*parent).standalone_module_graph } {
-        if let Some(name) = graph.resolve_embedded_entry(str) {
+        if let Some(name) = graph.find(str) {
             return Some(name);
+        }
+        if str.starts_with(b"./") || str.starts_with(b"../") {
+            if let Some(name) = graph.resolve_embedded_entry(str) {
+                return Some(name);
+            }
         }
     }
 

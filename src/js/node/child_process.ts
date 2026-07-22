@@ -794,6 +794,7 @@ function fork(modulePath, args = [], options) {
   if (Bun.isStandaloneExecutable && (!userExecPath || userExecPath === process.execPath)) {
     const modulePathStr = typeof modulePath === "string" ? modulePath : Buffer.from(modulePath).toString("utf8");
     options.env = {
+      __proto__: null,
       ...(options.env || process.env),
       BUN_INTERNAL_FORK_ENTRY: modulePathStr,
     };

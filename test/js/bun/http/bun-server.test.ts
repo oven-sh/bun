@@ -586,11 +586,11 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
           const socks = [];
           const bufs = [];
           const closed = [];
-          await Promise.all(Array.from({ length: N }, (_, i) => new Promise(resolve => {
+          await Promise.all(Array.from({ length: N }, (_, i) => new Promise((resolve, reject) => {
             const s = net.connect(port, "127.0.0.1");
             socks[i] = s; bufs[i] = ""; closed[i] = false;
-            s.on("close", () => { closed[i] = true; });
-            s.on("error", () => { closed[i] = true; });
+            s.on("close", () => { closed[i] = true; reject(new Error("socket " + i + " closed before first response")); });
+            s.on("error", e => { closed[i] = true; reject(e); });
             s.on("connect", () => s.write("GET /first HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"));
             s.on("data", d => { bufs[i] += d.toString(); if (bufs[i].includes("hello")) resolve(); });
           })));
@@ -646,7 +646,7 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
           const s = net.connect(port, "127.0.0.1");
           s.on("connect", () => connected.resolve());
           s.on("close", () => { closed = true; });
-          s.on("error", () => { closed = true; });
+          s.on("error", e => { closed = true; connected.reject(e); });
           s.on("data", () => {});
           await connected.promise;
           s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
@@ -655,13 +655,15 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
           server.stop(false);
           await new Promise(r => setImmediate(r));
           const openAfterGraceful = !closed;
-          // Escalate: must tear down the surviving connection.
+          // Escalate: must tear down the surviving connection and drop the
+          // event-loop ref even though the handler never resolves.
           server.stop(true);
           const until = Date.now() + 2000;
           while (!closed && Date.now() < until) await new Promise(r => setTimeout(r, 10));
           console.log(JSON.stringify({ openAfterGraceful, closedAfterForce: closed }));
           release.resolve();
           s.destroy();
+          process.exit(0);
         `,
       ],
       env: bunEnv,
@@ -740,7 +742,7 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
           s.on("connect", () => connected.resolve());
           s.on("data", d => { received += d.toString(); waiter.p.resolve(); });
           s.on("close", () => { closed = true; waiter.p.resolve(); });
-          s.on("error", () => { closed = true; waiter.p.resolve(); });
+          s.on("error", e => { closed = true; waiter.p.resolve(); connected.reject(e); });
           await connected.promise;
           s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
           await inflight.promise;

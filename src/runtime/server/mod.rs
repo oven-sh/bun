@@ -1592,6 +1592,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
+        let already_terminated = self.flags.contains(ServerFlags::TERMINATED);
         let Some(listener) = self.listener.take() else {
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
@@ -1602,8 +1603,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             // A prior graceful stop already took the listener. An abrupt stop
             // still needs to tear down surviving connections so a "graceful
-            // then force" shutdown can complete.
-            if abrupt && !self.flags.contains(ServerFlags::TERMINATED) {
+            // then force" shutdown can complete. Gate on the pre-call
+            // `TERMINATED` so the H3 arm's insert above does not mask this for
+            // an SSL+http3 server's TCP app.
+            if abrupt && !already_terminated {
+                self.unref();
                 if let Some(ws) = self.config.websocket.as_mut() {
                     ws.handler.app = None;
                 }

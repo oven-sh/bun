@@ -282,13 +282,14 @@ impl CryptoHasher {
 
         // `from_js_no_string_object` never runs user JS, so `output`'s buffer
         // (captured above) stays valid.
-        let input = match BlobOrStringOrBuffer::from_js_no_string_object(global, arguments.ptr[1])? {
-            Some(b) => b,
-            None => {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-            }
-        };
+        let input =
+            match BlobOrStringOrBuffer::from_js_no_string_object(global, arguments.ptr[1])? {
+                Some(b) => b,
+                None => {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
+                }
+            };
 
         Self::hash_(global, algorithm, &input, output)
     }
@@ -1246,13 +1247,14 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
         // `from_js_no_string_object` never runs user JS, so `output`'s buffer
         // (captured above) stays valid.
-        let input = match BlobOrStringOrBuffer::from_js_no_string_object(global, arguments.ptr[0])? {
-            Some(b) => b,
-            None => {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-            }
-        };
+        let input =
+            match BlobOrStringOrBuffer::from_js_no_string_object(global, arguments.ptr[0])? {
+                Some(b) => b,
+                None => {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
+                }
+            };
 
         Self::hash_(global, &input, output)
     }

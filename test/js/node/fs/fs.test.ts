@@ -5652,7 +5652,12 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     // gates the identical call the same way).
     ...(isWindows
       ? []
-      : [["dns.reverse", `require("dns").reverse("127.0.0.1", () => { throw new Error("boom"); })`] as [string, string]]),
+      : [
+          ["dns.reverse", `require("dns").reverse("127.0.0.1", () => { throw new Error("boom"); })`] as [
+            string,
+            string,
+          ],
+        ]),
     ["crypto.pbkdf2", `require("crypto").pbkdf2("pw", "salt", 10, 16, "sha256", () => { throw new Error("boom"); })`],
   ];
 

@@ -1991,9 +1991,5 @@ __attribute__((callback (corker, ctx)))
       uWS::Loop::clearLoopAtThreadExit();
   }
 
-  extern "C" void bun_free_loop_wrapper_at_thread_exit() {
-      uWS::Loop::freeLoopWrapperAtThreadExit();
-  }
-
 #pragma clang attribute pop
 }

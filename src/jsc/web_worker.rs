@@ -1364,17 +1364,15 @@ impl WebWorker {
         #[cfg(windows)]
         {
             // Free the uWS wrapper (512 KiB recv_buf + send/cork buffers +
-            // struct). `WindowsLoop::get()` passes a non-null uv hint so
-            // `cleanMe` stays false and the POSIX `on_thread_exit()` path
-            // below would no-op. Must precede `Loop::shutdown()`:
-            // `us_loop_free` queues `uv_close` callbacks on this thread's
-            // `uv_loop_t` that `shutdown()`'s `uv_run` flushes; running it
-            // afterwards would `uv_close()` already-closed handles.
-            // `RareData::drop` in `vm.destroy()` below no longer touches the
-            // wrapper: every socket group was emptied (and so unlinked) by
+            // struct). Must precede `Loop::shutdown()`: `us_loop_free` queues
+            // `uv_close` callbacks on this thread's `uv_loop_t` that
+            // `shutdown()`'s `uv_run` flushes; running it afterwards would
+            // `uv_close()` already-closed handles. `RareData::drop` in
+            // `vm.destroy()` below does not touch the freed wrapper: every
+            // socket group was emptied (and so unlinked) by
             // `close_all_socket_groups` + the JSC-finalizer listener close +
             // `drain_closed_sockets` above.
-            bun_uws::free_loop_wrapper_at_thread_exit();
+            bun_uws::on_thread_exit();
             // Per-thread libuv loop teardown; closes any handles still open on
             // this worker's loop and drops the thread-local pointer.
             bun_sys::windows::libuv::Loop::shutdown();

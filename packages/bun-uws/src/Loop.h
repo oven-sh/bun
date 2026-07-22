@@ -127,17 +127,11 @@ public:
         return getLazyLoop().loop;
     }
 
+    /* Frees this thread's loop wrapper if one exists. Not gated on cleanMe:
+     * us_loop_free already knows (via is_default) not to close a borrowed
+     * native loop, so the wrapper and its buffers are always safe to release
+     * here. cleanMe only governs the ~LoopCleaner TLS-destructor path. */
     static void clearLoopAtThreadExit() {
-        if (getLazyLoop().cleanMe) {
-            getLazyLoop().loop->free();
-        }
-    }
-
-    /* Frees this thread's loop wrapper if one was created, regardless of
-     * cleanMe. Callers that passed a non-null hint to get() (which leaves
-     * cleanMe false) use this to release the wrapper before closing the
-     * native loop they own. */
-    static void freeLoopWrapperAtThreadExit() {
         if (getLazyLoop().loop) {
             getLazyLoop().cleanMe = false;
             getLazyLoop().loop->free();

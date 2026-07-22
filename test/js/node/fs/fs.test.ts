@@ -2530,6 +2530,32 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
+// Node's JS realpath/realpathSync walks path components, so a trailing
+// separator on a regular file is a no-op. Only realpath.native (realpath(3))
+// rejects it with ENOTDIR.
+it.if(isPosix)("realpathSync ignores trailing slash on a regular file", async () => {
+  using dir = tempDir("fs-realpath-trailing-slash", { "f": "hello" });
+  const real = realpathSync(String(dir));
+  const file = join(real, "f");
+  const link = join(real, "link");
+  symlinkSync(file, link);
+
+  expect(realpathSync(file + "/")).toBe(file);
+  expect(realpathSync(file + "//")).toBe(file);
+  expect(realpathSync(link + "/")).toBe(file);
+  expect(realpathSync(Buffer.from(file + "/"))).toBe(file);
+  expect(realpathSync(real + "/")).toBe(real);
+  expect(realpathSync("/")).toBe("/");
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  fs.realpath(file + "/", (err, p) => (err ? reject(err) : resolve(p)));
+  expect(await promise).toBe(file);
+
+  expect(() => realpathSync.native(file + "/")).toThrow(
+    expect.objectContaining({ code: "ENOTDIR", syscall: "realpath" }),
+  );
+});
+
 // src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
 // (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
 // covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every

@@ -7627,7 +7627,13 @@ impl NodeFS {
                     ..Default::default()
                 });
             };
-            let path_len = joined.len();
+            // Node's JS realpath walks components, so trailing separators on a
+            // regular file are ignored; only realpath.native (realpath(3)) errors.
+            let path_len = if variant == RealpathVariant::Emulated {
+                strings::without_trailing_slash(joined).len()
+            } else {
+                joined.len()
+            };
             inbuf[path_len] = 0;
             let path = ZStr::from_buf(&inbuf[..], path_len);
 
@@ -7647,7 +7653,6 @@ impl NodeFS {
                 Ok(buf_) => buf_,
             };
 
-            let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::SliceWithUnderlyingString(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {

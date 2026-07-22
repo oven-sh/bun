@@ -469,6 +469,11 @@ async function queueFinding(r: Result, v: Verify) {
   if (r.job.mode.startsWith("mangle") && v.verdict === "slow") return;
   if (v.verdict === "not-reproduced") return;
   if (v.verdict === "slow" && r.outcome !== "stalled") return;
+  // A post-fault (the op SUCCEEDED, then we report failure) whose immediate
+  // caller is another module ('o:' key) fabricates an impossible world: a
+  // completed operation does not retroactively report failure inside system
+  // machinery. Repeatedly triaged not-real; suppressed as a class.
+  if (r.job.mode === "post" && r.job.coord.key.startsWith("o:")) return;
   const dedupeKey = r.crashSig
     ? `crash: ${r.crashSig.signature}`
     : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;

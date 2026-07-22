@@ -1189,12 +1189,13 @@ test("file route serves a burst of concurrent requests after reloads", async () 
   expect(a).toBe("a-new");
 });
 
-// FileRoute ends a bodiless status via end_without_body, which writes no
-// Content-Length. For statuses that RFC 9112 §6.3 does NOT self-terminate
-// (205/307/308), an HTTP/1.1 keep-alive client would then block waiting for
-// the body. Assert each status is framed, and that 307 actually completes
-// over keep-alive (the former hang).
-test("file route bodiless statuses are framed on HTTP/1.1 keep-alive", async () => {
+// FileRoute used to end 205/307/308 via end_without_body, which writes no
+// Content-Length; RFC 9112 §6.3 does not self-terminate those, so HTTP/1.1
+// keep-alive clients blocked waiting for body framing. 307/308 now stream the
+// file body like StaticRoute and the fetch-handler path do (RFC 9110 §15.4
+// permits a redirect body); 205 stays bodiless per RFC 9110 §15.3.6 and
+// writes Content-Length: 0.
+test("file route 205/307/308 responses are framed on HTTP/1.1 keep-alive", async () => {
   using dir = tempDir("serve-file-bodiless-status", {
     "f.txt": "hello",
   });
@@ -1208,11 +1209,14 @@ test("file route bodiless statuses are framed on HTTP/1.1 keep-alive", async () 
       "/307": new Response(file(), { status: 307, headers: { Location: "/204" } }),
       "/308": new Response(file(), { status: 308, headers: { Location: "/204" } }),
     },
-    fetch: () => new Response("fallback"),
+    fetch: req =>
+      new URL(req.url).pathname === "/handler-307"
+        ? new Response(file(), { status: 307, headers: { Location: "/204" } })
+        : new Response("fallback"),
   });
 
   async function rawGet(path: string) {
-    const { promise, resolve } = Promise.withResolvers<string>();
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
     const sock = connect(server.port, "127.0.0.1", () => {
       sock.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n`);
     });
@@ -1224,7 +1228,8 @@ test("file route bodiless statuses are framed on HTTP/1.1 keep-alive", async () 
         resolve(buf);
       }
     });
-    sock.on("error", () => resolve(buf));
+    sock.on("close", () => resolve(buf));
+    sock.on("error", reject);
     return promise;
   }
 
@@ -1237,14 +1242,16 @@ test("file route bodiless statuses are framed on HTTP/1.1 keep-alive", async () 
     };
   };
 
-  // 205/307/308 must carry Content-Length (they are not self-terminating).
-  for (const path of ["/205", "/307", "/308"]) {
+  // 307/308 ship the file body (same Content-Length as the fetch-handler path).
+  for (const path of ["/307", "/308", "/handler-307"]) {
     expect({ path, ...(await framing(path)) }).toEqual({
       path,
-      contentLength: "0",
+      contentLength: "5",
       connectionClose: false,
     });
   }
+  // 205 is a null-body status but not self-terminating: Content-Length: 0.
+  expect(await framing("/205")).toEqual({ contentLength: "0", connectionClose: false });
   // 204/304 are self-terminating and stay header-only (RFC 9110 §8.6 forbids
   // Content-Length on 204).
   for (const path of ["/204", "/304"]) {
@@ -1258,7 +1265,7 @@ test("file route bodiless statuses are framed on HTTP/1.1 keep-alive", async () 
   // Two back-to-back 307s on a keep-alive connection: the second resolving
   // proves the first's framing was complete.
   {
-    const { promise, resolve } = Promise.withResolvers<string>();
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
     const sock = connect(server.port, "127.0.0.1", () => {
       sock.write("GET /307 HTTP/1.1\r\nHost: x\r\n\r\nGET /307 HTTP/1.1\r\nHost: x\r\n\r\n");
     });
@@ -1270,7 +1277,8 @@ test("file route bodiless statuses are framed on HTTP/1.1 keep-alive", async () 
         resolve(buf);
       }
     });
-    sock.on("error", () => resolve(buf));
+    sock.on("close", () => resolve(buf));
+    sock.on("error", reject);
     expect((await promise).match(/HTTP\/1\.1 307/g)?.length).toBe(2);
   }
 
@@ -1280,5 +1288,5 @@ test("file route bodiless statuses are framed on HTTP/1.1 keep-alive", async () 
     status: res.status,
     contentLength: res.headers.get("content-length"),
     body: await res.text(),
-  }).toEqual({ status: 307, contentLength: "0", body: "" });
+  }).toEqual({ status: 307, contentLength: "5", body: "hello" });
 });

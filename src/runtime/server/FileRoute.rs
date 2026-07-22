@@ -369,7 +369,7 @@ impl FileRoute {
 
         // `fd_owned` tracks whether this function is still responsible for
         // closing the file descriptor and releasing the route ref. Every
-        // non-streaming return — bodiless status codes (304/204/205/307/308),
+        // non-streaming return — null-body status codes (1xx/204/205/304),
         // HEAD, non-streamable files, and the two JS-exception early-return
         // paths below — hits this defer, so neither the fd nor the route ref
         // (or the server's pending_requests counter) can leak regardless of
@@ -504,16 +504,15 @@ impl FileRoute {
         resp.write_mark();
         this.write_headers(resp);
 
-        // Bodiless statuses end before the range switch so a 304 emits no
+        // Null-body statuses end before the range switch so a 304 emits no
         // Content-Range. FileResponseStream ships via sendfile/write(), so a
-        // null-body status must never start it; 307/308 routes skip it too.
-        if HTTPStatusText::is_null_body(status_code) || matches!(status_code, 307 | 308) {
-            // 205/307/308 are not self-terminating under RFC 9112 §6.3, so a
-            // keep-alive client needs Content-Length. 1xx/204/304 are, and
-            // stay header-only.
-            if matches!(status_code, 205 | 307 | 308)
-                && !resp.state().has_written_content_length_header()
-            {
+        // null-body status must never start it. 307/308 are ordinary
+        // body-bearing statuses (RFC 9110 §15.4) and fall through to stream
+        // the file, same as StaticRoute and the fetch-handler path.
+        if HTTPStatusText::is_null_body(status_code) {
+            // 205 is the one null-body status RFC 9112 §6.3 does NOT
+            // self-terminate, so a keep-alive client needs Content-Length.
+            if status_code == 205 && !resp.state().has_written_content_length_header() {
                 resp.write_header_int(b"content-length", 0);
             }
             resp.end_without_body(resp.should_close_connection());

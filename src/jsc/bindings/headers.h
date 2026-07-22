@@ -812,5 +812,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onResolveRequestStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onRejectRequestStream);
 
+BUN_DECLARE_HOST_FUNCTION(Bun__FileSinkPipe__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__FileSinkPipe__onReject);
 
 #endif

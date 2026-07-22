@@ -4034,6 +4034,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FileSink__onResolveStream;
     } else if (handler == Bun__FileSink__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__FileSink__onRejectStream;
+    } else if (handler == Bun__FileSinkPipe__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__FileSinkPipe__onResolve;
+    } else if (handler == Bun__FileSinkPipe__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__FileSinkPipe__onReject;
     } else if (handler == Bun__CronJob__onPromiseResolve) {
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
     } else if (handler == Bun__CronJob__onPromiseReject) {

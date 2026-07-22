@@ -40,6 +40,11 @@ pub struct FileSink {
     pub event_loop_handle: EventLoopHandle,
     pub written: Cell<usize>,
     pub pending: JsCell<streams::WritablePending>,
+    /// Async writer error that arrived while no JS write was pending (pipe
+    /// mode has none): poll-time EPIPE/ENOSPC between chunks. Consulted and
+    /// taken by the FileSinkPipe consumer so the error rejects `Bun.write`
+    /// instead of vanishing.
+    pub stored_error: JsCell<Option<bun_sys::Error>>,
     pub signal: JsCell<streams::Signal>,
     pub done: Cell<bool>,
     pub started: Cell<bool>,
@@ -479,6 +484,10 @@ impl FileSink {
                 }
 
                 FileSink::run_pending(this);
+            } else {
+                // No JS write to fail (native pipe mode): keep the error so
+                // the pipe's next write / finish rejects with it.
+                (*this).stored_error.with_mut(|slot| *slot = Some(err));
             }
         }
     }
@@ -982,6 +991,13 @@ impl FileSink {
         this
     }
 
+    /// Take an async writer error recorded while no JS write was pending
+    /// (see `on_error`). Pipe consumers call this to surface poll-time
+    /// failures that have no pending promise to land on.
+    pub fn take_stored_error(&self) -> Option<bun_sys::Error> {
+        self.stored_error.with_mut(Option::take)
+    }
+
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
@@ -1308,6 +1324,7 @@ impl FileSink {
             // SAFETY: sentinel only; never dispatched (overwritten before use).
             event_loop_handle: EventLoopHandle::init(core::ptr::null_mut()),
             written: Cell::new(0),
+            stored_error: JsCell::new(None),
             pending: JsCell::new(streams::WritablePending {
                 result: streams::Writable::Done,
                 ..Default::default()

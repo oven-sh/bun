@@ -1606,6 +1606,25 @@ impl BlobExt for Blob {
         signal.with_mut(|s| s.clear());
         debug_assert!(signal.get().is_dead());
 
+        // Native fast path: a network-fed ByteStream (fetch/S3/request body)
+        // that no JS reader holds can pipe straight into the FileSink without
+        // the per-chunk JS streaming loop below. Gating mirrors
+        // `ResumableSink::init_exact_refs`: Source::Bytes, no JS lock or
+        // disturbance, and no pipe already attached. Everything else keeps
+        // the JSSink path.
+        if !readable_stream.is_locked(global_this) && !readable_stream.is_disturbed(global_this) {
+            if let Some(byte_stream) = readable_stream.ptr.bytes() {
+                if byte_stream.pipe.get().is_empty() {
+                    return Ok(pipe_byte_stream_to_file_sink(
+                        global_this,
+                        readable_stream,
+                        byte_stream,
+                        file_sink,
+                    ));
+                }
+            }
+        }
+
         // SAFETY: `file_sink` is a live +1 `*mut FileSink`; `JsCell::as_ptr`
         // yields the stable `*mut Signal` inside the `UnsafeCell`, and
         // `&raw mut (*_).ptr` projects to the `Option<NonNull<c_void>>` field
@@ -5937,6 +5956,349 @@ impl Drop for S3BlobDownloadTask {
 // ──────────────────────────────────────────────────────────────────────────
 // FileStreamWrapper / pipeReadableStreamToBlob
 // ──────────────────────────────────────────────────────────────────────────
+
+/// Native arm of `pipe_readable_stream_to_blob`: drain whatever
+/// the ByteStream has buffered into the FileSink, then either complete
+/// synchronously (the body already fully arrived) or install a
+/// [`FileSinkPipe`] so subsequent network chunks flow native→native.
+/// Takes ownership of the caller's +1 `file_sink` ref.
+fn pipe_byte_stream_to_file_sink(
+    global_this: &JSGlobalObject,
+    readable_stream: ReadableStream,
+    byte_stream: bun_ptr::BackRef<webcore::ByteStream>,
+    file_sink: *mut webcore::FileSink,
+) -> JSValue {
+    // Mirror `ResumableSink::init_exact_refs`: if the complete body is
+    // already buffered, write it and finish without installing a pipe.
+    if byte_stream.has_received_last_chunk.get() {
+        let err: Option<JSValue> = 'brk_err: {
+            let pending = &byte_stream.pending.get().result;
+            if let streams::Result::Err(e) = pending {
+                let (js_err, was_strong) = e.to_js_weak(global_this);
+                js_err.ensure_still_alive();
+                if was_strong == streams::WasStrong::Strong {
+                    js_err.unprotect();
+                }
+                break 'brk_err Some(js_err);
+            }
+            None
+        };
+
+        let bytes = byte_stream.drain();
+        let pipe = FileSinkPipe {
+            promise: jsc::JSPromiseStrong::init(global_this),
+            stream: webcore::readable_stream::ReadableStreamStrong::init(
+                readable_stream,
+                global_this,
+            ),
+            sink: file_sink,
+            global_this: bun_ptr::BackRef::new(global_this),
+        };
+        let promise_value = pipe.promise.value();
+        let mut err = err;
+        if !bytes.is_empty() {
+            // SAFETY: `file_sink` is the live +1 transferred to `pipe`.
+            let wr = unsafe {
+                (*file_sink).write(&streams::Result::Temporary(bun_ptr::RawSlice::new(&bytes)))
+            };
+            if let streams::Writable::Err(e) = wr {
+                if err.is_none() {
+                    err = Some(e.to_js(global_this));
+                }
+            }
+        }
+        // `finish` consumes the boxed pipe; box it first so destroy()'s
+        // `heap::take` matches.
+        let pipe = bun_core::heap::into_raw(Box::new(pipe));
+        // SAFETY: just allocated; `finish` consumes it.
+        unsafe { (*pipe).finish(err) };
+        return promise_value;
+    }
+
+    // Drain what arrived so far, then install the pipe for the rest.
+    let bytes = byte_stream.drain();
+    let mut drain_err: Option<JSValue> = None;
+    if !bytes.is_empty() {
+        // SAFETY: `file_sink` is the caller's live +1.
+        let wr = unsafe {
+            (*file_sink).write(&streams::Result::Temporary(bun_ptr::RawSlice::new(&bytes)))
+        };
+        if let streams::Writable::Err(e) = wr {
+            drain_err = Some(e.to_js(global_this));
+        }
+    }
+
+    let pipe = bun_core::heap::into_raw(Box::new(FileSinkPipe {
+        promise: jsc::JSPromiseStrong::init(global_this),
+        stream: webcore::readable_stream::ReadableStreamStrong::init(readable_stream, global_this),
+        sink: file_sink,
+        global_this: bun_ptr::BackRef::new(global_this),
+    }));
+    // SAFETY: just allocated; live until `finish`/shims destroy it.
+    let promise_value = unsafe { (*pipe).promise.value() };
+    if let Some(err) = drain_err {
+        // The drained prefix already failed — reject now and cancel the
+        // stream instead of installing a pipe on a dead sink.
+        // SAFETY: just allocated; `finish` consumes it.
+        unsafe { (*pipe).finish(Some(err)) };
+        return promise_value;
+    }
+    byte_stream.pipe.set(webcore::Wrap::<FileSinkPipe>::init(
+        // SAFETY: `pipe` was just heap-allocated above and stays live until
+        // `finish`/the then-shims destroy it; the Pipe holds the erased ptr.
+        unsafe { &mut *pipe },
+    ));
+    promise_value
+}
+
+/// Native ByteStream → FileSink pipe: forwards network-fed body chunks
+/// straight into the FileSink, keeping the per-chunk Promise/Uint8Array/
+/// microtask round-trips of the JS streaming loop out of the hot path.
+///
+/// Heap-allocated; ownership ends in [`Self::finish`] (or in the then-shims
+/// below when the final flush completes asynchronously). Holds a +1 ref on
+/// the sink and a Strong on the stream for the pipe's lifetime.
+pub struct FileSinkPipe {
+    pub promise: jsc::JSPromiseStrong,
+    pub stream: webcore::readable_stream::ReadableStreamStrong,
+    // Same shape as `FileStreamWrapper.sink` (raw +1, intrusive refcount).
+    pub sink: *mut webcore::FileSink,
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+}
+
+impl FileSinkPipe {
+    /// Consume `this`: release the sink ref and free the box. Callers must
+    /// not touch `this` afterwards.
+    unsafe fn destroy(this: *mut Self) {
+        // SAFETY: `this` was produced by `heap::into_raw` in
+        // `pipe_byte_stream_to_file_sink`; `sink` carries the +1 taken there.
+        unsafe {
+            webcore::FileSink::deref((*this).sink);
+            drop(bun_core::heap::take(this));
+        }
+    }
+
+    /// Detach from the stream (mirrors `ResumableSink::end_pipe`), then end
+    /// the sink and settle the promise. Consumes `self`.
+    fn finish(&mut self, err: Option<JSValue>) {
+        // Copy the BackRef before `.get()` so `global` doesn't borrow `self`
+        // (same reshape as `ResumableSink::end_pipe`).
+        let global = self.global_this;
+        let global = global.get();
+        // An async writer error recorded between chunks must reject even when
+        // the stream itself ended cleanly.
+        // SAFETY: `sink` is the live +1 held by this pipe.
+        let err =
+            err.or_else(|| unsafe { (*self.sink).take_stored_error() }.map(|e| e.to_js(global)));
+        if let Some(stream_) = self.stream.get(global) {
+            // BACKREF: live while `self.stream` Strong holds it.
+            if let Some(bytes) = stream_.ptr.bytes() {
+                bytes.pipe.set(webcore::Pipe::default());
+            }
+            if err.is_some() {
+                stream_.cancel(global);
+            } else {
+                stream_.done(global);
+            }
+            let stream = core::mem::take(&mut self.stream);
+            drop(stream);
+        }
+
+        let this: *mut Self = self;
+
+        if let Some(err) = err {
+            // SAFETY: `sink` is the live +1 held by this pipe.
+            let _ = unsafe { (*self.sink).end(None) };
+            // `end`'s Pending arm (an async write is still in flight) marks
+            // the sink done but leaves the writer running, expecting a
+            // pending JS write's completion to close it — pipe mode has none
+            // (`pending.state` is never `Pending` here), so without an
+            // explicit `writer.end()` the write-completion callback skips
+            // both cleanup arms in `on_write` and the keep-alive ref (and
+            // the fd) leak. No-op for the arms where `end` already ended the
+            // writer.
+            // SAFETY(JsCell): `IOWriter::end` is pure I/O; the `on_close`
+            // re-entry it may trigger (POSIX) goes via the stored
+            // `*mut FileSink` backref, and cannot drop the last ref — this
+            // pipe still holds one until `destroy` below.
+            unsafe { (*self.sink).writer.with_mut(|w| w.end()) };
+            // `reject` only errs on VM termination; nothing to settle then.
+            let _ = self.promise.reject(global, Ok(err));
+            // SAFETY: sole owner; nothing touches `this` after destroy.
+            unsafe { Self::destroy(this) };
+            return;
+        }
+
+        // Resolve with 0 on success — parity with the JSSink path this
+        // replaces, which discards the builtin's result and resolves with 0
+        // for every ReadableStream source (see the `Fulfilled` arm and
+        // `on_file_stream_resolve_request_stream` in
+        // `pipe_readable_stream_to_blob`).
+        // SAFETY: `sink` is the live +1 held by this pipe.
+        match unsafe { (*self.sink).end_from_js(global) } {
+            bun_sys::Result::Ok(value) => {
+                if let Some(promise) = value.as_any_promise() {
+                    match promise.status() {
+                        jsc::js_promise::Status::Pending => {
+                            // Final flush is asynchronous — settle our promise
+                            // from the then-shims once the writer drains.
+                            value.then(
+                                global,
+                                this.cast::<c_void>(),
+                                on_file_sink_pipe_resolve_shim,
+                                on_file_sink_pipe_reject_shim,
+                            );
+                            return;
+                        }
+                        jsc::js_promise::Status::Fulfilled => {
+                            let _ = self.promise.resolve(global, JSValue::js_number(0.0));
+                        }
+                        jsc::js_promise::Status::Rejected => {
+                            let _ = self.promise.reject(global, Ok(promise.result(global.vm())));
+                        }
+                    }
+                } else {
+                    let _ = self.promise.resolve(global, JSValue::js_number(0.0));
+                }
+            }
+            bun_sys::Result::Err(err) => {
+                let _ = self.promise.reject(global, Ok(err.to_js(global)));
+            }
+        }
+        // SAFETY: sole owner; nothing touches `this` after destroy.
+        unsafe { Self::destroy(this) };
+    }
+}
+
+impl webcore::PipeHandler for FileSinkPipe {
+    fn on_pipe(&mut self, mut stream: streams::Result) {
+        let is_done = stream.is_done();
+
+        // Backpressure is still intentionally unsignalled (parity with the JS
+        // streaming loop this replaces and with ResumableSink's pipe arm) —
+        // but errors are not: a failed write must reject `Bun.write` and
+        // cancel the ByteStream so the network stops pulling into a dead
+        // sink. (The JS loop's discarded write *promise* still tripped
+        // unhandled-rejection; discarding the raw error here would be
+        // genuinely silent.)
+        // SAFETY: `sink` is the live +1 held by this pipe.
+        let write_result = unsafe { (*self.sink).write(&stream) };
+
+        // Owned payloads were allocated by ByteStream with the global
+        // allocator; freeing them is this handler's responsibility (same tail
+        // as ResumableSink::on_stream_pipe). Free before any `finish` below —
+        // `self` is consumed there.
+        if let streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) = &mut stream {
+            use bun_collections::VecExt as _;
+            owned.clear_and_free();
+        }
+
+        let global = self.global_this;
+        let global = global.get();
+        let sink_err: Option<JSValue> = match write_result {
+            streams::Writable::Err(e) => Some(e.to_js(global)),
+            // `Done` mid-stream means the writer already closed underneath us
+            // (an async poll-time error closed it without reporting) — fail
+            // with the recorded error rather than feeding a dead sink.
+            streams::Writable::Done if !is_done => Some(
+                // SAFETY: `sink` is the live +1 held by this pipe.
+                match unsafe { (*self.sink).take_stored_error() } {
+                    Some(e) => e.to_js(global),
+                    None => {
+                        bun_core::String::static_(b"FileSink closed before the stream finished")
+                            .to_error_instance(global)
+                    }
+                },
+            ),
+            // SAFETY: `sink` is the live +1 held by this pipe.
+            _ => unsafe { (*self.sink).take_stored_error() }.map(|e| e.to_js(global)),
+        };
+        if let Some(err) = sink_err {
+            self.finish(Some(err));
+            return;
+        }
+
+        if is_done {
+            let err: Option<JSValue> = 'brk_err: {
+                if let streams::Result::Err(e) = &stream {
+                    let (js_err, was_strong) = e.to_js_weak(global);
+                    js_err.ensure_still_alive();
+                    if was_strong == streams::WasStrong::Strong {
+                        js_err.unprotect();
+                    }
+                    break 'brk_err Some(js_err);
+                }
+                None
+            };
+            self.finish(err);
+            // `self` is dangling past this point.
+        }
+    }
+}
+
+pub fn on_file_sink_pipe_resolve(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let args = callframe.arguments_old::<2>();
+    // SAFETY: trailing arg is the `*mut FileSinkPipe` boxed through `then()`
+    // in `FileSinkPipe::finish`; we are the sole consumer.
+    let this = args.ptr[args.len - 1].as_number() as usize as *mut FileSinkPipe;
+    // Resolve with 0 — parity with the synchronous arms of
+    // `FileSinkPipe::finish` and with the JSSink path this replaces.
+    // SAFETY: `this` is live until destroy below.
+    let result = unsafe {
+        (*this)
+            .promise
+            .resolve(global_this, JSValue::js_number(0.0))
+    };
+    // SAFETY: sole owner.
+    unsafe { FileSinkPipe::destroy(this) };
+    result?;
+    Ok(JSValue::UNDEFINED)
+}
+
+pub fn on_file_sink_pipe_reject(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let args = callframe.arguments_old::<2>();
+    // SAFETY: see resolve shim above.
+    let this = args.ptr[args.len - 1].as_number() as usize as *mut FileSinkPipe;
+    let err = args.ptr[0];
+    // SAFETY: `this` is live until destroy below.
+    let result = unsafe { (*this).promise.reject(global_this, Ok(err)) };
+    // SAFETY: sole owner.
+    unsafe { FileSinkPipe::destroy(this) };
+    result?;
+    Ok(JSValue::UNDEFINED)
+}
+
+bun_jsc::jsc_host_abi! {
+    #[unsafe(export_name = "Bun__FileSinkPipe__onResolve")]
+    unsafe fn on_file_sink_pipe_resolve_shim(
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+        let (global, callframe) =
+            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
+        bun_jsc::host_fn::to_js_host_fn_result(global, on_file_sink_pipe_resolve(global, callframe))
+    }
+}
+bun_jsc::jsc_host_abi! {
+    #[unsafe(export_name = "Bun__FileSinkPipe__onReject")]
+    unsafe fn on_file_sink_pipe_reject_shim(
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // S008: see resolve shim above.
+        let (global, callframe) =
+            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
+        bun_jsc::host_fn::to_js_host_fn_result(global, on_file_sink_pipe_reject(global, callframe))
+    }
+}
 
 pub struct FileStreamWrapper {
     pub promise: jsc::JSPromiseStrong,

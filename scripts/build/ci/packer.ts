@@ -192,6 +192,11 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
           type: "powershell",
           inline: [
             `Remove-Item -Recurse -Force ${REMOTE_BOOTSTRAP_DIR} -ErrorAction SilentlyContinue`,
+            // The bootstrap's scratchDir (%TEMP%\bun-bootstrap-<pid>) holds
+            // every downloaded installer (~300 MB); it must not ship in the
+            // image. Clear it and the rest of the bake user's temp before capture.
+            "Remove-Item -Recurse -Force (Join-Path $env:TEMP 'bun-bootstrap-*') -ErrorAction SilentlyContinue",
+            "Remove-Item -Recurse -Force (Join-Path $env:TEMP '*') -ErrorAction SilentlyContinue",
             "Remove-Item -Recurse -Force C:\\Windows\\Panther -ErrorAction SilentlyContinue",
             "Write-Output '>>> Clearing pending reboot flags...'",
             "Remove-Item 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending' -Recurse -Force -ErrorAction SilentlyContinue",

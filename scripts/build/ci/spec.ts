@@ -167,7 +167,7 @@ const linuxRust: LinuxRustSpec = {
   components: ["rust-src"],
 };
 
-const crossToolchains: CrossToolchains = {
+export const crossToolchains: CrossToolchains = {
   winSysroot: {
     xwinVersion: "0.9.0",
     xwinReleaseBase: "https://github.com/Jake-Shadle/xwin/releases/download",

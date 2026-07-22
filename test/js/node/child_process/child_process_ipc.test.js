@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("child_process ipc", async () => {
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc_fixture.js`.text();
@@ -12,4 +12,51 @@ test("child_process ipc", async () => {
     cb ERR_IPC_CHANNEL_CLOSED
     "
   `);
+});
+
+// Writing raw bytes to fd 3 only reaches the IPC decoder on POSIX (Windows uses a
+// named pipe); the decode path under test is platform-independent.
+test.skipIf(isWindows)("advanced serialization: malformed frame from child does not crash parent", async () => {
+  using dir = tempDir("ipc-advanced-malformed", {
+    "fixture.mjs": `
+      import { fork } from "node:child_process";
+      import fs from "node:fs";
+      if (process.env.ROLE === "child") {
+        // IPCMessageType.SerializedMessage (2), u32-LE length = 4, then 4 bytes that are
+        // not a valid structured-clone blob.
+        fs.writeSync(3, Buffer.from([2, 4, 0, 0, 0, 0xde, 0xad, 0xbe, 0xef]));
+        process.exit(0);
+      } else {
+        process.on("uncaughtException", err => {
+          console.error("uncaughtException: " + err.message);
+          process.exit(1);
+        });
+        const cp = fork(import.meta.filename, [], {
+          serialization: "advanced",
+          env: { ...process.env, ROLE: "child" },
+        });
+        cp.on("message", m => console.log("message: " + JSON.stringify(m)));
+        cp.on("exit", code => {
+          console.log("child exit " + code);
+          console.log("parent still alive");
+        });
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("Unable to deserialize data");
+  expect(stderr).not.toContain("uncaughtException");
+  expect(stdout).toContain("child exit 0");
+  expect(stdout).toContain("parent still alive");
+  expect(exitCode).toBe(0);
 });

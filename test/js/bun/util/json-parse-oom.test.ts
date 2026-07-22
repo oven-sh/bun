@@ -53,7 +53,14 @@ test.skipIf(!isLinux || isASAN)(
       sawInputOK = true;
 
       // Once the input is built, JSON.parse must not kill the process.
-      expect({ shape, size, stdout: stdout.trim(), stderr: stderr.trim(), exitCode, signal: proc.signalCode }).toMatchObject({
+      expect({
+        shape,
+        size,
+        stdout: stdout.trim(),
+        stderr: stderr.trim(),
+        exitCode,
+        signal: proc.signalCode,
+      }).toMatchObject({
         shape,
         size,
         signal: null,

@@ -37,4 +37,13 @@ impl<'a> ReaderContext for StackReader<'a> {
     fn set_offset_from_start(self, offset: usize) {
         StackReader::set_offset_from_start(&self, offset)
     }
+    fn packet_remaining(&self) -> usize {
+        StackReader::packet_remaining(self)
+    }
+    fn set_packet_limit_from_start(self, packet_length: usize) {
+        StackReader::set_packet_end_from_start(&self, packet_length)
+    }
+    fn clear_packet_limit(self) {
+        StackReader::clear_packet_end(&self)
+    }
 }

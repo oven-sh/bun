@@ -40,6 +40,11 @@ pub struct StackReader<'a> {
     pub buffer: &'a [u8],
     pub offset: &'a Cell<usize>,
     pub message_start: &'a Cell<usize>,
+    /// Absolute offset one past the current packet's last body byte; reads at
+    /// or past it are a protocol error, not a short read. `usize::MAX` means
+    /// "no packet framed yet" (header decode, or a protocol that tracks its
+    /// own message lengths like Postgres).
+    pub packet_end: &'a Cell<usize>,
 }
 
 impl<'a> StackReader<'a> {
@@ -47,16 +52,32 @@ impl<'a> StackReader<'a> {
         buffer: &'a [u8],
         offset: impl IntoCursor<'a>,
         message_start: impl IntoCursor<'a>,
+        packet_end: impl IntoCursor<'a>,
     ) -> R {
         R::wrap(StackReader {
             buffer,
             offset: offset.into_cursor(),
             message_start: message_start.into_cursor(),
+            packet_end: packet_end.into_cursor(),
         })
     }
 
     pub fn mark_message_start(&self) {
         self.message_start.set(self.offset.get());
+        self.packet_end.set(usize::MAX);
+    }
+
+    pub fn set_packet_end_from_start(&self, packet_length: usize) {
+        self.packet_end
+            .set(self.message_start.get().saturating_add(packet_length));
+    }
+
+    pub fn clear_packet_end(&self) {
+        self.packet_end.set(usize::MAX);
+    }
+
+    pub fn packet_remaining(&self) -> usize {
+        self.packet_end.get().saturating_sub(self.offset.get())
     }
 
     pub fn set_offset_from_start(&self, offset: usize) {

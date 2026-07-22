@@ -107,6 +107,7 @@ pub(crate) fn mysql_error_to_js(
         "InvalidEOFPacket" => b"ERR_MYSQL_INVALID_EOF_PACKET",
         "InvalidErrorPacket" => b"ERR_MYSQL_INVALID_ERROR_PACKET",
         "UnexpectedPacket" => b"ERR_MYSQL_UNEXPECTED_PACKET",
+        "MalformedPacket" => b"ERR_MYSQL_MALFORMED_PACKET",
         "ConnectionTimedOut" => b"ERR_MYSQL_CONNECTION_TIMEOUT",
         "IdleTimeout" => b"ERR_MYSQL_IDLE_TIMEOUT",
         "LifetimeTimeout" => b"ERR_MYSQL_LIFETIME_TIMEOUT",

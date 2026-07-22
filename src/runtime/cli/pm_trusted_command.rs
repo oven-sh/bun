@@ -14,6 +14,7 @@ use bun_install::lockfile::{
 use bun_install::package_manager_real::{
     PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, update_lockfile_if_needed,
 };
+use bun_install::package_manager::Options::NodeLinker;
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
     PackageID, PackageManager, Resolution, ResolutionTag,
@@ -36,14 +37,27 @@ type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
 /// Peer-hash suffixes are discovered by readdir rather than recomputing the
 /// Store: a package's entries are every directory name equal to
 /// `<name>@<res>` or `<name>@<res>+<16 lowercase hex>`.
+///
+/// `f` receives `in_global_store = true` when the `.bun/<entry>` is a symlink
+/// (global virtual store); running a script there would mutate the shared
+/// content-addressed cache, mirroring the guard in the isolated installer's
+/// `Step::RunPreinstall`.
 fn collect_isolated_untrusted_scripts(
+    node_linker: NodeLinker,
     log: &mut bun_ast::Log,
     lockfile: &Lockfile,
     scripts: &[Scripts],
     resolutions: &[Resolution],
     untrusted_dep_ids: &DepIdSet,
-    mut f: impl FnMut(DependencyID, PackageID, ScriptsList) -> crate::Result<()>,
+    mut f: impl FnMut(DependencyID, PackageID, ScriptsList, bool) -> crate::Result<()>,
 ) -> crate::Result<bool> {
+    // A stale `.bun` from a prior isolated install can coexist with a hoisted
+    // layout after a linker switch without `rm -rf node_modules`; honor the
+    // configured linker rather than blindly trusting the directory's presence.
+    if node_linker == NodeLinker::Hoisted {
+        return Ok(false);
+    }
+
     let mut store_path = AutoAbsPath::init_top_level_dir();
     let _ = store_path.append(b"node_modules");
     let _ = store_path.append(b".bun");
@@ -57,7 +71,7 @@ fn collect_isolated_untrusted_scripts(
         let _ = bun_sys::close(fd);
     });
 
-    let mut entries: Vec<Box<[u8]>> = Vec::new();
+    let mut entries: Vec<(Box<[u8]>, bool)> = Vec::new();
     let mut iter = bun_sys::iterate_dir(store_fd);
     loop {
         match iter.next() {
@@ -66,7 +80,7 @@ fn collect_isolated_untrusted_scripts(
                 if name == b"node_modules" || name.first() == Some(&b'.') {
                     continue;
                 }
-                entries.push(Box::from(name));
+                entries.push((Box::from(name), ent.kind == bun_sys::EntryKind::SymLink));
             }
             Ok(None) => break,
             Err(e) => return Err(crate::Error::from(e)),
@@ -115,7 +129,7 @@ fn collect_isolated_untrusted_scripts(
         }
         .into_bytes();
 
-        for entry in &entries {
+        for (entry, in_global_store) in &entries {
             // Peer-hash suffix is `format!("+{:016x}", hash)` (Store.rs); constrain
             // to that exact shape so semver build metadata (`foo@1.0.0+sha`) or
             // `/`→`+` encoded tarball/folder paths don't over-match a shorter
@@ -154,7 +168,7 @@ fn collect_isolated_untrusted_scripts(
 
             if let Some(list) = maybe_list {
                 if list.total > 0 && !list.items.is_empty() {
-                    f(dep_id, package_id, list)?;
+                    f(dep_id, package_id, list, *in_global_store)?;
                 }
             }
         }
@@ -200,6 +214,7 @@ impl UntrustedCommand {
         // as `package_manager_command.rs::print_hash`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
+        let node_linker = pm.options.node_linker;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
         // SAFETY: `pm_raw` derived from `pm` above; `update_lockfile_if_needed`
@@ -249,12 +264,13 @@ impl UntrustedCommand {
             ArrayHashMap::new();
 
         let found_isolated = collect_isolated_untrusted_scripts(
+            node_linker,
             log,
             lockfile,
             scripts,
             resolutions,
             &untrusted_dep_ids,
-            |dep_id, _package_id, list| {
+            |dep_id, _package_id, list, _in_global_store| {
                 untrusted_deps.put(dep_id, list)?;
                 Ok(())
             },
@@ -364,6 +380,11 @@ struct ScriptInfo {
     package_id: PackageID,
     scripts_list: ScriptsList,
     skip: bool,
+    /// Isolated linker only: entry is a symlink into the global virtual store.
+    /// The script is not run (mutating the shared cache would affect every
+    /// project), but the name is still written to `trustedDependencies` so the
+    /// next `bun install` detaches to a project-local copy and runs it there.
+    in_global_store: bool,
 }
 
 impl TrustCommand {
@@ -410,6 +431,7 @@ impl TrustCommand {
         // `pm`/`pm.lockfile` access in between goes through `pm_raw`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
+        let node_linker = pm.options.node_linker;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
         // `update_lockfile_if_needed` consumes `LoadResult` but we
@@ -490,12 +512,13 @@ impl TrustCommand {
 
         // SAFETY: `log` derived from `pm.log`; single-threaded CLI.
         let found_isolated = collect_isolated_untrusted_scripts(
+            node_linker,
             unsafe { &mut *log },
             lockfile,
             scripts,
             resolutions,
             &untrusted_dep_ids,
-            |dep_id, package_id, scripts_list| {
+            |dep_id, package_id, scripts_list, in_global_store| {
                 let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
                 let alias = dep.name.slice(buf);
                 let resolution = &resolutions[package_id as usize];
@@ -531,11 +554,14 @@ impl TrustCommand {
                     package_id,
                     scripts_list,
                     skip,
+                    in_global_store,
                 });
 
                 if !skip {
                     package_names_to_add.put(alias, ())?;
-                    scripts_count += total;
+                    if !in_global_store {
+                        scripts_count += total;
+                    }
                 }
                 Ok(())
             },
@@ -628,6 +654,7 @@ impl TrustCommand {
                             package_id,
                             scripts_list,
                             skip,
+                            in_global_store: false,
                         });
 
                         if !skip {
@@ -670,7 +697,7 @@ impl TrustCommand {
         // the `List` per spawn.
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
-                if info.skip {
+                if info.skip || info.in_global_store {
                     continue;
                 }
 
@@ -794,6 +821,7 @@ impl TrustCommand {
         let mut total_scripts_ran: usize = 0;
         let mut total_packages_with_scripts: usize = 0;
         let mut total_skipped_packages: usize = 0;
+        let mut total_global_store_packages: usize = 0;
 
         Output::print(format_args!("\n"));
 
@@ -807,6 +835,10 @@ impl TrustCommand {
                     info.scripts_list
                         .print_scripts(resolution, buf, PrintFormat::Untrusted);
                     total_skipped_packages += 1;
+                } else if info.in_global_store {
+                    info.scripts_list
+                        .print_scripts(resolution, buf, PrintFormat::Info);
+                    total_global_store_packages += 1;
                 } else {
                     total_packages_with_scripts += 1;
                     total_scripts_ran += info.scripts_list.total as usize;
@@ -882,7 +914,7 @@ impl TrustCommand {
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
         let _ = root_file.close();
 
-        debug_assert!(total_scripts_ran > 0);
+        debug_assert!(total_scripts_ran > 0 || total_global_store_packages > 0);
 
         bun_core::pretty!(
             " <green>{}<r> script{} ran across {} package{} ",
@@ -898,6 +930,24 @@ impl TrustCommand {
 
         Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
         Output::print(format_args!("\n"));
+
+        if total_global_store_packages > 0 {
+            Output::print(format_args!("\n"));
+            bun_core::prettyln!(
+                " <yellow>{}<r> package{} linked from the global store; run <d>`<r><blue>bun install<r><d>`<r> to run {} scripts in a project-local copy",
+                total_global_store_packages,
+                if total_global_store_packages > 1 {
+                    "s are"
+                } else {
+                    " is"
+                },
+                if total_global_store_packages > 1 {
+                    "their"
+                } else {
+                    "its"
+                },
+            );
+        }
 
         if total_skipped_packages > 0 {
             Output::print(format_args!("\n"));

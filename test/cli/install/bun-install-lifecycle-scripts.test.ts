@@ -1,5 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { readdirSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
@@ -4101,11 +4102,10 @@ describe("pm untrusted/trust under the isolated linker", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const out = await stdout.text();
-      const err = stderrForInstall(await stderr.text());
-      expect(err).not.toContain("error:");
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(stderrForInstall(err)).not.toContain("error:");
       expect(out).toContain("Blocked 1 postinstall. Run `bun pm untrusted` for details.");
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
     }
 
     const storePkgDir = join(packageDir, "node_modules", ".bun", `${pkgName}@1.0.0`, "node_modules", pkgName);
@@ -4121,11 +4121,11 @@ describe("pm untrusted/trust under the isolated linker", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const out = await stdout.text();
-      expect(await stderr.text()).toContain("bun pm untrusted");
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).toContain("bun pm untrusted");
       expect(out).toContain(join("node_modules", ".bun", `${pkgName}@1.0.0`, "node_modules", pkgName));
       expect(out).toContain("[postinstall]");
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
     }
 
     // pm trust: should run the script in the .bun store dir and add to trustedDependencies
@@ -4137,14 +4137,102 @@ describe("pm untrusted/trust under the isolated linker", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const out = await stdout.text();
-      const err = await stderr.text();
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
       expect(err).not.toContain("error:");
       expect(out).toContain("1 script ran across 1 package");
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
     }
 
     expect(await exists(join(storePkgDir, "RAN-marker"))).toBe(true);
     expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([pkgName]);
+  });
+
+  test("does not run scripts inside the shared global store", async () => {
+    const pkgName = "lifecycle-globalstore-pkg";
+    const pj = {
+      name: pkgName,
+      version: "1.0.0",
+      scripts: {
+        postinstall: `${bunExe()} -e 'require("fs").writeFileSync("RAN-marker","ok")'`,
+      },
+    };
+    const tgz = makeTarball(pj);
+    const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tgz).digest("base64");
+
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname.endsWith(".tgz")) return new Response(tgz);
+        return Response.json({
+          name: pkgName,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              ...pj,
+              hasInstallScript: true,
+              dist: { tarball: `${server.url}${pkgName}-1.0.0.tgz`, integrity },
+            },
+          },
+        });
+      },
+    });
+
+    using dir = tempDir("pm-trust-isolated-globalstore", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      "packages/b/package.json": JSON.stringify({
+        name: "ws-b",
+        version: "1.0.0",
+        dependencies: { [pkgName]: "1.0.0" },
+      }),
+    });
+    const packageDir = String(dir);
+    const cacheDir = join(packageDir, ".bun-cache");
+    const env = { ...baseEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\nregistry = "${server.url}"\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nlinker = "isolated"\nglobalStore = true\n`,
+    );
+
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(stderrForInstall(err)).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    // pm trust should add to trustedDependencies but NOT run the script inside
+    // the shared content-addressed cache
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "pm", "trust", pkgName],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("linked from the global store");
+      expect(exitCode).toBe(0);
+    }
+
+    expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([pkgName]);
+
+    const ranInCache: string[] = [];
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const full = join(d, e.name);
+        if (e.name === "RAN-marker") ranInCache.push(full);
+        else if (e.isDirectory() && !e.isSymbolicLink()) walk(full);
+      }
+    };
+    walk(cacheDir);
+    expect(ranInCache).toEqual([]);
   });
 });

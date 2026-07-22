@@ -2660,19 +2660,21 @@ pub(crate) fn install_isolated_packages(
 
         // Populate `packages_with_blocked_scripts` for the "Blocked N postinstalls"
         // install-summary hint. The hoisted installer fills this per-package during
-        // `install_package_with_name_and_resolution`; isolated tasks skip untrusted
+        // `install_package_with_name_and_resolution` (only reached when
+        // `needs_install` and the install succeeded); isolated tasks skip untrusted
         // packages without recording anything (worker-thread `Step::Scripts`), so
         // account for them here on the main thread once all tasks have finished.
-        {
+        if let Some(installed) = summary.successfully_installed.as_ref() {
             let pkg_metas = pkgs.items_meta();
             let pkg_script_lists = pkgs.items_scripts();
-            let mut log = bun_ast::Log::init();
+            let log_level = installer.manager().options.log_level;
+            let fail_early = installer.manager().options.enable.fail_early();
             for _entry_id in 0..store.entries.len() {
                 let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
                 let node_id = entry_node_ids[entry_id.get() as usize];
                 let pkg_id = node_pkg_ids[node_id.get() as usize];
                 let dep_id = node_dep_ids[node_id.get() as usize];
-                if dep_id == invalid_dependency_id {
+                if dep_id == invalid_dependency_id || !installed.is_set(pkg_id as usize) {
                     continue;
                 }
                 let pkg_res = pkg_resolutions[pkg_id as usize];
@@ -2701,14 +2703,27 @@ pub(crate) fn install_isolated_packages(
                 installer.append_store_path(&mut pkg_cwd, entry_id);
                 let mut pkg_scripts = pkg_script_lists[pkg_id as usize];
                 let count = match pkg_scripts.get_list(
-                    &mut log,
+                    installer.manager().log_mut(),
                     lockfile_ro,
                     &mut pkg_cwd,
                     alias,
                     &pkg_res,
                 ) {
                     Ok(Some(list)) => list.total as usize,
-                    _ => 0,
+                    Ok(None) => 0,
+                    Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => 0,
+                    Err(err) => {
+                        if log_level != crate::package_manager::Options::LogLevel::Silent {
+                            Output::err_generic(
+                                "failed to fill lifecycle scripts for <b>{}<r>: {}",
+                                (bstr::BStr::new(alias), err.name()),
+                            );
+                        }
+                        if fail_early {
+                            Global::crash();
+                        }
+                        0
+                    }
                 };
                 if count > 0 {
                     let entry = summary

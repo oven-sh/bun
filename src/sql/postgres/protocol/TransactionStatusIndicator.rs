@@ -7,5 +7,5 @@ pub struct TransactionStatusIndicator(pub u8);
 
 impl TransactionStatusIndicator {
     /// if idle (not in a transaction block)
-    pub(crate) const I: Self = Self(b'I');
+    pub const I: Self = Self(b'I');
 }

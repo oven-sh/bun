@@ -125,6 +125,11 @@ pub struct PostgresSQLConnection {
     // so `vm_mut()`'s `&mut *as_ptr()` is sound.
     pub vm: BackRef<VirtualMachine>,
     pub statements: JsCell<PreparedStatementsMap>,
+    /// The transaction status byte from the most recent ReadyForQuery. Used to
+    /// suppress the transparent re-prepare retry inside an open or aborted
+    /// transaction block, where the retry Parse would be rejected with 25P02
+    /// and mask the original 0A000/26000 (pgjdbc's `willHealOnRetry` guard).
+    pub tx_status: Cell<protocol::TransactionStatusIndicator>,
     pub prepared_statement_id: Cell<u64>,
     pub pending_activity_count: AtomicU32,
     // Self-wrapper back-ref (the JS object that owns this payload). Stored as a
@@ -1198,6 +1203,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             // canonical `VirtualMachine::as_mut()` accessor.
             vm: BackRef::new_mut(vm),
             statements: JsCell::new(PreparedStatementsMap::default()),
+            tx_status: Cell::new(protocol::TransactionStatusIndicator::I),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
@@ -2526,7 +2532,8 @@ impl PostgresSQLConnection {
                 // parameter_status dropped at scope end
             }
             MessageType::ReadyForQuery => {
-                let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                let ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                self.tx_status.set(ready_for_query.status);
 
                 self.set_status(Status::Connected);
                 self.update_flags(|f| {
@@ -3010,19 +3017,28 @@ impl PostgresSQLConnection {
                         // the dead name forever. Unnamed statements Parse on
                         // every execution and are never cached, so nothing to
                         // evict or retry there.
-                        if self
+                        if let Some(removed) = self
                             .statements
                             .with_mut(|m| m.remove(&stmt.signature.name[..]))
-                            .is_some()
                         {
-                            // SAFETY: the request still holds its own ref; see above.
-                            unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
+                            // SAFETY: `removed` is the pointer the map held
+                            // and this releases exactly the map's ref on it.
+                            // It is usually `stmt`, but a user `.catch()` that
+                            // ran between pipelined siblings' ErrorResponses
+                            // may have inserted a different statement under
+                            // the same key; deref'ing `removed` keeps both
+                            // refcounts balanced either way.
+                            unsafe { PostgresSQLStatement::deref(removed) };
                         }
                         // Re-prepare transparently when this is the only
                         // exchange in flight (no later Bind/Execute already on
                         // the wire whose responses would be misattributed to
-                        // the reset request) and we have not retried already.
+                        // the reset request), we have not retried already, and
+                        // the session is not inside a transaction block (where
+                        // the retry Parse would be rejected with 25P02 and
+                        // mask the original error; pgjdbc's willHealOnRetry).
                         if !request.flags.get().reprepared
+                            && self.tx_status.get() == protocol::TransactionStatusIndicator::I
                             && self.pipelined_requests.get() <= 1
                             && self.nonpipelinable_requests.get() == 0
                         {
@@ -3033,6 +3049,7 @@ impl PostgresSQLConnection {
                             stmt.reset_for_reprepare(id);
                             let slot = self.statements.with_mut(|m| {
                                 m.get_or_put(&stmt.signature.name).map(|e| {
+                                    debug_assert!(!e.found_existing);
                                     core::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr)
                                 })
                             });
@@ -3053,12 +3070,12 @@ impl PostgresSQLConnection {
                             self.update_ref();
                             return Ok(());
                         }
-                        // Not retrying this one (other Bind/Execute for the
-                        // same stale name are still on the wire, or this
-                        // request already retried once). Leave the statement
-                        // Prepared so the last pipelined sibling's
+                        // Not retrying this one: already retried once, inside
+                        // a transaction block, or other Bind/Execute for the
+                        // same stale name are still on the wire. Leave the
+                        // statement Prepared so the last pipelined sibling's
                         // ErrorResponse can still re-prepare it; the cache
-                        // entry is already gone so nothing new attaches to it.
+                        // entry is already gone.
                     }
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.

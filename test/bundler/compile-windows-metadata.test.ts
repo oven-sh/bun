@@ -15,6 +15,17 @@ function cleanup(outfile: string) {
   };
 }
 
+// Drain stdout/stderr and assert exit 0, surfacing stderr when the build fails.
+// These tests run concurrently and spawn many `bun build --compile` processes
+// from the same cwd; asserting stderr first means a flake shows the real error
+// instead of just "Expected: 0, Received: 1".
+async function expectBuildOk(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  return { stdout, stderr, exitCode };
+}
+
 describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
   describe("CLI flags", () => {
     test("all metadata flags via CLI", async () => {
@@ -49,10 +60,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(exitCode).toBe(0);
-      expect(stderr).toBe("");
+      await expectBuildOk(proc);
 
       // Verify executable was created
       const exists = await Bun.file(outfile).exists();
@@ -103,8 +111,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      await expectBuildOk(proc);
 
       const getMetadata = (field: string) => {
         try {
@@ -312,8 +319,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      await expectBuildOk(proc);
 
       const version = execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.ProductVersion"`, {
         encoding: "utf8",
@@ -379,8 +385,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      await expectBuildOk(proc);
 
       // Check that Original Filename is empty (not "bun.exe")
       const getMetadata = (field: string) => {
@@ -430,8 +435,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      await expectBuildOk(proc);
 
       const getMetadata = (field: string) => {
         try {
@@ -483,8 +487,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      await expectBuildOk(proc);
 
       const exists = await Bun.file(outfile).exists();
       expect(exists).toBe(true);
@@ -519,8 +522,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      await expectBuildOk(proc);
 
       const exists = await Bun.file(outfile).exists();
       expect(exists).toBe(true);
@@ -568,8 +570,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      await expectBuildOk(proc);
 
       const exists = await Bun.file(outfile).exists();
       expect(exists).toBe(true);
@@ -602,8 +603,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      await expectBuildOk(proc);
 
       const exists = await Bun.file(outfile).exists();
       expect(exists).toBe(true);
@@ -637,8 +637,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      await expectBuildOk(proc);
 
       const exists = await Bun.file(outfile).exists();
       expect(exists).toBe(true);

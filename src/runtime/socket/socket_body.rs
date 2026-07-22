@@ -725,9 +725,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::UNDEFINED);
         }
         if this.flags.get().contains(Flags::IS_PAUSED) {
-            // A detached socket has no stream to resume; record the intent so
-            // connect_finish's recompute_poll_ref sees it once connected.
-            let resumed = this.socket.get().is_detached() || this.socket.get().resume_stream();
+            // Nothing more can arrive after EOF; don't re-arm readable (it would
+            // restore the Windows DISCONNECT busy-loop on_end's pause_stream stops).
+            let resumed = this.socket.get().is_detached()
+                || this.flags.get().contains(Flags::READ_EOF)
+                || this.socket.get().resume_stream();
             this.update_flags(|f| f.set(Flags::IS_PAUSED, !resumed));
             if resumed {
                 this.recompute_poll_ref();

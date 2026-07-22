@@ -1777,7 +1777,10 @@ fn wait_for_entrypoint_and_reload(target_name: &[u8]) -> ! {
                 if !has_extension && is_file(&mut buf, &[target_name, ext]) {
                     break 'probe true;
                 }
-                if is_file(&mut buf, &[target_name, paths::SEP_STR.as_bytes(), b"index", ext]) {
+                if is_file(
+                    &mut buf,
+                    &[target_name, paths::SEP_STR.as_bytes(), b"index", ext],
+                ) {
                     break 'probe true;
                 }
             }

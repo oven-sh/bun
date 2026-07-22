@@ -71,7 +71,13 @@ fixReplRequire(__node_module__);
 
 const { BuiltinModule } = require("internal/repl/node-shims");
 
-const nodeSchemeBuiltinLibs = ArrayPrototypeMap(getReplBuiltinLibs(), lib => `node:${lib}`);
+// Only offer `node:`-prefixed forms that actually resolve: _builtinLibs now
+// includes bun/bun:*/undici/ws (module.builtinModules parity), and
+// `node:bun:ffi` / `node:undici` are not real specifiers.
+const nodeSchemeBuiltinLibs = ArrayPrototypeFilter(
+  ArrayPrototypeMap(getReplBuiltinLibs(), lib => `node:${lib}`),
+  id => BuiltinModule.canBeRequiredByUsers(id),
+);
 ArrayPrototypeForEach(BuiltinModule.getSchemeOnlyModuleNames(), lib =>
   ArrayPrototypePush(nodeSchemeBuiltinLibs, `node:${lib}`),
 );

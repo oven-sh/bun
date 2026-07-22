@@ -1116,6 +1116,17 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 && args.flag(b"-i")
                 && ctx.positionals.is_empty()
                 && ctx.runtime_options.eval.script.is_empty());
+        if cmd == CommandTag::AutoCommand
+            && args.flag(b"-i")
+            && ctx.runtime_options.interactive
+            && ctx.debug.global_cache == options::GlobalCache::fallback
+        {
+            // Bare `bun -i` reaches the REPL, so drop the --install=fallback
+            // meaning `-i` carries on the auto-install path: both REPL
+            // spellings (`bun -i` and `bun --interactive`) boot with the
+            // default resolver options.
+            ctx.debug.global_cache = options::GlobalCache::auto;
+        }
         ctx.runtime_options.input_type_specified = args.option(b"--input-type").is_some();
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");

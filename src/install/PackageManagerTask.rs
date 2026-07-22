@@ -282,17 +282,15 @@ impl<'a> Task<'a> {
                     };
 
                     // `Callback` is a tagged enum, so destructure the variant.
-                    // SAFETY: tag == PackageManifest ⇒ the network task was
-                    // built by `NetworkTask::for_manifest` with this variant.
+                    // tag == PackageManifest ⇒ the network task was built by
+                    // `NetworkTask::for_manifest` with this variant.
                     let crate::network_task::Callback::PackageManifest {
                         loaded_manifest,
                         is_extended_manifest,
                         ..
                     } = &network.callback
                     else {
-                        // SAFETY: tag == PackageManifest ⇒ the network task was
-                        // built by `NetworkTask::for_manifest` with this variant.
-                        unsafe { core::hint::unreachable_unchecked() }
+                        unreachable!("expected Callback::PackageManifest variant")
                     };
                     let loaded_manifest = loaded_manifest.clone();
                     let is_extended_manifest = *is_extended_manifest;
@@ -546,9 +544,7 @@ impl<'a> Task<'a> {
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
-                    // SAFETY: `apply_patch_task` is only ever populated with the
-                    // Apply variant (see `new_apply_patch_hash`).
-                    unsafe { core::hint::unreachable_unchecked() }
+                    unreachable!("apply_patch_task should hold Callback::Apply")
                 };
                 if apply.logger.errors > 0 {
                     // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.

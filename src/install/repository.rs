@@ -588,11 +588,17 @@ impl RepositoryExt for Repository {
         }
 
         if Dependency::is_scp_like_path(url) {
-            const PREFIX: &[u8] = b"ssh://git@";
-            ssh_path_buf[..PREFIX.len()].copy_from_slice(PREFIX);
-            let rest = &mut ssh_path_buf[PREFIX.len()..];
-
             let colon_index = strings::index_of_char(url, b':');
+
+            // scp-style is `[user@]host:path`. Only inject a `git@` user when the
+            // input omitted one; otherwise `ssh://git@user@host/...` is sent to git.
+            let has_user = colon_index
+                .map(|c| strings::index_of_char(&url[..c as usize], b'@').is_some())
+                .unwrap_or(false);
+            let prefix: &[u8] = if has_user { b"ssh://" } else { b"ssh://git@" };
+
+            ssh_path_buf[..prefix.len()].copy_from_slice(prefix);
+            let rest = &mut ssh_path_buf[prefix.len()..];
 
             if let Some(colon) = colon_index {
                 let colon = colon as usize;
@@ -603,7 +609,7 @@ impl RepositoryExt for Repository {
                     rest[colon + tld.len()] = b'/';
                     rest[colon + tld.len() + 1..colon + tld.len() + 1 + (url.len() - colon - 1)]
                         .copy_from_slice(&url[colon + 1..]);
-                    let out = &ssh_path_buf[..url.len() + PREFIX.len() + tld.len()];
+                    let out = &ssh_path_buf[..url.len() + prefix.len() + tld.len()];
                     return Some(out);
                 }
             }
@@ -612,8 +618,7 @@ impl RepositoryExt for Repository {
             if let Some(colon) = colon_index {
                 rest[colon as usize] = b'/';
             }
-            let final_ = &ssh_path_buf[..url.len() + b"ssh://".len()];
-            return Some(final_);
+            return Some(&ssh_path_buf[..url.len() + prefix.len()]);
         }
 
         None

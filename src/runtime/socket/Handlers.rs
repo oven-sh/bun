@@ -265,10 +265,10 @@ impl Handlers {
             return false;
         }
         // Let the listener's JS wrapper be GC'd once the last connection is
-        // closed and it's not listening anymore.
+        // closed and it's not listening anymore. The listener's poll_ref is
+        // released in do_stop; accepted sockets manage their own.
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
-                listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
                 listener.this_value.with_mut(|r| r.downgrade());
             }
         }

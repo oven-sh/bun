@@ -290,6 +290,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// A partial write is armed for a writable-event retry. Only meaningful
+    /// for a live `us_socket_t` (the Pipe/Duplex variants own their own
+    /// liveness accounting).
+    pub fn write_pending(&self) -> bool {
+        on_socket!(self.socket;
+            connected s => s.write_pending(),
+            duplex _d => false,
+            pipe _p => false,
+            else => false,
+        )
+    }
+
     pub fn is_established(&self) -> bool {
         on_socket!(self.socket;
             connected s => s.is_established(),

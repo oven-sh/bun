@@ -691,6 +691,12 @@ __attribute__((always_inline)) int us_socket_is_shut_down(struct us_socket_t *s)
     return us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN;
 }
 
+/* The last write was partial and the poll is armed for a writable event to
+ * retry: the libuv analogue of a pending uv_write_t in active_reqs. */
+int us_socket_write_pending(struct us_socket_t *s) {
+    return s->flags.last_write_failed;
+}
+
 int us_connecting_socket_is_shut_down(struct us_connecting_socket_t *c) {
     return c->shutdown;
 }

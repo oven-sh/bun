@@ -629,6 +629,7 @@ void us_socket_shutdown(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown_read(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_shut_down(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
+int us_socket_write_pending(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_tls(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;

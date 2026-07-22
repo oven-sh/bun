@@ -1,7 +1,7 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isLinux, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -1010,10 +1010,9 @@ describe("Socket fd adoption", () => {
 
 describe("paused socket whose peer sends RST", () => {
   // Regression: on Linux, epoll forwarded the raw EPOLLERR bit (8) as a libus
-  // close code, which the JS error path read as errno 8 and surfaced as a
-  // bogus `Error: read ENOEXEC` when the socket was not actively reading.
-  // kqueue already normalized the flag to 0/1.
-  it("does not surface a bogus errno error", async () => {
+  // close code which surfaced as a bogus `read ENOEXEC`. Linux-only: epoll
+  // delivers EPOLLERR on a paused fd; IOCP/kqueue never observe the RST.
+  it.skipIf(!isLinux)("does not surface a bogus errno error", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     const errors: NodeJS.ErrnoException[] = [];
     const server = createServer(c => {
@@ -1131,4 +1130,30 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   } finally {
     target.close();
   }
+});
+
+// Runs in a subprocess: any in-process 'readable' listener would itself flip
+// readableFlowing and mask the bug the test observes.
+it("net.Socket readableFlowing starts null and buffers bytes arriving before a 'data' listener", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "socket-initial-flowing-fixture.js")],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const lines = stdout.trim().split("\n");
+  expect(lines).toEqual([
+    "A flowing null len 17",
+    'A got "hello-first-bytes"',
+    "B flowing false",
+    'B got "paused-bytes"',
+    "C flowing null len 15",
+    'C got "server-greeting"',
+    "E connect fired, paused true",
+    "D readableEnded false len 13",
+    'D got "final-payload" ended true',
+  ]);
+  expect(exitCode).toBe(0);
 });

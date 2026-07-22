@@ -607,6 +607,8 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // poll_ref is ref'd in on_open once the pipe is live (recompute bails
+        // on Detached); balanced in mark_inactive.
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
@@ -650,6 +652,9 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // Each accepted socket holds the loop via its own poll_ref so
+        // node:net's per-socket unref() is meaningful (balanced in mark_inactive).
+        s.recompute_poll_ref();
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.global_object;
@@ -799,8 +804,10 @@ impl Listener {
             Self::unlink_unix_socket_path(this);
         }
 
+        // The listener's poll_ref covers only the listener; accepted sockets
+        // ref their own (on_create), so release this one unconditionally.
+        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.active_connections.get() == 0 {
-            this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
             this.this_value.with_mut(|r| r.downgrade());
             this.strong_data
                 .with_mut(|s| s.clear_without_deallocation());
@@ -1131,6 +1138,9 @@ impl Listener {
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
                         ));
+                        // Clears per-connection READ_EOF; the socket is already
+                        // Detached so the rest is a no-op.
+                        prev.detach_for_reconnect();
                         // Free old resources before reassignment to prevent memory leaks
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
@@ -1222,6 +1232,9 @@ impl Listener {
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
                         ));
+                        // Clears per-connection READ_EOF; the socket is already
+                        // Detached so the rest is a no-op.
+                        prev.detach_for_reconnect();
                         // Adopt `connection` (heap-owned for .unix) so the socket's
                         // deinit frees it; matches the TLS arm above and the
                         // non-pipe arm below. Previously `.connection = null`
@@ -1561,13 +1574,9 @@ fn connect_finish<const IS_SSL: bool>(
         return Ok(promise_value);
     }
 
-    // if this is from node:net there's surface where the user can .ref() and .deref()
-    // before the connection starts. make sure we honor that here.
-    if socket_ref.ref_pollref_on_connect.get() {
-        socket_ref
-            .poll_ref
-            .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-    }
+    // node:net can .ref()/.unref()/.pause() before the connection starts;
+    // recompute honours ref_pollref_on_connect and IS_PAUSED together.
+    socket_ref.recompute_poll_ref();
 
     Ok(promise_value)
 }
@@ -1674,7 +1683,9 @@ impl WindowsNamedPipeListeningContext {
                 .get_accepted_by(&mut this_ref.uv_pipe, this_ref.ctx.map(|p| p.as_ptr()))
         };
         if result.is_err() {
-            // connection dropped
+            // connection dropped; on_open will never dispatch. The socket's
+            // poll_ref was never ref'd (recompute bails on Detached) so
+            // nothing to balance; mark_inactive (the normal release) is unreachable.
             // Release the only ref, which goes 1→0 → schedule_deinit → next-tick free. The
             // deferred path is required because `get_accepted_by` may have already `uv_pipe_init`'d
             // the client's inner handle on the loop; freeing the backing storage in-callback

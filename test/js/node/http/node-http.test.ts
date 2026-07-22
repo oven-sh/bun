@@ -2083,6 +2083,9 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const { promise, resolve, reject } = Promise.withResolvers<string>();
       client.on("error", reject);
       client.on("close", resolve);
+      // Drain the response: with Node-compatible buffering 'end'/'close' only
+      // fire once the readable buffer empties.
+      client.resume();
       await promise;
     }
 

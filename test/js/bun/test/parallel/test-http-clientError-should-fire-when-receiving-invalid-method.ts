@@ -20,5 +20,9 @@ const address = server.address() as AddressInfo;
 socket = createConnection({ port: address.port });
 
 await once(socket, "connect");
+// Drain the server's 400 response so 'end'/'close' fire (readableFlowing
+// starts null; Bun's http server currently writes a 400 on clientError even
+// with a listener, so unread bytes would hold 'close').
+socket.resume();
 socket.write("*");
 await once(socket, "close");

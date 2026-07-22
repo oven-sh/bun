@@ -149,11 +149,6 @@ const kSNIError = Symbol("kSNIError");
 const kALPNError = Symbol("kALPNError");
 const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
-const kUserUnrefed = Symbol("kUserUnrefed");
-// Set when pause() dropped the handle's hold on the loop, so the read paths
-// only restore a hold they actually removed - re-refing a handle that never
-// held the loop (a wrapped duplex with no fd) would pin the process.
-const kPausedUnref = Symbol("kPausedUnref");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
@@ -582,6 +577,7 @@ function SocketEmitEndNT(self, _err?) {
     }
     self[kended] = true;
     self.push(null);
+    self.read(0);
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
@@ -881,10 +877,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     // after secureConnection event we emmit secure and secureConnect
     self.emit("secure", self);
     self.emit("secureConnect", verifyError);
+    // Leave readableFlowing at null so application data arriving before a
+    // 'data' listener is attached buffers in the Readable (Node semantics).
     if (server?.pauseOnConnect) {
       self.pause();
-    } else {
-      self.resume();
     }
   },
   error(socket, error) {
@@ -1063,10 +1059,9 @@ function onconnection(err, clientHandle) {
   }
 
   self.emit("connection", _socket);
-  // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-  if (!pauseOnConnect && !isTLS) {
-    _socket.resume();
-  }
+  // Node leaves readableFlowing null so early bytes buffer; the native handle
+  // is already reading, and resume() here would discard them and stomp any
+  // pause() made in the 'connection' handler.
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
@@ -1121,9 +1116,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       } else if (res) {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
-        // The buffered write drained: if end() already unref'd (peer FIN) and _write
-        // re-ref'd for this pending flush, drop the ref again now nothing is in flight.
-        if (self[kended] && !self[kUserUnrefed] && socket === self._handle) socket.unref?.();
         callback(null);
       } else {
         self[kBytesWritten] = socket.bytesWritten;
@@ -1139,16 +1131,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
-    // The peer's FIN means kernel reads are over for good. In libuv a stream handle only holds
-    // the loop while reading or with a write in flight, so node lets the process exit even if
-    // the (half-open) writable side stays open and the readable side was never consumed. Mirror
-    // that: drop this handle's hold on the loop unless a write is still waiting on drain, and
-    // forget any pause()-time unref so a later read()/resume() does not pin the loop again.
-    // A subsequent buffered write re-refs (see _write) so its callback can still fire.
-    if (socket === self._handle && !self[kwriteCallback]) {
-      socket.unref?.();
-      self[kPausedUnref] = false;
-    }
   },
   // See SocketHandlers.session.
   session(socket, session) {
@@ -2098,30 +2080,12 @@ Socket.prototype.resume = function resume() {
   if (!this.connecting) {
     this._handle?.resume?.();
   }
-  // Restore the hold pause() removed - even while still connecting, so the
-  // pause-then-resume sequence is symmetric. Gated on the pause flag so a
-  // socket that was never paused (e.g. a wrapped duplex with no fd) is not
-  // newly pinned to the loop.
-  if (this[kPausedUnref] && !this[kUserUnrefed]) {
-    this._handle?.ref?.();
-    this[kPausedUnref] = false;
-  }
   return Duplex.prototype.resume.$call(this);
 };
 
 Socket.prototype.pause = function pause() {
   if (!this.destroyed) {
     this._handle?.pause?.();
-    // libuv only counts a stream handle as active - and therefore as keeping
-    // the event loop alive - while it is reading. A paused socket lets the
-    // process exit; resume() re-refs it unless the user explicitly unref'd.
-    this._handle?.unref?.();
-    // Only remember the unref when this handle can actually hold the loop: a
-    // TLS socket wrapped over a generic duplex has no fd, so re-refing it
-    // later would newly pin the process.
-    if (!this[kupgraded] || this[kupgraded] instanceof Socket) {
-      this[kPausedUnref] = true;
-    }
   }
   return Duplex.prototype.pause.$call(this);
 };
@@ -2178,13 +2142,6 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 Socket.prototype.read = function read(size) {
   if (!this.connecting) {
     this._handle?.resume?.();
-    // Restarting kernel reads makes the handle hold the loop open again;
-    // mirror resume()'s re-ref or a paused-then-read() socket waits for
-    // data without keeping the process alive.
-    if (this[kPausedUnref] && !this[kUserUnrefed]) {
-      this._handle?.ref?.();
-      this[kPausedUnref] = false;
-    }
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -2195,12 +2152,6 @@ Socket.prototype._read = function _read(size) {
     this.once("connect", () => this._read(size));
   } else {
     socket?.resume?.();
-    // See read() above - the Readable machinery's pull path must also
-    // restore the handle's hold on the loop.
-    if (this[kPausedUnref] && !this[kUserUnrefed]) {
-      socket?.ref?.();
-      this[kPausedUnref] = false;
-    }
   }
 };
 
@@ -2251,7 +2202,6 @@ Object.defineProperty(Socket.prototype, "readyState", {
 });
 
 Socket.prototype.ref = function ref() {
-  this[kUserUnrefed] = false;
   const socket = this._handle;
   if (!socket) {
     this.once("connect", this.ref);
@@ -2445,7 +2395,6 @@ Socket.prototype._unrefTimer = function _unrefTimer() {
 };
 
 Socket.prototype.unref = function unref() {
-  this[kUserUnrefed] = true;
   const socket = this._handle;
   if (!socket) {
     this.once("connect", this.unref);
@@ -2557,10 +2506,6 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     callback(new Error("overlapping _write()"));
   } else {
     this[kwriteCallback] = callback;
-    // libuv holds the loop for a pending uv_write_t regardless of the handle's ref
-    // state; end() dropped ours on the peer's FIN. Re-ref while this buffered write
-    // waits for drain so the process does not exit with data unflushed.
-    if (this[kended] && !this[kUserUnrefed]) socket.ref?.();
   }
 };
 

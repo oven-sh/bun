@@ -682,12 +682,6 @@ private:
         auto *httpContextData = getSocketContextDataS(s);
 
 
-        /* Not only CONNECT: node:http req.socket.write() shares this
-         * AsyncSocket buffer with the response body, so the JS socket
-         * wrapper's pending _write callback completes once it empties. */
-        if (httpResponseData->socketData && httpContextData->onSocketDrain) {
-            httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
-        }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
         if (httpResponseData->onWritable) {
             /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
@@ -708,6 +702,15 @@ private:
 
         /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
         asyncSocket->flush();
+
+        /* Not only CONNECT: node:http req.socket.write() shares this
+         * AsyncSocket buffer with the response body. Runs after callOnWritable
+         * so the response's own drain (zero-copy pinned tail, 'drain' handler
+         * writes) lands first and a deferred socket.end() FIN does not cut
+         * them off. */
+        if (httpResponseData->socketData && httpContextData->onSocketDrain) {
+            httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
+        }
 
         /* node:http compat: reads were paused while pipelined responses were
          * queued and stayed paused because the socket still had outgoing

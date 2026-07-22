@@ -606,52 +606,14 @@ mod c {
 }
 
 #[repr(C)]
+#[derive(Default)]
 pub struct us_socket_stream_buffer_t {
-    pub list_ptr: *mut u8,
-    pub list_cap: usize,
-    pub list_len: usize,
     pub total_bytes_written: usize,
-    pub cursor: usize,
-}
-
-impl Default for us_socket_stream_buffer_t {
-    fn default() -> Self {
-        Self {
-            list_ptr: ptr::null_mut(),
-            list_cap: 0,
-            list_len: 0,
-            total_bytes_written: 0,
-            cursor: 0,
-        }
-    }
 }
 
 impl us_socket_stream_buffer_t {
     pub fn wrote(&mut self, written: usize) {
         self.total_bytes_written = self.total_bytes_written.saturating_add(written);
     }
-
-    /// Explicit teardown — this struct is `#[repr(C)]` and freed via the
-    /// exported `us_socket_free_stream_buffer`, so no `Drop` impl. `list_ptr`
-    /// is never populated anymore (writes buffer natively in
-    /// `AsyncSocketData::buffer`); the null check makes this a no-op.
-    ///
-    /// SAFETY: `this` must point to a live `us_socket_stream_buffer_t`.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract — `this` is non-null and exclusively borrowed
-        let this = unsafe { &mut *this };
-        if !this.list_ptr.is_null() {
-            unsafe {
-                // SAFETY: list_ptr/list_cap came from a decomposed Vec<u8> (global mimalloc).
-                drop(Vec::from_raw_parts(this.list_ptr, 0, this.list_cap));
-            }
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
-    // SAFETY: caller (C) passes a live us_socket_stream_buffer_t*
-    unsafe { us_socket_stream_buffer_t::destroy(buffer) };
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs

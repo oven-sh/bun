@@ -388,30 +388,11 @@ impl PipeReader {
     /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
     /// whose generated trait `destructor` upholds the sole-owner contract.
     fn deinit(this: *mut PipeReader) {
-        // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
-        let this_ref = unsafe { &mut *this };
-
         #[cfg(unix)]
         {
+            // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
+            let this_ref = unsafe { &*this };
             debug_assert!(this_ref.reader.is_done() || matches!(this_ref.state, State::Err(_)));
-        }
-
-        #[cfg(windows)]
-        {
-            // WindowsBufferedReader.onError() never closes the source, and
-            // WindowsBufferedReader.deinit() nulls this.source before calling
-            // closeImpl so it never actually closes either. Close it here on
-            // the error path so the uv.Pipe handle doesn't leak.
-            if matches!(this_ref.state, State::Err(_))
-                && this_ref.reader.source.is_some()
-                && !this_ref.reader.source.as_ref().unwrap().is_closed()
-            {
-                this_ref.reader.close_impl::<false>();
-            }
-            debug_assert!(
-                this_ref.reader.source.is_none()
-                    || this_ref.reader.source.as_ref().unwrap().is_closed()
-            );
         }
 
         // The `state` buffer and `reader` are freed by Drop when the Box drops.

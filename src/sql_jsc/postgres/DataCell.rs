@@ -313,11 +313,15 @@ fn parse_array(
                         continue;
                     }
                     if array_type == types::Tag::date_array {
-                        let mut str = BunString::init(element);
-                        array.push(SQLDataCell::date(
-                            crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
-                                .map_err(crate::jsc::js_error_to_postgres)?,
-                        ));
+                        let ms = match crate::postgres::types::date::parse_infinity(element) {
+                            Some(inf) => inf,
+                            None => {
+                                let mut str = BunString::init(element);
+                                crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                                    .map_err(crate::jsc::js_error_to_postgres)?
+                            }
+                        };
+                        array.push(SQLDataCell::date(ms));
                     } else {
                         // the only escape sequency possible here is \b
                         if element == b"\\b" {
@@ -827,6 +831,9 @@ pub(crate) fn from_bytes(
             } else {
                 if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
                     return Ok(SQLDataCell::null());
+                }
+                if let Some(inf) = crate::postgres::types::date::parse_infinity(bytes) {
+                    return Ok(SQLDataCell::date(inf));
                 }
                 // `timestamp` (without time zone) text carries no offset, so
                 // decode its components as UTC to match the binary path. `date`

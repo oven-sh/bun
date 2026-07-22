@@ -1,6 +1,13 @@
 //! Raw Win32 extern fn declarations + tier-0 Win32 typedefs.
 //! `bun_sys::windows` re-exports FROM here (see the layering doc). This crate is a tier-0 leaf: it depends on nothing above
 //! `libuv_sys`.
+//!
+//! `#[link(name = "...")]` on every `extern` block is wrapped in
+//! `#[cfg_attr(windows, ...)]`. This crate is depended on unconditionally (not
+//! behind `[target.'cfg(windows)']`) by several workspace members that need
+//! the POD typedefs on every target, so an unconditional `#[link]` would bake
+//! `-lntdll`/`-lkernel32`/... into the rlib and break linking any standalone
+//! test/bench binary on a non-Windows host.
 
 use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
 
@@ -544,7 +551,7 @@ impl FILE_INFORMATION_CLASS {
 pub mod ntdll {
     use super::*;
 
-    #[link(name = "ntdll")]
+    #[cfg_attr(windows, link(name = "ntdll"))]
     unsafe extern "system" {
         pub fn RtlCaptureStackBackTrace(
             FramesToSkip: u32,
@@ -692,7 +699,7 @@ pub mod kernel32 {
     }
     pub const MEM_FREE: u32 = 0x10000;
 
-    #[link(name = "kernel32")]
+    #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
@@ -775,7 +782,7 @@ pub mod kernel32 {
             Add: BOOL,
         ) -> BOOL;
     }
-    #[link(name = "kernel32")]
+    #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// `GetConsoleScreenBufferInfo` (`wincon.h`).
         pub fn GetConsoleScreenBufferInfo(
@@ -838,7 +845,7 @@ pub const INFINITE: DWORD = 0xFFFF_FFFF;
 pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     #[link_name = "WaitForSingleObject"]
     fn WaitForSingleObject_raw(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
@@ -919,7 +926,7 @@ pub const fn NT_ERROR(status: NTSTATUS) -> bool {
 }
 pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
 
-#[link(name = "ntdll")]
+#[cfg_attr(windows, link(name = "ntdll"))]
 unsafe extern "system" {
     /// Total over `NTSTATUS`; no preconditions.
     pub safe fn RtlNtStatusToDosError(status: NTSTATUS) -> DWORD;
@@ -953,7 +960,7 @@ pub mod ws2_32 {
         pub ai_next: *mut addrinfo,
     }
 
-    #[link(name = "ws2_32")]
+    #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
         pub fn getaddrinfo(
             node: *const c_char,
@@ -1142,7 +1149,7 @@ pub mod ws2_32 {
         pub const WSA_QOS_RESERVED_PETYPE: Self = Self(11031);
     }
 
-    #[link(name = "ws2_32")]
+    #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
         /// Raw `WSAGetLastError`. The `Option<SystemErrno>` wrapper lives in `errno`
         /// because `SystemErrno` is a higher-tier type. No preconditions; reads
@@ -1330,12 +1337,12 @@ impl Win32Error {
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
 
-#[link(name = "shell32")]
+#[cfg_attr(windows, link(name = "shell32"))]
 unsafe extern "system" {
     pub fn CommandLineToArgvW(lpCmdLine: LPCWSTR, pNumArgs: *mut c_int) -> *mut LPWSTR;
 }
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetFileInformationByHandle(
         hFile: HANDLE,
@@ -1389,7 +1396,7 @@ pub struct SYSTEM_INFO {
     pub wProcessorLevel: WORD,
     pub wProcessorRevision: WORD,
 }
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO);
 }
@@ -1398,7 +1405,7 @@ pub const TOKEN_QUERY: DWORD = 0x0008;
 /// `TOKEN_INFORMATION_CLASS::TokenIsAppContainer`
 pub const TOKEN_IS_APP_CONTAINER: c_int = 29;
 
-#[link(name = "advapi32")]
+#[cfg_attr(windows, link(name = "advapi32"))]
 unsafe extern "system" {
     pub fn SaferiIsExecutableFileType(szFullPathname: LPCWSTR, bFromShellExecute: BOOLEAN) -> BOOL;
 
@@ -1420,7 +1427,7 @@ unsafe extern "system" {
 // `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the
 // callconv is correct on all targets (winapi == C only on x64). `GetProcAddress`
 // takes `LPCSTR` (narrow), not wide.
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetProcAddress(ptr: *mut c_void, name: *const c_char) -> *mut c_void;
 
@@ -1429,7 +1436,7 @@ unsafe extern "system" {
 
 // Declared as `extern "system"` so the callconv is correct on all targets
 // (winapi == C only on x64).
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
 
@@ -1753,7 +1760,7 @@ pub const CTRL_CLOSE_EVENT: DWORD = 2;
 pub const CTRL_LOGOFF_EVENT: DWORD = 5;
 pub const CTRL_SHUTDOWN_EVENT: DWORD = 6;
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn CreateDirectoryExW(
         lpTemplateDirectory: *const u16,
@@ -1789,7 +1796,7 @@ unsafe extern "C" {
     pub safe fn GetConsoleCP() -> u32;
 }
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     /// No preconditions; returns 0 on failure.
     pub safe fn SetConsoleCP(wCodePageID: UINT) -> BOOL;

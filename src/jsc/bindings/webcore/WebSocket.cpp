@@ -1751,7 +1751,10 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::timeout: {
-        didReceiveClose(CleanStatus::Clean, 1013, "Timeout"_s);
+        // Opening-handshake timeout: per WHATWG "fail the WebSocket connection"
+        // fire error + close(1006). didReceiveClose gates the error event on
+        // wasConnecting, so a (currently unreachable) post-open timeout only closes.
+        didReceiveClose(CleanStatus::NotClean, 1006, "Timeout"_s, true);
         break;
     }
     case Bun::WebSocketErrorCode::closed: {

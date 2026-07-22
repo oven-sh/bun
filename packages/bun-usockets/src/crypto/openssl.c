@@ -1821,7 +1821,23 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     /* Ciphertext from a partial batch flush goes out before anything else;
      * while it is pending nothing new may be written for this socket. */
+    unsigned int spill_off_before = loop_ssl_data ? loop_ssl_data->ssl_spill_off : 0;
     if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
+      /* A writable event that moves zero spill bytes after the peer's
+       * readable side has already ended means the peer is gone (send()
+       * hit EPIPE/ECONNRESET, folded to 0 by us_socket_raw_write) and
+       * this spill will never drain. Returning here would spin the
+       * re-armed writable poll on kqueue, since EPOLLERR is not delivered
+       * there. Mark the SSL fatal so us_internal_ssl_write returns 0 (the
+       * uWS layer's flushed==0-after-FIN guard, or hasFullyDrained() when
+       * nothing is buffered, then closes the connection on this dispatch)
+       * and dispatch directly, bypassing the is_shut_down gate below that
+       * ssl_fatal_error would otherwise trip. */
+      if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before) {
+        ssl_release_spill(s->group->loop, s);
+        s->ssl_fatal_error = 1;
+        return us_dispatch_writable(s);
+      }
       return s;
     }
     if (s->ssl_shutdown_after_spill) {
@@ -2096,6 +2112,17 @@ int us_internal_ssl_handshake_callback_has_fired(struct us_socket_t *s) {
 
 void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
   return s->ssl ? s_ssl(s) : NULL;
+}
+
+/* Ciphertext bytes already sealed for `s` and counted as written by
+ * us_internal_ssl_write, still waiting on a writable event to reach the
+ * kernel. uWS's AsyncSocket::hasFullyDrained() checks this so the HTTP
+ * close-after-drain gates do not fire while the last batch is still in
+ * userspace. */
+unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  if (!loop_ssl_data || loop_ssl_data->ssl_spill_owner != s) return 0;
+  return loop_ssl_data->ssl_spill_len - loop_ssl_data->ssl_spill_off;
 }
 
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {

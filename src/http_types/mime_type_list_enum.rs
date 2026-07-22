@@ -34,8 +34,6 @@ impl MimeTypeList {
         self.0.len()
     }
 
-    pub const COUNT: usize = 2310;
-
     pub const ALL: &'static [MimeTypeList] = ALL;
 }
 

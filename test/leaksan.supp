@@ -85,6 +85,7 @@ leak:JSC::stringProtoFuncReplaceUsingRegExp
 leak:WebCore::parseTypeAndSubtype
 leak:runtime.node.util.parse_args.parseArgs
 leak:JSC::IntlDateTimeFormat::initializeDateTimeFormat
+leak:JSC::TemporalCore::withTimeZone
 leak:WebCore__DOMURL__fileSystemPath
 leak:runtime.node.node_fs_watcher.FSWatcher.Arguments.fromJS
 leak:jsc.web_worker.create

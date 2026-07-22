@@ -157,6 +157,13 @@ int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t *s) {
     return 1;
 }
 
+unsigned int us_socket_ssl_spill_pending(struct us_socket_t *s) {
+    if (s->ssl) {
+        return us_internal_ssl_spill_pending(s);
+    }
+    return 0;
+}
+
 int us_connecting_socket_is_closed(struct us_connecting_socket_t *c) {
     return c->closed;
 }

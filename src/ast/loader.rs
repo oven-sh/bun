@@ -1,9 +1,9 @@
 //! `Loader` + `SideEffects`.
 //!
-//! Data-only enum + pure predicates. `to_api()` / `from_api()` / `API_NAMES` /
-//! `LoaderOptional::from_api` live in `bun_options_types::LoaderExt` (would
-//! back-edge into the schema crate). `to_mime_type` / `from_mime_type` live in
-//! `bun_http_types` (would back-edge into `bun_http::MimeType`).
+//! Data-only enum + pure predicates. `to_api()` / `from_api()` / `API_NAMES`
+//! live in `bun_options_types::LoaderExt` (would back-edge into the schema
+//! crate). `to_mime_type` / `from_mime_type` live in `bun_http_types` (would
+//! back-edge into `bun_http::MimeType`).
 
 use enum_map::Enum;
 
@@ -63,20 +63,6 @@ bun_core::assert_ffi_discr!(
     Jsonc = 7, Toml = 8, Wasm = 9, Napi = 10, Base64 = 11, Dataurl = 12,
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
 );
-
-/// `Loader.Optional` — `enum(u8) { none = 254, _ }` niche-packed optional.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct LoaderOptional(pub(crate) u8);
-
-impl LoaderOptional {
-    pub const NONE: LoaderOptional = LoaderOptional(254);
-
-    #[inline]
-    pub const fn from_loader(l: Loader) -> LoaderOptional {
-        LoaderOptional(l as u8)
-    }
-}
 
 // E0658: inherent assoc types are nightly-only; lifted to module scope.
 pub type LoaderHashTable = bun_collections::StringArrayHashMap<Loader>;

@@ -188,6 +188,21 @@ public:
         return getAsyncSocketData()->buffer.length();
     }
 
+    /* Whether every byte handed to us_socket_write() has reached the kernel.
+     * For TLS, us_socket_write() can report a batch as written while its
+     * ciphertext still sits in the loop's spill slot (openssl.c
+     * ssl_flush_write_batch); the close-after-drain gates in HttpResponse /
+     * HttpContext must wait for that too. Kept separate from
+     * getBufferedAmount() so WebSocket's maxBackpressure policy and the
+     * JS-exposed bufferedAmount stay a plaintext count. */
+    bool hasFullyDrained() {
+        if (getAsyncSocketData()->buffer.length()) return false;
+        if constexpr (SSL) {
+            return us_socket_ssl_spill_pending((us_socket_t *) this) == 0;
+        }
+        return true;
+    }
+
     /* Returns the text representation of an IPv4 or IPv6 address */
     std::string_view addressAsText(std::string_view binary) {
         static thread_local char buf[64];

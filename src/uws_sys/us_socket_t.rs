@@ -122,12 +122,14 @@ impl us_socket_t {
         c::us_socket_is_shut_down(self) > 0
     }
 
-    pub fn local_port(&self) -> i32 {
-        c::us_socket_local_port(self)
+    /// `None` when `getsockname()` fails or the address family has no port.
+    pub fn local_port(&self) -> Option<u16> {
+        u16::try_from(c::us_socket_local_port(self)).ok()
     }
 
-    pub fn remote_port(&self) -> i32 {
-        c::us_socket_remote_port(self)
+    /// `None` when `getpeername()` fails or the address family has no port.
+    pub fn remote_port(&self) -> Option<u16> {
+        u16::try_from(c::us_socket_remote_port(self)).ok()
     }
 
     /// Returned slice is a view into `buf`.

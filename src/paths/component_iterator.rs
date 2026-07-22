@@ -36,7 +36,7 @@ impl PathFormat {
 /// and including `name` (no trailing separator); `name` is the bare segment.
 /// Both borrow the original input — no allocation, no copying.
 #[derive(Clone, Copy, Debug)]
-pub struct Component<'a, T> {
+pub(crate) struct Component<'a, T> {
     /// The current component's name, e.g. `b`. Never contains separators.
     name: &'a [T],
     /// The full path up to and including the current component, e.g. `/a/b`.

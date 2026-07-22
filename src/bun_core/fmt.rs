@@ -19,7 +19,7 @@ const SHA512_DIGEST: usize = 64;
 // `pub use bun_core::strings::*` and extend with the heavy bits.
 // ════════════════════════════════════════════════════════════════════════════
 
-pub mod js_lexer {
+pub(crate) mod js_lexer {
     /// ASCII fast path; bun_js_parser extends with the full Unicode ID_Start
     /// table.
     #[inline]

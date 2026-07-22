@@ -408,7 +408,7 @@ impl<'a> LinkerContext<'a> {
 // and `SideEffects` live in sibling modules. Re-export so `EntryPoint::Kind` here is the
 // *same type* `items_entry_point_kind()` returns.
 #[allow(non_snake_case)]
-pub mod EntryPoint {
+pub(crate) mod EntryPoint {
     pub(crate) use crate::entry_point::Kind;
 }
 use crate::bundled_ast::Flags as AstFlags;

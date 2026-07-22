@@ -1467,7 +1467,7 @@ pub struct Node {
     pub next: *mut Node,
 }
 
-pub mod node {
+pub(crate) mod node {
     use super::*;
 
     /// A linked list of Nodes

@@ -226,7 +226,7 @@ pub(crate) fn todo(msg: &str) -> ! {
 // duplicated `generics::{Parse, ToCss}`, so they were removed.
 
 /// `enum_property_util` — generic `parse`/`toCss`/`asStr` for plain enums.
-pub mod enum_property_util {
+pub(crate) mod enum_property_util {
     use super::*;
 
     pub(crate) fn as_str<T: Into<&'static str> + Copy>(this: &T) -> &'static str {
@@ -3890,7 +3890,7 @@ impl BlockType {
 
 // ───────────────────────────── nth ─────────────────────────────
 
-pub mod nth {
+pub(crate) mod nth {
     use super::*;
 
     pub(crate) type NthResult = (i32, i32);
@@ -5810,7 +5810,7 @@ pub mod color {
 
 // ───────────────────────────── serializer ─────────────────────────────
 
-pub mod serializer {
+pub(crate) mod serializer {
     use super::*;
 
     /// Write a CSS name, like a custom property name.
@@ -6044,7 +6044,7 @@ pub mod serializer {
 
 // ───────────────────────────── misc utilities ─────────────────────────────
 
-pub mod parse_utility {
+pub(crate) mod parse_utility {
     use super::*;
 
     /// Parse a value from a string.

@@ -336,7 +336,7 @@ pub mod resolve_path;
 pub use resolve_path::{Platform, PlatformT, platform};
 pub mod component_iterator;
 pub use component_iterator::{
-    Component, ComponentIterator, MakePathStep, PathFormat, make_path_with,
+    ComponentIterator, MakePathStep, PathFormat, make_path_with,
 };
 pub mod classify;
 pub use classify::{RelPathFacts, classify_rel_t};

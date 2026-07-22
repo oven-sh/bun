@@ -1142,8 +1142,9 @@ pub mod schema {
 pub use output as Output;
 
 // `crate::js_lexer` / `crate::js_printer` resolve to fmt.rs's local subsets.
+pub(crate) use fmt::js_lexer;
 pub use fmt::{
-    InvalidCharacter, ParseIntError, js_lexer, js_printer, parse_decimal, parse_int, parse_unsigned,
+    InvalidCharacter, ParseIntError, js_printer, parse_decimal, parse_int, parse_unsigned,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

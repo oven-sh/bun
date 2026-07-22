@@ -88,8 +88,7 @@ pub use values as css_values;
 // selector/property/media_query bodies via `css::*`.
 pub use css_parser::{
     CssRef, CssRefTag, CssResult as Result, Delimiters, EnumProperty, IntoParserError, Maybe,
-    ParserState, enum_property_util, nth, parse_utility,
-};
+    ParserState, };
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────
 // The selector grammar references these via `bun_css::*`. `Str` is the
@@ -138,8 +137,8 @@ pub use generics::{CssEql, DeepClone};
 pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
 // Serializer + dtoa helpers live in the parser hub but are referenced as
 // `css::serializer` / `css::f32_length_with_5_digits` from value modules.
-pub use css_parser::{dtoa_short, f32_length_with_5_digits, serializer};
-pub(crate) use css_parser::to_css;
+pub use css_parser::{dtoa_short, f32_length_with_5_digits};
+pub(crate) use css_parser::{enum_property_util, nth, parse_utility, to_css};
 
 #[path = "generics.rs"]
 pub mod generics;

@@ -1543,8 +1543,15 @@ async function getPipeline(options = {}) {
         }
 
         // Seed the symbol order file for a cross-compiled target on its native
-        // test fleet (see getTraceOrderStep). Non-PR only: PRs never consume it.
-        if (target.os === "darwin" && target.arch === "aarch64" && isMainBranch()) {
+        // test fleet (see getTraceOrderStep). Always on main so the inheritance
+        // chain stays fed, and anywhere else on commit-message opt-in so a PR
+        // that changes the tracer can prove the step works before merge — the
+        // same `[generate symbol order]` tag ci.ts already honours.
+        if (
+          target.os === "darwin" &&
+          target.arch === "aarch64" &&
+          (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))
+        ) {
           steps.push(getTraceOrderStep(target));
         }
 

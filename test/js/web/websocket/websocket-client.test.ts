@@ -3,8 +3,8 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, nodeExe } from "harness";
 import { createHash } from "node:crypto";
-import { createServer } from "node:net";
 import { once } from "node:events";
+import { createServer } from "node:net";
 import * as path from "node:path";
 function test(
   label: string,
@@ -297,7 +297,9 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
           const i = buf.indexOf("\r\n\r\n");
           if (i < 0) return;
           const key = /sec-websocket-key: *([^\r\n]+)/i.exec(buf.toString("latin1"))![1];
-          const accept = createHash("sha1").update(key + GUID).digest("base64");
+          const accept = createHash("sha1")
+            .update(key + GUID)
+            .digest("base64");
           sock.write(
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
               `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,

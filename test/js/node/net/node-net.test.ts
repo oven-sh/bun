@@ -1132,3 +1132,24 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
     target.close();
   }
 });
+
+// onconnection / ServerHandlers.handshake previously resume()d after emit,
+// stomping a pause() made inside the handler. Subprocess-isolated so nothing
+// in the test runner touches readableFlowing.
+describe.each([
+  ["net.createServer 'connection'", "net-server-accepted-socket-pause-fixture.js"],
+  ["tls.createServer 'secureConnection'", "tls-server-accepted-socket-pause-fixture.js"],
+])("accepted socket honors pause() made inside the %s handler", (_, fixture) => {
+  it("leaves readableFlowing false and delivers every byte after resume()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, fixture)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual(["flowing false", "backpressured true", "delivered true"]);
+    expect(exitCode).toBe(0);
+  });
+});

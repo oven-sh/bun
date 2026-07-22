@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 
 // Regression test for a heap-use-after-free when a Worker is terminated
@@ -14,15 +14,13 @@ import { bunEnv, bunExe, isASAN } from "harness";
 //
 // Keeping several codecs in flight at once makes the do_work() window wide
 // enough that terminate() reliably lands inside it.
-test(
-  "worker.terminate() during in-flight node:zlib async compression does not UAF",
-  async () => {
-    // ASAN poisons the freed VM immediately; a couple of rounds are enough.
-    // Release builds need the freed page to be reused/unmapped, which takes a
-    // few more.
-    const ROUNDS = isASAN ? 4 : 10;
+test("worker.terminate() during in-flight node:zlib async compression does not UAF", async () => {
+  // ASAN poisons the freed VM immediately; a couple of rounds are enough.
+  // Release builds need the freed page to be reused/unmapped, which takes a
+  // few more.
+  const ROUNDS = isASAN ? 4 : 10;
 
-    const script = /* js */ `
+  const script = /* js */ `
       const { Worker } = require("node:worker_threads");
       const src = \`
         const { parentPort } = require("node:worker_threads");
@@ -55,23 +53,17 @@ test(
       });
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("heap-use-after-free");
-    expect(stderr).not.toContain("AddressSanitizer");
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
-  },
-  // Per-test override: each round starts a Worker under ASAN and compresses a
-  // 16 MiB buffer; the default 5s is too short for that even once.
-  60_000,
-);
+  expect(stderr).not.toContain("heap-use-after-free");
+  expect(stderr).not.toContain("AddressSanitizer");
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+}, // Per-test override: each round starts a Worker under ASAN and compresses a
+// 16 MiB buffer; the default 5s is too short for that even once.
+60_000);

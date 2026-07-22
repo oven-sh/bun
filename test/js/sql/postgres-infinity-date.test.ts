@@ -256,7 +256,12 @@ test.each(["timestamp", "timestamptz"] as const)("binding ±Infinity to %s write
         } else if (type === 0x42 /* Bind */) {
           sent = readBindParameters(body);
           socket.write(
-            Buffer.concat([pgBindComplete(), pgDataRow([Buffer.from("ok")]), pgCommandComplete("SELECT 1"), pgReadyForQuery()]),
+            Buffer.concat([
+              pgBindComplete(),
+              pgDataRow([Buffer.from("ok")]),
+              pgCommandComplete("SELECT 1"),
+              pgReadyForQuery(),
+            ]),
           );
         }
       });

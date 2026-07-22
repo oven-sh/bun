@@ -32,9 +32,18 @@
  *     → extern-template declarations, or move the instantiating header to PCH.
  */
 
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync, type SpawnSyncOptions } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+
+function run(argv: string[], opts: SpawnSyncOptions): void {
+  const r = spawnSync(argv[0]!, argv.slice(1), opts);
+  if (r.error) {
+    console.error(`failed to spawn ${argv[0]}: ${r.error.message}`);
+    process.exit(1);
+  }
+  if (r.status !== 0) process.exit(r.status ?? 1);
+}
 
 const args = process.argv.slice(2);
 const flag = (name: string, dflt?: string): string | undefined => {
@@ -73,8 +82,13 @@ async function resolveClangBuildAnalyzer(): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`download failed: ${res.status} ${res.statusText}`);
   mkdirSync(dirname(bin), { recursive: true });
-  await Bun.write(bin, res);
-  if (process.platform !== "win32") chmodSync(bin, 0o755);
+  // .partial + rename: an interrupted fetch would otherwise leave a truncated
+  // file that existsSync() above happily reuses forever (same idiom as
+  // scripts/build/download.ts).
+  const partial = `${bin}.${process.pid}.partial`;
+  await Bun.write(partial, res);
+  if (process.platform !== "win32") chmodSync(partial, 0o755);
+  renameSync(partial, bin);
   return bin;
 }
 
@@ -115,13 +129,17 @@ function categorize(out: string): string {
 }
 
 function reportNinjaLog(edges: Edge[]): void {
+  console.log(`\n━━━ wall-clock (.ninja_log) ━━━`);
+  if (edges.length === 0) {
+    console.log(`  no edges recorded in ${buildDir}/.ninja_log — run without --no-build first.`);
+    return;
+  }
   const fmt = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
   const minStart = Math.min(...edges.map(e => e.start));
   const maxEnd = Math.max(...edges.map(e => e.end));
   const wall = maxEnd - minStart;
   const sum = edges.reduce((a, e) => a + (e.end - e.start), 0);
 
-  console.log(`\n━━━ wall-clock (.ninja_log) ━━━`);
   console.log(
     `  ${edges.length} edges   wall: ${fmt(wall)}   Σduration: ${fmt(sum)}   parallelism≈${(sum / wall).toFixed(1)}×\n`,
   );
@@ -195,9 +213,9 @@ if (!noBuild) {
     rmSync(buildDir, { recursive: true, force: true });
   }
   console.error(`building (release, cpp-only, lto=${lto}, timeTrace) → ${buildDir}`);
-  const r = spawnSync(
-    process.execPath,
+  run(
     [
+      process.execPath,
       resolve(repo, "scripts/build.ts"),
       "--profile=release",
       "--mode=cpp-only",
@@ -207,7 +225,6 @@ if (!noBuild) {
     ],
     { stdio: "inherit", cwd: repo },
   );
-  if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
 reportNinjaLog(readNinjaLog(buildDir));
@@ -218,9 +235,7 @@ reportNinjaLog(readNinjaLog(buildDir));
 const capture = resolve(buildDir, "time-trace.capture");
 const ini = resolve(buildDir, "ClangBuildAnalyzer.ini");
 await Bun.write(ini, `[counts]\nfileParse=20\nfileCodegen=15\nfunction=0\ntemplate=30\nheader=30\nheaderChain=5\n`);
-let r = spawnSync(cba, ["--all", buildDir, capture], { stdio: ["ignore", "ignore", "inherit"] });
-if (r.status !== 0) process.exit(r.status ?? 1);
+run([cba, "--all", buildDir, capture], { stdio: ["ignore", "ignore", "inherit"] });
 
 console.log(`\n━━━ compiler time (-ftime-trace, ClangBuildAnalyzer) ━━━`);
-r = spawnSync(cba, ["--analyze", capture], { stdio: "inherit", cwd: buildDir });
-if (r.status !== 0) process.exit(r.status ?? 1);
+run([cba, "--analyze", capture], { stdio: "inherit", cwd: buildDir });

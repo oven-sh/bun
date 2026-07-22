@@ -43,8 +43,9 @@ number to bump anywhere. Merging _is_ publishing.
 | `types.ts`                                           | The types for the spec. The types are the checklist: a field only some images bake exists only on those images' types.                                                                                                                                                                                                                                                                        |
 | `artifacts.ts`                                       | Turns spec values into concrete `{url, sha256}` downloads. `resolveArtifacts(entry)` is THE enumeration of everything an image bake fetches. Code, not data — but its _output_ is hashed.                                                                                                                                                                                                     |
 | `naming.ts`                                          | The hash and the name. `imageHash(entry)` = `sha256({epoch, image, artifacts, recipe})`.                                                                                                                                                                                                                                                                                                      |
-| `recipe.ts`                                          | `recipeHash(os)`: digest of every recipe file (this dir, machine.ts, the agent bundle), scoped per OS.                                                                                                                                                                                                                                                                                        |
-| `bootstrap.ts`                                       | Entry point run **on the bake VM** under a bare `node` (type stripping). `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`. `--dry-run` prints the complete plan for any image from any host.                                                                                                                                                                                           |
+| `generate.ts`                                        | Renders every image's files into `build/ci/<key>/` (self-contained `bootstrap.ts`, `agent.mjs`, `packer.json`), each bundled by esbuild from the entry + only its own components. |
+| `outputs.ts`                                         | Where those generated files live, and the digest over them (the image name's hash).                                                                          |
+| `bootstrap.ts`                                       | The bootstrap program (`runBootstrap`). Bundled per image into `build/ci/<key>/bootstrap.ts`, which runs **on the machine** under a bare `node`. `--dry-run` prints the plan.                                              |
 | `components/*.ts`                                    | One file per baked thing (nodejs, ccache, the sysroots, ...): each owns HOW its thing installs on each platform it supports and enumerates its own downloads, reading every fact from the spec entry.                                                                                                                                                                                         |
 | `components/registry.ts`                             | name → component; derives BOTH the ordered install steps and the hashed download bundle from an image\'s `components` list, so what is baked and what is hashed share one input.                                                                                                                                                                                                              |
 | `components/paths.ts`                                | Derived locations composed from the spec\'s root paths; no path is written twice.                                                                                                                                                                                                                                                                                                             |
@@ -91,7 +92,8 @@ force a rebuild by hand. Sanity-check with `bun run ci:images` (dry-runs all
 **Review what a bake will do** without touching anything:
 
 ```sh
-node scripts/build/ci/bootstrap.ts --image=linux-aarch64-13-debian --ci --repo-ref=main --dry-run
+bun scripts/build.ts --configure-only          # generates build/ci/<key>/
+node build/ci/linux-aarch64-13-debian/bootstrap.ts --ci --repo-ref=main --dry-run
 ```
 
 Prints every step, command, download (URL + whether checksum-pinned), and
@@ -109,23 +111,23 @@ file write. Works from any OS.
    name before launching anything (the guard against two simultaneous
    builds of one new hash) and returns immediately if it exists — same
    name means same recipe. Otherwise it bakes.
-3. Linux: launch the base AMI (spec `base.nameGlob`), upload
-   `scripts/build/ci/`, run the shim from `delivery.ts` (curl the pinned
-   node, `node bootstrap.ts …`), snapshot as `<name>`.
-   Windows: `packer.ts` renders the JSON template; Packer creates the VM,
-   the provisioners fetch the pinned node and run `bootstrap.ts`, then
-   sysprep and gallery publish under `<name>`.
+3. Linux: launch the base AMI (spec `base.nameGlob`), upload the
+   generated `bootstrap.ts`, run the shim from `delivery.ts` (curl the
+   pinned node, `node bootstrap.ts …`), snapshot as `<name>`.
+   Windows: the generated `packer.json` (with its bake-time placeholders
+   filled in) drives Packer, which creates the VM, uploads the generated
+   `bootstrap.ts`, runs it, then sysprep and gallery publish under `<name>`.
 4. robobun launches CI machines by looking `<name>` up exactly. No
    wildcards, no newest-wins.
 
 ## What the hash means (and doesn't)
 
-The hash covers the image's **facts** (its `spec.ts` entry), its **resolved
-downloads**, and the **recipe code** that produces it (`recipe.ts` digests
-every file under `scripts/build/ci` plus `machine.ts`, per OS) — so changing
-how images are baked renames them and nothing is silently reused. Tooling
-that produces nothing on an image (`check.ts`, `existence.ts`, this doc) is
-excluded and freely editable.
+The hash is a digest of the image's **generated files** (`build/ci/<key>/`),
+which `generate.ts` renders from the entry's facts plus only the recipe code
+that entry uses — so changing what a machine gets renames its image, and a
+refactor that renders identical files renames nothing. Bake-time values
+(the branch ref for the prefetch cache, credentials) are `{{placeholders}}`
+in the generated template, deliberately outside the hash.
 
 The hash means **same recipe**, not **same bytes**. Some inputs float by
 nature and are marked `FLOATING` in `spec.ts`: OS package repositories

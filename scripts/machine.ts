@@ -1,25 +1,16 @@
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  cpSync,
-  existsSync,
-  mkdtempSync,
-  readdirSync,
-  realpathSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { basename, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
 import { azure } from "./azure.mjs";
 import { packerDownload } from "./build/ci/artifacts.ts";
 import { agentEntry } from "./build/ci/components/paths.ts";
-import { BOOTSTRAP_SOURCE_DIRS, LINUX_REMOTE_ROOT, linuxBootstrapCommand } from "./build/ci/delivery.ts";
+import { LINUX_REMOTE_BOOTSTRAP, LINUX_REMOTE_ROOT, linuxBootstrapCommand } from "./build/ci/delivery.ts";
 import { azureToken } from "./build/ci/existence.ts";
 import { imageName as computeImageName, imageEntry } from "./build/ci/naming.ts";
-import { windowsPackerTemplate } from "./build/ci/packer.ts";
+import { imageOutDir } from "./build/ci/outputs.ts";
 import { packer } from "./build/ci/spec.ts";
 import { docker } from "./docker.mjs";
 import { tart } from "./tart.mjs";
@@ -1127,10 +1118,10 @@ function getCloud(name) {
  * @param {WindowsImage} options.image the spec entry to bake
  * @param {boolean} options.ci
  * @param {string} options.repoRef
- * @param {string} options.agentPath esbuild-bundled agent.mjs
- * @param {string} options.bootstrapDir directory holding scripts/build/ci
+ * @param {string} options.agentPath generated, esbuild-bundled agent.mjs
+ * @param {string} options.generated build/ci/<key>: generated packer.json + bootstrap.ts
  */
-async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, bootstrapDir }) {
+async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, generated }) {
   if (image.os !== "windows") {
     throw new Error(`buildWindowsImageWithPacker: ${image.key} is not a windows image entry`);
   }
@@ -1222,29 +1213,31 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
     throw new Error(`Failed to create gallery image definition: ${defResponse.status} ${await defResponse.text()}`);
   }
 
-  // Render the Packer template from the spec entry.
+  // The Packer template is GENERATED (packer.json, spec-derived values as
+  // literal text). Substitute the bake-time placeholders — credentials, the
+  // branch ref, local upload paths — which are deliberately outside the
+  // image hash, then write the concrete template for this bake.
   const packerBin = await ensurePacker(packer.version);
-  const template = windowsPackerTemplate({
-    image,
-    imageName,
-    repoRef,
-    bootstrapDir,
-    agentPath,
-    azure: {
-      clientId,
-      clientSecret,
-      subscriptionId,
-      tenantId,
-      // Dedicated build RG so Packer's 4-core bake VMs don't contend with
-      // robobun CI runners for the runner quota. (The gallery's own RG is
-      // a spec fact, image.gallery.resourceGroup, read by the template.)
-      buildResourceGroup: `${resourceGroup}-PACKER`,
-      location: image.gallery.location,
-    },
+  const bootstrapFile = join(generated, "bootstrap.ts");
+  const substitutions = {
+    azure_client_id: clientId,
+    azure_client_secret: clientSecret,
+    azure_subscription_id: subscriptionId,
+    azure_tenant_id: tenantId,
+    azure_build_resource_group: `${resourceGroup}-PACKER`,
+    azure_location: image.gallery.location,
+    repo_ref: repoRef,
+    bootstrap_file: bootstrapFile,
+    agent_path: agentPath,
+    hash: imageName.slice(image.key.length + 1),
+  };
+  const rendered = readFileSync(join(generated, "packer.json"), "utf8").replace(/\{\{([a-z_]+)\}\}/g, (match, name) => {
+    if (!(name in substitutions)) throw new Error(`packer.json placeholder {{${name}}} has no substitution`);
+    return String(substitutions[name]).replace(/\\/g, "\\\\");
   });
   const templateDir = mkdtempSync(join(tmpdir(), "packer-"));
   const templatePath = join(templateDir, `${key}.pkr.json`);
-  writeFileSync(templatePath, JSON.stringify(template, null, 2));
+  writeFileSync(templatePath, rendered);
   console.log(`[packer] Template: ${templatePath}`);
 
   console.log("[packer] Initializing plugins...");
@@ -1461,36 +1454,26 @@ async function main() {
   const branch = getBranch();
   const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
 
-  let bootstrapDir, agentPath;
-  if (bootstrap) {
-    // The bootstrap sources uploaded to every bake VM: bootstrap.ts + its
-    // modules + the spec, laid out at their repo-relative paths.
-    // Named to match LINUX_REMOTE_ROOT's basename so `scp -r` of this
-    // directory into the remote parent lands it exactly at the root.
-    bootstrapDir = join(mkdtempSync(join(tmpdir(), "bootstrap-")), basename(LINUX_REMOTE_ROOT));
-    for (const dir of BOOTSTRAP_SOURCE_DIRS) {
-      cpSync(resolve(import.meta.dirname, "..", dir), join(bootstrapDir, dir), { recursive: true });
-    }
-    console.log("Bootstrap sources:", bootstrapDir);
-    if (ci) {
-      const npx = which("bunx") || which("npx");
-      if (!npx) {
-        throw new Error("Executable not found: bunx or npx");
-      }
-      const entryPath = resolve(import.meta.dirname, "agent.mjs");
-      const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
-      // Named from the spec fact the remote path also derives from, so the
-      // bundle we upload and the file the service runs are one string.
-      agentPath = join(tmpPath, imageEntryValue.paths.buildkiteAgentEntry);
-      await spawnSafe($`${npx} esbuild ${entryPath} --bundle --platform=node --format=esm --outfile=${agentPath}`);
-    }
+  // The image's files are GENERATED by the build (bun scripts/build.ts →
+  // scripts/build/ci/generate.ts) into build/ci/<key>/: the self-contained
+  // bootstrap.ts, the agent bundle, and (windows) the packer template. This
+  // orchestrator only consumes them — the bytes uploaded are the bytes the
+  // image name is a hash of.
+  const generated = bootstrap ? imageOutDir(imageEntryValue) : undefined;
+  if (generated && !existsSync(join(generated, "bootstrap.ts"))) {
+    throw new Error(
+      `no generated files for "${imageEntryValue.key}" at ${generated}\n` + `Run \`bun scripts/build.ts\` first.`,
+    );
   }
+  const bootstrapFile = generated ? join(generated, "bootstrap.ts") : undefined;
+  const agentPath = generated && ci ? join(generated, "agent.mjs") : undefined;
+  if (generated) console.log("Generated image files:", generated);
 
   // Use Packer for Windows Azure image builds — it handles VM creation,
   // bootstrap, sysprep, and gallery capture via WinRM (no Run Command hacks).
   // Its idempotency check (gallery version probe) is inside the function.
   if (args["cloud"] === "azure" && os === "windows" && command === "create-image") {
-    await buildWindowsImageWithPacker({ image: options.imageEntry, ci, repoRef, agentPath, bootstrapDir });
+    await buildWindowsImageWithPacker({ image: options.imageEntry, ci, repoRef, agentPath, generated });
     return;
   }
 
@@ -1585,17 +1568,15 @@ async function main() {
       await machine.spawnSafe(command, { stdio: "inherit" });
     });
 
-    if (bootstrapDir) {
+    if (bootstrapFile) {
       // (Windows never reaches here: main turns bootstrap off for it — the
       // Packer path bakes Windows images.)
       // The image entry the bootstrap builds (resolved from --image in main).
       const entry = options.imageEntry;
-      await startGroup("Uploading bootstrap sources...", async () => {
-        // bootstrapDir's basename matches LINUX_REMOTE_ROOT's, so `scp -r`
-        // of the directory into the parent lands it exactly at the root.
-        await machine.spawnSafe(["rm", "-rf", LINUX_REMOTE_ROOT]);
-        await machine.upload(bootstrapDir, dirname(LINUX_REMOTE_ROOT));
-        await machine.spawnSafe(["ls", "-R", LINUX_REMOTE_ROOT]);
+      await startGroup("Uploading the generated bootstrap...", async () => {
+        await machine.spawnSafe(["sh", "-c", `rm -rf ${LINUX_REMOTE_ROOT} && mkdir -p ${LINUX_REMOTE_ROOT}`]);
+        await machine.upload(bootstrapFile, LINUX_REMOTE_BOOTSTRAP);
+        await machine.spawnSafe(["ls", "-l", LINUX_REMOTE_ROOT]);
       });
       await startGroup("Running bootstrap...", async () => {
         // Renders: fetch the spec-pinned node, then `node bootstrap.ts`.

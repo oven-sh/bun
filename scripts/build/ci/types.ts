@@ -41,13 +41,6 @@ export type LlvmSpec = {
   readonly aptScriptUrl: string;
 };
 
-/** The pinned GCC toolchain (gcc-N/g++-N, sanitizer runtimes, and the
- * CC/CXX/include/library environment binding the build to it). Present only
- * where the image ships a pinned gcc rather than the distro compiler set. */
-export type GccSpec = {
-  readonly version: string;
-};
-
 export type PinnedRelease = {
   readonly version: string;
   readonly releaseBase: string;
@@ -169,7 +162,6 @@ export type LinuxImageBase = {
   readonly nodejs: NodejsSpec;
   readonly bun: BunSpec;
   readonly llvm: LlvmSpec;
-  readonly gcc: GccSpec | null;
   /** Kitware's self-extracting installer on apt distros; alpine uses its
    * package. */
   readonly cmake: PinnedRelease;
@@ -274,7 +266,6 @@ export type LinuxSharedFields = Pick<
   | "nodejs"
   | "bun"
   | "llvm"
-  | "gcc"
   | "cmake"
   | "curlH3"
   | "buildkiteAgent"

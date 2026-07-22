@@ -1,50 +1,48 @@
-// Browsers for puppeteer-based tests: the distro's Chromium runtime deps,
-// plus Google Chrome itself where a .deb exists (x64 apt images) so tests
-// with a system browser skip their per-run Chrome-for-Testing download.
+// Browsers for puppeteer-based tests: the distro's Chromium runtime deps
+// (every linux image), and Google Chrome from its .deb (the x64 apt images
+// that list `chrome`) so tests with a system browser skip their per-run
+// Chrome-for-Testing download.
 
 import { shellScript } from "../bootstrap/ops-posix.ts";
 import { download, warn } from "../bootstrap/runtime.ts";
-import type { LinuxImage } from "../types.ts";
-import type { Component } from "./component.ts";
+import type { LinuxComponent } from "./component.ts";
 import { artifact } from "./component.ts";
-import { installPackages } from "./system-linux.ts";
 
-/** The single predicate for "this image ships Google Chrome": an x64
- * image with a chrome .deb URL. The artifact declaration and the step gate
- * both use it, so they cannot disagree. */
-function hasChromeDeb(image: LinuxImage): image is LinuxImage & { chromeDebUrl: string } {
-  return image.arch === "x64" && !!image.chromeDebUrl;
-}
-
-/** Chromium runtime for puppeteer-based tests (+ Chrome itself on x64). */
-export const chromium: Component = {
+/** Chromium runtime dependencies for puppeteer-based tests. */
+export const chromium: LinuxComponent = {
   name: "chromium",
-  linux: {
-    artifacts: image => (hasChromeDeb(image) ? { chromeDeb: { url: image.chromeDebUrl, sha256: null } } : {}),
-    steps: ctx => {
-      const { image } = ctx;
-      const chromeDeb = hasChromeDeb(image);
-      return [
-        {
-          name: "Install Chromium test dependencies",
-          run: () => installPackages(ctx, image.packages.chromium),
-        },
-        {
-          name: "Install Google Chrome (system browser skips per-run Chrome-for-Testing download)",
-          skip: !chromeDeb && "no Chrome .deb build for this image (x64 apt only)",
-          run: async () => {
-            // Best-effort: a Chrome install hiccup shouldn't fail the bake.
-            const deb = await download(artifact(ctx.artifacts, "chromeDeb"), { name: "google-chrome.deb" });
-            const result = await shellScript({
-              describe: "install the Chrome .deb, letting apt resolve deps and falling back to dpkg",
-              root: true,
-              allowFailure: true,
-              script: `apt-get install -y '${deb}' || dpkg -i '${deb}'`,
-            });
-            if (result.exitCode !== 0) warn("Chrome install failed; puppeteer tests will download their own browser");
-          },
-        },
-      ];
+  artifacts: () => ({}),
+  steps: ctx => [
+    {
+      name: "Install Chromium test dependencies",
+      run: () => ctx.manager.install(ctx, ctx.image.packages.chromium),
     },
+  ],
+};
+
+/** Google Chrome itself, from its .deb (an apt package). Listed only on the
+ * x64 apt images, whose entry carries `chromeDebUrl`. */
+export const chrome: LinuxComponent = {
+  name: "chrome",
+  artifacts: image => {
+    const url = image.arch === "x64" ? image.chromeDebUrl : null;
+    if (!url) throw new Error(`${image.key} lists "chrome" but has no chromeDebUrl`);
+    return { chromeDeb: { url, sha256: null } };
   },
+  steps: ctx => [
+    {
+      name: "Install Google Chrome (system browser skips per-run Chrome-for-Testing download)",
+      run: async () => {
+        // Best-effort: a Chrome install hiccup shouldn't fail the bake.
+        const deb = await download(artifact(ctx.artifacts, "chromeDeb"), { name: "google-chrome.deb" });
+        const result = await shellScript({
+          describe: "install the Chrome .deb, letting apt resolve deps and falling back to dpkg",
+          root: true,
+          allowFailure: true,
+          script: `apt-get install -y '${deb}' || dpkg -i '${deb}'`,
+        });
+        if (result.exitCode !== 0) warn("Chrome install failed; puppeteer tests will download their own browser");
+      },
+    },
+  ],
 };

@@ -16,18 +16,19 @@
 // A field that only some images bake exists only on those images' types.
 //
 // An image is named `${entry.key}-${hash}` (see ./naming.ts) where the hash
-// digests `epoch`, that entry's ENTIRE manifest, the artifacts it resolves
-// to, and the recipe code that produces it (./recipe.ts). So:
+// is a digest of that image's GENERATED files (build/ci/<key>/ — the
+// self-contained bootstrap.ts, the Packer template, the agent bundle),
+// which ./generate.ts renders from the entry here plus the recipe code. So:
 //
-//   - Change a fact an image references, or the code that builds it → its
-//     hash changes → CI bakes it fresh on that branch and reuses it on every
-//     later push. There is no `[build images]` / `[publish images]` step
-//     and no version number to bump; merging to main IS publishing, because
-//     main computes the same hash the branch already baked.
+//   - Change a fact an image references, or the code that renders it → its
+//     files change → its hash changes → CI bakes it fresh on that branch and
+//     reuses it on every later push. There is no `[build images]` /
+//     `[publish images]` step and no version number to bump; merging to
+//     main IS publishing, because main renders the same files.
 //
-//   - Whether an image bakes is a mechanical consequence of what changed —
-//     never something to remember, and never possible to fool by editing
-//     code without renaming the image.
+//   - Whether an image bakes is a mechanical consequence of the generated
+//     files — never something to remember. A refactor that renders
+//     identical files renames nothing.
 //
 // What a hash means: "same recipe", not "same bytes". Some inputs float by
 // nature (OS package repositories, `latest` cloud base images, installer
@@ -428,7 +429,6 @@ const linuxShared: LinuxSharedFields = {
   nodejs,
   bun,
   llvm,
-  gcc: null,
   cmake,
   curlH3,
   buildkiteAgent,
@@ -579,7 +579,6 @@ const linuxCommonComponents = [
   "python-fuse",
   "cmake",
   "llvm",
-  "gcc",
   "rust",
   "docker",
   "tailscale",
@@ -602,7 +601,6 @@ const linuxBuildHostComponents = [
   "python-fuse",
   "cmake",
   "llvm",
-  "gcc",
   "rust",
   "docker",
   "tailscale",
@@ -675,7 +673,7 @@ const linuxTestImages: readonly LinuxTestImage[] = [
     release: "13",
     abi: "gnu",
     buildHost: false,
-    components: linuxCommonComponents,
+    components: [...linuxCommonComponents, "chrome"],
     base: debianAmi("x64"),
     bake: linuxBake("x64"),
     packages: debianPackages,
@@ -702,7 +700,7 @@ const linuxTestImages: readonly LinuxTestImage[] = [
     release: "25.04",
     abi: "gnu",
     buildHost: false,
-    components: linuxCommonComponents,
+    components: [...linuxCommonComponents, "chrome"],
     base: ubuntuAmi("25.04", "x64"),
     bake: linuxBake("x64"),
     packages: ubuntuPackages,

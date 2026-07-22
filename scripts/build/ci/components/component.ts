@@ -9,20 +9,21 @@
 // its own file:
 //
 //   - change a component's CODE  → the recipe hash moves and the images
-//     for that platform re-bake (recipe.ts scopes it per OS);
+//     for that platform re-bake (their generated bootstraps change);
 //   - change a component's FACTS → the spec entry changed → its images
 //     re-bake automatically.
 //
 // An image's spec entry lists its components IN INSTALL ORDER, so ordering
-// is data. bootstrap.ts assembles the plan via components/registry.ts, which
-// walk that list; resolveArtifacts() walks the same list to build the
-// hashed download bundle. Bake and hash therefore share one input by
+// is data. The generated per-image entry imports exactly that list, and
+// components/registry.ts derives both the steps and the download bundle from
+// it — one input, so what is baked and what is generated agree by
 // construction.
 
 import type { Download } from "../artifacts.ts";
 import type { Host } from "../bootstrap/host.ts";
 import type { Step } from "../bootstrap/runtime.ts";
 import type { LinuxImage, WindowsImage } from "../types.ts";
+import type { PackageManager } from "./package-manager.ts";
 
 /** What a linux component's steps get. */
 export type LinuxContext = {
@@ -36,6 +37,9 @@ export type LinuxContext = {
   /** Every download this image performs, keyed by artifact name — the same
    * bundle the image hash covers. Components read their downloads here. */
   artifacts: ArtifactBundle;
+  /** This image's package manager. Resolved from the entry in the generated
+   * per-image bundle, so only its own manager's code is present. */
+  manager: PackageManager;
 };
 
 /** What a windows component's steps get. */
@@ -50,27 +54,27 @@ export type WindowsContext = {
 /** Downloads keyed by a stable artifact name (unique across an image). */
 export type ArtifactBundle = { readonly [artifactName: string]: Download };
 
-/** One platform's half of a component. Omit the platform a thing has no
- * meaning on (age has no windows; intelSde has no linux). */
-export type LinuxSupport = {
+/** A component for one platform. A thing that installs on both (nodejs,
+ * rust, ...) is two components sharing a name in separate modules
+ * (<name>.linux.ts / <name>.windows.ts), so a generated bootstrap imports
+ * only its own platform's module and never carries the other's code. */
+export type LinuxComponent = {
+  /** Stable identifier; images list components by name. */
+  name: string;
   /** The downloads this component needs on this image, keyed by artifact
-   * name. Part of the hash; the steps read the same names back. */
+   * name. The steps read the same names back. */
   artifacts: (image: LinuxImage) => ArtifactBundle;
   /** The install steps, in order. */
   steps: (ctx: LinuxContext) => Step[];
 };
 
-export type WindowsSupport = {
+export type WindowsComponent = {
+  name: string;
   artifacts: (image: WindowsImage) => ArtifactBundle;
   steps: (ctx: WindowsContext) => Step[];
 };
 
-export type Component = {
-  /** Stable identifier; images list components by name. */
-  name: string;
-  linux?: LinuxSupport;
-  windows?: WindowsSupport;
-};
+export type Component = LinuxComponent | WindowsComponent;
 
 /**
  * Read a download a component declared. A missing name is a genuine bug —

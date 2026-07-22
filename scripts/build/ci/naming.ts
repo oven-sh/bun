@@ -1,25 +1,20 @@
 // Content-addressed CI image names.
 //
-// An image is named `${entry.key}-${imageHash(entry)}` where the hash digests
-// `spec.epoch` + that image's ENTIRE entry + the RESOLVED artifact bundle
-// it produces (every concrete download URL/checksum, from
-// artifacts.resolveArtifacts). spec.ts stays pure data; the URL
-// construction is code in artifacts.ts, but its OUTPUT is hashed here, so
-// editing a URL template re-bakes exactly like editing a version does.
-// The RECIPE — the code that produces the image (bootstrap, components,
-// ops, packer template, machine.ts) — is also hashed, scoped per OS via
-// recipe.ts, so a code change renames exactly the images it can affect and
-// reuse can never mask a bake that should have happened. spec.epoch stays
-// the lever for changes the hash can't see (a floating base image moved).
+// An image is named `${entry.key}-${imageHash(entry)}` where the hash is a
+// digest of the image's GENERATED files (build/ci/<key>/, from generate.ts):
+// the self-contained bootstrap.ts, the Packer template, and the agent
+// bundle. Those files are derived from spec.ts, so editing the spec (or the
+// recipe code they are built from) changes the files, which changes the
+// name, which makes CI bake. Files unchanged -> name unchanged -> reuse.
 //
 // The same name is used for the AWS AMI and the Azure gallery image
 // definition, and robobun launches CI machines by looking that exact name
 // up — no wildcards, no version numbers, no newest-wins.
 
-import { createHash } from "node:crypto";
-import { resolveArtifacts } from "./components/registry.ts";
-import { recipeHash } from "./recipe.ts";
-import { epoch, images } from "./spec.ts";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { hashImageDir, imageOutDir } from "./outputs.ts";
+import { images } from "./spec.ts";
 import type { Image } from "./types.ts";
 
 /** Length of the hex hash suffix. 16 hex chars = 64 bits; collision odds
@@ -27,40 +22,20 @@ import type { Image } from "./types.ts";
 const HASH_LENGTH = 16;
 
 /**
- * Deterministic JSON: objects have their keys sorted; everything else is
- * standard. Used only for hashing, so it only has to be stable, not pretty.
+ * The hex digest of one image's GENERATED files (build/ci/<key>/): the
+ * self-contained bootstrap.ts, the Packer template, the agent bundle — the
+ * exact bytes that are baked. Requires the files to have been generated
+ * (bun scripts/build.ts, or scripts/build/ci/generate.ts).
  */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record).sort();
-  return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
-}
-
-/** The hex digest of one image's full manifest + resolved downloads
- * (+ epoch). */
 export function imageHash(entry: Image): string {
-  return createHash("sha256")
-    .update(
-      canonicalJson({
-        epoch,
-        image: entry,
-        artifacts: resolveArtifacts(entry),
-        // The code that produces the image (recipe.ts) — so a change to
-        // bootstrap/components/packer/machine renames the images it can
-        // affect, and no build can reuse an image the current code
-        // wouldn't have produced. Reuse is a mechanical consequence, never a
-        // thing to remember to force.
-        recipe: recipeHash(entry.os),
-      }),
-    )
-    .digest("hex")
-    .slice(0, HASH_LENGTH);
+  const dir = imageOutDir(entry);
+  if (!existsSync(join(dir, "bootstrap.ts"))) {
+    throw new Error(
+      `image "${entry.key}" has no generated files at ${dir}.\n` +
+        `Run \`node scripts/build/ci/generate.ts\` (or \`bun scripts/build.ts\`) first.`,
+    );
+  }
+  return hashImageDir(dir).slice(0, HASH_LENGTH);
 }
 
 /** The full name every consumer agrees on: robobun's `image-name` agent

@@ -1,4 +1,3 @@
-
 /**
  * Build and test Bun on macOS, Linux, and Windows.
  * @link https://buildkite.com/docs/pipelines/defining-steps
@@ -11,6 +10,7 @@
 
 import { join } from "node:path";
 import { checkImages } from "../scripts/build/ci/existence.ts";
+import { generateCiImages } from "../scripts/build/ci/generate.ts";
 import { imageEntry, imageKey, imageName } from "../scripts/build/ci/naming.ts";
 import { alpineRelease } from "../scripts/build/ci/spec.ts";
 import {
@@ -901,9 +901,12 @@ function getWindowsSignStep(windowsPlatforms, options) {
     key: "windows-sign",
     label: `${getBuildkiteEmoji("windows")} sign`,
     depends_on: windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
-    agents: getEc2Agent({ os: "windows", arch: "x64", release: "2019" }, {
-      instanceType: getAzureVmSize("windows", "x64", "test"),
-    }),
+    agents: getEc2Agent(
+      { os: "windows", arch: "x64", release: "2019" },
+      {
+        instanceType: getAzureVmSize("windows", "x64", "test"),
+      },
+    ),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     command: [
@@ -1378,6 +1381,9 @@ async function getPipeline(options = {}) {
   // No fallback: if the credentials aren't resolvable or the cloud query
   // fails, pipeline generation FAILS. A broken existence check must be seen
   // and fixed, never masked by quietly baking everything (or nothing).
+  // Names are hashes of the GENERATED files, so generate them first (the
+  // same generator `bun scripts/build.ts` runs).
+  generateCiImages();
   let existence;
   try {
     existence = await checkImages(
@@ -1400,7 +1406,11 @@ async function getPipeline(options = {}) {
     console.log(`  ${exists ? "exists " : "BAKE   "} ${name}  (${detail})`);
   }
   const missing = new Set(existence.filter(({ exists }) => !exists).map(({ image }) => image.key));
-  console.log(missing.size ? `\n${missing.size} image(s) to bake: ${[...missing].join(", ")}` : "\nAll images exist; no bake steps needed.");
+  console.log(
+    missing.size
+      ? `\n${missing.size} image(s) to bake: ${[...missing].join(", ")}`
+      : "\nAll images exist; no bake steps needed.",
+  );
 
   // imagePlatforms = the images this build must BAKE. Downstream depends_on
   // keys off membership here, so a job waits on a bake only when one is

@@ -1,14 +1,15 @@
 // Packer template generation for Windows CI images.
 //
 // Windows images are baked with Packer's azure-arm builder (VM create,
-// WinRM provisioning, sysprep, gallery capture). The template is generated
-// as JSON at bake time from the image's spec entry — the base image, bake VM
-// size, disk, gallery destination, and the 27 replication regions are all
-// facts on WindowsImage — so there is no checked-in .pkr.hcl to drift.
+// WinRM provisioning, sysprep, gallery capture). The template is rendered
+// as JSON (generate.ts) from the image's spec entry — the base image, bake
+// VM size, disk, gallery destination, and the 27 replication regions are all
+// facts on WindowsImage — with the bake-time values as {{placeholders}}.
+// There is no checked-in .pkr.hcl to drift.
 //
 // The provisioner sequence is code, and lives here:
-//   1. download the pinned node, upload the bootstrap sources
-//   2. run `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`
+//   1. upload the generated bootstrap.ts, download the pinned node
+//   2. run `node bootstrap.ts --ci --repo-ref=<ref>`
 //   3. upload agent.mjs and install it as a service
 //   4. reboot (VS Build Tools / Windows Update leftovers), then sysprep last
 //
@@ -19,15 +20,23 @@ import { windowsAgentEntry } from "./components/paths.ts";
 import { packer } from "./spec.ts";
 import type { WindowsImage } from "./types.ts";
 
+/**
+ * The rendered template is generated at build time (scripts/build/ci/generate.ts)
+ * with the bake-time values as {{placeholders}}; machine.ts substitutes the
+ * real values just before `packer build`. Anything derived from the spec
+ * entry is literal text and part of the image hash; the placeholders (a
+ * branch ref, credentials, local upload paths) are not, so a branch rename
+ * or a secret rotation never renames the image.
+ */
 export type PackerTemplateInput = {
   image: WindowsImage;
-  /** Exact gallery image definition name (from naming.ts). */
+  /** The content-addressed image name (the gallery image definition). */
   imageName: string;
-  /** Git ref the bootstrap clones for the prefetch caches. */
+  /** Git ref the bootstrap clones for the prefetch caches — {{repo_ref}}
+   * at generate time, the real ref at bake time. */
   repoRef: string;
-  /** Local path of the directory holding bootstrap.ts + its modules
-   * (uploaded to the VM). */
-  bootstrapDir: string;
+  /** Local path of the generated bootstrap.ts (uploaded to the VM). */
+  bootstrapFile: string;
   /** Local path of the esbuild-bundled agent.mjs (uploaded to the VM). */
   agentPath: string;
   azure: {
@@ -42,6 +51,24 @@ export type PackerTemplateInput = {
   };
 };
 
+/** The bake-time inputs as {{placeholders}}: the hashed, generated template
+ * carries these instead of live values. */
+export const PACKER_PLACEHOLDERS: PackerTemplateInput["azure"] & {
+  repoRef: string;
+  bootstrapFile: string;
+  agentPath: string;
+} = {
+  clientId: "{{azure_client_id}}",
+  clientSecret: "{{azure_client_secret}}",
+  subscriptionId: "{{azure_subscription_id}}",
+  tenantId: "{{azure_tenant_id}}",
+  buildResourceGroup: "{{azure_build_resource_group}}",
+  location: "{{azure_location}}",
+  repoRef: "{{repo_ref}}",
+  bootstrapFile: "{{bootstrap_file}}",
+  agentPath: "{{agent_path}}",
+};
+
 /** Where the bootstrap sources land on the bake VM (deleted by sysprep). */
 const REMOTE_BOOTSTRAP_DIR = "C:\\bun-bootstrap";
 /** The pinned node is unpacked inside the bootstrap dir so one cleanup
@@ -53,7 +80,7 @@ const REMOTE_NODE_DIR = `${REMOTE_BOOTSTRAP_DIR}\\node`;
  * Returned as an object; the caller writes it with JSON.stringify.
  */
 export function windowsPackerTemplate(input: PackerTemplateInput): Record<string, unknown> {
-  const { image, imageName, repoRef, bootstrapDir, agentPath, azure } = input;
+  const { image, imageName, repoRef, bootstrapFile, agentPath, azure } = input;
   const { gallery } = image;
   const node = nodejsDownload(image.nodejs, "windows", image.arch, null);
   const nodeFolder = nodejsFolderName(image.nodejs, "windows", image.arch, null);
@@ -113,8 +140,7 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
   // is the only artifact anything reads.
 
   const bootstrapCommand = [
-    `& '${REMOTE_NODE_DIR}\\${nodeFolder}\\node.exe' '${REMOTE_BOOTSTRAP_DIR}\\scripts\\build\\ci\\bootstrap.ts'`,
-    `--image=${image.key}`,
+    `& '${REMOTE_NODE_DIR}\\${nodeFolder}\\node.exe' '${REMOTE_BOOTSTRAP_DIR}\\bootstrap.ts'`,
     "--ci",
     `--repo-ref=${repoRef}`,
   ].join(" ");
@@ -136,11 +162,11 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
       // not a "type" field. hclProvisioners() re-shapes the readable
       // {type, ...body} entries below into that encoding.
       provisioner: hclProvisioners([
-        // Step 1: upload the bootstrap sources (spec + bootstrap modules).
+        // Step 1: upload the generated, self-contained bootstrap.ts.
         {
           type: "file",
-          source: `${bootstrapDir}/`,
-          destination: `${REMOTE_BOOTSTRAP_DIR}\\`,
+          source: bootstrapFile,
+          destination: `${REMOTE_BOOTSTRAP_DIR}\\bootstrap.ts`,
         },
         // Step 2: fetch the spec-pinned node (the same node the image
         // keeps) so bootstrap.ts runs under a real node with type-stripping.

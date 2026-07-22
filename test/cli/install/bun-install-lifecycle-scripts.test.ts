@@ -2837,6 +2837,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
                 // prevents real `uses-what-bin` from hoisting to root
                 "uses-what-bin": "npm:a-dep@1.0.3",
               },
+              // what-bin hoists to root while its declaring uses-what-bin
+              // stays nested under pkg1; the bin trust gate would otherwise
+              // drop it from every `.bin` on PATH for the install script.
+              trustedDependencies: ["what-bin"],
               workspaces: ["pkg1"],
             }),
           ),

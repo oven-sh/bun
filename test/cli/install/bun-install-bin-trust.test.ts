@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync } from "fs";
-import { rm } from "fs/promises";
+import { rm, symlink, mkdir } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -10,8 +10,11 @@ import { join } from "path";
 // the next time a project script shells out to that tool, bypassing the
 // default no-scripts trust model. These tests cover the trust gate applied to
 // hoisted bin linking.
-
-// --- tiny in-process npm registry -----------------------------------------
+//
+// A tiny in-process registry is used instead of `VerdaccioRegistry` so the
+// test packages live next to the assertions that depend on their shape; the
+// bypass cases below need packages whose `scripts` and `bin` maps are varied
+// per test.
 
 const enc = new TextEncoder();
 function tarHeader(name: string, size: number, mode = "0000755") {
@@ -66,6 +69,19 @@ addPkg(
   { "shadow.js": shadowScript },
 );
 addPkg({ name: "dep-on-shadow-bin", version: "1.0.0", dependencies: { "shadow-bin": "1.0.0" } }, { "index.js": "0" });
+addPkg(
+  {
+    name: "scripted-dep-on-shadow-bin",
+    version: "1.0.0",
+    dependencies: { "shadow-bin": "1.0.0" },
+    scripts: { postinstall: "exit 0" },
+  },
+  { "index.js": "0" },
+);
+addPkg(
+  { name: "dep-on-scripted-dep", version: "1.0.0", dependencies: { "scripted-dep-on-shadow-bin": "1.0.0" } },
+  { "index.js": "0" },
+);
 
 let server: ReturnType<typeof Bun.serve>;
 let registryUrl: string;
@@ -85,6 +101,7 @@ beforeAll(() => {
           versions: {
             [p.pj.version]: {
               ...p.pj,
+              hasInstallScript: !!p.pj.scripts,
               dist: { tarball: `${registryUrl}t/${p.pj.name}-${p.pj.version}.tgz`, integrity: integrity(p.gz) },
             },
           },
@@ -101,8 +118,6 @@ beforeAll(() => {
 afterAll(() => {
   server?.stop(true);
 });
-
-// --- helpers ---------------------------------------------------------------
 
 async function install(packageDir: string, extraEnv: Record<string, string> = {}) {
   await using proc = Bun.spawn({
@@ -132,33 +147,37 @@ function binEntries(dir: string): string[] {
     .sort();
 }
 
-async function setup(packageJson: any) {
-  const dir = tempDir("bin-trust-", {
+function setup(packageJson: any) {
+  return tempDir("bin-trust-", {
     "bunfig.toml": `[install]\nregistry = "${registryUrl}"\ncache = false\nlinker = "hoisted"\n`,
     "package.json": JSON.stringify(packageJson),
   });
-  return String(dir);
 }
-
-// --- tests ----------------------------------------------------------------
 
 describe.concurrent("hoisted linker bin trust gate", () => {
   test("untrusted transitive dependency bins are not linked into root .bin", async () => {
-    const packageDir = await setup({
+    using dir = setup({
       name: "app",
       version: "1.0.0",
       dependencies: { "dep-on-shadow-bin": "1.0.0" },
     });
+    const packageDir = String(dir);
 
     await install(packageDir);
 
     // shadow-bin is installed (hoisted to root node_modules) but its bin
     // entries must not appear in root .bin because it is neither a direct
-    // dependency nor trusted.
+    // dependency nor trusted. They are linked into the declaring package's
+    // own nested .bin instead so that package's scripts could still find them.
     expect(existsSync(join(packageDir, "node_modules", "shadow-bin", "shadow.js"))).toBeTrue();
     expect(binEntries(packageDir)).toEqual([]);
     expect(existsSync(join(packageDir, "node_modules", ".bin", "git"))).toBeFalse();
-    expect(existsSync(join(packageDir, "node_modules", ".bin", "shadow-bin-tool"))).toBeFalse();
+    const nestedBin = join(packageDir, "node_modules", "dep-on-shadow-bin", "node_modules", ".bin");
+    expect(
+      readdirSync(nestedBin)
+        .map(n => n.replace(/\.(bunx|exe)$/i, ""))
+        .sort(),
+    ).toContain("shadow-bin-tool");
 
     // Same result after a reinstall from the lockfile (exercises the
     // already-on-disk enqueue path).
@@ -167,12 +186,61 @@ describe.concurrent("hoisted linker bin trust gate", () => {
     expect(binEntries(packageDir)).toEqual([]);
   });
 
+  test.skipIf(isWindows)(
+    "stale bins left by a previous install are removed when the gate now denies them",
+    async () => {
+      using dir = setup({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "dep-on-shadow-bin": "1.0.0" },
+      });
+      const packageDir = String(dir);
+
+      await install(packageDir);
+      expect(binEntries(packageDir)).toEqual([]);
+
+      // Simulate a node_modules populated before the gate existed.
+      await mkdir(join(packageDir, "node_modules", ".bin"), { recursive: true });
+      await symlink(
+        join("..", "shadow-bin", "shadow.js"),
+        join(packageDir, "node_modules", ".bin", "git"),
+      );
+      await symlink(
+        join("..", "shadow-bin", "shadow.js"),
+        join(packageDir, "node_modules", ".bin", "shadow-bin-tool"),
+      );
+      expect(binEntries(packageDir)).toEqual(["git", "shadow-bin-tool"]);
+
+      // A reinstall over the existing node_modules should clear them.
+      await install(packageDir);
+      expect(binEntries(packageDir)).toEqual([]);
+    },
+  );
+
+  test("transitive owner with a lifecycle script does not unlock root .bin for its dependencies", async () => {
+    using dir = setup({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { "dep-on-scripted-dep": "1.0.0" },
+    });
+    const packageDir = String(dir);
+
+    const { stdout } = await install(packageDir);
+
+    // scripted-dep-on-shadow-bin has a postinstall but is itself transitive
+    // and untrusted; a no-op script must not be enough to plant shadow-bin's
+    // git in the root .bin.
+    expect(stdout).toContain("Blocked 1 postinstall");
+    expect(binEntries(packageDir)).toEqual([]);
+  });
+
   test("direct dependency bins are linked regardless of trust", async () => {
-    const packageDir = await setup({
+    using dir = setup({
       name: "app",
       version: "1.0.0",
       dependencies: { "shadow-bin": "1.0.0" },
     });
+    const packageDir = String(dir);
 
     await install(packageDir);
 
@@ -180,12 +248,13 @@ describe.concurrent("hoisted linker bin trust gate", () => {
   });
 
   test("transitive dependency bins are linked when their declaring package is trusted", async () => {
-    const packageDir = await setup({
+    using dir = setup({
       name: "app",
       version: "1.0.0",
       dependencies: { "dep-on-shadow-bin": "1.0.0" },
       trustedDependencies: ["dep-on-shadow-bin"],
     });
+    const packageDir = String(dir);
 
     await install(packageDir);
 
@@ -195,12 +264,13 @@ describe.concurrent("hoisted linker bin trust gate", () => {
   });
 
   test("transitive dependency bins are linked when trusted via trustedDependencies", async () => {
-    const packageDir = await setup({
+    using dir = setup({
       name: "app",
       version: "1.0.0",
       dependencies: { "dep-on-shadow-bin": "1.0.0" },
       trustedDependencies: ["shadow-bin"],
     });
+    const packageDir = String(dir);
 
     await install(packageDir);
 
@@ -208,7 +278,7 @@ describe.concurrent("hoisted linker bin trust gate", () => {
   });
 
   test("workspace direct dependency bins are linked into root .bin", async () => {
-    const dir = tempDir("bin-trust-ws-", {
+    using dir = tempDir("bin-trust-ws-", {
       "bunfig.toml": `[install]\nregistry = "${registryUrl}"\ncache = false\nlinker = "hoisted"\n`,
       "package.json": JSON.stringify({ name: "root", version: "1.0.0", workspaces: ["packages/*"] }),
       "packages/pkg1/package.json": JSON.stringify({
@@ -229,12 +299,13 @@ describe.concurrent("hoisted linker bin trust gate", () => {
   test.skipIf(isWindows)(
     "bun run does not execute a shadowed tool from an untrusted transitive dependency",
     async () => {
-      const packageDir = await setup({
+      using dir = setup({
         name: "app",
         version: "1.0.0",
         dependencies: { "dep-on-shadow-bin": "1.0.0" },
         scripts: { rev: "git --version" },
       });
+      const packageDir = String(dir);
 
       await install(packageDir);
 

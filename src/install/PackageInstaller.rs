@@ -927,6 +927,90 @@ impl<'a> PackageInstaller<'a> {
                 < self.manager().options.max_concurrent_lifecycle_scripts
     }
 
+    /// Decide whether a package's `bin` entries may be linked into
+    /// `self.current_tree_id`'s `.bin` folder.
+    ///
+    /// A root/workspace `.bin` is prepended to PATH for `bun run` and for
+    /// lifecycle scripts, so linking an untrusted transitive dependency's bins
+    /// there lets it shadow system tools (`git`, `sh`, ...) and run on the next
+    /// `bun run`, bypassing the default no-scripts trust model. For those trees
+    /// we link a bin only when:
+    ///  - the package is a direct dependency of root/a workspace, or
+    ///  - the package is trusted, or
+    ///  - the package that declares this dependency edge is trusted or has
+    ///    lifecycle scripts of its own (so the declaring package's install
+    ///    script, run now or later via `bun pm trust`, can resolve its own
+    ///    dependencies' bins under a hoisted layout).
+    ///
+    /// Nested (non-workspace) `.bin` folders are not on the project-root PATH
+    /// and keep the old behavior.
+    fn should_link_bin_for_tree(
+        &self,
+        dependency_id: DependencyID,
+        alias: &[u8],
+        pkg_name: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
+        if !self.lockfile().is_workspace_tree_id(self.current_tree_id) {
+            return true;
+        }
+        if matches!(
+            resolution.tag,
+            resolution::Tag::Root | resolution::Tag::Workspace
+        ) {
+            return true;
+        }
+        if self.lockfile().is_workspace_dependency(dependency_id) {
+            return true;
+        }
+        if self.is_trusted_for_bin_link(alias, pkg_name, resolution) {
+            return true;
+        }
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+        for (owner_id, dep_range) in self.pkg_dependencies.iter().enumerate() {
+            if !dep_range.contains(dependency_id) {
+                continue;
+            }
+            let owner_resolution = &self.resolutions[owner_id];
+            if matches!(
+                owner_resolution.tag,
+                resolution::Tag::Root | resolution::Tag::Workspace
+            ) {
+                return true;
+            }
+            // A declaring package that has lifecycle scripts needs its own
+            // dependencies' bins on PATH for those scripts to run, both now
+            // (if already trusted) and later via `bun pm trust`. When the
+            // declaring package is untrusted this surfaces as a "Blocked N
+            // postinstall" notice, so the planted bin is not silent.
+            if self.metas[owner_id].has_install_script() {
+                return true;
+            }
+            let owner_name = self.names[owner_id].slice(string_buf);
+            return self.is_trusted_for_bin_link(owner_name, owner_name, owner_resolution);
+        }
+        false
+    }
+
+    fn is_trusted_for_bin_link(
+        &self,
+        alias: &[u8],
+        pkg_name: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
+        let truncated_hash =
+            bun_semver::semver_string::Builder::string_hash(alias) as TruncatedPackageNameHash;
+        if self
+            .trusted_dependencies_from_update_requests
+            .get(&truncated_hash)
+            .is_some_and(|n| **n == *alias)
+        {
+            return true;
+        }
+        self.lockfile()
+            .has_trusted_dependency(alias, pkg_name, resolution)
+    }
+
     /// A tree can start installing packages when the parent has installed all its packages. If the parent
     /// isn't finished, we need to wait because it's possible a package installed in this tree will be deleted by the parent.
     // free fn (not `&self`) so callers can pass disjoint borrows
@@ -1815,7 +1899,14 @@ impl<'a> PackageInstaller<'a> {
                         self.node.complete_one();
                     }
 
-                    if self.bins[package_id as usize].tag != bin::Tag::None {
+                    if self.bins[package_id as usize].tag != bin::Tag::None
+                        && self.should_link_bin_for_tree(
+                            dependency_id,
+                            alias.slice(string_buf!()),
+                            pkg_name.slice(string_buf!()),
+                            resolution,
+                        )
+                    {
                         self.trees[self.current_tree_id as usize]
                             .binaries
                             .add(dependency_id)
@@ -2109,7 +2200,14 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
         } else {
-            if self.bins[package_id as usize].tag != bin::Tag::None {
+            if self.bins[package_id as usize].tag != bin::Tag::None
+                && self.should_link_bin_for_tree(
+                    dependency_id,
+                    alias.slice(string_buf!()),
+                    pkg_name.slice(string_buf!()),
+                    resolution,
+                )
+            {
                 self.trees[self.current_tree_id as usize]
                     .binaries
                     .add(dependency_id)

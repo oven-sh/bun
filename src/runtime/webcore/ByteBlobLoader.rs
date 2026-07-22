@@ -13,7 +13,6 @@ pub struct ByteBlobLoader {
     pub chunk_size: blob::SizeType,
     pub remain: blob::SizeType,
     pub done: bool,
-    pub pulled: bool,
 
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
@@ -29,7 +28,6 @@ impl Default for ByteBlobLoader {
             chunk_size: 1024 * 1024 * 2,
             remain: 1024 * 1024 * 2,
             done: false,
-            pulled: false,
             content_type: blob::BlobContentType::default(),
         }
     }
@@ -95,7 +93,6 @@ impl ByteBlobLoader {
             .min(1024 * 1024 * 2),
             remain: size,
             done: false,
-            pulled: false,
             content_type,
         };
     }
@@ -108,7 +105,6 @@ impl ByteBlobLoader {
     pub fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {
         array.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(array);
-        self.pulled = true;
         let Some(store) = self.store.clone() else {
             return streams::Result::Done;
         };

@@ -398,6 +398,19 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   };
   for (const src of cSources) compileC(src);
 
+  // InternalModuleRegistryConstants.S — `.incbin`s the bundled JS module sources
+  // so InternalModuleRegistry.cpp sees a tiny {offset, length} table instead of
+  // megabytes of byte-array initializers. The `.bin` payload is an implicit
+  // input: `.incbin` is opaque to depfiles, and the `.S` itself rarely changes.
+  // cFlagsFull carries --target/--sysroot/-march so a cross-compile's
+  // preprocessor picks the right __APPLE__/_WIN32 branch and object format.
+  cObjects.push(
+    cc(n, cfg, codegen.internalModulesAsm, {
+      flags: cFlagsFull,
+      implicitInputs: [codegen.internalModulesBin],
+    }),
+  );
+
   // Deps that contribute source files for bun to compile directly (via
   // provides.sources) instead of building a lib. Compile them here with
   // bun's full flag set and give each a phony so `--target <name>` builds

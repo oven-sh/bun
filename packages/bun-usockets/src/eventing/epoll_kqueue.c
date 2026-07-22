@@ -17,6 +17,7 @@
 
 #include "libusockets.h"
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #include <stdlib.h>
 #include <time.h>
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
@@ -598,6 +599,12 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
 
 int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
+
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    ssize_t injected = 0;
+    int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_POLL_START, p->state.fd, injected, unused)) return (int) injected;
+#endif
 
 #ifdef LIBUS_USE_EPOLL
     struct epoll_event event;

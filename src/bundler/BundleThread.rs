@@ -289,7 +289,10 @@ impl<C: CompletionStruct> BundleThread<C> {
             // SAFETY: atomic field projected via raw ptr; only incremented here.
             unsafe {
                 let g = &(*instance).generation;
-                g.store(g.load(Ordering::Relaxed).saturating_add(1), Ordering::Relaxed);
+                g.store(
+                    g.load(Ordering::Relaxed).saturating_add(1),
+                    Ordering::Relaxed,
+                );
             }
 
             if has_bundled {

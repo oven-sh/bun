@@ -2690,10 +2690,17 @@ function attributeProcessError(err: unknown, failureType: string): void {
   // No tracked context (bun's ALS does not cover promise-rejection sweeps or
   // every native source): fall back to the innermost running test.
   entry ??= executionStack[executionStack.length - 1];
-  if (entry !== undefined && !entry.node.finished) {
-    const wrapper = wrapTestError(err) as { failureType?: string };
-    wrapper.failureType = failureType;
-    entry.fail(wrapper as Error);
+  if (entry !== undefined) {
+    if (!entry.node.finished) {
+      const wrapper = wrapTestError(err) as { failureType?: string };
+      wrapper.failureType = failureType;
+      entry.fail(wrapper as Error);
+      return;
+    }
+    // Entry's body is done (afterEach/after window): report at root level and
+    // fail the run, but keep running so reporters flush and later tests report.
+    console.error((err as Error)?.stack ?? err);
+    process.exitCode = 1;
     return;
   }
   // No active test: node's fatal path — print and exit 1 (kGenericUserError).
@@ -2740,19 +2747,9 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     node.plan = new TestPlan(planOption);
   }
 
-  try {
-    for (const ancestor of ancestors) {
-      for (const hook of ancestor.hooks.beforeEach) {
-        await runHook(hook, ancestor, ctx);
-      }
-    }
-  } catch (err) {
-    failure = err;
-  }
-
-  // While this test runs, an uncaughtException/unhandledRejection belongs to
-  // it (node fails the test instead of crashing the process). The interrupt
-  // promise unblocks a body that can no longer settle (e.g. awaiting forever).
+  // While this test (hooks included) runs, an uncaughtException/unhandledRejection
+  // belongs to it (node fails the test instead of crashing the process). The
+  // interrupt promise unblocks a body that can no longer settle.
   let execEntry: ExecutionEntry | undefined;
   let interrupt: { promise: Promise<never>; reject: (err: Error) => void } | undefined;
   if (runEventsEnabled()) {
@@ -2774,6 +2771,20 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     };
     executionStack.push(execEntry);
   }
+
+  try {
+    for (const ancestor of ancestors) {
+      for (const hook of ancestor.hooks.beforeEach) {
+        await runHook(hook, ancestor, ctx);
+      }
+    }
+  } catch (err) {
+    failure = err;
+  }
+
+  // Picked up after a beforeEach body settled: attributeProcessError stored
+  // a detached error on node.hookFailure via execEntry.fail.
+  failure ??= node.hookFailure;
 
   if (failure === undefined) {
     // Node arms one stopPromise (timeout + signal) and races both the body
@@ -2853,11 +2864,6 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   }
 
-  if (execEntry !== undefined) {
-    const at = executionStack.lastIndexOf(execEntry);
-    if (at !== -1) executionStack.splice(at, 1);
-  }
-
   // node cancels (rather than fails) a timed-out test and aborts t.signal.
   if ((failure as { failureType?: string } | undefined)?.failureType === "testTimeoutFailure") {
     (node.abortController ??= new AbortController()).abort();
@@ -2891,6 +2897,11 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     } catch (err) {
       failure ??= err;
     }
+  }
+
+  if (execEntry !== undefined) {
+    const at = executionStack.lastIndexOf(execEntry);
+    if (at !== -1) executionStack.splice(at, 1);
   }
 
   try {

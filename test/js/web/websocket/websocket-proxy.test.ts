@@ -177,30 +177,27 @@ describe("WebSocket proxy API", () => {
     }).toThrow(SyntaxError);
   });
 
-  test.each(["socks5", "socks4", "socks5h", "ftp", "ws"])(
-    "rejects unsupported proxy protocol %s://",
-    scheme => {
-      // Matching fetch()'s UnsupportedProxyProtocol rejection: only http:// and
-      // https:// proxies are supported, and any other scheme must fail up front
-      // instead of silently sending an HTTP CONNECT request.
-      expect(() => {
-        new WebSocket("ws://example.com", {
-          proxy: `${scheme}://127.0.0.1:1`,
-        });
-      }).toThrow(
-        expect.objectContaining({
-          name: "SyntaxError",
-          message: expect.stringContaining("Unsupported proxy protocol"),
-        }),
-      );
-      // Same rejection via the { url } form.
-      expect(() => {
-        new WebSocket("ws://example.com", {
-          proxy: { url: `${scheme}://127.0.0.1:1` },
-        });
-      }).toThrow(/Unsupported proxy protocol/);
-    },
-  );
+  test.each(["socks5", "socks4", "socks5h", "ftp", "ws"])("rejects unsupported proxy protocol %s://", scheme => {
+    // Matching fetch()'s UnsupportedProxyProtocol rejection: only http:// and
+    // https:// proxies are supported, and any other scheme must fail up front
+    // instead of silently sending an HTTP CONNECT request.
+    expect(() => {
+      new WebSocket("ws://example.com", {
+        proxy: `${scheme}://127.0.0.1:1`,
+      });
+    }).toThrow(
+      expect.objectContaining({
+        name: "SyntaxError",
+        message: expect.stringContaining("Unsupported proxy protocol"),
+      }),
+    );
+    // Same rejection via the { url } form.
+    expect(() => {
+      new WebSocket("ws://example.com", {
+        proxy: { url: `${scheme}://127.0.0.1:1` },
+      });
+    }).toThrow(/Unsupported proxy protocol/);
+  });
 });
 
 describe("WebSocket through HTTP CONNECT proxy", () => {

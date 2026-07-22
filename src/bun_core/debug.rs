@@ -353,11 +353,17 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
         // valid for the duration of the handler. Copy so RtlVirtualUnwind can
         // mutate freely without touching the kernel's record.
         let mut ctx: CONTEXT = unsafe { *(fp as *const CONTEXT) };
+        // Termination: RtlVirtualUnwind sets Pc = 0 at the end of the chain;
+        // the `n < out.len()` cap is the ultimate bound. No Sp-advance or
+        // consecutive-Pc checks: on ARM64 a valid unwind step (fault at prolog
+        // offset 0, or a .pdata-bearing zero-stack leaf) can set Pc = Lr while
+        // leaving Sp unchanged, and directly-recursive frames share a return
+        // Pc, so either check truncates legitimate stacks.
         while n < out.len() {
             #[cfg(target_arch = "x86_64")]
-            let (control_pc, sp_before) = (ctx.Rip, ctx.Rsp);
+            let control_pc = ctx.Rip;
             #[cfg(target_arch = "aarch64")]
-            let (control_pc, sp_before) = (ctx.Pc, ctx.Sp);
+            let control_pc = ctx.Pc;
             let mut image_base: u64 = 0;
             // SAFETY: `control_pc` is a code address from the fault context;
             // `image_base` is valid for write; history table may be null.
@@ -370,10 +376,15 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                 // `Lr`. An ARM64 leaf allocates no stack (bl does not push),
                 // so `Sp` is correctly left unchanged here.
                 #[cfg(target_arch = "x86_64")]
-                // SAFETY: `Rsp` is the fault thread's stack pointer restored by
-                // the previous unwind step; the return-address slot is mapped.
-                unsafe {
-                    ctx.Rip = *(ctx.Rsp as *const u64);
+                {
+                    if !is_valid_memory(ctx.Rsp as usize) {
+                        break;
+                    }
+                    // SAFETY: is_valid_memory just confirmed the page at `Rsp`
+                    // is mapped.
+                    unsafe {
+                        ctx.Rip = *(ctx.Rsp as *const u64);
+                    }
                     ctx.Rsp += 8;
                 }
                 #[cfg(target_arch = "aarch64")]
@@ -383,7 +394,6 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                     }
                     ctx.Pc = ctx.Lr;
                 }
-                let _ = sp_before;
             } else {
                 let mut handler_data: *mut core::ffi::c_void = core::ptr::null_mut();
                 let mut establisher_frame: u64 = 0;
@@ -401,18 +411,6 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                         &mut establisher_frame,
                         core::ptr::null_mut(),
                     );
-                }
-                // Stuck-unwind guard: RtlVirtualUnwind must advance the stack
-                // pointer. Checked only on this branch because the ARM64 leaf
-                // step legitimately leaves Sp unchanged. Comparing PCs instead
-                // would wrongly truncate directly-recursive stacks. The `n <
-                // out.len()` cap is the ultimate bound.
-                #[cfg(target_arch = "x86_64")]
-                let sp_after = ctx.Rsp;
-                #[cfg(target_arch = "aarch64")]
-                let sp_after = ctx.Sp;
-                if sp_after <= sp_before {
-                    break;
                 }
             }
             #[cfg(target_arch = "x86_64")]

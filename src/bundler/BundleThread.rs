@@ -212,9 +212,29 @@ impl<C: CompletionStruct> BundleThread<C> {
             // `spawn_overflow_thread` upholds the same ownership contract.
             match unsafe { Self::spawn_overflow_thread(instance, completion, generation) } {
                 Ok(()) => return,
-                Err(_) => {
-                    // OS refused the thread; fall through to the queue so the
-                    // build still runs once the singleton thread frees up.
+                Err(e) => {
+                    // Cannot fall through to `queue`: if this build is awaited
+                    // from inside the singleton build's plugin callback, the
+                    // singleton is parked in `wait_for_parse` (not on `waker`)
+                    // and would never pop it. Reject so the plugin promise
+                    // settles instead of hanging the process.
+                    // SAFETY: `completion` is the live caller-owned task; sole
+                    // mutator on this (JS) thread until
+                    // `complete_on_bundle_thread` hands it back.
+                    let completion = unsafe { &mut *completion.as_ptr() };
+                    let mut log = bun_ast::Log::init();
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!("Failed to spawn concurrent Bun.build thread: {e}"),
+                    );
+                    completion.set_log(log);
+                    completion.set_result(BundleV2Result::Err(crate::Error::BuildFailed));
+                    completion.complete_on_bundle_thread();
+                    // SAFETY: atomic field projected via raw ptr. Pairs with the
+                    // `fetch_add` above.
+                    unsafe { (*instance).scheduled.fetch_sub(1, Ordering::Release) };
+                    return;
                 }
             }
         }

@@ -353,14 +353,20 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
         // valid for the duration of the handler. Copy so RtlVirtualUnwind can
         // mutate freely without touching the kernel's record.
         let mut ctx: CONTEXT = unsafe { *(fp as *const CONTEXT) };
+        // Progress is the stack pointer advancing toward higher addresses.
+        // Comparing consecutive PCs would wrongly truncate directly-recursive
+        // stacks (every frame returns to the same instruction). The `n <
+        // out.len()` cap is the ultimate bound.
+        let mut prev_sp: u64 = 0;
         while n < out.len() {
             #[cfg(target_arch = "x86_64")]
-            let control_pc = ctx.Rip;
+            let (control_pc, sp) = (ctx.Rip, ctx.Rsp);
             #[cfg(target_arch = "aarch64")]
-            let control_pc = ctx.Pc;
-            if control_pc == 0 {
+            let (control_pc, sp) = (ctx.Pc, ctx.Sp);
+            if sp <= prev_sp {
                 break;
             }
+            prev_sp = sp;
             let mut image_base: u64 = 0;
             // SAFETY: `control_pc` is a code address from the fault context;
             // `image_base` is valid for write; history table may be null.
@@ -405,7 +411,7 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
             let next_pc = ctx.Rip;
             #[cfg(target_arch = "aarch64")]
             let next_pc = ctx.Pc;
-            if next_pc == 0 || next_pc == control_pc {
+            if next_pc == 0 {
                 break;
             }
             out[n] = next_pc as usize;

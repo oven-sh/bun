@@ -12,7 +12,6 @@ pub mod js_bindings {
     use super::*;
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 10);
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
@@ -34,6 +33,7 @@ pub mod js_bindings {
                 __jsc_host_js_raise_ignoring_panic_handler,
             ),
         ];
+        let obj = JSValue::create_empty_object(global, ENTRIES.len());
         for &(name, func) in ENTRIES {
             obj.put(
                 global,

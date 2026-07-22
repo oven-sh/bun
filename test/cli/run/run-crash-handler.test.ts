@@ -152,14 +152,15 @@ test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures th
   const frameAddrs = [...stderr.matchAll(/: (0x[0-9a-f]{6,}) in /gi)].map(m => m[1]);
   expect(frameAddrs.length).toBeGreaterThanOrEqual(6);
 
-  // Frame 0 is the fault PC inside the DLL. Frame 1 must be in bun's image
-  // (the code that called into the DLL), not another DLL/ntdll frame. The
-  // high 32 bits of an address identify the image under ASLR on x64, so a
-  // match against any later bun frame is sufficient; a mismatch means frame
-  // 1 was KiUserExceptionDispatcher or another handler frame.
+  // Frame 0 is the fault PC inside ntdll.dll; frames 1+ must be the bun call
+  // chain with no handler or ntdll-dispatch frames interleaved. Group by the
+  // high 32 bits (a coarse per-image proxy under Windows ASLR): when the walk
+  // is seeded from the fault CONTEXT, frames 1..6 are all inside bun's image
+  // and share one value. The old RtlCaptureStackBackTrace path left
+  // [handler x3][ntdll-dispatch x3] ahead of the first real caller, so frames
+  // 4-6 landed in ntdll and this set has two members.
   const hi = (a: string) => (BigInt(a) >> 32n).toString(16);
-  expect(hi(frameAddrs[0])).not.toBe(hi(frameAddrs[1]));
-  expect(hi(frameAddrs[1])).toBe(hi(frameAddrs[2]));
+  expect(new Set(frameAddrs.slice(1, 7).map(hi)).size).toBe(1);
 });
 
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {

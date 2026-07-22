@@ -803,9 +803,12 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
                 return (struct us_internal_async *) cb;
             }
         }
-        /* Dropping the receive right destroys the port; any send right it
-         * carried becomes a dead name that the failing caller never uses. */
+        /* Dropping the receive right destroys the port; release the send
+         * right (now a dead name) so the port-name-table entry is freed too.
+         * mach_port_deallocate is a harmless KERN_INVALID_RIGHT no-op when
+         * insert_right failed and no send right exists. */
         mach_port_mod_refs(self, cb->port, MACH_PORT_RIGHT_RECEIVE, -1);
+        mach_port_deallocate(self, cb->port);
     }
 
     if (!fallthrough) {

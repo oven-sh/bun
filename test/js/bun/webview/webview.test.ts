@@ -557,17 +557,29 @@ itRendering("click(selector) waits for element to stop animating", async () => {
       encodeURIComponent(`
         <style>
           @keyframes slide { from { left: 0px; } to { left: 100px; } }
-          #mover { position: fixed; top: 50px; width: 60px; height: 60px;
-                   animation: slide 100ms linear forwards; }
+          #mover { position: fixed; top: 50px; left: 0; width: 60px; height: 60px; }
         </style>
-        <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+        <body style="margin:0" onclick="(window.__x ||= []).push(event.clientX)">
+          <div id=mover></div>
+        </body>
       `),
   );
-  // The stable-for-2-consecutive-frames check means we don't click until
-  // the animation stops. If we clicked mid-slide, __hit would be < 100.
-  await view.click("#mover");
-  const left = await view.evaluate("String(__hit)");
-  expect(Number(left)).toBe(100);
+  // Restart the animation immediately before each click(). The style change
+  // leaves the animation play-pending: its start time is only assigned at
+  // the next rendering frame, so the element reads left=0 both before that
+  // frame and at the first frame (from-keyframe, t=0). The actionability
+  // check must take its two stability samples from distinct rAF callbacks;
+  // a synchronous first sample compared against one post-rAF sample can land
+  // in the same rendering frame and dispatch the click at the from-position.
+  for (let i = 0; i < 5; i++) {
+    await view.evaluate(
+      `(m => { m.style.animation = 'none'; void m.offsetHeight; m.style.animation = 'slide 100ms linear forwards'; })(document.getElementById('mover'))`,
+    );
+    await view.click("#mover");
+  }
+  // The animation ends at left=100; the element is 60px wide, so every click
+  // lands at clientX=130 once the slide has settled.
+  expect(await view.evaluate("__x")).toEqual(Array(5).fill(130));
 });
 
 itRendering("click(selector) rejects on timeout when obscured", async () => {

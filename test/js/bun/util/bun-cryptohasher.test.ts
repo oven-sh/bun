@@ -48,7 +48,9 @@ test("CryptoHasher.update(str, 'hex') rejects odd-length hex like node:crypto", 
   }
 
   // Buffers are unaffected by the input encoding parameter.
-  expect(() => new Bun.CryptoHasher("sha1").update(Buffer.from("abc"), "hex")).not.toThrow();
+  expect(new Bun.CryptoHasher("sha1").update(Buffer.from("abc"), "hex").digest("hex")).toBe(
+    createHash("sha1").update(Buffer.from("abc")).digest("hex"),
+  );
 });
 test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", () => {
   // @ts-expect-error

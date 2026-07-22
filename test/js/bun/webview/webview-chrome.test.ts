@@ -732,15 +732,10 @@ it("chrome: click(selector) waits for animation to stop", async () => {
         </body>
       `),
   );
-  // Restart the animation immediately before each click(). The style change
-  // leaves the animation play-pending: its start time is only assigned at
-  // the next rendering frame, so the element reads left=0 both before that
-  // frame (no animation effect) and at the first frame (from-keyframe, t=0).
-  // The actionability check must take its two stability samples from distinct
-  // rAF callbacks; a synchronous first sample compared against one post-rAF
-  // sample can land in the same rendering frame and dispatch the click at
-  // the from-position. Looping closes the remaining window across Chrome's
-  // frame scheduling.
+  // Restart the animation immediately before each click(): the element reads
+  // left=0 both before the next render (no effect yet) and at t=0 of the
+  // animation, so a sync-then-rAF stability pair would match and click at
+  // the from-position. The loop covers frame-scheduling variance.
   for (let i = 0; i < 5; i++) {
     await view.evaluate(
       `(m => { m.style.animation = 'none'; void m.offsetHeight; m.style.animation = 'slide 100ms linear forwards'; })(document.getElementById('mover'))`,

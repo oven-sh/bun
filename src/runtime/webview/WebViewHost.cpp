@@ -357,11 +357,11 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
 // timeout.
 //
 // Every sample is taken after an `await rAF`, and a match only counts when
-// the rAF timestamp advanced. Sampling synchronously before the first rAF
-// could coincide with the same rendering frame as the first rAF callback,
-// which made a just-started animation look stable at its from-keyframe.
-// Playwright's injected stable check (_checkElementIsStable) does the same
-// rAF-first plus <15ms-frame-drop guard.
+// the rAF timestamp advanced, so a just-started animation cannot look stable
+// at its from-keyframe (Playwright's _checkElementIsStable does the same).
+// The rAF wait races a setTimeout bound to the deadline so the timeout
+// contract holds when the renderer is not producing frames (headless WK
+// without a display driver).
 //
 // Arguments `sel` and `timeout` are passed via the arguments: NSDictionary,
 // not string-interpolated — the selector can contain any characters.
@@ -369,7 +369,11 @@ static constexpr const char* kActionabilityJS = R"js(
 const deadline = performance.now() + timeout;
 let last, lastT;
 for (;;) {
-  const t = await new Promise(f => requestAnimationFrame(f));
+  const t = await new Promise(f => {
+    const id = setTimeout(f, Math.max(0, deadline - performance.now()));
+    requestAnimationFrame(t => { clearTimeout(id); f(t); });
+  });
+  if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
   const el = document.querySelector(sel);
   if (el) {
     const r = el.getBoundingClientRect();
@@ -383,7 +387,6 @@ for (;;) {
     } else last = undefined;
   } else last = undefined;
   lastT = t;
-  if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
 }
 )js";
 

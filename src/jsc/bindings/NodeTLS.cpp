@@ -144,17 +144,15 @@ static int noPasswordCallback(char*, int, int, void*)
     return 0;
 }
 
-// One input slot for the PEM parse pass. `owned` holds the bytes (UTF-8 for
-// string inputs, a copy of the view's backing store for ArrayBufferViews) and
-// `bytes` points into `owned`. Views are copied because forEachInIterable
-// drives the iterator protocol: a tampered %ArrayIteratorPrototype%.next can
-// detach an earlier element's buffer between callbacks, and a raw span into
-// the view would then dangle (MarkedArgumentBuffer roots the JSValue against
-// GC but does not prevent detach).
-struct CACertInput {
-    WTF::CString owned;
-    std::span<const uint8_t> bytes;
-};
+// One input slot for the PEM parse pass. String inputs hold their UTF-8 bytes
+// in a CString (the WTF string's backing is not guaranteed UTF-8).
+// ArrayBufferView inputs hold the view pointer so pass 2 can read
+// vector()/byteLength() without copying; the MarkedArgumentBuffer below roots
+// the view against GC, and pass 2 re-checks isDetached() before reading
+// because forEachInIterable drives the iterator protocol and a tampered
+// %ArrayIteratorPrototype%.next can detach an earlier element between pass-1
+// callbacks.
+using CACertInput = std::variant<WTF::CString, JSC::JSArrayBufferView*>;
 
 JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -167,20 +165,22 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
         return throwVMTypeError(globalObject, scope, "expected an array of certificates"_s);
     }
 
-    // Pass 1: collect bytes. All JS type checks / coercions happen here with
-    // no BoringSSL resources live, so RETURN_IF_EXCEPTION cannot leak. Both
-    // branches copy into CACertInput::owned, so nothing in pass 2 depends on a
-    // JS value staying alive or attached.
+    // Pass 1: collect inputs. All JS type checks / coercions happen here with
+    // no BoringSSL resources live, so RETURN_IF_EXCEPTION cannot leak.
+    JSC::MarkedArgumentBuffer keepAlive;
     WTF::Vector<CACertInput, 8> inputs;
 
     forEachInIterable(globalObject, certs, [&](VM&, JSGlobalObject* g, JSValue element) {
         auto innerScope = DECLARE_THROW_SCOPE(vm);
+        keepAlive.append(element);
+        if (keepAlive.hasOverflowed()) {
+            throwOutOfMemoryError(g, innerScope);
+            return;
+        }
         if (element.isString()) {
             auto string = element.toWTFString(g);
             RETURN_IF_EXCEPTION(innerScope, );
-            auto utf8 = string.utf8();
-            auto span = std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() };
-            inputs.append({ WTF::move(utf8), span });
+            inputs.append(string.utf8());
             return;
         }
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(element)) {
@@ -188,9 +188,7 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
                 throwVMTypeError(g, innerScope, "certificate buffer is detached"_s);
                 return;
             }
-            WTF::CString owned { std::span { reinterpret_cast<const char*>(view->vector()), view->byteLength() } };
-            auto span = std::span { reinterpret_cast<const uint8_t*>(owned.data()), owned.length() };
-            inputs.append({ WTF::move(owned), span });
+            inputs.append(view);
             return;
         }
         throwVMTypeError(g, innerScope, "expected a string or ArrayBufferView"_s);
@@ -200,17 +198,29 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     // Pass 2: PEM_read_bio_X509 over each span. ncrypto's RAII pointers own
     // the BIO/X509 so no manual cleanup is interleaved with error checks; any
     // BoringSSL error is recorded and thrown below, after all RAII scopes exit.
+    // No user JS runs in this pass (nothing here dispatches to JS), so a view's
+    // backing store cannot be detached out from under the span read below.
     WTF::Vector<WTF::String, 16> pems;
     WTF::HashSet<WTF::String> seen;
     unsigned long parseError = 0;
     bool oom = false;
 
     for (auto& in : inputs) {
-        if (in.bytes.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        std::span<const uint8_t> bytes;
+        if (auto* utf8 = std::get_if<WTF::CString>(&in)) {
+            bytes = { reinterpret_cast<const uint8_t*>(utf8->data()), utf8->length() };
+        } else {
+            auto* view = std::get<JSC::JSArrayBufferView*>(in);
+            if (view->isDetached()) {
+                return throwVMTypeError(globalObject, scope, "certificate buffer is detached"_s);
+            }
+            bytes = { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() };
+        }
+        if (bytes.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
             return throwVMTypeError(globalObject, scope, "certificate is too large"_s);
         }
         ERR_clear_error();
-        auto bio = ncrypto::BIOPointer::New(in.bytes.data(), in.bytes.size());
+        auto bio = ncrypto::BIOPointer::New(bytes.data(), bytes.size());
         if (!bio) {
             oom = true;
             break;

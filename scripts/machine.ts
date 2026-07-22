@@ -1620,8 +1620,14 @@ async function main() {
       });
       await startGroup("Running bootstrap...", async () => {
         // Renders: fetch the spec-pinned node, then `node bootstrap.ts`.
+        // The script is the SOLE remote argument: ssh space-joins trailing
+        // args before the remote shell parses them, so ["sh","-c",script]
+        // would run `sh -c set` (a var dump) and then the body in the outer
+        // shell WITHOUT its `set -ex`. sshd already runs the argument under
+        // `$SHELL -c`, so one string keeps set -e (abort on failure) and
+        // set -x (echo every command) intact.
         const script = linuxBootstrapCommand(entry, { ci, repoRef });
-        await machine.spawnSafe(["sh", "-c", script], { stdio: "inherit" });
+        await machine.spawnSafe([script], { stdio: "inherit" });
       });
     }
 

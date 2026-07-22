@@ -74,8 +74,12 @@ function walk(dir: string, out: string[]): string[] {
 export function recipeFiles(os: Image["os"]): readonly string[] {
   const excluded = os === "linux" ? WINDOWS_ONLY : LINUX_ONLY;
   const files = walk(ciDir, []).filter(file => !NON_RECIPE.has(file) && !excluded.has(file));
-  // The orchestrator lives outside the ci dir but drives every bake.
-  files.push("scripts/machine.ts");
+  // Files outside the ci dir that still determine an image, both
+  // platforms: the orchestrator that drives every bake, and the agent that is
+  // esbuild-bundled (with the utils it imports) and installed ON the image
+  // as the runner's service. An agent edit that did not rename the image
+  // would leave every lane silently running the old agent.
+  files.push("scripts/machine.ts", "scripts/agent.mjs", "scripts/utils.mjs");
   return files.sort();
 }
 

@@ -259,6 +259,12 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
     if (!url.isValid())
         return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
 
+    // Only HTTP CONNECT proxies are supported. Reject socks5://, ftp://, etc. up front
+    // instead of silently sending an HTTP CONNECT request to a non-HTTP proxy, matching
+    // fetch()'s UnsupportedProxyProtocol behaviour.
+    if (!url.protocolIsInHTTPFamily())
+        return Exception { SyntaxError, makeString("Unsupported proxy protocol \""_s, url.protocol(), "\" (expected \"http\" or \"https\")"_s) };
+
     ProxyConfig config;
     config.host = url.host().toString();
     config.isHTTPS = url.protocolIs("https"_s);

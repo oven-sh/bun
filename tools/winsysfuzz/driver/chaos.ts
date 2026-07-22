@@ -193,7 +193,19 @@ async function reproduces(schedule: string[], dir: string, capture = false): Pro
     const raw = rr.hangStacks ?? rr.crashDump ?? "";
     capturedStacks = raw ? digestStacks(raw) : [];
   }
-  return isFinding(classify(rr));
+  const ok = isFinding(classify(rr));
+  // Per-trial retention (minimization can spawn dozens of multi-process
+  // runs whose traces are GBs live at once): a trial that did NOT reproduce
+  // is a pure negative - delete it whole; one that DID keeps only its small
+  // text (the schedule IS the replay) - strip its raw traces immediately
+  // rather than waiting for the whole minimize to finish.
+  try {
+    if (!ok) rmSync(dir, { recursive: true, force: true });
+    else
+      for (const f of readdirSync(dir))
+        if (f.startsWith("wsf-") && f.endsWith(".log")) rmSync(join(dir, f), { force: true });
+  } catch {}
+  return ok;
 }
 // Greedy delta over rules: drop each rule if the finding still reproduces
 // without it. What survives is the minimal (locally) reproducing schedule.

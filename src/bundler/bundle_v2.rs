@@ -4556,27 +4556,26 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
+                    // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap
+                    // allocations are moved into `this.free_list` below (in the
+                    // `!found_existing` and `external` branches) and thus outlive `BundleV2`.
+                    // Erase to `'static` so `Fs::Path<'static>` can borrow them across
+                    // `path_with_pretty_initialized` / `ParseTask`. In the `found_existing`
+                    // branch `path` is dead before the boxes drop, so the dangling
+                    // `'static` is never observed.
+                    let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
+                        (
+                            &*std::ptr::from_ref::<[u8]>(result.path.as_ref()),
+                            &*std::ptr::from_ref::<[u8]>(result.namespace.as_ref()),
+                        )
+                    };
+                    let mut path = Fs::Path::init(result_path_static);
+                    if result.namespace.is_empty() || result.namespace.as_ref() == b"file" {
+                        path.namespace = b"file";
+                    } else {
+                        path.namespace = result_ns_static;
+                    }
                     if !result.external {
-                        // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap
-                        // allocations are moved into `this.free_list` below (in the
-                        // `!found_existing` branch) and thus outlive `BundleV2`. Erase
-                        // to `'static` so `Fs::Path<'static>` can borrow them across
-                        // `path_with_pretty_initialized` / `ParseTask`. In the `found_existing`/`external`
-                        // branches `path` is dead before the boxes drop, so the dangling
-                        // `'static` is never observed.
-                        let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
-                            (
-                                &*std::ptr::from_ref::<[u8]>(result.path.as_ref()),
-                                &*std::ptr::from_ref::<[u8]>(result.namespace.as_ref()),
-                            )
-                        };
-                        let mut path = Fs::Path::init(result_path_static);
-                        if result.namespace.is_empty() || result.namespace.as_ref() == b"file" {
-                            path.namespace = b"file";
-                        } else {
-                            path.namespace = result_ns_static;
-                        }
-
                         // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
                         // lifetime, blocking the `free_list`/`graph` accesses below.
                         // Capture `value_ptr` as a raw ptr + `found_existing` and drop
@@ -4687,6 +4686,30 @@ pub mod bv2_impl {
                         } else {
                             // SAFETY: map slot from `get_or_put` above; map not mutated since.
                             out_source_index = Some(Index::init(unsafe { *value_ptr }));
+                            drop(result.namespace);
+                            drop(result.path);
+                        }
+                    } else if resolve.import_record.kind != ImportKind::EntryPointBuild {
+                        // `{ path, external: true }` from an onResolve plugin: rewrite the
+                        // import record's path so the emitted external import uses the
+                        // plugin-returned specifier (esbuild parity).
+                        let source_import_records = &mut this.graph.ast.items_import_records_mut()
+                            [resolve.import_record.importer_source_index as usize];
+                        if (source_import_records.len() as u32)
+                            > resolve.import_record.import_record_index
+                        {
+                            let import_record: &mut ImportRecord = &mut source_import_records
+                                .as_mut_slice()
+                                [resolve.import_record.import_record_index as usize];
+                            if !strings::eql_long(import_record.path.text, path.text, true) {
+                                import_record.path = path_as_static(&path);
+                                this.free_list.push(result.namespace);
+                                this.free_list.push(result.path);
+                            } else {
+                                drop(result.namespace);
+                                drop(result.path);
+                            }
+                        } else {
                             drop(result.namespace);
                             drop(result.path);
                         }

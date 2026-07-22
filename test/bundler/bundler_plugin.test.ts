@@ -414,6 +414,61 @@ describe("bundler", () => {
       },
     };
   });
+  // https://github.com/oven-sh/bun/issues/2805
+  itBundled("plugin/ResolveExternalRewritesPath", {
+    files: {
+      "index.ts": /* ts */ `
+        import React from "react";
+        console.log(React);
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^react$/ }, () => {
+        return { path: "https://esm.sh/react@19", external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`from "https://esm.sh/react@19"`);
+      expect(contents).not.toContain(`from "react"`);
+    },
+  });
+  itBundled("plugin/ResolveExternalRewritesPathRequire", {
+    files: {
+      "index.ts": /* ts */ `
+        const React = require("react");
+        console.log(React);
+      `,
+    },
+    format: "cjs",
+    plugins(builder) {
+      builder.onResolve({ filter: /^react$/ }, () => {
+        return { path: "./vendor/react.cjs", external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`require("./vendor/react.cjs")`);
+      expect(contents).not.toContain(`require("react")`);
+    },
+  });
+  itBundled("plugin/ResolveExternalWithoutPath", {
+    files: {
+      "index.ts": /* ts */ `
+        import lodash from "lodash";
+        console.log(lodash);
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^lodash$/ }, () => {
+        return { external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`from "lodash"`);
+    },
+  });
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
       files: {

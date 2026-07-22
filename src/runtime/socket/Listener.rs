@@ -1112,6 +1112,9 @@ impl Listener {
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
                         ));
+                        // Clears per-connection flags (READ_EOF/IS_PAUSED); the socket
+                        // is already Detached so the rest is a no-op.
+                        prev.detach_for_reconnect();
                         // Free old resources before reassignment to prevent memory leaks
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
@@ -1203,6 +1206,9 @@ impl Listener {
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
                         ));
+                        // Clears per-connection flags (READ_EOF/IS_PAUSED); the socket
+                        // is already Detached so the rest is a no-op.
+                        prev.detach_for_reconnect();
                         // Adopt `connection` (heap-owned for .unix) so the socket's
                         // deinit frees it; matches the TLS arm above and the
                         // non-pipe arm below. Previously `.connection = null`

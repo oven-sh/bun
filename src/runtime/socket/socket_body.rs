@@ -1338,6 +1338,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// not live in the ext slot so those are left for the caller's existing
     /// `debug_assert!` to catch.
     pub fn detach_for_reconnect(&self) {
+        // READ_EOF is per-connection: clear before the ext() guard so an already-
+        // Detached prev (reconnect after on_close) still sees reading=true.
+        // IS_PAUSED carries the user's pause() intent across (re)connect.
+        self.update_flags(|f| f.remove(Flags::READ_EOF));
         let old = self.socket.get();
         let Some(ext) = old.ext::<*mut c_void>() else {
             return;
@@ -1350,10 +1354,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
-        // READ_EOF and IS_PAUSED are per-connection: a stale READ_EOF would make
-        // connect_finish's recompute_poll_ref leave the reconnect unref'd, and a
-        // stale IS_PAUSED would make on_open pause the fresh stream.
-        self.update_flags(|f| f.remove(Flags::READ_EOF | Flags::IS_PAUSED));
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             if let Some(h) = self.handlers_opt() {

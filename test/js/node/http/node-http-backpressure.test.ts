@@ -280,6 +280,32 @@ describe("backpressure", () => {
           expect(await halfCloseTlsRequestBodyBytes(port)).toEqual({ body: BODY, ended: true });
         }
       });
+
+      // allow_half_open defers the close to the writable drain; a peer that
+      // FINs then resets must not wedge that drain on a spill send() that
+      // keeps failing (us_internal_ssl_on_writable releases a zero-progress
+      // spill after EOF so the dispatch reaches the close gate). A wedge
+      // would leave the server-side socket open past the test timeout.
+      it("closes promptly when the client half-closes then resets mid-drain", async () => {
+        const closed = Promise.withResolvers<void>();
+        await using server = https.createServer(tlsOptions, (req, res) => {
+          req.socket.on("close", () => closed.resolve());
+          res.writeHead(200, { "Content-Length": String(BODY) });
+          res.end(payload);
+          res.on("error", () => {});
+        });
+        server.requestTimeout = 0;
+        server.headersTimeout = 0;
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const port = (server.address() as AddressInfo).port;
+        const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        sock.on("error", () => {});
+        await once(sock, "secureConnect");
+        sock.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await once(sock, "data");
+        sock.destroy();
+        await closed.promise;
+      });
     });
   });
 

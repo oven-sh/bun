@@ -1821,8 +1821,22 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     /* Ciphertext from a partial batch flush goes out before anything else;
      * while it is pending nothing new may be written for this socket. */
+    unsigned int spill_off_before = loop_ssl_data ? loop_ssl_data->ssl_spill_off : 0;
     if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
-      return s;
+      /* A writable event that moves zero spill bytes after the peer's
+       * readable side has already ended means the peer is gone (send()
+       * hit EPIPE/ECONNRESET, folded to 0 by us_socket_raw_write) and
+       * this spill will never drain. Returning here without reaching
+       * us_dispatch_writable would spin the re-armed writable poll on
+       * kqueue until idle timeout, since neither EPOLLERR nor the uWS
+       * layer's zero-progress-after-FIN close guard can fire. Release
+       * the dead bytes so the dispatch below proceeds and that guard
+       * closes the connection. */
+      if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before) {
+        ssl_release_spill(s->group->loop, s);
+      } else {
+        return s;
+      }
     }
     if (s->ssl_shutdown_after_spill) {
       s->ssl_shutdown_after_spill = 0;

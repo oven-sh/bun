@@ -611,7 +611,7 @@ private:
             /* We need to check if we should close this socket here now */
             if (httpResponseData->shouldCloseConnection()) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) s)->getBufferedAmount() == 0) {
+                    if (((AsyncSocket<SSL> *) s)->hasFullyDrained()) {
                         ((AsyncSocket<SSL> *) s)->shutdown();
                         /* We need to force close after sending FIN since we want to hinder
                          * clients from keeping to send their huge data */
@@ -741,7 +741,7 @@ private:
                     responseDone = true;
                 }
             }
-            if (responseDone && asyncSocket->getBufferedAmount() == 0) {
+            if (responseDone && asyncSocket->hasFullyDrained()) {
                 asyncSocket->shutdown();
                 /* We need to force close after sending FIN since we want to hinder
                  * clients from keeping to send their huge data */
@@ -799,7 +799,7 @@ private:
              * callback is still draining) must not be discarded by the close()
              * below; the connection shuts down from the shouldCloseConnection()
              * gates once they have flushed. */
-            bool hasQueuedOutgoing = asyncSocket->getBufferedAmount() > 0
+            bool hasQueuedOutgoing = !asyncSocket->hasFullyDrained()
                 || httpResponseData->onWritable != nullptr;
             bool responseInFlight = httpResponseData->nodeHttpQueuedPipelinedCount > 0
                 || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);

@@ -832,6 +832,13 @@ function TLSSocket(socket?, options?) {
   }
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
   this[ksession] = options.session || null;
+  // Honor the constructor's own `rejectUnauthorized`. tls.connect() also
+  // routes it through Socket.prototype.connect's options, but the bare
+  // `new TLSSocket(socket, options)` + `_start()` path never gets there.
+  // Only an explicit `false` disables verification (Node's CVE-2021-22939
+  // fix): every other value, including `null`, keeps it on.
+  const rejectUnauthorized = options.rejectUnauthorized;
+  if (rejectUnauthorized !== undefined) this._rejectUnauthorized = rejectUnauthorized !== false;
 
   // `new tls.TLSSocket(socket, { isServer: true })`: drive the server-side TLS
   // handshake over the provided socket via net.ts's native upgrade path (reaches
@@ -853,7 +860,19 @@ TLSSocket.prototype._destroySSL = function _destroySSL() {
 };
 
 TLSSocket.prototype._start = function _start() {
-  // some frameworks uses this _start internal implementation is suposed to start TLS handshake/connect
+  // Some frameworks use this internal entry point to start the TLS handshake.
+  // The client STARTTLS pattern, `new tls.TLSSocket(connectedSocket,
+  // { isServer: false })` followed by `_start()`, has to drive the upgrade
+  // over the wrapped socket the constructor stashed on `_handle` - the same
+  // thing `tls.connect({ socket })` does - or connect() is left with no
+  // port, path, or socket and throws ERR_MISSING_ARGS.
+  const wrapped = this._handle;
+  if (!this.isServer && wrapped instanceof Duplex) {
+    // Preserve any SNI set via setServername() before _start(): connect()
+    // would otherwise overwrite this.servername from its options object.
+    this.connect({ socket: wrapped, servername: this.servername });
+    return;
+  }
   this.connect();
 };
 
@@ -1282,7 +1301,7 @@ function Server(options, secureConnectionListener): void {
       const rejectUnauthorized = options.rejectUnauthorized;
 
       if (typeof rejectUnauthorized !== "undefined") {
-        this._rejectUnauthorized = rejectUnauthorized;
+        this._rejectUnauthorized = rejectUnauthorized !== false;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault();
 
       const ciphers = options.ciphers;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, tempDir } from "harness";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -339,17 +339,17 @@ for (const { name, connect } of tests) {
           {
             name: "TLS_AES_128_GCM_SHA256",
             standardName: "TLS_AES_128_GCM_SHA256",
-            version: "TLSv1/SSLv3",
+            version: "TLSv1.3",
           },
           {
             name: "TLS_AES_256_GCM_SHA384",
             standardName: "TLS_AES_256_GCM_SHA384",
-            version: "TLSv1/SSLv3",
+            version: "TLSv1.3",
           },
           {
             name: "TLS_CHACHA20_POLY1305_SHA256",
             standardName: "TLS_CHACHA20_POLY1305_SHA256",
-            version: "TLSv1/SSLv3",
+            version: "TLSv1.3",
           },
         ];
         const socket = (await new Promise((resolve, reject) => {
@@ -746,4 +746,408 @@ it("https.request reports an impossible version window as a TLS error, not a cer
   response.on("data", (chunk: Buffer) => (body += chunk));
   await once(response, "end");
   expect(body).toBe("ok");
+});
+
+/**
+ * Start a TLS server over the harness cert, connect a client with
+ * `clientOptions`, await both handshakes, and hand the two TLSSockets to
+ * `fn`. Cleanup runs whether or not `fn`'s assertions pass.
+ */
+async function withTlsPair(
+  clientOptions: tls.ConnectionOptions,
+  fn: (client: TLSSocket, serverSide: TLSSocket) => void | Promise<void>,
+  serverOptions: tls.TlsOptions = {},
+) {
+  const serverSocket = Promise.withResolvers<TLSSocket>();
+  const server = tls.createServer({ ...COMMON_CERT_, ...serverOptions }, socket => {
+    socket.on("error", () => {});
+    serverSocket.resolve(socket);
+  });
+  server.on("tlsClientError", err => serverSocket.reject(err));
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const client = tlsConnect({
+    port,
+    host: "127.0.0.1",
+    ca: COMMON_CERT_.cert,
+    servername: "localhost",
+    ...clientOptions,
+  });
+  try {
+    const [, serverSide] = await Promise.all([once(client, "secureConnect"), serverSocket.promise]);
+    await fn(client, serverSide);
+  } finally {
+    client.destroy();
+    server.close();
+    await once(server, "close");
+  }
+}
+
+it("getCipher().version reports the cipher's protocol version, matching Node", async () => {
+  // Every TLS 1.3 suite reports "TLSv1.3"; the exact AEAD depends on AES-NI,
+  // so only `version` is pinned for this case.
+  await withTlsPair({ minVersion: "TLSv1.3" }, client => {
+    expect(client.getProtocol()).toBe("TLSv1.3");
+    expect(client.getCipher().version).toBe("TLSv1.3");
+  });
+  // A SHA-2 AEAD suite is first defined for TLS 1.2, so Node reports
+  // "TLSv1.2" for it regardless of the negotiated protocol.
+  await withTlsPair({ maxVersion: "TLSv1.2", ciphers: "ECDHE-RSA-AES128-GCM-SHA256" }, (client, serverSide) => {
+    const expected = {
+      name: "ECDHE-RSA-AES128-GCM-SHA256",
+      standardName: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+      version: "TLSv1.2",
+    };
+    expect(client.getProtocol()).toBe("TLSv1.2");
+    expect(client.getCipher()).toEqual(expected);
+    expect(serverSide.getCipher()).toEqual(expected);
+  });
+});
+
+it("getCipher().version separates the pre-1.2 ECC suites (TLSv1.0) from the SSLv3-era ones", async () => {
+  // OpenSSL reports each cipher's minimum protocol: the ECC suites were
+  // defined for TLS 1.0 (RFC 4492) and everything older is SSLv3.
+  for (const [ciphers, version] of [
+    ["ECDHE-RSA-AES128-SHA", "TLSv1.0"],
+    ["AES128-SHA", "SSLv3"],
+  ] as const) {
+    await withTlsPair(
+      { maxVersion: "TLSv1.2", ciphers },
+      client => {
+        expect(client.getProtocol()).toBe("TLSv1.2");
+        expect(client.getCipher().name).toBe(ciphers);
+        expect(client.getCipher().version).toBe(version);
+      },
+      { ciphers },
+    );
+  }
+});
+
+// Node's getEphemeralKeyInfo() always returns the same three own keys on a
+// client, with undefined values when no ephemeral key applies (verified on
+// node v26.3.0: Object.keys(...) === ["type","name","size"] for TLS 1.3 and
+// for a static-RSA exchange). toStrictEqual pins that exact key set.
+const NO_EPHEMERAL_KEY = { type: undefined, name: undefined, size: undefined };
+
+it("getEphemeralKeyInfo() reports the negotiated TLS 1.2 ECDHE group, matching Node", async () => {
+  // Node reports OBJ_nid2sn + EVP_PKEY_bits of the peer's ephemeral key.
+  // BoringSSL prefers X25519 on both sides of a TLS <= 1.2 key exchange.
+  await withTlsPair({ maxVersion: "TLSv1.2" }, (client, serverSide) => {
+    expect(client.getProtocol()).toBe("TLSv1.2");
+    expect(client.getEphemeralKeyInfo()).toStrictEqual({ type: "ECDH", name: "X25519", size: 253 });
+    // Node reports null on the server side of the connection.
+    expect(serverSide.getEphemeralKeyInfo()).toBeNull();
+  });
+  // A static-RSA key exchange has no ephemeral key.
+  await withTlsPair({ maxVersion: "TLSv1.2", ciphers: "AES128-SHA" }, client => {
+    expect(client.getEphemeralKeyInfo()).toStrictEqual(NO_EPHEMERAL_KEY);
+  });
+  // Node reports no key on TLS 1.3: its SSL_get_peer_tmp_key only surfaces
+  // the <= 1.2 ServerKeyExchange key.
+  await withTlsPair({ minVersion: "TLSv1.3" }, client => {
+    expect(client.getProtocol()).toBe("TLSv1.3");
+    expect(client.getEphemeralKeyInfo()).toStrictEqual(NO_EPHEMERAL_KEY);
+  });
+});
+
+it("getEphemeralKeyInfo() reports no key on a resumed TLS 1.2 session, matching Node", async () => {
+  // A resumed abbreviated handshake has no ServerKeyExchange, so Node's
+  // SSL_get_peer_tmp_key is empty. BoringSSL serializes the original
+  // handshake's group_id into the session blob, so without a resumption
+  // check SSL_get_negotiated_group would surface it here.
+  const server = tls.createServer({ ...COMMON_CERT_, maxVersion: "TLSv1.2" }, socket => {
+    socket.write("x");
+    socket.on("error", () => {});
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const base = {
+    port,
+    host: "127.0.0.1",
+    ca: COMMON_CERT_.cert,
+    servername: "localhost",
+    maxVersion: "TLSv1.2",
+  } as const;
+
+  async function connect(extra: tls.ConnectionOptions) {
+    const client = tlsConnect({ ...base, ...extra });
+    await once(client, "secureConnect");
+    await once(client, "data");
+    return client;
+  }
+
+  let session: Buffer | undefined;
+  try {
+    const full = await connect({});
+    try {
+      expect(full.isSessionReused()).toBe(false);
+      expect(full.getEphemeralKeyInfo()).toStrictEqual({ type: "ECDH", name: "X25519", size: 253 });
+      session = full.getSession();
+    } finally {
+      full.destroy();
+    }
+
+    const resumed = await connect({ session });
+    try {
+      expect(resumed.isSessionReused()).toBe(true);
+      expect(resumed.getEphemeralKeyInfo()).toStrictEqual(NO_EPHEMERAL_KEY);
+    } finally {
+      resumed.destroy();
+    }
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("checkServerIdentity is not called on a resumed session, matching Node", async () => {
+  // Node's onConnectSecure guards the callback with `!this.isSessionReused()`:
+  // the identity was verified on the original full handshake.
+  const server = tls.createServer({ ...COMMON_CERT_, maxVersion: "TLSv1.2" }, socket => {
+    socket.write("x");
+    socket.on("error", () => {});
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  let calls = 0;
+  const base = {
+    port,
+    host: "127.0.0.1",
+    ca: COMMON_CERT_.cert,
+    servername: "localhost",
+    maxVersion: "TLSv1.2",
+    checkServerIdentity: () => void calls++,
+  } as const;
+
+  async function connect(extra: tls.ConnectionOptions) {
+    const client = tlsConnect({ ...base, ...extra });
+    await once(client, "secureConnect");
+    await once(client, "data");
+    return client;
+  }
+
+  let session: Buffer | undefined;
+  try {
+    const full = await connect({});
+    try {
+      expect(full.isSessionReused()).toBe(false);
+      expect(calls).toBe(1);
+      session = full.getSession();
+    } finally {
+      full.destroy();
+    }
+
+    const resumed = await connect({ session });
+    try {
+      expect(resumed.isSessionReused()).toBe(true);
+      expect(calls).toBe(1);
+    } finally {
+      resumed.destroy();
+    }
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("new tls.TLSSocket(socket, { isServer: false }) + _start() runs the handshake over the wrapped socket", async () => {
+  // The client STARTTLS pattern: wrap an already-connected plaintext socket,
+  // then start the handshake with the internal _start() entry point. This
+  // used to throw ERR_MISSING_ARGS because connect() got no port, path, or
+  // socket.
+  const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+    socket.on("error", () => {});
+    socket.on("data", () => socket.end());
+    socket.write("hi");
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const raw = net.connect(port, "127.0.0.1");
+  await once(raw, "connect");
+  const secure: any = new TLSSocket(raw, {
+    isServer: false,
+    ca: COMMON_CERT_.cert,
+    servername: "localhost",
+  } as tls.TLSSocketOptions);
+  try {
+    secure._start();
+    await once(secure, "secureConnect");
+    expect(secure.authorized).toBe(true);
+    expect(secure.getProtocol()).toBe("TLSv1.3");
+    // The upgraded stream carries application data both ways.
+    const [chunk] = await once(secure, "data");
+    expect(chunk.toString()).toBe("hi");
+    secure.write("bye");
+    await once(secure, "close");
+  } finally {
+    secure.destroy();
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("new tls.TLSSocket(socket, { isServer: false, rejectUnauthorized: false }) completes against an untrusted peer", async () => {
+  // The bare-TLSSocket path never reaches Socket.prototype.connect's
+  // rejectUnauthorized handling, so the constructor has to honor its own
+  // option or a self-signed peer would always be destroyed.
+  const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+    socket.on("error", () => {});
+    socket.end();
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const raw = net.connect(port, "127.0.0.1");
+  await once(raw, "connect");
+  const secure: any = new TLSSocket(raw, { isServer: false, rejectUnauthorized: false } as tls.TLSSocketOptions);
+  try {
+    secure._start();
+    await once(secure, "secureConnect");
+    // Verification still ran and reported; it just did not tear the socket down.
+    expect(secure.authorized).toBe(false);
+    expect(secure.authorizationError).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+  } finally {
+    secure.destroy();
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("setServername() before _start() is sent as the client SNI, matching Node", async () => {
+  // Socket.prototype.connect overwrites this.servername from its options;
+  // _start() has to forward the value set between construction and start so
+  // the SNI reaches the handshake.
+  const observed = Promise.withResolvers<string | false | undefined>();
+  const server = tls.createServer({ ...COMMON_CERT_ });
+  server.on("secureConnection", socket => {
+    observed.resolve(socket.servername);
+    socket.end();
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const raw = net.connect(port, "127.0.0.1");
+  await once(raw, "connect");
+  const secure: any = new TLSSocket(raw, { isServer: false, rejectUnauthorized: false } as tls.TLSSocketOptions);
+  try {
+    secure.setServername("example.test");
+    secure._start();
+    await once(secure, "secureConnect");
+    expect(secure.servername).toBe("example.test");
+    expect(await observed.promise).toBe("example.test");
+  } finally {
+    secure.destroy();
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("rejectUnauthorized: null keeps certificate verification on, matching Node (CVE-2021-22939)", async () => {
+  // Node only disables verification on an explicit `false`. Every other value
+  // (including `null`, which used to reach the handshake's truthiness check
+  // as-is and silently skip rejection) keeps it on.
+  const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+    socket.on("error", () => {});
+    socket.end();
+  });
+  server.on("tlsClientError", () => {});
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  function outcome(client: TLSSocket) {
+    return new Promise<string>(resolve => {
+      client.once("secureConnect", () => resolve("connected"));
+      client.once("error", e => resolve((e as NodeJS.ErrnoException).code ?? String(e)));
+    }).finally(() => client.destroy());
+  }
+
+  try {
+    // tls.connect path.
+    {
+      const client = tlsConnect({ port, host: "127.0.0.1", servername: "localhost", rejectUnauthorized: null as any });
+      expect(await outcome(client)).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    }
+    // new tls.TLSSocket(socket, { isServer: false }) + _start() path.
+    {
+      const raw = net.connect(port, "127.0.0.1");
+      await once(raw, "connect");
+      const secure: any = new TLSSocket(raw, {
+        isServer: false,
+        servername: "localhost",
+        rejectUnauthorized: null as any,
+      } as tls.TLSSocketOptions);
+      secure._start();
+      expect(await outcome(secure)).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    }
+    // An explicit `false` still disables it.
+    {
+      const client = tlsConnect({ port, host: "127.0.0.1", servername: "localhost", rejectUnauthorized: false });
+      expect(await outcome(client)).toBe("connected");
+    }
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("an exception from a user checkServerIdentity escapes as an uncaught exception, not a socket 'error'", async () => {
+  // Node does not guard the callback (onConnectSecure in lib/_tls_wrap.js):
+  // a throw aborts the handshake and reaches the process as an uncaught
+  // exception. It must not be downgraded into the socket's 'error' routing,
+  // and 'secureConnect' must not fire.
+  using dir = tempDir("tls-csi-throw", {
+    "cert.pem": COMMON_CERT_.cert,
+    "key.pem": COMMON_CERT_.key,
+    "fixture.ts": `
+      import tls from "node:tls";
+      import { readFileSync } from "node:fs";
+      const cert = readFileSync("cert.pem", "utf8");
+      const key = readFileSync("key.pem", "utf8");
+      process.on("uncaughtException", err => {
+        console.log("UNCAUGHT " + err.message);
+        process.exit(42);
+      });
+      const server = tls.createServer({ key, cert }, s => s.end());
+      server.listen(0, "127.0.0.1", () => {
+        const client = tls.connect({
+          port: server.address().port,
+          host: "127.0.0.1",
+          ca: cert,
+          servername: "localhost",
+          checkServerIdentity() {
+            throw new Error("csi-boom");
+          },
+        });
+        client.on("secureConnect", () => {
+          console.log("SECURE_CONNECT");
+          process.exit(5);
+        });
+        client.on("error", e => {
+          console.log("SOCKET_ERROR " + e.message);
+          process.exit(3);
+        });
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "UNCAUGHT csi-boom",
+    stderr: "",
+    exitCode: 42,
+  });
 });

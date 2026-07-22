@@ -28,22 +28,19 @@ pub(super) mod ffi {
     bun_opaque::opaque_ffi! {
         pub(crate) struct SSL_SESSION;
         pub(crate) struct SSL_CIPHER;
-        pub(crate) struct EVP_PKEY;
-        pub(crate) struct EC_KEY;
-        pub(crate) struct EC_GROUP;
     }
 
     // ssl.h
     pub(crate) const TLSEXT_NAMETYPE_host_name: c_int = 0;
+    // tls1.h / ssl3.h protocol version numbers.
+    pub(crate) const TLS1_2_VERSION: u16 = 0x0303;
+    pub(crate) const TLS1_3_VERSION: u16 = 0x0304;
 
     // evp.h key types (NID values)
     pub(crate) const EVP_PKEY_RSA: c_int = 6;
     pub(crate) const EVP_PKEY_RSA_PSS: c_int = 912;
     pub(crate) const EVP_PKEY_DSA: c_int = 116;
     pub(crate) const EVP_PKEY_EC: c_int = 408;
-    pub(crate) const EVP_PKEY_DH: c_int = 28;
-    pub(crate) const EVP_PKEY_X25519: c_int = 948;
-    pub(crate) const EVP_PKEY_X448: c_int = 961;
 
     // obj_mac.h
     pub(crate) const NID_ED25519: c_int = 949;
@@ -51,9 +48,16 @@ pub(super) mod ffi {
     pub(crate) const NID_id_GostR3410_2001: c_int = 811;
     pub(crate) const NID_id_GostR3410_2012_256: c_int = 979;
     pub(crate) const NID_id_GostR3410_2012_512: c_int = 980;
+    // The (EC)DHE named groups BoringSSL supports for a TLS <= 1.2 key
+    // exchange (`ssl_key_share.cc` `kNamedGroups`).
+    pub(crate) const NID_X9_62_prime256v1: c_int = 415;
+    pub(crate) const NID_secp384r1: c_int = 715;
+    pub(crate) const NID_secp521r1: c_int = 716;
+    pub(crate) const NID_X25519: c_int = 948;
+    pub(crate) const NID_kx_ecdhe: c_int = 952;
 
     // ffi-safe-fn: every handle type below (`SSL`, `X509`, `SSL_CIPHER`,
-    // `EVP_PKEY`, `EC_KEY`, `EC_GROUP`) is an `opaque_ffi!` ZST — `&T`
+    // `SSL_SESSION`) is an `opaque_ffi!` ZST — `&T`
     // dereferences zero bytes, carries no `dereferenceable`/`noalias`
     // obligation, and the `UnsafeCell` body lets BoringSSL mutate through a
     // shared ref. Functions whose *only* pointer arguments are such handles
@@ -65,6 +69,10 @@ pub(super) mod ffi {
     unsafe extern "C" {
         // ── SSL session/handshake info ───────────────────────────────────
         pub(crate) safe fn SSL_get_version(ssl: &SSL) -> *const c_char;
+        pub(crate) safe fn SSL_version(ssl: &SSL) -> c_int;
+        /// NID of the (EC)DHE group negotiated by the most recently completed
+        /// handshake, or `NID_undef` (0) when the key exchange used none (RSA).
+        pub(crate) safe fn SSL_get_negotiated_group(ssl: &SSL) -> c_int;
         pub(crate) safe fn SSL_get_peer_certificate(ssl: &SSL) -> *mut X509;
         pub(crate) safe fn SSL_get_certificate(ssl: &SSL) -> *mut X509;
         pub(crate) safe fn SSL_set_max_send_fragment(ssl: &SSL, max_send_fragment: usize) -> c_int;
@@ -100,7 +108,6 @@ pub(super) mod ffi {
             use_context: c_int,
         ) -> c_int;
         pub(crate) safe fn SSL_session_reused(ssl: &SSL) -> c_int;
-        pub(crate) safe fn SSL_get_privatekey(ssl: &SSL) -> *mut EVP_PKEY;
 
         // ── SSL_SESSION ───────────────────────────────────────────────────
         pub(crate) safe fn SSL_get_session(ssl: &SSL) -> *mut SSL_SESSION;
@@ -129,7 +136,8 @@ pub(super) mod ffi {
         pub(crate) safe fn SSL_get_current_cipher(ssl: &SSL) -> *const SSL_CIPHER;
         pub(crate) safe fn SSL_CIPHER_get_name(cipher: &SSL_CIPHER) -> *const c_char;
         pub(crate) safe fn SSL_CIPHER_standard_name(cipher: &SSL_CIPHER) -> *const c_char;
-        pub(crate) safe fn SSL_CIPHER_get_version(cipher: &SSL_CIPHER) -> *const c_char;
+        pub(crate) safe fn SSL_CIPHER_get_min_version(cipher: &SSL_CIPHER) -> u16;
+        pub(crate) safe fn SSL_CIPHER_get_kx_nid(cipher: &SSL_CIPHER) -> c_int;
 
         // ── X509 ─────────────────────────────────────────────────────────
         pub(crate) safe fn X509_up_ref(x: &X509) -> c_int;
@@ -144,17 +152,6 @@ pub(super) mod ffi {
         // on null, which both call sites already guard).
         #[link_name = "sk_value"]
         pub(crate) safe fn sk_X509_value(sk: &struct_stack_st_X509, i: usize) -> *mut X509;
-
-        // ── EVP / EC ──────────────────────────────────────────────────────
-        pub(crate) safe fn EVP_PKEY_id(pkey: &EVP_PKEY) -> c_int;
-        pub(crate) safe fn EVP_PKEY_bits(pkey: &EVP_PKEY) -> c_int;
-        // Returns a +1 `EC_KEY*` (caller owns; the sole call site
-        // intentionally leaks it). The only pointer arg is an
-        // opaque-ZST `&EVP_PKEY`, so the call itself has no precondition.
-        pub(crate) safe fn EVP_PKEY_get1_EC_KEY(pkey: &EVP_PKEY) -> *mut EC_KEY;
-        // Result is borrowed from `key`; opaque-ZST ref ⇒ no caller precondition.
-        pub(crate) safe fn EC_KEY_get0_group(key: &EC_KEY) -> *const EC_GROUP;
-        pub(crate) safe fn EC_GROUP_get_curve_name(group: &EC_GROUP) -> c_int;
 
         // ── OBJ ──────────────────────────────────────────────────────────
         // Pure NID→short-name lookup; takes a by-value int and returns a
@@ -814,14 +811,22 @@ pub(super) fn get_cipher(
         );
     }
 
-    let version = ffi::SSL_CIPHER_get_version(cipher);
-    if version.is_null() {
-        result.put(global, b"version", JSValue::NULL);
-    } else {
-        // SAFETY: SSL_CIPHER_get_version returns a static NUL-terminated C string.
-        let s = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
-        result.put(global, b"version", ZigString::from_utf8(s).to_js(global));
-    }
+    // BoringSSL's `SSL_CIPHER_get_version` is hardcoded to "TLSv1/SSLv3".
+    // Node reports the cipher's minimum protocol version (OpenSSL's cipher
+    // table); rebuild the same strings from `SSL_CIPHER_get_min_version`.
+    // For the pre-1.2 suites OpenSSL reports "TLSv1.0" for the ECC ones
+    // (RFC 4492 defined them for TLS 1.0) and "SSLv3" for the rest.
+    let version: &[u8] = match ffi::SSL_CIPHER_get_min_version(cipher) {
+        ffi::TLS1_3_VERSION => b"TLSv1.3",
+        ffi::TLS1_2_VERSION => b"TLSv1.2",
+        _ if ffi::SSL_CIPHER_get_kx_nid(cipher) == ffi::NID_kx_ecdhe => b"TLSv1.0",
+        _ => b"SSLv3",
+    };
+    result.put(
+        global,
+        b"version",
+        ZigString::from_utf8(version).to_js(global),
+    );
 
     Ok(result)
 }
@@ -1021,64 +1026,43 @@ pub(super) fn get_ephemeral_key_info(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::NULL);
     };
+    let ssl = boringssl::SSL::opaque_ref(ssl_ptr);
     let result = JSValue::create_empty_object(global, 0);
 
-    // TODO: investigate better option or compatible way to get the key
-    // this implementation follows nodejs but for BoringSSL SSL_get_server_tmp_key will always return 0
-    // wich will result in a empty object
-    // let mut raw_key: *mut boringssl::EVP_PKEY = core::ptr::null_mut();
-    // if unsafe { boringssl::SSL_get_server_tmp_key(ssl_ptr, &mut raw_key) } == 0 {
-    //     return Ok(result);
-    // }
-    let raw_key: *mut ffi::EVP_PKEY = ffi::SSL_get_privatekey(boringssl::SSL::opaque_ref(ssl_ptr));
-    if raw_key.is_null() {
+    // BoringSSL has no `SSL_get_peer_tmp_key`, but the negotiated named group
+    // carries the same information for a TLS <= 1.2 (EC)DHE key exchange.
+    // Node reports no ephemeral key on TLS 1.3 or a resumed session (its
+    // `SSL_get_peer_tmp_key` only surfaces the ServerKeyExchange key) and on
+    // a non-forward-secret (RSA) key exchange, where
+    // `SSL_get_negotiated_group` is `NID_undef`; match all three. The tls.ts
+    // wrapper shapes the empty result into Node's fixed {type, name, size}
+    // key set. BoringSSL serializes `group_id` into the session blob, so a
+    // resumed session must be checked separately.
+    if ffi::SSL_version(ssl) >= i32::from(ffi::TLS1_3_VERSION) || ffi::SSL_session_reused(ssl) != 0
+    {
         return Ok(result);
     }
-    let pkey = ffi::EVP_PKEY::opaque_ref(raw_key);
-
-    let kid = ffi::EVP_PKEY_id(pkey);
-    let bits = ffi::EVP_PKEY_bits(pkey);
-
-    match kid {
-        ffi::EVP_PKEY_DH => {
-            result.put(global, b"type", BunString::static_("DH").to_js(global)?);
-            result.put(global, b"size", JSValue::js_number(f64::from(bits)));
-        }
-        ffi::EVP_PKEY_EC | ffi::EVP_PKEY_X25519 | ffi::EVP_PKEY_X448 => {
-            let curve_name: &[u8];
-            if kid == ffi::EVP_PKEY_EC {
-                // `pkey` is non-null (guarded above) and `kid == EVP_PKEY_EC`, so
-                // BoringSSL guarantees a non-null EC_KEY with a group set; the
-                // `opaque_ref` chain panics (not UB) if that invariant ever broke.
-                let ec = ffi::EVP_PKEY_get1_EC_KEY(pkey);
-                let group = ffi::EC_KEY_get0_group(ffi::EC_KEY::opaque_ref(ec));
-                let nid = ffi::EC_GROUP_get_curve_name(ffi::EC_GROUP::opaque_ref(group));
-                let nid_str = ffi::OBJ_nid2sn(nid);
-                if !nid_str.is_null() {
-                    // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-                    curve_name = unsafe { bun_core::ffi::cstr(nid_str) }.to_bytes();
-                } else {
-                    curve_name = b"";
-                }
-            } else {
-                let kid_str = ffi::OBJ_nid2sn(kid);
-                if !kid_str.is_null() {
-                    // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-                    curve_name = unsafe { bun_core::ffi::cstr(kid_str) }.to_bytes();
-                } else {
-                    curve_name = b"";
-                }
-            }
-            result.put(global, b"type", BunString::static_("ECDH").to_js(global)?);
-            result.put(
-                global,
-                b"name",
-                ZigString::from_utf8(curve_name).to_js(global),
-            );
-            result.put(global, b"size", JSValue::js_number(f64::from(bits)));
-        }
-        _ => {}
+    let nid = ffi::SSL_get_negotiated_group(ssl);
+    // `size` mirrors Node's `EVP_PKEY_bits` of the peer's ephemeral key: the
+    // field size for the NIST curves and the 253-bit X25519 group order.
+    let bits: i32 = match nid {
+        ffi::NID_X25519 => 253,
+        ffi::NID_X9_62_prime256v1 => 256,
+        ffi::NID_secp384r1 => 384,
+        ffi::NID_secp521r1 => 521,
+        _ => return Ok(result),
+    };
+    let sn = ffi::OBJ_nid2sn(nid);
+    if sn.is_null() {
+        return Ok(result);
     }
+    // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
+    let name = unsafe { bun_core::ffi::cstr(sn) }.to_bytes();
+    // BoringSSL only offers ECDHE groups for TLS <= 1.2 (no DHE cipher suites),
+    // so every reachable group here is an ECDH exchange.
+    result.put(global, b"type", BunString::static_("ECDH").to_js(global)?);
+    result.put(global, b"name", ZigString::from_utf8(name).to_js(global));
+    result.put(global, b"size", JSValue::js_number(f64::from(bits)));
     Ok(result)
 }
 

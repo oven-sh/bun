@@ -305,6 +305,33 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+function rethrowUncaught(err) {
+  throw err;
+}
+
+// Distinguishes "the user's checkServerIdentity threw" from any Error it
+// returned; the handshake is abandoned the way Node abandons onConnectSecure.
+const kCheckServerIdentityThrew = Symbol("kCheckServerIdentityThrew");
+
+/**
+ * Run the user's `checkServerIdentity` and return the verify Error it
+ * produced (or undefined). Node does not guard the callback: an exception it
+ * throws escapes the handshake as an uncaught exception rather than being
+ * downgraded to a socket 'error' by the native handler error routing, so the
+ * rethrow is deferred out of this callback's try frame.
+ */
+function runCheckServerIdentity(self, checkServerIdentity) {
+  const hostname = self.servername || self._host || "localhost";
+  const cert = self.getPeerCertificate(true);
+  if (!cert) return undefined;
+  try {
+    return checkServerIdentity(hostname, cert);
+  } catch (err) {
+    process.nextTick(rethrowUncaught, err);
+    return kCheckServerIdentityThrew;
+  }
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -470,12 +497,11 @@ const SocketHandlers: SocketHandler = {
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
-      const cert = self.getPeerCertificate(true);
-      if (cert) {
-        verifyError = checkServerIdentity(hostname, cert);
-      }
+    // Node skips the identity check on a resumed session: it was verified on
+    // the original full handshake (onConnectSecure in lib/_tls_wrap.js).
+    if (!verifyError && typeof checkServerIdentity === "function" && !self.isSessionReused()) {
+      verifyError = runCheckServerIdentity(self, checkServerIdentity);
+      if (verifyError === kCheckServerIdentityThrew) return;
     }
     let rejectUnauthorized;
     if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
@@ -1252,12 +1278,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
-      const cert = self.getPeerCertificate(true);
-      if (cert) {
-        verifyError = checkServerIdentity(hostname, cert);
-      }
+    // Node skips the identity check on a resumed session: it was verified on
+    // the original full handshake (onConnectSecure in lib/_tls_wrap.js).
+    if (!verifyError && typeof checkServerIdentity === "function" && !self.isSessionReused()) {
+      verifyError = runCheckServerIdentity(self, checkServerIdentity);
+      if (verifyError === kCheckServerIdentityThrew) return;
     }
     let rejectUnauthorized;
     if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
@@ -1758,8 +1783,9 @@ Socket.prototype.connect = function connect(...args) {
       this._requestCert = true;
       if (tls) {
         if (typeof rejectUnauthorized !== "undefined") {
-          this._rejectUnauthorized = rejectUnauthorized;
-          tls.rejectUnauthorized = rejectUnauthorized;
+          // Only an explicit `false` disables verification (CVE-2021-22939).
+          this._rejectUnauthorized = rejectUnauthorized !== false;
+          tls.rejectUnauthorized = this._rejectUnauthorized;
         } else {
           this._rejectUnauthorized = tls.rejectUnauthorized;
         }
@@ -2823,8 +2849,8 @@ function internalConnect(self, options, address, port, addressType, localAddress
     if (tls) {
       const { rejectUnauthorized, session, checkServerIdentity } = options;
       if (typeof rejectUnauthorized !== "undefined") {
-        self._rejectUnauthorized = rejectUnauthorized;
-        tls.rejectUnauthorized = rejectUnauthorized;
+        self._rejectUnauthorized = rejectUnauthorized !== false;
+        tls.rejectUnauthorized = self._rejectUnauthorized;
       } else {
         self._rejectUnauthorized = tls.rejectUnauthorized;
       }
@@ -2976,8 +3002,8 @@ function internalConnectMultiple(context, canceled?) {
     if (tls) {
       const { rejectUnauthorized, session, checkServerIdentity } = context.options;
       if (typeof rejectUnauthorized !== "undefined") {
-        self._rejectUnauthorized = rejectUnauthorized;
-        tls.rejectUnauthorized = rejectUnauthorized;
+        self._rejectUnauthorized = rejectUnauthorized !== false;
+        tls.rejectUnauthorized = self._rejectUnauthorized;
       } else {
         self._rejectUnauthorized = tls.rejectUnauthorized;
       }

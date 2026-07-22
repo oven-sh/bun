@@ -449,9 +449,9 @@ describe("undici ProxyAgent / dispatcher", () => {
   });
 
   it("ProxyAgent rejects invalid constructor arguments", () => {
-    expect(() => new (ProxyAgent as any)()).toThrow();
-    expect(() => new (ProxyAgent as any)({})).toThrow();
-    expect(() => new (ProxyAgent as any)(123)).toThrow();
+    expect(() => new (ProxyAgent as any)()).toThrow("Proxy uri is mandatory");
+    expect(() => new (ProxyAgent as any)({})).toThrow("Proxy uri is mandatory");
+    expect(() => new (ProxyAgent as any)(123)).toThrow("Proxy uri is mandatory");
   });
 
   it("Client/Pool store constructor origin and close()/destroy() resolve (#14498, #21944, #7920)", async () => {
@@ -465,9 +465,18 @@ describe("undici ProxyAgent / dispatcher", () => {
     expect(statusCode).toBe(200);
     expect(await body!.json()).toEqual({ path: "/from-client" });
 
-    const pool = new Pool(`http://127.0.0.1:${origin.port}`);
-    const r2 = await pool.request({ path: "/from-pool", method: "GET" });
-    expect(await r2.body!.json()).toEqual({ path: "/from-pool" });
+    // URL origins serialize with a trailing slash; the client must not produce
+    // `//from-url` when concatenating path.
+    const pool = new Pool(new URL(`http://127.0.0.1:${origin.port}`));
+    const r2 = await pool.request({ path: "/from-url", method: "GET" });
+    expect(await r2.body!.json()).toEqual({ path: "/from-url" });
+
+    const r3 = await new Agent().request({
+      origin: new URL(`http://127.0.0.1:${origin.port}`),
+      path: "/agent-url",
+      method: "GET",
+    });
+    expect(await r3.body!.json()).toEqual({ path: "/agent-url" });
 
     await expect(new Agent().close()).resolves.toBeUndefined();
     await expect(client.close()).resolves.toBeUndefined();

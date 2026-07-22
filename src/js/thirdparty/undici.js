@@ -309,7 +309,15 @@ class Dispatcher extends EventEmitter {
     let opts;
     if (options != null && typeof options === "object" && !(options instanceof URL)) {
       const { origin, path, ...rest } = options;
-      url = origin != null ? String(origin) + (path ?? "") : path;
+      if (origin != null) {
+        // URL serialization always emits a trailing slash; strip it so
+        // `{origin: new URL(...), path: "/x"}` doesn't produce `//x`.
+        let o = String(origin);
+        if (o.endsWith("/")) o = o.slice(0, -1);
+        url = o + (path ?? "");
+      } else {
+        url = path;
+      }
       opts = rest;
     }
     const p = request(url, { ...opts, dispatcher: this });
@@ -366,7 +374,7 @@ class Client extends Dispatcher {
     if (origin == null || (typeof origin !== "string" && !(origin instanceof URL))) {
       throw new InvalidArgumentError("Invalid URL: origin must be a non-empty string or URL");
     }
-    this.#origin = String(origin);
+    this.#origin = new URL(origin).origin;
   }
 
   request(options, callback) {

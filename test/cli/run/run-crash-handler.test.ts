@@ -133,37 +133,34 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
 // external DLL the old RtlCaptureStackBackTrace path could stop at
 // KiUserExceptionDispatcher on some Windows versions, leaving only the
 // handler's own frames in the trace and none of the bun callers.
-test.if(isWindows && isDebug)(
-  "Windows: segfault inside a system DLL captures the bun callers",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "segfaultInDll"],
-      env: noReportEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures the bun callers", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "segfaultInDll"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
-    expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+  expect(exitCode).not.toBe(0);
 
-    // The debug build's fallback printer emits one `???:?:?: 0x<addr>` line per
-    // captured frame. A walk seeded from the fault CONTEXT reaches through the
-    // DLL into the bun call chain (the JS host-fn dispatch is several frames
-    // deep), so a short trace means the unwind stopped at the exception
-    // dispatcher and the handler's own frames are all that was captured.
-    const frameAddrs = [...stderr.matchAll(/: (0x[0-9a-f]{6,}) in /gi)].map(m => m[1]);
-    expect(frameAddrs.length).toBeGreaterThanOrEqual(6);
+  // The debug build's fallback printer emits one `???:?:?: 0x<addr>` line per
+  // captured frame. A walk seeded from the fault CONTEXT reaches through the
+  // DLL into the bun call chain (the JS host-fn dispatch is several frames
+  // deep), so a short trace means the unwind stopped at the exception
+  // dispatcher and the handler's own frames are all that was captured.
+  const frameAddrs = [...stderr.matchAll(/: (0x[0-9a-f]{6,}) in /gi)].map(m => m[1]);
+  expect(frameAddrs.length).toBeGreaterThanOrEqual(6);
 
-    // Frame 0 is the fault PC inside the DLL. Frame 1 must be in bun's image
-    // (the code that called into the DLL), not another DLL/ntdll frame. The
-    // high 32 bits of an address identify the image under ASLR on x64, so a
-    // match against any later bun frame is sufficient; a mismatch means frame
-    // 1 was KiUserExceptionDispatcher or another handler frame.
-    const hi = (a: string) => (BigInt(a) >> 32n).toString(16);
-    expect(hi(frameAddrs[0])).not.toBe(hi(frameAddrs[1]));
-    expect(hi(frameAddrs[1])).toBe(hi(frameAddrs[2]));
-  },
-);
+  // Frame 0 is the fault PC inside the DLL. Frame 1 must be in bun's image
+  // (the code that called into the DLL), not another DLL/ntdll frame. The
+  // high 32 bits of an address identify the image under ASLR on x64, so a
+  // match against any later bun frame is sufficient; a mismatch means frame
+  // 1 was KiUserExceptionDispatcher or another handler frame.
+  const hi = (a: string) => (BigInt(a) >> 32n).toString(16);
+  expect(hi(frameAddrs[0])).not.toBe(hi(frameAddrs[1]));
+  expect(hi(frameAddrs[1])).toBe(hi(frameAddrs[2]));
+});
 
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {
   // If this fails, then https://bun.report will be incorrect and the stack

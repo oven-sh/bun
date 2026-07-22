@@ -98,10 +98,6 @@ async function getFeaturesJSON(body: ArrayBuffer) {
   release.assets.unshift(asset);
 }
 
-if (release?.assets?.[0]?.name !== localProfile) {
-  throw new Error("Expected local profile build to be the first asset");
-}
-
 for (const asset of release.assets) {
   const url = asset.browser_download_url;
   const response = await fetch(url);

@@ -16,7 +16,7 @@ impl NotificationResponse {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        let mut remaining = (reader.length()? - 4) as usize;
+        let mut remaining = reader.body_length()?;
         if remaining < 4 {
             return Err(AnyPostgresError::InvalidMessage);
         }

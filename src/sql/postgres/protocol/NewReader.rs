@@ -172,9 +172,18 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Ok(expected)
     }
 
+    /// `length()` minus the 4 bytes the length field itself occupies, i.e. the
+    /// number of body bytes remaining in this message. Cannot underflow:
+    /// `length()` has already returned `InvalidMessageLength` for any value
+    /// below 4, and `ensure_capacity` has confirmed those bytes are present.
+    #[inline]
+    pub fn body_length(&mut self) -> Result<usize, AnyPostgresError> {
+        Ok((self.length()? - 4) as usize)
+    }
+
     pub fn skip_message(&mut self) -> Result<(), AnyPostgresError> {
-        let length = self.length()?;
-        self.skip(usize::try_from(length - 4).expect("int cast"))
+        let body = self.body_length()?;
+        self.skip(body)
     }
 
     #[inline]

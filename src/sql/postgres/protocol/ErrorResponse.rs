@@ -22,9 +22,7 @@ impl ErrorResponse {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        // A length of exactly 4 is an empty message (no fields); `length()`
-        // already rejected anything smaller.
-        let remaining_bytes = (reader.length()? - 4) as usize;
+        let remaining_bytes = reader.body_length()?;
         if remaining_bytes > 0 {
             return Ok(Self {
                 messages: FieldMessage::decode_list::<Container>(reader, remaining_bytes)?,

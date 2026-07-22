@@ -218,7 +218,7 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
             } else {
                 "/data/storage/el2/base/tmp".to_string()
             };
-            let _ = std::env::set_var("TMPDIR", &fallback);
+            let _ = unsafe { std::env::set_var("TMPDIR", &fallback) };
         }
     }
 

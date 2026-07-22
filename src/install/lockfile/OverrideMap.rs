@@ -6,8 +6,8 @@ use bun_core::strings;
 use bun_install::dependency::{self, Behavior, Dependency, DependencyExt as _};
 use bun_install::{PackageManager, PackageNameHash};
 use bun_output::{declare_scope, scoped_log};
-use bun_semver::String as SemverString;
 use bun_semver::string::Builder as SemverBuilder;
+use bun_semver::{SlicedString, String as SemverString};
 
 use super::package::value_loc_of;
 use super::{StringBuilder, package::Package};
@@ -420,7 +420,24 @@ pub fn parse_override_value(
                 .name
                 .eql(ref_name_str, builder.string_bytes.as_slice(), ref_name)
             {
-                return Ok(Some(dep.clone()));
+                // `$ref` borrows only the version spec from the referenced
+                // dependency; the overridden package keeps its own identity.
+                let name_hash = SemverBuilder::string_hash(key);
+                let name = builder.append_with_hash::<SemverString>(key, name_hash);
+                // The referenced dependency's literal already lives in this
+                // lockfile's string buffer, so it can be re-parsed in place.
+                let literal_sliced = dep.version.literal.sliced(builder.string_bytes.as_slice());
+                return Ok(parse_override_dependency(
+                    field,
+                    package_manager,
+                    source,
+                    loc,
+                    log,
+                    value,
+                    name,
+                    name_hash,
+                    &literal_sliced,
+                ));
             }
         }
         log.add_warning_fmt(
@@ -446,29 +463,53 @@ pub fn parse_override_value(
     let name_hash = SemverBuilder::string_hash(key);
     let name = builder.append_with_hash::<SemverString>(key, name_hash);
 
-    let version = match dependency::parse(
+    Ok(parse_override_dependency(
+        field,
+        package_manager,
+        source,
+        loc,
+        log,
+        value,
+        name,
+        name_hash,
+        &literal_sliced,
+    ))
+}
+
+/// Shared tail of both `parse_override_value` branches: parse `literal_sliced`
+/// as a version spec under `name` and build the override's `Dependency`,
+/// warning on an unparsable value.
+fn parse_override_dependency(
+    field: &'static str,
+    package_manager: &mut PackageManager,
+    source: &bun_ast::Source,
+    loc: bun_ast::Loc,
+    log: &mut bun_ast::Log,
+    value: &[u8],
+    name: SemverString,
+    name_hash: PackageNameHash,
+    literal_sliced: &SlicedString,
+) -> Option<Dependency> {
+    let Some(version) = dependency::parse(
         name,
         name_hash,
         literal_sliced.slice,
-        &literal_sliced,
+        literal_sliced,
         &mut *log,
         package_manager,
-    ) {
-        Some(v) => v,
-        None => {
-            log.add_warning_fmt(
-                Some(source),
-                loc,
-                format_args!("Invalid {} value \"{}\"", field, bstr::BStr::new(value)),
-            );
-            return Ok(None);
-        }
+    ) else {
+        log.add_warning_fmt(
+            Some(source),
+            loc,
+            format_args!("Invalid {} value \"{}\"", field, bstr::BStr::new(value)),
+        );
+        return None;
     };
 
-    Ok(Some(Dependency {
+    Some(Dependency {
         name,
         name_hash,
         version,
         behavior: Behavior::default(),
-    }))
+    })
 }

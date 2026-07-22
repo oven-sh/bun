@@ -1059,8 +1059,12 @@ fn apply_transport_params(
     };
     if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
         let name = bun_core::String::from_js(cc, global)?.to_utf8_bytes();
+        // lsquic.h es_cc_algo: 0=default(→3 Adaptive), 1=Cubic, 2=BBRv1,
+        // 3=Adaptive. lsquic ships no Reno (NGTCP2_CC_ALGO_RENO in node's
+        // backend), so map 'reno' to Cubic, the closest loss-based option,
+        // rather than silently falling through to Adaptive which may pick BBR.
         let algo = match name.as_slice() {
-            b"cubic" => 1,
+            b"cubic" | b"reno" => 1,
             b"bbr" => 2,
             _ => 0,
         };

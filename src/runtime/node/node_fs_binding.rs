@@ -419,7 +419,7 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     // Per-VM singleton: freed at `~VM` in workers, process-lifetime on the
     // main thread. After `to_js_boxed` the only pointer lives in the GC
     // wrapper's `m_ctx` inside the JSC heap, which LSan does not scan.
-    bun_core::asan::ignore_object(&*module as *const Binding);
+    bun_core::asan::ignore_object::<Binding>(&module);
 
     // `module` was `Box::new`-allocated; ownership transfers to the GC
     // wrapper, which calls `Binding::finalize` to reclaim it.

@@ -2865,11 +2865,11 @@ pub mod asan {
     /// scanned as roots, so LSAN cannot see the pointer). Freeing the object
     /// later is fine; the ignore is per-allocation, not per-address.
     #[inline]
-    pub fn ignore_object<T>(ptr: *const T) {
+    pub fn ignore_object<T>(r: &T) {
         #[cfg(bun_asan)]
-        __lsan_ignore_object(ptr.cast());
+        __lsan_ignore_object(core::ptr::from_ref(r).cast());
         #[cfg(not(bun_asan))]
-        let _ = ptr;
+        let _ = r;
     }
 }
 

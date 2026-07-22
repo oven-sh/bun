@@ -1,6 +1,8 @@
 // Hardcoded module "sqlite"
 import type * as SqliteTypes from "bun:sqlite";
 
+type SQLBindable = number | string | bigint | null | boolean | Uint8Array<ArrayBuffer> | object | any[];
+
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;
 
@@ -96,15 +98,15 @@ const constants = {
 
 // This is interface is the JS equivalent of what JSSQLStatement.cpp defines
 interface CppSQLStatement {
-  run: (...args: TODO[]) => TODO;
-  get: (...args: TODO[]) => TODO;
-  all: (...args: TODO[]) => TODO;
-  iterate: (...args: TODO[]) => TODO;
-  as: (...args: TODO[]) => TODO;
-  values: (...args: TODO[]) => TODO;
-  raw: (...args: TODO[]) => TODO;
-  finalize: (...args: TODO[]) => TODO;
-  toString: (...args: TODO[]) => TODO;
+  run: (...args: SQLBindable[]) => void;
+  get: (...args: SQLBindable[]) => any;
+  all: (...args: SQLBindable[]) => any[];
+  iterate: (...args: SQLBindable[]) => any;
+  as: (ClassType: new () => any) => void;
+  values: (...args: SQLBindable[]) => any[];
+  raw: (...args: SQLBindable[]) => any[];
+  finalize: (...args: any[]) => void;
+  toString: () => string;
   columns: string[];
   columnsCount: number;
   paramsCount: number;
@@ -114,14 +116,16 @@ interface CppSQLStatement {
 }
 
 interface CppSQL {
-  open(filename: string, flags: number, db: Database): TODO;
-  isInTransaction(handle: TODO): boolean;
-  loadExtension(handle: TODO, name: string, entryPoint: string): void;
-  serialize(handle: TODO, name: string): Buffer;
-  deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number): TODO;
-  fcntl(handle: TODO, ...args: TODO[]): TODO;
-  close(handle: TODO, throwOnError: boolean): void;
+  open(filename: string, flags: number, db: Database): void;
+  isInTransaction(handle: any): boolean;
+  loadExtension(handle: any, name: string, entryPoint: string): void;
+  serialize(handle: any, name: string): Buffer;
+  deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number): any;
+  fcntl(handle: any, ...args: any[]): any;
+  close(handle: any, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;
+  run(handle: any, flags: number, internalFieldTuple: any, query: string, ...params: any[]): void;
+  prepare(handle: any, query: string, params: any, flags: number, internalFlags: number): CppSQLStatement;
 }
 
 let SQL: CppSQL;

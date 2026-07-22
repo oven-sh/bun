@@ -1141,7 +1141,11 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
 // Runs in a subprocess so nothing in the test runner touches the stream's
 // flowing state.
 describe.each([
-  ["net.createServer 'connection'", "net-server-accepted-socket-pause-fixture.js", "drainsWhilePaused 0 backpressured true"],
+  [
+    "net.createServer 'connection'",
+    "net-server-accepted-socket-pause-fixture.js",
+    "drainsWhilePaused 0 backpressured true",
+  ],
   ["tls.createServer 'secureConnection'", "tls-server-accepted-socket-pause-fixture.js", "backpressured true"],
 ])("accepted socket honors pause() made inside the %s handler", (_, fixture, backpressureLine) => {
   it("leaves readableFlowing false and delivers every byte after resume()", async () => {

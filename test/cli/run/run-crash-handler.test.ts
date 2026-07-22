@@ -150,7 +150,7 @@ test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures th
   // deep), so a short trace means the unwind stopped at the exception
   // dispatcher and the handler's own frames are all that was captured.
   const frameAddrs = [...stderr.matchAll(/: (0x[0-9a-f]{6,}) in /gi)].map(m => m[1]);
-  expect(frameAddrs.length).toBeGreaterThanOrEqual(6);
+  expect(frameAddrs.length).toBeGreaterThanOrEqual(7);
 
   // Frame 0 is the fault PC inside ntdll.dll; frames 1+ must be the bun call
   // chain with no handler or ntdll-dispatch frames interleaved. Group by the

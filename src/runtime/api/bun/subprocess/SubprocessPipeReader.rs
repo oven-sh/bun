@@ -396,10 +396,6 @@ impl PipeReader {
         }
 
         // The `state` buffer and `reader` are freed by Drop when the Box drops.
-        // On Windows, `WindowsBufferedReader::drop` closes any live uv.Pipe
-        // source (on_error never closes it, and non-error teardown paths such
-        // as `Readable::finalize` on a never-started pipe can arrive here with
-        // a live source).
 
         // SAFETY: `this` was created via heap::alloc in `create()`.
         drop(unsafe { bun_core::heap::take(this) });

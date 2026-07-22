@@ -87,7 +87,8 @@ const noClean = has("no-clean");
 const cbaVersion = "1.6.0";
 async function resolveClangBuildAnalyzer(): Promise<string> {
   // A system install always wins — it's the only option on platforms without
-  // a matching prebuilt (the upstream release ships x64-only binaries).
+  // a matching prebuilt. The mac prebuilt is universal (x64+arm64) and the
+  // windows one runs on arm64 via emulation; linux non-x64 has no fallback.
   const system = Bun.which("ClangBuildAnalyzer");
   if (system) return system;
   if (process.platform === "linux" && process.arch !== "x64") {

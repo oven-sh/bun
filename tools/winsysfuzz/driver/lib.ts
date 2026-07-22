@@ -94,8 +94,12 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // "Segmentation fault at address 0x24" keeps the low offset (a
       // struct-field null deref reads identically), thread ids and
       // pointer-sized addresses fold.
+      // Fold volatile pointers so identical crashes dedupe - but keep
+      // SENTINEL addresses their identity: all-F (a -1/INVALID_HANDLE used
+      // as a pointer) and low offsets (a struct field off a null base) are
+      // diagnostic, and folding them merged unrelated wild-pointer faults.
       const signature = detail
-        .replace(/0x[0-9a-fA-F]{9,}/g, "0xPTR")
+        .replace(/0x[0-9a-fA-F]{9,}/g, m => (/^0x[fF]{9,}$/.test(m) ? "0xFFFF(-1)" : "0xPTR"))
         .replace(/\bthread \d+\b/g, "thread N")
         .replace(/\b\d{5,}\b/g, "N");
       // The handler's backtrace: lines like "???:?:?: 0x7ffc... in ??? (???)"

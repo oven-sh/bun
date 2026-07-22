@@ -80,10 +80,6 @@ export const subprocessInternals = {
     subprocess: import("bun").Subprocess,
     kind: "stdout" | "stderr",
   ) => boolean,
-  finalizeStdioPipeReader: $newRustFunction("subprocess.rs", "TestingAPIs.finalizeStdioPipeReader", 2) as (
-    subprocess: import("bun").Subprocess,
-    kind: "stdout" | "stderr",
-  ) => boolean,
 };
 
 export const iniInternals = {

@@ -1140,9 +1140,32 @@ pub(crate) fn sleep_sync(
         )));
     }
 
-    std::thread::sleep(core::time::Duration::from_millis(
-        u64::try_from(milliseconds).expect("int cast"),
-    ));
+    let duration = core::time::Duration::from_millis(milliseconds as u64);
+
+    // In a worker, std::thread::sleep cannot be interrupted by worker.terminate():
+    // the parent thread's notify_need_termination only fires a JSC VMTrap (checked
+    // at JS safepoints) and wakes the event loop poll, neither of which unblocks a
+    // parked nanosleep/Sleep. Slice the sleep and poll the termination flag between
+    // slices so terminate() takes effect within SLEEP_SYNC_TERMINATE_SLICE instead
+    // of the full requested duration. The VMTrap then throws TerminationException
+    // at the next safepoint after we return.
+    if let Some(worker) = global_object.bun_vm().worker_ref() {
+        const SLEEP_SYNC_TERMINATE_SLICE: core::time::Duration =
+            core::time::Duration::from_millis(100);
+        let deadline = std::time::Instant::now() + duration;
+        loop {
+            if worker.has_requested_terminate() {
+                break;
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            std::thread::sleep((deadline - now).min(SLEEP_SYNC_TERMINATE_SLICE));
+        }
+    } else {
+        std::thread::sleep(duration);
+    }
     Ok(JSValue::UNDEFINED)
 }
 

@@ -218,7 +218,14 @@ test(
         console.log("ok");
       `,
       ],
-      env: bunEnv,
+      // A job still on the pool at close() is leaked by design (its ctx holds
+      // Strong handles into the dead VM's JSC heap), and any job that raced
+      // into concurrent_tasks before close() ends up requeued into
+      // EventLoop.tasks, whose buffer becomes unreachable when the worker VM
+      // is raw-dealloc'd. Both are bounded per terminated worker; opt this
+      // subprocess out of LSan so that stranded-task accounting isn't asserted
+      // as a regression.
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
       stdout: "pipe",
       stderr: "pipe",
     });

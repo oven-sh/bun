@@ -1553,6 +1553,11 @@ impl VirtualMachine {
             // drain below) or observes the flag under m_lock and drops.
             // destructOnExit sets it again (idempotently).
             Bun__JSCTaskScheduler__markShuttingDown(self.global());
+            // Same mirror for work-pool `AnyTaskJob`s (see web_worker.rs
+            // shutdown()): wait out any in-flight `ctx.run()` (which may be
+            // writing into a JSC `ArrayBuffer`) before `destructOnExit` frees
+            // the JSC heap.
+            self.any_task_gate().close();
 
             // Every worker has now posted its close task to our concurrent
             // queue (OUTSTANDING is decremented after dispatchExit). Drop

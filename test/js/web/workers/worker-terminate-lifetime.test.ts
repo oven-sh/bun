@@ -176,3 +176,48 @@ test.skipIf(!isASAN)(
   },
   timeout,
 );
+
+// Regression: ConcurrentPromiseTask<TransformTask>::on_finish (work pool
+// thread) held a raw &EventLoop captured at schedule time and pushed the
+// completion into it after WebWorker::shutdown() had freed the worker's VM
+// allocation (which embeds the EventLoop). ASAN heap-use-after-free in
+// EventLoop::enqueue_task_concurrent; stock release segfault.
+test(
+  "terminate() while Bun.Transpiler.transform() is in flight on the work pool does not UAF",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        // Large-ish source so a single transform stays on the pool long
+        // enough for terminate() to land mid-work.
+        const body = [
+          'const { parentPort } = require("node:worker_threads");',
+          'const tr = new Bun.Transpiler({ loader: "tsx" });',
+          'const code = Array.from({ length: 8000 }, (_, i) => "export const v" + i + " = (x: number): number => x * " + i + ";").join(" ");',
+          'for (let i = 0; i < 4; i++) (async () => { for (;;) { try { await tr.transform(code, "tsx"); } catch { await Bun.sleep(1); } } })();',
+          'parentPort.postMessage("up");',
+        ].join("\\n");
+        for (let r = 0; r < ${slow ? 4 : 8}; r++) {
+          const w = new Worker(body, { eval: true });
+          await new Promise(res => w.once("message", res));
+          await Bun.sleep(30 + (r * 37) % 120);
+          await w.terminate();
+        }
+        console.log("ok");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

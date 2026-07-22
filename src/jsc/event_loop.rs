@@ -106,6 +106,11 @@ pub struct EventLoop {
     pub signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
     #[cfg(not(unix))]
     pub signal_handler: (),
+
+    /// Registration generation from [`crate::virtual_machine::live_loop_registry`],
+    /// stamped at registration time; 0 = not stamped. Read on the owning
+    /// thread only, by [`EventLoop::concurrent_handle`].
+    pub(crate) live_generation: u64,
 }
 
 impl Default for EventLoop {
@@ -134,8 +139,24 @@ impl Default for EventLoop {
             signal_handler: None,
             #[cfg(not(unix))]
             signal_handler: (),
+            live_generation: 0,
         }
     }
+}
+
+/// Schedule-time identity of a specific [`EventLoop`] for cross-thread
+/// producers that deliver a completion from the work pool (or another thread)
+/// through [`EventLoop::try_enqueue_task_concurrent`].
+///
+/// Plain data (`Copy`, `Send`, `Sync`): holding one neither keeps the loop
+/// alive nor permits dereferencing it. The address alone cannot distinguish a
+/// live loop from a new worker VM reusing a dead worker's allocation; the
+/// generation (minted per registration in
+/// [`crate::virtual_machine::live_loop_registry`], never reused) can.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct LoopHandle {
+    addr: usize,
+    generation: u64,
 }
 
 mod drain_result {
@@ -1003,6 +1024,61 @@ impl EventLoop {
         }
         self.concurrent_tasks.push(task);
         self.wakeup();
+    }
+
+    /// Schedule-time [`LoopHandle`] for this loop, for producers that deliver
+    /// a completion from another thread through
+    /// [`EventLoop::try_enqueue_task_concurrent`]. Call on the owning thread.
+    #[inline]
+    pub fn concurrent_handle(&self) -> LoopHandle {
+        LoopHandle {
+            addr: core::ptr::from_ref(self) as usize,
+            generation: self.live_generation,
+        }
+    }
+
+    /// Cross-thread enqueue that tolerates the target event loop (and the
+    /// worker VM embedding it) having been freed by `WebWorker::shutdown()`
+    /// while the producer ran. For producers that captured a [`LoopHandle`]
+    /// at schedule time instead of a `&EventLoop`.
+    ///
+    /// Returns `false` when the loop is gone, including when a new loop
+    /// reuses the dead loop's address (the generation comparison catches
+    /// that). On `false` the task node is freed if `auto_delete`; the payload
+    /// is leaked (same as a task left undrained in a terminated worker's
+    /// queue, since its tag-specific teardown can only run on the JS thread).
+    pub fn try_enqueue_task_concurrent(
+        handle: LoopHandle,
+        task: core::ptr::NonNull<ConcurrentTaskItem>,
+    ) -> bool {
+        use crate::virtual_machine::live_loop_registry;
+        // Fast path: loops embedded in the main-thread VM are never freed.
+        if live_loop_registry::is_main_vm_loop(handle.addr) {
+            // SAFETY: main-thread VM loop, never freed; `enqueue_task_concurrent`
+            // takes `&self` and is thread-safe.
+            unsafe { (*(handle.addr as *const EventLoop)).enqueue_task_concurrent(task) };
+            return true;
+        }
+        let reg = live_loop_registry::REGISTRY.lock();
+        if !reg
+            .iter()
+            .any(|e| e.addr == handle.addr && e.generation == handle.generation)
+        {
+            drop(reg);
+            // SAFETY: the task was built for this enqueue and never linked
+            // into any queue; the producer still owns it.
+            unsafe {
+                if task.as_ref().auto_delete() {
+                    drop(bun_core::heap::take(task.as_ptr()));
+                }
+            }
+            return false;
+        }
+        // SAFETY: the loop is registered-live, and unregistration (which
+        // happens-before any free in `WebWorker::shutdown`) takes the same
+        // lock we hold.
+        unsafe { (*(handle.addr as *const EventLoop)).enqueue_task_concurrent(task) };
+        true
     }
 
     pub fn ref_concurrently(&self) {

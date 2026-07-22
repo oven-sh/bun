@@ -2,11 +2,10 @@ use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskab
 use bun_io::{self as Async, KeepAlive};
 use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
-use crate::event_loop::EventLoop;
+use crate::event_loop::{EventLoop, LoopHandle};
 use crate::js_promise::{JSPromise, Strong as JSPromiseStrong};
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JsTerminated};
-use bun_ptr::BackRef;
 
 /// The `Context` type parameter for [`ConcurrentPromiseTask`] must implement this trait:
 /// - `run(&mut self)` — performs the work on the thread pool
@@ -31,9 +30,11 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     // Owned here so dropping the task frees the context.
     pub ctx: Box<Context>,
     pub task: WorkPoolTask,
-    /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
-    /// `EventLoop`) outlives every task scheduled on it.
-    pub event_loop: BackRef<EventLoop>,
+    /// Captured from the JS-thread VM at create time. A handle (not a
+    /// reference): the owning worker VM can be freed by terminate() while
+    /// this task sits in the pool, so `on_finish` must go through the
+    /// registry-checked enqueue.
+    pub event_loop: LoopHandle,
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
     pub concurrent_task: ConcurrentTask,
@@ -57,9 +58,7 @@ impl<Context: ConcurrentPromiseTaskContext> Taskable for ConcurrentPromiseTask<'
 
 impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Context> {
     pub fn create_on_js_thread(global_this: &'a JSGlobalObject, value: Box<Context>) -> Box<Self> {
-        // `VirtualMachine::get()` returns the JS-thread singleton; the VM and
-        // its `EventLoop` outlive every task scheduled on it.
-        let event_loop = BackRef::new(VirtualMachine::get().as_mut().event_loop_shared());
+        let event_loop = VirtualMachine::get().event_loop_shared().concurrent_handle();
         let mut this = Box::new(Self {
             event_loop,
             ctx: value,
@@ -116,7 +115,9 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         );
         // `task` is the live `concurrent_task` field of the heap-allocated
         // job; the queue takes ownership of its intrusive `next` link.
-        event_loop.enqueue_task_concurrent(task);
+        // `event_loop` may denote a worker VM's loop freed by terminate()
+        // while the pool task ran.
+        let _ = EventLoop::try_enqueue_task_concurrent(event_loop, task);
     }
 
     /// Frees the heap allocation backing this task.

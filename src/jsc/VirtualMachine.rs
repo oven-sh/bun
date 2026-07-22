@@ -456,6 +456,105 @@ impl VMHolder {
     }
 }
 
+/// Process-global registry of `EventLoop` addresses that cross-thread
+/// producers may still enqueue to.
+///
+/// Worker `VirtualMachine`s (and the `EventLoop`s embedded in them) are freed
+/// by `WebWorker::shutdown()` while producers on the work pool still hold the
+/// loop address captured when the work was scheduled. A push after the free
+/// corrupts reused heap memory; see
+/// [`crate::event_loop::EventLoop::try_enqueue_task_concurrent`].
+///
+/// This is the Rust-side analogue of the fence the C++ `postTaskTo` path
+/// already has (`allScriptExecutionContextsMap` + its lock): teardown removes
+/// the VM's loops from the registry under the same lock producers take to
+/// enqueue, so a producer either observes the loop live (and teardown then
+/// waits for the lock before freeing) or drops the task.
+///
+/// Addresses are stored as `usize`; the registry never dereferences them.
+/// Each registration carries a process-unique generation so a stale producer
+/// cannot be fooled by a new VM allocated at a dead VM's address.
+///
+/// Lock ordering: this lock is a leaf. The critical sections only touch the
+/// target's MPSC queue (wait-free push) and `wakeup()` (a syscall); they take
+/// no other locks.
+pub(crate) mod live_loop_registry {
+    use super::{MAIN_THREAD_VM, VirtualMachine};
+    use bun_threading::Guarded;
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    pub(crate) struct Entry {
+        /// Owning VM; key for [`unregister_vm`]. Never dereferenced.
+        vm: usize,
+        pub(crate) addr: usize,
+        pub(crate) generation: u64,
+    }
+
+    pub(crate) static REGISTRY: Guarded<Vec<Entry>> = Guarded::new(Vec::new());
+
+    /// Starts at 1 so generation 0 (zero-initialised/placeholder handles)
+    /// matches nothing.
+    static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+    /// Register `vm`'s embedded event loops. Called as the final step of
+    /// `VirtualMachine::init()`, after both loops have been written. Stamps
+    /// each loop's `live_generation` so [`EventLoop::concurrent_handle`] can
+    /// build a handle without the lock.
+    pub(crate) fn register_vm(vm: *mut VirtualMachine) {
+        let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: `vm` is the freshly-initialised allocation; `init()` has
+        // exclusive access at this point.
+        let (regular, macro_) = unsafe {
+            (*vm).regular_event_loop.live_generation = generation;
+            (*vm).macro_event_loop.live_generation = generation;
+            (
+                core::ptr::addr_of!((*vm).regular_event_loop) as usize,
+                core::ptr::addr_of!((*vm).macro_event_loop) as usize,
+            )
+        };
+        let mut reg = REGISTRY.lock();
+        reg.push(Entry {
+            vm: vm as usize,
+            addr: regular,
+            generation,
+        });
+        reg.push(Entry {
+            vm: vm as usize,
+            addr: macro_,
+            generation,
+        });
+    }
+
+    /// Remove every entry for `vm`. Called from `WebWorker::shutdown()` before
+    /// anything the VM owns is freed; once this returns, no producer can be
+    /// inside a checked enqueue targeting `vm` (they would have to hold the
+    /// same lock).
+    pub(crate) fn unregister_vm(vm: *mut VirtualMachine) {
+        REGISTRY.lock().retain(|e| e.vm != vm as usize);
+    }
+
+    /// `true` iff `addr` is one of the immortal main-thread VM's embedded
+    /// loops. Lock-free: the main VM allocation is never freed, so a worker
+    /// loop can never occupy an address inside it, and an address match
+    /// proves liveness without the registry.
+    pub(crate) fn is_main_vm_loop(addr: usize) -> bool {
+        let main = MAIN_THREAD_VM.load(Ordering::Acquire);
+        if main.is_null() {
+            return false;
+        }
+        // SAFETY: `main` points at the live, never-freed main-thread VM
+        // allocation; `addr_of!` only projects field addresses (no read).
+        let (regular, macro_) = unsafe {
+            (
+                core::ptr::addr_of!((*main).regular_event_loop) as usize,
+                core::ptr::addr_of!((*main).macro_event_loop) as usize,
+            )
+        };
+        addr == regular || addr == macro_
+    }
+}
+
 #[thread_local]
 pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = Cell::new(false);
 #[thread_local]
@@ -1113,7 +1212,12 @@ impl VirtualMachine {
     pub fn enable_macro_mode(&mut self) {
         if !self.has_enabled_macro_mode {
             self.has_enabled_macro_mode = true;
+            // `EventLoop::default()` zeroes `live_generation`; the macro
+            // loop's address is still the one `register_vm` stamped, so
+            // restore its generation so `concurrent_handle()` stays valid.
+            let generation = self.macro_event_loop.live_generation;
             self.macro_event_loop = EventLoop::default();
+            self.macro_event_loop.live_generation = generation;
             self.macro_event_loop.virtual_machine = NonNull::new(std::ptr::from_mut(self));
             self.macro_event_loop.global = NonNull::new(self.global);
             self.macro_event_loop.concurrent_tasks = Default::default();
@@ -2199,6 +2303,11 @@ impl VirtualMachine {
             // SAFETY: written once during init.
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
+
+        // Publish both embedded event loops to the live-loop registry so
+        // checked cross-thread producers (`try_enqueue_task_concurrent`) can
+        // verify liveness. Last step: the loops are fully written above.
+        live_loop_registry::register_vm(vm);
 
         Ok(vm)
     }

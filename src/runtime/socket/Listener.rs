@@ -1418,7 +1418,10 @@ impl Listener {
             _ => return Ok(JSValue::UNDEFINED),
         };
         let address_js = ZigString::init(formatted).to_js(global);
-        let port_js = JSValue::js_number(socket_ref.get_local_port() as f64);
+        let port_js = match u16::try_from(socket_ref.get_local_port()) {
+            Ok(p) => JSValue::js_number(p as f64),
+            Err(_) => JSValue::UNDEFINED,
+        };
 
         out.put(global, b"family", family_js);
         out.put(global, b"address", address_js);

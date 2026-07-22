@@ -2342,7 +2342,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             return JSValue::UNDEFINED;
         }
 
-        JSValue::js_number_from_int32(this.socket.get().local_port())
+        match u16::try_from(this.socket.get().local_port()) {
+            Ok(p) => JSValue::js_number_from_int32(p as i32),
+            Err(_) => JSValue::UNDEFINED,
+        }
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2400,7 +2403,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             return JSValue::UNDEFINED;
         }
 
-        JSValue::js_number_from_int32(this.socket.get().remote_port())
+        match u16::try_from(this.socket.get().remote_port()) {
+            Ok(p) => JSValue::js_number_from_int32(p as i32),
+            Err(_) => JSValue::UNDEFINED,
+        }
     }
 
     #[inline]

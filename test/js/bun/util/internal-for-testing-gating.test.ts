@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
 
 // `bun:internal-for-testing` (and the native TestingAPIs bindings it references)

@@ -1658,12 +1658,15 @@ pub type RuntimeState = *mut c_void;
 
 /// The subset of a Worker's `execArgv` that bun acts on. Flags whose value must
 /// outlive the parse (--cpu-prof-dir/-name) are absent; nothing needs them yet.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub struct WorkerExecArgv {
     pub allow_addons: Option<bool>,
     pub use_system_ca: Option<bool>,
     pub cpu_prof: bool,
     pub cpu_prof_interval: Option<u32>,
+    pub expose_gc: bool,
+    /// `--require`/`-r`/`--preload`/`--import` specifiers, in order.
+    pub preloads: Vec<Box<[u8]>>,
 }
 
 pub struct RuntimeHooks {
@@ -1791,16 +1794,13 @@ pub struct RuntimeHooks {
         transpiler: *mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
-    /// Parse `execArgv` against the `RunCommand`
-    /// param table and return the resulting `allow_addons` value
-    /// (`!args.flag("--no-addons")`), or `None` if parsing failed.
-    /// The param table lives in
-    /// `bun_runtime::cli` (forward-dep). Only `--no-addons` is honoured;
-    /// the caller writes the returned `allow_addons` back into
-    /// `transform_options.allow_addons` so the override semantics
-    /// ("override the existing even if it was set") match, and applies
-    /// `cpu_prof` to the worker VM.
-    pub parse_worker_exec_argv: unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> WorkerExecArgv,
+    /// Parse a worker's own `execArgv` against the worker flag policy table
+    /// (`bun_runtime::cli::worker_exec_argv`, forward-dep) and return the
+    /// honoured per-worker subset. `None` derives the honoured defaults for an
+    /// inheriting worker from the process argv (preloads and the CPU profiler
+    /// are excluded there — the parent VM already carries both).
+    pub parse_worker_exec_argv:
+        unsafe fn(exec_argv: Option<&[bun_core::WTFStringImpl]>) -> WorkerExecArgv,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub cron_clear_all_teardown: fn(vm: &mut VirtualMachine),

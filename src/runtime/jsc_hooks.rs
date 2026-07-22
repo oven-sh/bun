@@ -20,7 +20,6 @@
 //!   4. `__bun_get_vm_ctx` / `__bun_js_vm_get` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
-use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -1517,74 +1516,24 @@ unsafe fn apply_standalone_runtime_flags(
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
 }
 
-/// Parse a Worker's `execArgv` against the
-/// `RunCommand` param table and return `!args.flag("--no-addons")`, or `None`
-/// on parse error.
-///
-/// Note: the Rust `bun_clap::parse_ex` port currently constrains
-/// `ArgIter<'static>` (parsed values are stored by reference), which would
-/// force leaking the per-call UTF-8 copies of `exec_argv`. Only flags whose
-/// values need not outlive the parse are read, so this body scans the converted
-/// argv directly with the same `stop_after_positional_at = 1` short-circuit.
-/// Full clap routing can return when `ComptimeClap` grows a borrowed-lifetime
-/// variant.
+/// Parse a Worker's `execArgv` and return the per-worker honoured subset
+/// (`Some` = the worker's own list; `None` = inheriting worker, derive from
+/// the process argv). Classification and honoured-flag extraction share one
+/// scanner in `cli::worker_exec_argv`, so the honoured set is always a
+/// subset of what `Bun__Worker__validateExecArgv` accepted.
 ///
 /// # Safety
 /// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
 /// `Worker::create` array, kept alive for the worker's lifetime).
 unsafe fn parse_worker_exec_argv(
-    exec_argv: &[bun_core::WTFStringImpl],
+    exec_argv: Option<&[bun_core::WTFStringImpl]>,
 ) -> bun_jsc::virtual_machine::WorkerExecArgv {
-    let mut out = bun_jsc::virtual_machine::WorkerExecArgv::default();
-    let mut no_addons = false;
-    let mut want_interval = false;
-    let mut skip_next = false;
-    for &arg in exec_argv {
-        if arg.is_null() {
-            continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
-        let bytes = owned.as_bytes();
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if want_interval {
-            want_interval = false;
-            out.cpu_prof_interval = std::str::from_utf8(bytes).ok().and_then(|s| s.parse().ok());
-            continue;
-        }
-        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
-        if bytes.first() != Some(&b'-') {
-            break;
-        }
-        if bytes == b"--" {
-            break;
-        }
-        if bytes == b"--no-addons" {
-            no_addons = true;
-        } else if bytes == b"--use-system-ca" {
-            out.use_system_ca = Some(true);
-        } else if bytes == b"--no-use-system-ca" {
-            // Only the explicit negation beats NODE_USE_SYSTEM_CA; node lets the
-            // env var still win under --use-bundled-ca.
-            out.use_system_ca = Some(false);
-        } else if bytes == b"--cpu-prof" {
-            out.cpu_prof = true;
-        } else if bytes == b"--cpu-prof-interval" {
-            want_interval = true;
-        } else if let Some(v) = bytes.strip_prefix(b"--cpu-prof-interval=") {
-            out.cpu_prof_interval = std::str::from_utf8(v).ok().and_then(|s| s.parse().ok());
-        } else if bytes == b"--cpu-prof-dir" || bytes == b"--cpu-prof-name" {
-            // Value is discarded here but must be consumed so it is not misread
-            // as the first positional (which would stop the scan early).
-            skip_next = true;
-        }
-    }
-    // Override `allow_addons` unconditionally.
-    out.allow_addons = Some(!no_addons);
-    out
+    let Some(exec_argv) = exec_argv else {
+        return crate::cli::worker_exec_argv::scan_process_exec_argv();
+    };
+    // SAFETY: per fn contract.
+    let tokens = unsafe { crate::cli::worker_exec_argv::owned_tokens(exec_argv) };
+    crate::cli::worker_exec_argv::scan_exec_argv(&tokens).honored
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —

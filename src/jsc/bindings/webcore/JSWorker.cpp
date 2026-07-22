@@ -74,6 +74,12 @@
 #include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/JSMap.h>
 
+// Worker execArgv / NODE_OPTIONS policy (src/runtime/cli/worker_exec_argv.rs).
+// Both return true when valid; otherwise write the ERR_WORKER_INVALID_EXEC_ARGV
+// message tail into outMessage.
+extern "C" bool Bun__Worker__validateExecArgv(WTF::StringImpl* const* argv, size_t len, BunString* outMessage);
+extern "C" bool Bun__Worker__validateWorkerNodeOptions(WTF::StringImpl* nodeOptions, BunString* outMessage);
+
 namespace WebCore {
 using namespace JSC;
 
@@ -295,6 +301,21 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                     env.add(key.impl()->isolatedCopy(), str);
                 }
 
+                // node_worker.cc: only an explicitly provided env object has its
+                // NODE_OPTIONS validated (the Rust side skips when it is
+                // byte-identical to the parent's, i.e. process.env passed through).
+                if (envValue && envValue.isCell()) {
+                    auto nodeOptions = env.find("NODE_OPTIONS"_s);
+                    if (nodeOptions != env.end()) {
+                        BunString invalidNodeOptions = BunStringEmpty;
+                        if (!Bun__Worker__validateWorkerNodeOptions(nodeOptions->value.impl(), &invalidNodeOptions)) {
+                            auto message = makeString("Initiated Worker with invalid NODE_OPTIONS env variable: "_s, invalidNodeOptions.transferToWTFString());
+                            throwScope.throwException(lexicalGlobalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, message));
+                            return {};
+                        }
+                    }
+                }
+
                 options.env.emplace(WTF::move(env));
             }
         }
@@ -334,6 +355,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 execArgv.append(str);
             });
             RETURN_IF_EXCEPTION(throwScope, {});
+            // node_worker.cc: an explicit execArgv is validated synchronously
+            // against the worker flag policy table (unknown flags, flags Bun or
+            // node cannot honour in a worker, and missing required values).
+            BunString invalidExecArgv = BunStringEmpty;
+            static_assert(sizeof(WTF::String) == sizeof(WTF::StringImpl*));
+            if (!Bun__Worker__validateExecArgv(reinterpret_cast<WTF::StringImpl* const*>(execArgv.begin()), execArgv.size(), &invalidExecArgv)) {
+                auto message = makeString("Initiated Worker with invalid execArgv flags: "_s, invalidExecArgv.transferToWTFString());
+                throwScope.throwException(lexicalGlobalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, message));
+                return {};
+            }
             options.execArgv.emplace(WTF::move(execArgv));
         }
     }

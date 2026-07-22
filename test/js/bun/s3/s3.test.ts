@@ -1784,7 +1784,9 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The S3 client reads HTTP_PROXY from the environment without a target host, so NO_PROXY never
+      // exempts the localhost endpoint. Strip proxy vars so this test is independent of ambient config.
+      env: { ...bunEnv, HTTP_PROXY: undefined, http_proxy: undefined, HTTPS_PROXY: undefined, https_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });

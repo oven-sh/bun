@@ -4075,7 +4075,7 @@ it("http.Server maxConnections destroys the excess and emits 'drop' like net.Ser
       sock.on("error", () => {});
       let body = "";
       sock.setEncoding("utf8");
-      sock.on("data", c => body.endsWith("ok") || (body += c).endsWith("ok") && resolve(sock));
+      sock.on("data", c => body.endsWith("ok") || ((body += c).endsWith("ok") && resolve(sock)));
       sock.once("close", () => reject(new Error(`closed before response, got: ${JSON.stringify(body)}`)));
       sock.once("connect", () => sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
     });

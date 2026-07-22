@@ -5942,53 +5942,33 @@ impl VirtualMachine {
                 }
             }
 
-            while let Some(field) = iterator.next()? {
-                let value = iterator.value;
-                if field.eql_comptime(b"message")
-                    || field.eql_comptime(b"name")
-                    || field.eql_comptime(b"stack")
-                {
-                    continue;
-                }
-                if field.eql_comptime(b"code") && code.is_some() {
-                    continue;
-                }
-
-                if field.eql_comptime(b"cause") {
-                    saw_cause = true;
-                }
-
-                let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
-                    value.protect();
-                    errors_to_append.push(value);
-                } else if kind.is_object()
-                    || kind.is_array()
-                    || value.is_primitive()
-                    || kind.is_string_like()
-                {
-                    let prev_disable_inspect_custom = formatter.disable_inspect_custom;
-                    let prev_quote_strings = formatter.quote_strings;
-                    let prev_max_depth = formatter.max_depth;
-                    let prev_format_buffer_as_text = formatter.format_buffer_as_text;
-                    formatter.depth += 1;
-                    formatter.format_buffer_as_text = true;
-                    formatter.max_depth = 1;
-                    formatter.quote_strings = true;
-                    formatter.disable_inspect_custom = true;
+            // Renders ` <label>: <value>,\n` for an own property, with the
+            // formatter temporarily forced to max_depth=1/quote_strings/etc.
+            // Expands in place so `?` and the early `return Ok(())` propagate
+            // from the enclosing function.
+            macro_rules! write_error_field {
+                ($label:expr, $label_len:expr, $value:expr) => {{
+                    let value: JSValue = $value;
                     let restore = RestoreFmt {
-                        f: formatter,
-                        d: prev_disable_inspect_custom,
-                        q: prev_quote_strings,
-                        m: prev_max_depth,
-                        b: prev_format_buffer_as_text,
+                        d: formatter.disable_inspect_custom,
+                        q: formatter.quote_strings,
+                        m: formatter.max_depth,
+                        b: formatter.format_buffer_as_text,
+                        f: {
+                            formatter.depth += 1;
+                            formatter.format_buffer_as_text = true;
+                            formatter.max_depth = 1;
+                            formatter.quote_strings = true;
+                            formatter.disable_inspect_custom = true;
+                            formatter
+                        },
                     };
                     let formatter = &mut *restore.f;
 
-                    let pad_left = longest_name.saturating_sub(field.length());
+                    let pad_left = longest_name.saturating_sub($label_len);
                     is_first_property = false;
                     splat_space(writer, pad_left as u64)?;
-                    pretty_write!(writer, " {}<r><d>:<r> ", field)?;
+                    pretty_write!(writer, " {}<r><d>:<r> ", $label)?;
 
                     if allow_side_effects && global_ref.has_exception() {
                         global_ref.clear_exception();
@@ -6014,6 +5994,35 @@ impl VirtualMachine {
                     }
 
                     pretty_write!(writer, "<r><d>,<r>\n")?;
+                }};
+            }
+
+            while let Some(field) = iterator.next()? {
+                let value = iterator.value;
+                if field.eql_comptime(b"message")
+                    || field.eql_comptime(b"name")
+                    || field.eql_comptime(b"stack")
+                {
+                    continue;
+                }
+                if field.eql_comptime(b"code") && code.is_some() {
+                    continue;
+                }
+
+                if field.eql_comptime(b"cause") {
+                    saw_cause = true;
+                }
+
+                let kind = value.js_type();
+                if kind == JSType::ErrorInstance && !prev_had_errors {
+                    value.protect();
+                    errors_to_append.push(value);
+                } else if kind.is_object()
+                    || kind.is_array()
+                    || value.is_primitive()
+                    || kind.is_string_like()
+                {
+                    write_error_field!(field, field.length(), value);
                 }
             }
 
@@ -6037,53 +6046,7 @@ impl VirtualMachine {
                         cause.protect();
                         errors_to_append.push(cause);
                     } else {
-                        let prev_disable_inspect_custom = formatter.disable_inspect_custom;
-                        let prev_quote_strings = formatter.quote_strings;
-                        let prev_max_depth = formatter.max_depth;
-                        let prev_format_buffer_as_text = formatter.format_buffer_as_text;
-                        formatter.depth += 1;
-                        formatter.format_buffer_as_text = true;
-                        formatter.max_depth = 1;
-                        formatter.quote_strings = true;
-                        formatter.disable_inspect_custom = true;
-                        let restore = RestoreFmt {
-                            f: formatter,
-                            d: prev_disable_inspect_custom,
-                            q: prev_quote_strings,
-                            m: prev_max_depth,
-                            b: prev_format_buffer_as_text,
-                        };
-                        let formatter = &mut *restore.f;
-
-                        let pad_left = longest_name.saturating_sub(b"cause".len());
-                        is_first_property = false;
-                        splat_space(writer, pad_left as u64)?;
-                        pretty_write!(writer, " cause<r><d>:<r> ")?;
-
-                        if allow_side_effects && global_ref.has_exception() {
-                            global_ref.clear_exception();
-                        }
-
-                        let tag = Tag::get_advanced(
-                            cause,
-                            global_ref,
-                            TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
-                        )?;
-                        let _ = if allow_ansi_color {
-                            formatter.format::<true>(tag, writer, cause, global_ref)
-                        } else {
-                            formatter.format::<false>(tag, writer, cause, global_ref)
-                        };
-
-                        if allow_side_effects {
-                            if global_ref.has_exception() {
-                                global_ref.clear_exception();
-                            }
-                        } else if global_ref.has_exception() || formatter.failed {
-                            return Ok(());
-                        }
-
-                        pretty_write!(writer, "<r><d>,<r>\n")?;
+                        write_error_field!("cause", b"cause".len(), cause);
                     }
                 }
             }

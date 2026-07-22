@@ -872,6 +872,81 @@ booga"
         .runAsTest("long leading run of injected ! stays literal");
     });
 
+    describe("a word ending in `**` is terminated by the separator after it", () => {
+      // A trailing `**` must not swallow the separator after it: `echo ** x` is
+      // two words, and before an operator the `**` is still its own word.
+      const words = (out: string) => out.trim().replaceAll("\\", "/").split(/\s+/);
+
+      TestBuilder.command`echo ** after`
+        .ensureTempDir()
+        .file("a.txt", "")
+        .directory("sub")
+        .file("sub/b.txt", "")
+        .stdout(out => {
+          expect(words(out).sort()).toEqual(["a.txt", "after", "sub", "sub/b.txt"]);
+          expect(words(out).at(-1)).toBe("after");
+        })
+        .runAsTest("followed by another word");
+
+      TestBuilder.command`echo src/** dst`
+        .ensureTempDir()
+        .directory("src")
+        .file("src/a.txt", "")
+        .stdout(out => {
+          expect(words(out)).toEqual(["src/a.txt", "dst"]);
+        })
+        .runAsTest("at the end of a longer word");
+
+      // https://github.com/oven-sh/bun/issues/18656
+      TestBuilder.command`echo views/** public/**/*.js .env`
+        .ensureTempDir()
+        .directory("views")
+        .file("views/a.html", "")
+        .directory("public/js")
+        .file("public/js/b.js", "")
+        .file(".env", "")
+        .stdout(out => {
+          expect(words(out)).toEqual(["views/a.html", "public/js/b.js", ".env"]);
+        })
+        .runAsTest("two `**` globs and a plain word stay three arguments");
+
+      TestBuilder.command`echo ** | cat`
+        .ensureTempDir()
+        .file("a.txt", "")
+        .directory("sub")
+        .file("sub/b.txt", "")
+        .stdout(out => {
+          expect(words(out).sort()).toEqual(["a.txt", "sub", "sub/b.txt"]);
+        })
+        .runAsTest("before a pipe");
+
+      TestBuilder.command`echo ** && echo done`
+        .ensureTempDir()
+        .file("a.txt", "")
+        .stdout(out => {
+          expect(out.trim().split("\n")).toEqual(["a.txt", "done"]);
+        })
+        .runAsTest("before &&");
+
+      // `-R` rather than `-r`: on POSIX `cp` spawns the system binary, which takes
+      // either, but on Windows it is a builtin that only accepts `-R`.
+      test("copies the whole tree with `cp -R src/** dst/`", async () => {
+        const dir = tempDirWithFiles("glob-double-asterisk-cp", {
+          "src/a.txt": "a",
+          "src/nested/b.txt": "b",
+          "dst/.keep": "",
+        });
+        const dst = join(dir, "dst").replaceAll("\\", "/");
+
+        const { stderr, exitCode } = await $`cp -R src/** ${dst}/`.cwd(dir).quiet().nothrow();
+        expect(stderr.toString()).toBe("");
+        expect(exitCode).toBe(0);
+
+        expect(await Bun.file(join(dst, "a.txt")).text()).toBe("a");
+        expect(await Bun.file(join(dst, "nested", "b.txt")).text()).toBe("b");
+      });
+    });
+
     test("glob on a nonexistent absolute directory does not crash the process", async () => {
       const missing = join(tmpdirSync(), "does-not-exist").replaceAll("\\", "/");
       const script = `

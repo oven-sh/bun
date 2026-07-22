@@ -75,8 +75,9 @@ impl<'a> CssModule<'a> {
         use css::css_properties::css_modules::Specifier;
         let key: &'a [u8] = match from {
             Some(Specifier::Global) => return Some(&name[2..]),
-            Some(Specifier::ImportRecordIndex(_)) => specifier_path
-                .expect("specifier_path required for Specifier::ImportRecordIndex"),
+            Some(Specifier::ImportRecordIndex(_)) => {
+                specifier_path.expect("specifier_path required for Specifier::ImportRecordIndex")
+            }
             // Local dashed ident: written unmangled.
             None => return None,
         };
@@ -116,7 +117,6 @@ impl<'a> CssModule<'a> {
 
         Ok(())
     }
-
 }
 
 /// Configuration for CSS modules.

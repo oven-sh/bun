@@ -312,10 +312,7 @@ pub struct LinearGradient {
 }
 
 impl LinearGradient {
-    fn parse(
-        input: &mut css::Parser,
-        vendor_prefix: VendorPrefix,
-    ) -> Result<LinearGradient> {
+    fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<LinearGradient> {
         let direction: LineDirection = if let Ok(dir) =
             input.try_parse(|i| LineDirection::parse(i, vendor_prefix != VendorPrefix::NONE))
         {
@@ -332,11 +329,7 @@ impl LinearGradient {
         })
     }
 
-    fn to_css(
-        &self,
-        dest: &mut Printer,
-        is_prefixed: bool,
-    ) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
         let angle: f32 = match &self.direction {
             LineDirection::Vertical(v) => match v {
                 VerticalPositionKeyword::Bottom => 180.0,
@@ -477,10 +470,7 @@ pub struct RadialGradient {
 }
 
 impl RadialGradient {
-    fn parse(
-        input: &mut css::Parser,
-        vendor_prefix: VendorPrefix,
-    ) -> Result<RadialGradient> {
+    fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<RadialGradient> {
         // todo_stuff.depth
         let shape = input.try_parse(EndingShape::parse).ok();
         let position = input
@@ -973,11 +963,7 @@ impl LineDirection {
         Ok(LineDirection::Vertical(y))
     }
 
-    fn to_css(
-        &self,
-        dest: &mut Printer,
-        is_prefixed: bool,
-    ) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
         match self {
             LineDirection::Angle(angle) => angle.to_css(dest),
             LineDirection::Horizontal(k) => {
@@ -1063,10 +1049,7 @@ impl<D: GradientPosition> GradientItem<D> {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    fn get_necessary_fallbacks(
-        &self,
-        targets: &css::targets::Targets,
-    ) -> ColorFallbackKind {
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         match self {
             GradientItem::ColorStop(stop) => stop.color.get_necessary_fallbacks(targets),
             GradientItem::Hint(_) => ColorFallbackKind::empty(),
@@ -1449,7 +1432,9 @@ crate::css_eql_partialeq!(
     Circle,
 );
 
-pub(crate) fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<GradientItem<D>>> {
+pub(crate) fn parse_items<D: GradientPosition>(
+    input: &mut css::Parser,
+) -> Result<Vec<GradientItem<D>>> {
     let mut items: Vec<GradientItem<D>> = Vec::new();
     let mut seen_stop = false;
 

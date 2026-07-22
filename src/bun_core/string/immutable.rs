@@ -344,7 +344,6 @@ pub fn contains(self_: &[u8], str: &[u8]) -> bool {
     index_of(self_, str).is_some()
 }
 
-
 /// Index of the first byte in `slice` that appears in `chars` (SIMD via
 /// highway). Returns `usize` (unlike the `u32`-returning single-char
 /// scanners above) so callers can index with the result directly.
@@ -1055,10 +1054,7 @@ pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8])
     true
 }
 
-fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(
-    str: &[T],
-    prefix: &[u8],
-) -> bool {
+fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(str: &[T], prefix: &[u8]) -> bool {
     if str.len() < prefix.len() {
         return false;
     }

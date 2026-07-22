@@ -126,7 +126,10 @@ pub mod ast {
     pub(crate) type CondExprArgList<'arena> = SmolList<Atom<'arena>, 2>;
 
     impl<'arena> CondExpr<'arena> {
-        pub(crate) fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
+        pub(crate) fn to_expr(
+            self,
+            bump: &'arena Bump,
+        ) -> Result<Expr<'arena>, bun_alloc::AllocError> {
             let condexpr = bump.alloc(self);
             Ok(Expr::CondExpr(condexpr))
         }
@@ -350,7 +353,10 @@ pub mod ast {
     }
 
     impl<'arena> If<'arena> {
-        pub(crate) fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
+        pub(crate) fn to_expr(
+            self,
+            bump: &'arena Bump,
+        ) -> Result<Expr<'arena>, bun_alloc::AllocError> {
             let i = bump.alloc(self);
             Ok(Expr::If(i))
         }
@@ -387,7 +393,10 @@ pub mod ast {
     }
 
     impl<'arena> CmdOrAssigns<'arena> {
-        pub(crate) fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
+        pub(crate) fn to_expr(
+            self,
+            bump: &'arena Bump,
+        ) -> Result<Expr<'arena>, bun_alloc::AllocError> {
             match self {
                 CmdOrAssigns::Cmd(cmd) => {
                     let cmd_ptr = bump.alloc(cmd);

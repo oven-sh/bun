@@ -438,7 +438,8 @@ pub(crate) struct Builder<'a, const METHOD: BuilderMethod> {
     // builder.resolutions[peer.dep_id] to the resolved pkg_id. A dependency ID set is used because there
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
     // could be visited multiple times before it's resolved.
-    pub(crate) pending_optional_peers: ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
+    pub(crate) pending_optional_peers:
+        ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],

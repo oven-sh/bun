@@ -179,7 +179,6 @@ impl core::error::Error for PrintErr {}
 /// signal (the *kind* lives in `Printer.error_kind`).
 pub(crate) type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
 
-
 // Re-export the hub types at the crate root so `bun_css::Foo` paths resolve
 // for css_jsc / bundler.
 pub use css_parser::{

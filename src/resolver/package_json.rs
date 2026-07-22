@@ -1509,7 +1509,11 @@ impl<'a> Package<'a> {
         Some(package)
     }
 
-    pub(crate) fn parse_subpath(subpath: &mut &'a [u8], specifier: &[u8], subpath_buf: &'a mut [u8]) {
+    pub(crate) fn parse_subpath(
+        subpath: &mut &'a [u8],
+        specifier: &[u8],
+        subpath_buf: &'a mut [u8],
+    ) {
         if specifier.len() + 1 > subpath_buf.len() {
             *subpath = b"";
             return;
@@ -1561,7 +1565,12 @@ fn module_bufs() -> *mut ModuleBufs {
 // `module_type` / `debug_logs` are `&'a mut T`, so reading/writing them
 // requires `&mut self`. All resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
-    pub(crate) fn resolve(&mut self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
+    pub(crate) fn resolve(
+        &mut self,
+        package_url: &[u8],
+        subpath: &[u8],
+        exports: &Entry,
+    ) -> Resolution {
         let r = self.resolve_exports(package_url, subpath, exports);
         Self::finalize(r)
     }

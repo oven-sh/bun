@@ -1,7 +1,6 @@
 use crate::css_parser as css;
 use css::{CssResult, PrintErr, Printer};
 
-
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
 pub struct Url {
     /// The url string.

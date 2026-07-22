@@ -237,8 +237,7 @@ pub(crate) struct SharedEnv {
 // Lazy-init on the install main thread, then `&'static`-read from worker
 // threads. RacyCell — the install enqueue path is single-threaded at the
 // write point.
-static SHARED_ENV: bun_core::RacyCell<SharedEnv> =
-    bun_core::RacyCell::new(SharedEnv { env: None });
+static SHARED_ENV: bun_core::RacyCell<SharedEnv> = bun_core::RacyCell::new(SharedEnv { env: None });
 
 impl SharedEnv {
     pub(crate) fn get(other: &mut bun_dotenv::Loader) -> &'static bun_dotenv::Map {

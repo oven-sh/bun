@@ -643,7 +643,10 @@ fn pread_box(file: &sys::File, len: usize, offset: u64) -> crate::CrateResult<Bo
 }
 
 impl RuntimeTranspilerCache {
-    pub(crate) fn write_cache_filename(buf: &mut [u8], input_hash: u64) -> crate::CrateResult<usize> {
+    pub(crate) fn write_cache_filename(
+        buf: &mut [u8],
+        input_hash: u64,
+    ) -> crate::CrateResult<usize> {
         // Hex-encode the 8 native-endian bytes of `input_hash`.
         let bytes = input_hash.to_ne_bytes();
         let suffix: &[u8] = if bun_core::env::IS_DEBUG {
@@ -660,7 +663,10 @@ impl RuntimeTranspilerCache {
         Ok(needed)
     }
 
-    pub(crate) fn get_cache_file_path(buf: &mut PathBuffer, input_hash: u64) -> crate::CrateResult<&ZStr> {
+    pub(crate) fn get_cache_file_path(
+        buf: &mut PathBuffer,
+        input_hash: u64,
+    ) -> crate::CrateResult<&ZStr> {
         let cache_dir_len = Self::get_cache_dir(buf)?;
         buf[cache_dir_len] = SEP;
         let cache_filename_len =

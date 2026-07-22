@@ -9112,12 +9112,7 @@ pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr
     }
 }
 /// `moveFileZSlow`: open source, unlink, copy to dest.
-fn move_file_z_slow(
-    from_dir: Fd,
-    filename: &ZStr,
-    to_dir: Fd,
-    destination: &ZStr,
-) -> Maybe<()> {
+fn move_file_z_slow(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
     let in_handle = openat(
         from_dir,
         filename,

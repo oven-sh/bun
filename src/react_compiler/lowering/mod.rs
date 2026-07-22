@@ -9,4 +9,4 @@ mod find_context_identifiers;
 mod hir_builder;
 
 pub(crate) use build_hir::lower;
-pub(crate) use hir_builder::{FunctionNode, };
+pub(crate) use hir_builder::FunctionNode;

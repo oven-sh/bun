@@ -33,7 +33,10 @@ impl<T: fmt::Display> fmt::Display for Err<T> {
 // `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
 
 impl Err<ParserError> {
-    pub(crate) fn from_parse_error(err: ParseError<ParserError>, filename: &[u8]) -> Err<ParserError> {
+    pub(crate) fn from_parse_error(
+        err: ParseError<ParserError>,
+        filename: &[u8],
+    ) -> Err<ParserError> {
         let kind = match err.kind {
             ParserErrorKind::basic(b) => match b {
                 BasicParseErrorKind::unexpected_token(t) => ParserError::unexpected_token(t),

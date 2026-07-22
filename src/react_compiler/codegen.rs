@@ -122,7 +122,11 @@ pub(crate) struct Codegen<'h> {
 }
 
 impl<'h> Codegen<'h> {
-    pub(crate) fn new(host: &'h mut dyn Host, arena: &'h Arena, memo_cache_import: Option<Ref>) -> Self {
+    pub(crate) fn new(
+        host: &'h mut dyn Host,
+        arena: &'h Arena,
+        memo_cache_import: Option<Ref>,
+    ) -> Self {
         let mut well_known = [None; WellKnown::COUNT];
         well_known[WellKnown::UseMemoCache as usize] = memo_cache_import;
         Codegen {

@@ -46,7 +46,11 @@ pub enum OutputFileListError {
 }
 
 impl OutputFileList {
-    pub(crate) fn init(c: &LinkerContext, chunks: &[Chunk], _unused: usize) -> Result<Self, crate::Error> {
+    pub(crate) fn init(
+        c: &LinkerContext,
+        chunks: &[Chunk],
+        _unused: usize,
+    ) -> Result<Self, crate::Error> {
         let (length, supplementary_file_count) =
             OutputFileList::calculate_output_file_list_capacity(c, chunks);
         let mut output_files: Vec<options::OutputFile> = Vec::with_capacity(length as usize);
@@ -79,7 +83,10 @@ impl OutputFileList {
         core::mem::take(&mut self.output_files)
     }
 
-    pub(crate) fn calculate_output_file_list_capacity(c: &LinkerContext, chunks: &[Chunk]) -> (u32, u32) {
+    pub(crate) fn calculate_output_file_list_capacity(
+        c: &LinkerContext,
+        chunks: &[Chunk],
+    ) -> (u32, u32) {
         let parse_graph = c.parse_graph();
         let source_map_count: usize = if c.options.source_maps.has_external_files() {
             'brk: {

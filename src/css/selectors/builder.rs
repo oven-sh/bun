@@ -144,10 +144,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     ///     order requires additional allocations, and undoing the reversal when serializing the
     ///     selector. So we could just change this code to store the components in the same order
     ///     as the source.
-    fn build_with_specificity_and_flags(
-        &mut self,
-        spec: SpecificityAndFlags,
-    ) -> BuildResult<Impl> {
+    fn build_with_specificity_and_flags(&mut self, spec: SpecificityAndFlags) -> BuildResult<Impl> {
         // Capture combinators.len() before borrowing simple_selectors.slice().
         let combinators_len = self.combinators.len();
 

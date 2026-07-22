@@ -49,7 +49,11 @@ impl Clone for LayerName {
 }
 
 impl LayerName {
-    pub(crate) fn clone_with_import_records(&self, bump: &Arena, _: &mut Vec<ImportRecord>) -> Self {
+    pub(crate) fn clone_with_import_records(
+        &self,
+        bump: &Arena,
+        _: &mut Vec<ImportRecord>,
+    ) -> Self {
         // Segments are arena-borrowed, not owned, so this is a shallow
         // `SmallList` copy. No import records to rewrite — layer names
         // contain no URLs.
@@ -76,7 +80,9 @@ impl LayerName {
         true
     }
 
-    pub(crate) fn parse(input: &mut css::css_parser::Parser<'_>) -> css::css_parser::CssResult<LayerName> {
+    pub(crate) fn parse(
+        input: &mut css::css_parser::Parser<'_>,
+    ) -> css::css_parser::CssResult<LayerName> {
         let mut parts: SmallList<&'static [u8], 1> = SmallList::default();
         let ident = input.expect_ident_cloned()?;
         parts.append(ident);

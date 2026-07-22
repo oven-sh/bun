@@ -3,7 +3,7 @@ use crate::postgres::AnyPostgresError;
 
 #[derive(Default)]
 pub struct CopyData {
-// default = Data::Empty
+    // default = Data::Empty
 }
 
 impl CopyData {

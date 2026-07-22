@@ -1,9 +1,9 @@
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_collections::{StringSet};
 #[cfg(not(windows))]
 use bun_collections::StringHashMap;
+use bun_collections::StringSet;
 use bun_core::Output;
 use bun_core::ZStr;
 #[cfg(not(windows))]

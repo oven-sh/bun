@@ -15,7 +15,6 @@ use crate::{
 pub struct ParsedSourceMap {
     // bun.ptr.ThreadSafeRefCount → intrusive atomic count; managed via
     // `bun_ptr::RefPtr<ParsedSourceMap>`. `ref`/`deref` are methods on RefPtr.
-
     pub input_line_count: usize,
     pub mappings: mapping::List,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
@@ -271,7 +270,10 @@ impl ParsedSourceMap {
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
     }
 
-    pub(crate) fn write_vlqs<W: bun_io::Write + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub(crate) fn write_vlqs<W: bun_io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> bun_io::Result<()> {
         if let Some(ism) = &self.internal {
             let mut buf = bun_core::MutableString::init_empty();
             ism.append_vlq_to(&mut buf);

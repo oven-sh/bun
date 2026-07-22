@@ -461,8 +461,7 @@ pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = Cell::new(false);
 #[thread_local]
 pub static IS_MAIN_THREAD_VM: Cell<bool> = Cell::new(false);
 
-static IS_SMOL_MODE: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static IS_SMOL_MODE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 #[inline]
 pub fn is_smol_mode() -> bool {
@@ -3107,7 +3106,9 @@ impl VirtualMachine {
     }
 
     /// The configured `--unhandled-rejections` mode (defaults to Bun's behavior).
-    pub(crate) fn unhandled_rejections_mode(&self) -> bun_options_types::schema::api::UnhandledRejections {
+    pub(crate) fn unhandled_rejections_mode(
+        &self,
+    ) -> bun_options_types::schema::api::UnhandledRejections {
         use bun_options_types::schema::api::UnhandledRejections;
         self.transpiler
             .options
@@ -4732,7 +4733,10 @@ impl VirtualMachine {
 
     /// Loads and evaluates a macro entry module, waiting for its promise.
     #[inline]
-    pub(crate) fn _load_macro_entry_point(&mut self, entry_path: &[u8]) -> Option<*mut JSInternalPromise> {
+    pub(crate) fn _load_macro_entry_point(
+        &mut self,
+        entry_path: &[u8],
+    ) -> Option<*mut JSInternalPromise> {
         let path_str = bun_core::String::init(entry_path);
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?

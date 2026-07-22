@@ -424,10 +424,7 @@ extern "C" fn AbortSignal__Timeout__create(
 /// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`;
 /// `vm` must be the live per-thread `VirtualMachine`.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn AbortSignal__Timeout__run(
-    this: *mut Timeout,
-    vm: *mut VirtualMachine,
-) {
+unsafe extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut VirtualMachine) {
     // SAFETY: C++ caller passes a live boxed Timeout and the live per-thread VM.
     unsafe { Timeout::run(this, vm) }
 }

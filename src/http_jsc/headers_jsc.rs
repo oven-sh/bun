@@ -174,10 +174,7 @@ impl H3TestingAPIs {
     /// Named distinctly from H2's `live_counts` because generate-js2native.ts
     /// mangles `[^A-Za-z]` to `_`, so the H2 and H3 client paths produce
     /// the same path prefix and the function name has to differ.
-    fn quic_live_counts(
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn quic_live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         use bun_http::h3_client;
         let obj = JSValue::create_empty_object(global, 2);
         // h3 atomics are `AtomicU32`; widen to u64 for `js_number_from_uint64`.

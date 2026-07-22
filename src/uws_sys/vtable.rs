@@ -235,11 +235,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    extern "C" fn on_data(
-        s: *mut us_socket_t,
-        data: *mut u8,
-        len: c_int,
-    ) -> *mut us_socket_t {
+    extern "C" fn on_data(s: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t {
         // SAFETY: usockets guarantees `data[0..len]` is valid.
         let data_slice = unsafe { thunk::c_slice(data, usize::try_from(len).expect("int cast")) };
         if H::HAS_EXT {
@@ -309,10 +305,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    extern "C" fn on_connect_error(
-        s: *mut us_socket_t,
-        code: c_int,
-    ) -> *mut us_socket_t {
+    extern "C" fn on_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t {
         if H::HAS_EXT {
             H::on_connect_error(Self::ext(s), s, code);
         } else {

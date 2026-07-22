@@ -43,7 +43,11 @@ impl PathToSourceIndexMap {
 
     // Takes `&[u8]` (not `impl AsRef<[u8]>`)
     // to avoid E0283 inference ambiguity at `.into()` call sites in bundle_v2.
-    pub(crate) fn put(&mut self, text: &[u8], value: IndexInt) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn put(
+        &mut self,
+        text: &[u8],
+        value: IndexInt,
+    ) -> Result<(), bun_alloc::AllocError> {
         // PERF: bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
         self.map.put(text, value)

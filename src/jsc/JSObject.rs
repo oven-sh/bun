@@ -212,7 +212,10 @@ impl JSObject {
     }
 
     /// This will not call getters or be observable from JavaScript.
-    pub(crate) fn get_code_property_vm_inquiry(&mut self, global: &JSGlobalObject) -> Option<JSValue> {
+    pub(crate) fn get_code_property_vm_inquiry(
+        &mut self,
+        global: &JSGlobalObject,
+    ) -> Option<JSValue> {
         let v = Bun__JSObject__getCodePropertyVMInquiry(global, self);
         if v.is_empty() {
             return None;

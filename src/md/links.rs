@@ -1023,7 +1023,11 @@ impl Parser<'_> {
         None
     }
 
-    pub(crate) fn render_autolink(&mut self, url: &[u8], is_email: bool) -> crate::types::JsResult<()> {
+    pub(crate) fn render_autolink(
+        &mut self,
+        url: &[u8],
+        is_email: bool,
+    ) -> crate::types::JsResult<()> {
         self.renderer.enter_span(
             Span::A,
             SpanAttrs {

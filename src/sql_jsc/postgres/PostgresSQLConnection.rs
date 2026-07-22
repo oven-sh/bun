@@ -3083,7 +3083,10 @@ impl PostgresSQLConnection {
         JSValue::from(this.status.get() == Status::Connected)
     }
 
-    pub(crate) fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
+    pub(crate) fn consume_on_connect_callback(
+        &self,
+        global_object: &JSGlobalObject,
+    ) -> Option<JSValue> {
         debug!("consumeOnConnectCallback");
         let js_value = self.js_value.get().get();
         let on_connect = js::onconnect_get_cached(js_value)?;
@@ -3093,7 +3096,10 @@ impl PostgresSQLConnection {
         Some(on_connect)
     }
 
-    pub(crate) fn consume_on_close_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
+    pub(crate) fn consume_on_close_callback(
+        &self,
+        global_object: &JSGlobalObject,
+    ) -> Option<JSValue> {
         debug!("consumeOnCloseCallback");
         let js_value = self.js_value.get().get();
         let on_close = js::onclose_get_cached(js_value)?;

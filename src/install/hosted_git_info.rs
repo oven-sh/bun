@@ -1039,7 +1039,8 @@ pub(crate) mod formatters {
     pub(crate) mod extract {
         use super::*;
 
-        pub(crate) type Type = fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
+        pub(crate) type Type =
+            fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
 
         pub(crate) fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();

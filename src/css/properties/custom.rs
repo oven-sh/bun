@@ -394,7 +394,11 @@ impl TokenList {
         Ok(())
     }
 
-    pub(crate) fn write_whitespace_if_needed(&self, i: usize, dest: &mut Printer) -> PrintResult<bool> {
+    pub(crate) fn write_whitespace_if_needed(
+        &self,
+        i: usize,
+        dest: &mut Printer,
+    ) -> PrintResult<bool> {
         if !dest.minify
             && i != self.v.len() - 1
             && !matches!(
@@ -410,7 +414,11 @@ impl TokenList {
         }
     }
 
-    pub(crate) fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<TokenList> {
+    pub(crate) fn parse(
+        input: &mut Parser,
+        options: &ParserOptions,
+        depth: usize,
+    ) -> Result<TokenList> {
         let mut tokens: Vec<TokenOrValue> = Vec::new();
         TokenListFns::parse_into(input, &mut tokens, options, depth)?;
 
@@ -760,7 +768,10 @@ impl TokenList {
         res
     }
 
-    pub(crate) fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+    pub(crate) fn get_necessary_fallbacks(
+        &self,
+        targets: &css::targets::Targets,
+    ) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         for token_or_value in self.v.iter() {
             match token_or_value {
@@ -981,10 +992,7 @@ impl UnresolvedColor {
         Err(input.new_custom_error(ParserError::invalid_value))
     }
 
-    fn light_dark_owned(
-        light: UnresolvedColor,
-        dark: UnresolvedColor,
-    ) -> UnresolvedColor {
+    fn light_dark_owned(light: UnresolvedColor, dark: UnresolvedColor) -> UnresolvedColor {
         UnresolvedColor::LightDark {
             light: TokenList {
                 v: vec![TokenOrValue::UnresolvedColor(light)],
@@ -1574,11 +1582,7 @@ impl CustomPropertyName {
     // deep_clone / eql — provided by `#[derive(DeepClone, CssEql)]`.
 }
 
-fn try_parse_color_token(
-    f: &[u8],
-    state: &ParserState,
-    input: &mut Parser,
-) -> Option<CssColor> {
+fn try_parse_color_token(f: &[u8], state: &ParserState, input: &mut Parser) -> Option<CssColor> {
     if strings::eql_any_case_insensitive_ascii(
         f,
         &[

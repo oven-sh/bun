@@ -864,9 +864,7 @@ extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn ByteRangeMapping__find(
-    path: bun_core::String,
-) -> Option<NonNull<ByteRangeMapping>> {
+extern "C" fn ByteRangeMapping__find(path: bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
 
     let map_ptr = thread_map_opt()?;

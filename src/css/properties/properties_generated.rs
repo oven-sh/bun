@@ -6243,7 +6243,11 @@ impl Property {
         UnparsedProperty::parse(property_id, input, options).map(Property::Unparsed)
     }
 
-    pub(crate) fn to_css(&self, dest: &mut css::Printer, important: bool) -> Result<(), css::PrintErr> {
+    pub(crate) fn to_css(
+        &self,
+        dest: &mut css::Printer,
+        important: bool,
+    ) -> Result<(), css::PrintErr> {
         properties_impl::property_mixin::to_css(self, dest, important)
     }
 

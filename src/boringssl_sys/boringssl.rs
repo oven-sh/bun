@@ -265,8 +265,7 @@ pub struct GENERAL_NAME {
 // ═══════════════════════════════════════════════════════════════════════════
 
 type OPENSSL_sk_free_func = Option<unsafe extern "C" fn(*mut c_void)>;
-type OPENSSL_sk_call_free_func =
-    Option<unsafe extern "C" fn(OPENSSL_sk_free_func, *mut c_void)>;
+type OPENSSL_sk_call_free_func = Option<unsafe extern "C" fn(OPENSSL_sk_free_func, *mut c_void)>;
 type OPENSSL_sk_cmp_func =
     Option<unsafe extern "C" fn(*const *const c_void, *const *const c_void) -> c_int>;
 

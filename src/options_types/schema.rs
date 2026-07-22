@@ -502,7 +502,6 @@ pub mod api {
         pub loaders: Vec<Loader>,
     }
 
-
     /// Fully-resolved env configuration (prefix + defaults applied).
     #[derive(Clone, Debug, Default)]
     pub struct LoadedEnvConfig {
@@ -510,7 +509,6 @@ pub mod api {
         pub defaults: StringMap,
         pub prefix: Box<[u8]>,
     }
-
 
     /// Open `enum(u8)` in the wire schema. Kept closed.
     #[repr(u8)]

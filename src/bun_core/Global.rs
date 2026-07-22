@@ -392,8 +392,7 @@ pub static JSC_SCOPE: crate::output::ScopedLogger =
 // Debug-build-only breakpoint matchers.
 pub mod debug_flags {
     #[cfg(debug_assertions)]
-    static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> =
-        crate::Once::new();
+    static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
     #[cfg(debug_assertions)]
     static PRINT_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
 
@@ -773,8 +772,7 @@ pub struct SyncCStr(pub *const c_char);
 // SAFETY: points into a `'static` string literal; the pointer is never mutated.
 unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
-static Bun__userAgent: SyncCStr =
-    SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
+static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
 /// only ever called from C/C++ (so rustc sees no Rust caller). Expands to one

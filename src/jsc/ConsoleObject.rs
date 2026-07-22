@@ -2846,10 +2846,7 @@ pub mod formatter {
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
     /// `self.indent` is a disjoint field read, so passing it by value here
     /// keeps the borrow checker happy.
-    fn write_indent_n(
-        indent: u32,
-        writer: &mut dyn bun_io::Write,
-    ) -> bun_io::Result<()> {
+    fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
             let written: u8 = total_remain.min(32) as u8;

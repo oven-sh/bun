@@ -117,7 +117,10 @@ impl<'a> PropertyHandlerContext<'a> {
         bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
     }
 
-    pub(crate) fn get_supports_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
+    pub(crate) fn get_supports_rules<T>(
+        &self,
+        style_rule: &css::StyleRule<T>,
+    ) -> Vec<css::CssRule<T>> {
         if self.supports.is_empty() {
             return Vec::new();
         }
@@ -146,7 +149,10 @@ impl<'a> PropertyHandlerContext<'a> {
         dest
     }
 
-    pub(crate) fn get_additional_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
+    pub(crate) fn get_additional_rules<T>(
+        &self,
+        style_rule: &css::StyleRule<T>,
+    ) -> Vec<css::CssRule<T>> {
         // TODO: :dir/:lang raises the specificity of the selector. Use :where to lower it?
         let mut dest: Vec<css::CssRule<T>> = Vec::new();
 

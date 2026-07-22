@@ -221,8 +221,8 @@ pub use directories::{
 pub use self::package_manager_enqueue as enqueue;
 pub(crate) use enqueue::{
     enqueue_dependency_list, enqueue_dependency_with_main, enqueue_git_for_checkout,
-    enqueue_network_task, enqueue_package_for_download, enqueue_patch_task,
-    enqueue_patch_task_pre, enqueue_tarball_for_download, enqueue_tarball_for_reading,
+    enqueue_network_task, enqueue_package_for_download, enqueue_patch_task, enqueue_patch_task_pre,
+    enqueue_tarball_for_download, enqueue_tarball_for_reading,
 };
 
 use self::package_manager_lifecycle as lifecycle;
@@ -594,8 +594,7 @@ pub use bun_install_types::resolver_hooks::WakeHandler;
 /// both the main thread and ThreadPool workers thereafter — `AtomicBool` with
 /// `Relaxed` is sufficient (no ordering against other state; the write
 /// happens-before any worker spawn).
-static VERBOSE_INSTALL: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static VERBOSE_INSTALL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 impl PackageManager {
     /// Read as `PackageManager::verbose_install()` throughout the install pipeline.

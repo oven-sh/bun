@@ -108,7 +108,11 @@ impl Targets {
         }
     }
 
-    pub(crate) fn prefixes(&self, prefix: VendorPrefix, feature: css::prefixes::Feature) -> VendorPrefix {
+    pub(crate) fn prefixes(
+        &self,
+        prefix: VendorPrefix,
+        feature: css::prefixes::Feature,
+    ) -> VendorPrefix {
         if prefix.contains(VendorPrefix::NONE) && !self.exclude.contains(Features::VENDOR_PREFIXES)
         {
             if self.include.contains(Features::VENDOR_PREFIXES) {

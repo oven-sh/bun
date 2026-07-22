@@ -180,8 +180,6 @@ impl ProgramContext {
     pub(crate) fn merge_uid_known_names(&mut self, names: &IndexSet<String>) {
         self.known_referenced_names.extend(names.iter().cloned());
     }
-
-
 }
 
 /// Check for blocklisted import modules.

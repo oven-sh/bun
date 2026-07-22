@@ -488,7 +488,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Function { func }, loc))
     }
 
-    pub(crate) fn parse_fn_body(&mut self, data: &mut FnOrArrowDataParse) -> Result<G::FnBody, Error> {
+    pub(crate) fn parse_fn_body(
+        &mut self,
+        data: &mut FnOrArrowDataParse,
+    ) -> Result<G::FnBody, Error> {
         let p = self;
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         let old_allow_in = p.allow_in;

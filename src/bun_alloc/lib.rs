@@ -78,13 +78,8 @@ impl AllocatorVTable {
     /// foreign string) and never allocate or grow it.
     const NO_ALLOC: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8 =
         |_, _, _, _| core::ptr::null_mut();
-    const NO_RESIZE: unsafe fn(
-        *mut core::ffi::c_void,
-        &mut [u8],
-        Alignment,
-        usize,
-        usize,
-    ) -> bool = |_, _, _, _, _| false;
+    const NO_RESIZE: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> bool =
+        |_, _, _, _, _| false;
     const NO_REMAP: unsafe fn(
         *mut core::ffi::c_void,
         &mut [u8],
@@ -389,7 +384,11 @@ pub mod default_alloc {
     /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
     #[cfg(not(bun_asan))]
     #[inline]
-    pub(crate) unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
+    pub(crate) unsafe fn realloc_aligned(
+        ptr: *mut c_void,
+        new_size: usize,
+        align: usize,
+    ) -> *mut c_void {
         // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation
         // with alignment `align`.
         unsafe { crate::mimalloc::mi_realloc_aligned(ptr, new_size, align) }
@@ -2347,9 +2346,7 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
     /// Reserve a slot and return its uninitialized storage. Caller MUST
     /// initialize the slot before any other access.
     #[inline(always)]
-    fn append_uninit(
-        &mut self,
-    ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
+    fn append_uninit(&mut self) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         let index = self.used.fetch_add(1, Ordering::AcqRel);
         if index as usize >= BSS_LIST_CHUNK_SIZE {
             return Err(AllocError);

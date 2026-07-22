@@ -129,7 +129,10 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Ok(Int::from_be_slice(data.slice()))
     }
 
-    pub(crate) fn expect_int<Int: ProtocolInt>(&mut self, value: Int) -> Result<bool, AnyPostgresError> {
+    pub(crate) fn expect_int<Int: ProtocolInt>(
+        &mut self,
+        value: Int,
+    ) -> Result<bool, AnyPostgresError> {
         let actual = self.int::<Int>()?;
         Ok(actual == value)
     }

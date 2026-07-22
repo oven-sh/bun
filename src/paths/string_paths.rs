@@ -250,12 +250,7 @@ fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     wstr_in_buf(wbuf, len)
 }
 
-fn normalize_slashes_only_t<
-    'a,
-    T: Ch,
-    const DESIRED_SLASH: u8,
-    const ALWAYS_COPY: bool,
->(
+fn normalize_slashes_only_t<'a, T: Ch, const DESIRED_SLASH: u8, const ALWAYS_COPY: bool>(
     buf: &'a mut [T],
     path: &'a [T],
 ) -> &'a [T] {

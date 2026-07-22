@@ -477,7 +477,11 @@ impl<'h> HirBuilder<'h> {
         }
     }
 
-    pub(crate) fn terminate(&mut self, terminal: Terminal, next_block_kind: Option<BlockKind>) -> BlockId {
+    pub(crate) fn terminate(
+        &mut self,
+        terminal: Terminal,
+        next_block_kind: Option<BlockKind>,
+    ) -> BlockId {
         let wip = std::mem::replace(
             &mut self.current,
             new_block(BlockId(u32::MAX), BlockKind::Block),
@@ -503,7 +507,11 @@ impl<'h> HirBuilder<'h> {
         block_id
     }
 
-    pub(crate) fn terminate_with_continuation(&mut self, terminal: Terminal, continuation: WipBlock) {
+    pub(crate) fn terminate_with_continuation(
+        &mut self,
+        terminal: Terminal,
+        continuation: WipBlock,
+    ) {
         let wip = std::mem::replace(&mut self.current, continuation);
         let block_id = wip.id;
         self.completed.insert(
@@ -699,7 +707,10 @@ impl<'h> HirBuilder<'h> {
         ))
     }
 
-    pub(crate) fn lookup_continue(&self, label: Option<&str>) -> Result<BlockId, CompilerDiagnostic> {
+    pub(crate) fn lookup_continue(
+        &self,
+        label: Option<&str>,
+    ) -> Result<BlockId, CompilerDiagnostic> {
         for scope in self.scopes.iter().rev() {
             match scope {
                 Scope::Loop {

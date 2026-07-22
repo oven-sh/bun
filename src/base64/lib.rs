@@ -1,6 +1,5 @@
 use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
 
-
 // ASCII control codes used in the ignore set below.
 const VT: u8 = 0x0B; // vertical tab
 const FF: u8 = 0x0C; // form feed
@@ -419,7 +418,6 @@ pub mod zig_base64 {
         #[error("NoSpaceLeft")]
         NoSpaceLeft,
     }
-
 
     /// Base64 codecs
     pub struct Codecs {

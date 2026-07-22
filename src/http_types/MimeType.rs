@@ -267,8 +267,7 @@ pub const OTHER: MimeType = MimeType::init_comptime(b"application/octet-stream",
 pub const CSS: MimeType = MimeType::init_comptime(b"text/css;charset=utf-8", Category::Css);
 pub const JAVASCRIPT: MimeType =
     MimeType::init_comptime(b"text/javascript;charset=utf-8", Category::Javascript);
-const ICO: MimeType =
-    MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
+const ICO: MimeType = MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
 pub const HTML: MimeType = MimeType::init_comptime(b"text/html;charset=utf-8", Category::Html);
 // we transpile json to javascript so that it is importable without import assertions.
 pub const JSON: MimeType =

@@ -145,7 +145,11 @@ impl ConfigItem {
     }
 
     /// Duplicate the value, decoding it if it is base64 encoded.
-    pub(crate) fn dupe_value_decoded(&self, log: &mut Log, source: &Source) -> OOM<Option<Box<[u8]>>> {
+    pub(crate) fn dupe_value_decoded(
+        &self,
+        log: &mut Log,
+        source: &Source,
+    ) -> OOM<Option<Box<[u8]>>> {
         if self.optname.is_base64_encoded() {
             if self.value.is_empty() {
                 return Ok(Some(Box::default()));

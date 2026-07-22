@@ -232,10 +232,7 @@ impl Background {
         ret
     }
 
-    fn get_necessary_fallbacks(
-        &self,
-        targets: &css::targets::Targets,
-    ) -> ColorFallbackKind {
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         self.color.get_necessary_fallbacks(targets)
             | self.get_image().get_necessary_fallbacks(targets)
     }

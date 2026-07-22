@@ -21,7 +21,10 @@ pub fn ini_testing_load_npmrc_from_js(
 pub struct IniTestingAPIs;
 
 impl IniTestingAPIs {
-    pub(crate) fn load_npmrc_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn load_npmrc_from_js(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         use bun_api::BunInstall;
         use bun_ast::{Log, Source};
         use bun_core::String as BunString;

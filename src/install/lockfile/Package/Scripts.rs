@@ -79,7 +79,11 @@ impl Scripts {
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone`.
-    pub(crate) fn clone_into(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) -> Scripts {
+    pub(crate) fn clone_into(
+        &self,
+        buf: &[u8],
+        builder: &mut LockfileStringBuilder<'_>,
+    ) -> Scripts {
         if !self.filled {
             return Scripts::default();
         }
@@ -264,7 +268,11 @@ impl Scripts {
         }
     }
 
-    pub(crate) fn parse_alloc<B: bun_semver::StringBuilder>(&mut self, builder: &mut B, json: Expr) {
+    pub(crate) fn parse_alloc<B: bun_semver::StringBuilder>(
+        &mut self,
+        builder: &mut B,
+        json: Expr,
+    ) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 let dsts = self.hooks_mut();

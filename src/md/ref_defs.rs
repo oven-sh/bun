@@ -245,7 +245,11 @@ impl Parser<'_> {
         p
     }
 
-    pub(crate) fn parse_ref_def_dest<'a>(&self, text: &'a [u8], start: usize) -> Option<ParsedDest<'a>> {
+    pub(crate) fn parse_ref_def_dest<'a>(
+        &self,
+        text: &'a [u8],
+        start: usize,
+    ) -> Option<ParsedDest<'a>> {
         let mut p = start;
         if p >= text.len() {
             return None;
@@ -297,7 +301,11 @@ impl Parser<'_> {
         }
     }
 
-    pub(crate) fn parse_ref_def_title<'a>(&self, text: &'a [u8], start: usize) -> Option<ParsedTitle<'a>> {
+    pub(crate) fn parse_ref_def_title<'a>(
+        &self,
+        text: &'a [u8],
+        start: usize,
+    ) -> Option<ParsedTitle<'a>> {
         let mut p = start;
         if p >= text.len() {
             return None;

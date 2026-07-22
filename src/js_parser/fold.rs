@@ -831,7 +831,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub(crate) fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, crate::Error> {
+    pub(crate) fn maybe_defined_helper(
+        &mut self,
+        identifier_expr: Expr,
+    ) -> Result<Expr, crate::Error> {
         let p = self;
         let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p

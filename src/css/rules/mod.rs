@@ -344,10 +344,7 @@ fn decl_block_to_css(
 /// canonical `impl VendorPrefix` block in lib.rs hasn't grown a `to_css`
 /// yet and `rules/` is the only caller.
 #[inline]
-fn vendor_prefix_to_css(
-    prefix: css::VendorPrefix,
-    dest: &mut Printer,
-) -> Result<(), PrintErr> {
+fn vendor_prefix_to_css(prefix: css::VendorPrefix, dest: &mut Printer) -> Result<(), PrintErr> {
     use css::VendorPrefix as VP;
     match prefix.bits() {
         b if b == VP::WEBKIT.bits() => dest.write_str("-webkit-"),
@@ -920,11 +917,7 @@ pub(crate) struct StyleRuleKeyMap {
 impl StyleRuleKeyMap {
     /// Find and remove an earlier index whose rule `is_duplicate` of
     /// `rules[key.index]`.
-    fn remove_duplicate<R>(
-        &mut self,
-        rules: &[CssRule<R>],
-        key: &StyleRuleKey,
-    ) -> Option<usize> {
+    fn remove_duplicate<R>(&mut self, rules: &[CssRule<R>], key: &StyleRuleKey) -> Option<usize> {
         let bucket = self.buckets.get_mut(&key.hash)?;
         let CssRule::Style(rule) = &rules[key.index] else {
             return None;

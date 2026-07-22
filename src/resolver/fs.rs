@@ -724,7 +724,10 @@ impl DirEntry {
 
     /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
     /// already lowercase, so no per-call lowercasing buffer is needed.
-    pub(crate) fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
+    pub(crate) fn get_comptime_query<'a>(
+        &'a self,
+        query_lower: &'static [u8],
+    ) -> Option<EntryLookup<'a>> {
         let &result_ptr = self.data.get(query_lower)?;
         // SAFETY: EntryStore-owned pointer; read-only basename compare.
         let basename = unsafe { &*result_ptr }.base();

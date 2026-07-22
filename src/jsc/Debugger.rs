@@ -778,7 +778,12 @@ impl TestReporterHandle {
         Bun__TestReporterAgentReportTestStart(self, test_id);
     }
 
-    pub(crate) fn report_test_end(&mut self, test_id: c_int, bun_test_status: TestStatus, elapsed: f64) {
+    pub(crate) fn report_test_end(
+        &mut self,
+        test_id: c_int,
+        bun_test_status: TestStatus,
+        elapsed: f64,
+    ) {
         Bun__TestReporterAgentReportTestEnd(self, test_id, bun_test_status, elapsed);
     }
 }

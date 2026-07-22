@@ -609,11 +609,7 @@ pub struct ExternVersionMap {
 }
 
 impl ExternVersionMap {
-    fn find_key_index(
-        self,
-        buf: &[Semver::Version],
-        find: Semver::Version,
-    ) -> Option<u32> {
+    fn find_key_index(self, buf: &[Semver::Version], find: Semver::Version) -> Option<u32> {
         for (i, key) in self.keys.get(buf).iter().enumerate() {
             if key.eql(find) {
                 return Some(i as u32);

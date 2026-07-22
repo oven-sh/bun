@@ -9,10 +9,7 @@ use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
 #[crate::host_fn(export = "Resolver__nodeModulePathsForJS")]
-fn node_module_paths_for_js(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     crate::mark_binding!();
     let argument: JSValue = frame.argument(0);
 

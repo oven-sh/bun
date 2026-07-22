@@ -102,7 +102,11 @@ mod bridge {
             self.progress_update::<true>(ctx, socket);
         }
         #[inline]
-        pub(crate) fn h2_do_redirect(&mut self, ctx: *mut NewHTTPContext<true>, socket: HTTPSocket<true>) {
+        pub(crate) fn h2_do_redirect(
+            &mut self,
+            ctx: *mut NewHTTPContext<true>,
+            socket: HTTPSocket<true>,
+        ) {
             self.do_redirect::<true>(ctx, socket);
         }
         #[inline]

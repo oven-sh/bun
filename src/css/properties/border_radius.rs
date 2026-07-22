@@ -422,7 +422,11 @@ impl BorderRadiusHandler {
         true
     }
 
-    pub(crate) fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
     }
 

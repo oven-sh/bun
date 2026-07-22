@@ -436,8 +436,7 @@ pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
     /// `\??\` — NT object-manager prefix (UTF-16).
-    pub const NT_OBJECT_PREFIX: [u16; 4] =
-        ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
+    pub const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
     /// `\??\UNC\` — NT object-manager UNC prefix (UTF-16).
     pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
         '\\' as u16,
@@ -450,8 +449,7 @@ pub mod windows {
         '\\' as u16,
     ];
     /// `\\?\` — Win32 long-path prefix (UTF-16).
-    pub const LONG_PATH_PREFIX: [u16; 4] =
-        ['\\' as u16, '\\' as u16, '?' as u16, '\\' as u16];
+    pub const LONG_PATH_PREFIX: [u16; 4] = ['\\' as u16, '\\' as u16, '?' as u16, '\\' as u16];
 
     /// `\??\` — NT object-manager prefix (UTF-8/ASCII).
     pub const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
@@ -466,7 +464,6 @@ pub mod windows {
     pub fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
         U::LONG_PATH_PREFIX
     }
-
 }
 
 // ──────────────────────────────────────────────────────────────────────────

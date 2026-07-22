@@ -101,8 +101,7 @@ pub enum CompileOutput {
     },
 }
 
-pub struct CompileDiagnostic {
-}
+pub struct CompileDiagnostic {}
 
 /// An item in the ordered log, which can be either a logger event or a debug entry.
 #[derive(Debug, Clone)]

@@ -811,11 +811,7 @@ impl SizeHandler {
         true
     }
 
-    fn flush(
-        &mut self,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
-    ) {
+    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
         }

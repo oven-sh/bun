@@ -21,7 +21,10 @@ pub(crate) fn from_binary(bytes: &[u8]) -> f64 {
 /// (e.g. `infinity`, BC dates, 5+ digit years), so the caller falls back to
 /// `Date.parse`. `timestamptz` and `date` already decode correctly via
 /// `Date.parse` and must NOT be routed here.
-pub(crate) fn timestamp_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) -> Option<f64> {
+pub(crate) fn timestamp_text_to_ms_utc(
+    global_object: &JSGlobalObject,
+    bytes: &[u8],
+) -> Option<f64> {
     let parsed = crate::shared::datetime_text::parse_postgres_timestamp(bytes)?;
     global_object
         .gregorian_date_time_to_ms_utc(

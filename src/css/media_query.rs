@@ -1635,10 +1635,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
 
     /// `QueryFeature.parse` with `ParserOptions` threaded so the `env()`
     /// arm of `MediaFeatureValue::parse_unknown` is reachable.
-    fn parse_with_options(
-        input: &mut Parser,
-        options: &css::ParserOptions,
-    ) -> Result<Self> {
+    fn parse_with_options(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
         match input.try_parse(|i| Self::parse_name_first(i, options)) {
             Ok(res) => Ok(res),
             Err(e) => {
@@ -1653,10 +1650,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
         }
     }
 
-    fn parse_name_first(
-        input: &mut Parser,
-        options: &css::ParserOptions,
-    ) -> Result<Self> {
+    fn parse_name_first(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
         let (name, legacy_op) = MediaFeatureName::<FeatureId>::parse(input)?;
 
         let operator = match input.try_parse(|i| consume_operation_or_colon(i, true)) {
@@ -1688,10 +1682,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
         }
     }
 
-    fn parse_value_first(
-        input: &mut Parser,
-        options: &css::ParserOptions,
-    ) -> Result<Self> {
+    fn parse_value_first(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
         // We need to find the feature name first so we know the type.
         let start = input.state();
         // Skip tokens (matching lightningcss) until the name is found;

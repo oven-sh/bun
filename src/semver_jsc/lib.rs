@@ -8,4 +8,3 @@ pub use bun_jsc::JsResult;
 pub mod SemverObject;
 #[path = "SemverString_jsc.rs"]
 pub mod SemverString_jsc;
-

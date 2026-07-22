@@ -376,7 +376,11 @@ impl<'a> LinkerContext<'a> {
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
     }
 
-    pub(crate) fn is_external_dynamic_import(&self, record: &ImportRecord, source_index: u32) -> bool {
+    pub(crate) fn is_external_dynamic_import(
+        &self,
+        record: &ImportRecord,
+        source_index: u32,
+    ) -> bool {
         use crate::linker_graph::FileColumns as _;
         self.graph.code_splitting
             && record.kind == ImportKind::Dynamic
@@ -3320,7 +3324,10 @@ impl<'a> LinkerContext<'a> {
 
     /// Follows one step of an import chain: resolves what `tracker`'s import
     /// points to in the target file and reports the match status.
-    pub(crate) fn advance_import_tracker(&mut self, tracker: &ImportTracker) -> ImportTrackerIterator {
+    pub(crate) fn advance_import_tracker(
+        &mut self,
+        tracker: &ImportTracker,
+    ) -> ImportTrackerIterator {
         let id = tracker.source_index.get();
         // Note: read `named_import` out first, then borrow the rest.
         let named_import: &NamedImport =

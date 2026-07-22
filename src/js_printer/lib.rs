@@ -416,7 +416,11 @@ pub mod analyze_transpiled_module {
                 &[export_name, import_name, module_name],
             );
         }
-        pub(crate) fn add_export_info_local(&mut self, export_name: StringID, local_name: StringID) {
+        pub(crate) fn add_export_info_local(
+            &mut self,
+            export_name: StringID,
+            local_name: StringID,
+        ) {
             if self.has_or_add_exported_name(export_name) {
                 return;
             } // a syntax error will be emitted later in this case
@@ -425,7 +429,11 @@ pub mod analyze_transpiled_module {
                 &[export_name, local_name, StringID(u32::MAX)],
             );
         }
-        pub(crate) fn add_export_info_namespace(&mut self, export_name: StringID, module_name: StringID) {
+        pub(crate) fn add_export_info_namespace(
+            &mut self,
+            export_name: StringID,
+            module_name: StringID,
+        ) {
             if self.has_or_add_exported_name(export_name) {
                 return;
             } // a syntax error will be emitted later in this case
@@ -1354,11 +1362,7 @@ pub(crate) mod __gated_printer {
     }
     /// `EnumSet<T>` field-style mutation helper.
     #[inline(always)]
-    fn set_flag<T: enumset::EnumSetType>(
-        set: &mut enumset::EnumSet<T>,
-        flag: T,
-        on: bool,
-    ) {
+    fn set_flag<T: enumset::EnumSetType>(set: &mut enumset::EnumSet<T>, flag: T, on: bool) {
         if on {
             set.insert(flag);
         } else {
@@ -2698,7 +2702,11 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_string_literal_e_string(&mut self, str: &E::String, allow_backtick: bool) {
+        pub(crate) fn print_string_literal_e_string(
+            &mut self,
+            str: &E::String,
+            allow_backtick: bool,
+        ) {
             let quote = Self::best_quote_char_for_e_string(str, allow_backtick);
             self.print(quote);
             self.print_string_characters_e_string(str, quote);
@@ -4963,7 +4971,10 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn maybe_print_default_binding_value<P: HasDefaultValue>(&mut self, property: &P) {
+        pub(crate) fn maybe_print_default_binding_value<P: HasDefaultValue>(
+            &mut self,
+            property: &P,
+        ) {
             if let Some(default) = property.default_value() {
                 self.print_space();
                 self.print(b"=");

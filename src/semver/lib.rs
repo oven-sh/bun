@@ -173,7 +173,12 @@ pub mod external_string {
             self.value.fmt(buf)
         }
 
-        pub(crate) fn order(&self, rhs: &ExternalString, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+        pub(crate) fn order(
+            &self,
+            rhs: &ExternalString,
+            lhs_buf: &[u8],
+            rhs_buf: &[u8],
+        ) -> Ordering {
             if self.hash == rhs.hash && self.hash > 0 {
                 return Ordering::Equal;
             }

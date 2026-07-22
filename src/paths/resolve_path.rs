@@ -1524,10 +1524,7 @@ pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -
     unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
 }
 
-fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
-    buf: &'a mut [T],
-    parts: &[&[u8]],
-) -> &'a [T] {
+fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&[u8]]) -> &'a [T] {
     // Takes `&[&[u8]]` — every in-tree caller passes u8
     // parts — and transcodes to u16 below when `T == u16`.
     let mut written: usize = 0;

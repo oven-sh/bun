@@ -241,7 +241,11 @@ impl Chunk {
     /// - No two concurrent callers may pass the same `i` for the same `chunk`.
     /// - No reader may observe slot `i` until after the worker-pool join.
     #[inline]
-    pub(crate) unsafe fn write_compile_result_slot(chunk: *mut Chunk, i: usize, result: CompileResult) {
+    pub(crate) unsafe fn write_compile_result_slot(
+        chunk: *mut Chunk,
+        i: usize,
+        result: CompileResult,
+    ) {
         // SAFETY: per fn contract — `chunk` is live, `i` in-bounds, slot
         // exclusively owned by this caller.
         unsafe {
@@ -283,7 +287,10 @@ impl Chunk {
         }
     }
 
-    pub(crate) fn get_js_chunk_for_html<'a>(&self, chunks: &'a mut [Chunk]) -> Option<&'a mut Chunk> {
+    pub(crate) fn get_js_chunk_for_html<'a>(
+        &self,
+        chunks: &'a mut [Chunk],
+    ) -> Option<&'a mut Chunk> {
         // Non-entry chunks created under code splitting carry a default
         // entry_point_id of 0, so the id alone is ambiguous; require
         // is_entry_point to find the actual entry chunk.
@@ -299,7 +306,10 @@ impl Chunk {
         None
     }
 
-    pub(crate) fn get_css_chunk_for_html<'a>(&self, chunks: &'a mut [Chunk]) -> Option<&'a mut Chunk> {
+    pub(crate) fn get_css_chunk_for_html<'a>(
+        &self,
+        chunks: &'a mut [Chunk],
+    ) -> Option<&'a mut Chunk> {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).

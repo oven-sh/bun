@@ -148,7 +148,10 @@ impl Default for InternalState<'_> {
 }
 
 impl<'a> InternalState<'a> {
-    pub(crate) fn init(body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) -> InternalState<'a> {
+    pub(crate) fn init(
+        body: HTTPRequestBody<'a>,
+        body_out_str: &mut MutableString,
+    ) -> InternalState<'a> {
         let request_body = bun_ptr::RawSlice::new(body.slice());
         InternalState {
             original_request_body: body,

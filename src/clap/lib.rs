@@ -505,7 +505,7 @@ pub fn parse<Id: 'static>(
             stop_after_positional_at: opt.stop_after_positional_at,
         },
     )?;
-    Ok(Args { clap,})
+    Ok(Args { clap })
 }
 
 /// Same as [`parse`] but takes a pre-converted rodata [`ConvertedTable`]
@@ -524,7 +524,7 @@ pub fn parse_with_table<Id: 'static>(
             stop_after_positional_at: opt.stop_after_positional_at,
         },
     )?;
-    Ok(Args { clap,})
+    Ok(Args { clap })
 }
 
 /// Parses the command line arguments passed into the program based on an

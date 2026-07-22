@@ -1064,7 +1064,10 @@ impl PseudoClass {
         }
     }
 
-    pub(crate) fn get_necessary_prefixes(&mut self, targets: &css::targets::Targets) -> css::VendorPrefix {
+    pub(crate) fn get_necessary_prefixes(
+        &mut self,
+        targets: &css::targets::Targets,
+    ) -> css::VendorPrefix {
         use PseudoClass as P;
         use css::prefixes::Feature as F;
         let (p, feature): (&mut css::VendorPrefix, F) = match self {
@@ -1379,7 +1382,9 @@ impl<'a> SelectorParser<'a> {
             .contains(css::ParserFlags::DEEP_SELECTOR_COMBINATOR)
     }
 
-    pub(crate) fn default_namespace(&self) -> Option<<impl_::Selectors as SelectorImpl>::NamespaceUrl> {
+    pub(crate) fn default_namespace(
+        &self,
+    ) -> Option<<impl_::Selectors as SelectorImpl>::NamespaceUrl> {
         let _ = self;
         None
     }
@@ -1940,7 +1945,10 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     /// Returns an iterator over the sequence of simple selectors and
     /// combinators, in parse order (from left to right), starting from
     /// `offset`.
-    pub(crate) fn iter_raw_parse_order_from(&self, offset: usize) -> RawParseOrderFromIter<'_, Impl> {
+    pub(crate) fn iter_raw_parse_order_from(
+        &self,
+        offset: usize,
+    ) -> RawParseOrderFromIter<'_, Impl> {
         RawParseOrderFromIter {
             slice: &self.components[0..self.components.len() - offset],
             i: 0,
@@ -2284,7 +2292,10 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
         Self::Where(s)
     }
 
-    pub(crate) fn convert_helper_any(s: Box<[GenericSelector<Impl>]>, prefix: Impl::VendorPrefix) -> Self {
+    pub(crate) fn convert_helper_any(
+        s: Box<[GenericSelector<Impl>]>,
+        prefix: Impl::VendorPrefix,
+    ) -> Self {
         Self::Any {
             vendor_prefix: prefix,
             selectors: s,
@@ -2547,7 +2558,11 @@ impl NthSelectorData {
         }
     }
 
-    pub(crate) fn write_start(&self, dest: &mut Printer, is_function: bool) -> Result<(), PrintErr> {
+    pub(crate) fn write_start(
+        &self,
+        dest: &mut Printer,
+        is_function: bool,
+    ) -> Result<(), PrintErr> {
         dest.write_str(match self.ty {
             NthType::Child => {
                 if is_function {
@@ -3050,7 +3065,10 @@ impl PseudoElement {
         self.clone()
     }
 
-    pub(crate) fn get_necessary_prefixes(&mut self, targets: &css::targets::Targets) -> css::VendorPrefix {
+    pub(crate) fn get_necessary_prefixes(
+        &mut self,
+        targets: &css::targets::Targets,
+    ) -> css::VendorPrefix {
         use PseudoElement as PE;
         use css::prefixes::Feature as F;
         let (p, feature): (&mut css::VendorPrefix, F) = match self {

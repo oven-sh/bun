@@ -591,4 +591,3 @@ impl JSMySQLQuery {
 
 // JS reaches `create_instance` through `put_host_functions!` in `mysql.rs`;
 // nothing on the C++ side references it, so no extern export exists.
-

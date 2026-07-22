@@ -948,7 +948,10 @@ pub mod fs {
                 .get_or_put(key)
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
         }
-        pub(crate) fn at_index(&mut self, index: bun_alloc::IndexType) -> Option<&mut EntriesOption> {
+        pub(crate) fn at_index(
+            &mut self,
+            index: bun_alloc::IndexType,
+        ) -> Option<&mut EntriesOption> {
             self.inner().at_index(index)
         }
         pub(crate) fn put(

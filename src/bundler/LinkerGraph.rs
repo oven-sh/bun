@@ -580,7 +580,11 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub(crate) fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
+    pub(crate) fn add_part_to_file(
+        &mut self,
+        id: u32,
+        part: Part,
+    ) -> Result<u32, bun_alloc::AllocError> {
         let ast = self.ast.split_mut();
         add_part_to_file(
             ast.parts,

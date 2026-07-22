@@ -87,7 +87,12 @@ pub trait RendererImpl {
 
 impl<'a> Renderer<'a> {
     #[inline]
-    pub(crate) fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
+    pub(crate) fn enter_block(
+        &mut self,
+        block_type: BlockType,
+        data: u32,
+        flags: u32,
+    ) -> JsResult<()> {
         self.ptr.enter_block(block_type, data, flags)
     }
     #[inline]
@@ -95,7 +100,11 @@ impl<'a> Renderer<'a> {
         self.ptr.leave_block(block_type, data)
     }
     #[inline]
-    pub(crate) fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
+    pub(crate) fn enter_span(
+        &mut self,
+        span_type: SpanType,
+        detail: SpanDetail<'_>,
+    ) -> JsResult<()> {
         self.ptr.enter_span(span_type, detail)
     }
     #[inline]

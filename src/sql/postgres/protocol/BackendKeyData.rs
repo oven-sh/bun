@@ -2,8 +2,7 @@ use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
 
 #[derive(Default)]
-pub struct BackendKeyData {
-}
+pub struct BackendKeyData {}
 
 impl BackendKeyData {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(

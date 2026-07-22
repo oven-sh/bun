@@ -2987,9 +2987,7 @@ impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
 pub fn trimmed_precision<const PRECISION: usize>(
     value: f64,
 ) -> TrimmedPrecisionFormatter<PRECISION> {
-    TrimmedPrecisionFormatter {
-        num: value,
-    }
+    TrimmedPrecisionFormatter { num: value }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

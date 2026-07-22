@@ -295,7 +295,8 @@ pub(crate) fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
 
 /// HTTP-thread-only scratch buffer for building NUL-terminated hostnames.
-pub(crate) static TEMP_HOSTNAME: bun_core::RacyCell<[u8; 8192]> = bun_core::RacyCell::new([0; 8192]);
+pub(crate) static TEMP_HOSTNAME: bun_core::RacyCell<[u8; 8192]> =
+    bun_core::RacyCell::new([0; 8192]);
 
 const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;
 
@@ -851,9 +852,7 @@ impl<'a> HTTPClient<'a> {
     /// `h2_client::ClientSession::{stream_client_mut, pending_client_mut}`,
     /// `h2_client::PendingConnect::waiter_mut`, and `h3_client::client_mut`.
     #[inline(always)]
-    fn from_erased_backref<'b>(
-        p: NonNull<HTTPClient<'static>>,
-    ) -> &'b mut HTTPClient<'static> {
+    fn from_erased_backref<'b>(p: NonNull<HTTPClient<'static>>) -> &'b mut HTTPClient<'static> {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *p.as_ptr() }
     }
@@ -1749,7 +1748,10 @@ impl<'a> HTTPClient<'a> {
         true
     }
 
-    pub(crate) fn register_abort_tracker<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+    pub(crate) fn register_abort_tracker<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+    ) {
         if self.signals.aborted.is_some() {
             let any = if IS_SSL {
                 uws::AnySocket::SocketTls(uws::SocketTLS::from_any(socket.socket))
@@ -1768,7 +1770,10 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    pub(crate) fn on_open<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) -> crate::Result<()> {
+    pub(crate) fn on_open<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+    ) -> crate::Result<()> {
         if cfg!(debug_assertions) {
             if let Some(proxy) = &self.http_proxy {
                 debug_assert!(IS_SSL == proxy.is_https());
@@ -3169,7 +3174,11 @@ impl<'a> HTTPClient<'a> {
         Ok(false)
     }
 
-    pub(crate) fn write_to_stream<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>, data: &[u8]) {
+    pub(crate) fn write_to_stream<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+        data: &[u8],
+    ) {
         bun_core::scoped_log!(fetch, "flushStream");
         // Never write body bytes before the request headers: drain_queued_writes can
         // reach this via the not-yet-opened socket start_() puts in the abort tracker,
@@ -3582,7 +3591,10 @@ impl<'a> HTTPClient<'a> {
     /// The JS-side `checkServerIdentity` callback approved the peer
     /// certificate: clear the park flag and write the request that
     /// `on_writable` has been holding back since the handshake completed.
-    pub(crate) fn resume_after_cert_check<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+    pub(crate) fn resume_after_cert_check<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+    ) {
         if !self.state.flags.is_waiting_for_cert_check {
             // Never parked, or already resumed/reset by a redirect or failure.
             return;

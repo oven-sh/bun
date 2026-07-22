@@ -404,7 +404,10 @@ impl HttpThread {
     }
 
     #[inline]
-    pub(crate) fn get_request_body_send_buffer(&mut self, estimated_size: usize) -> RequestBodyBuffer {
+    pub(crate) fn get_request_body_send_buffer(
+        &mut self,
+        estimated_size: usize,
+    ) -> RequestBodyBuffer {
         if estimated_size >= REQUEST_BODY_SEND_STACK_BUFFER_SIZE {
             if self.lazy_request_body_buffer.is_none() {
                 bun_core::scoped_log!(

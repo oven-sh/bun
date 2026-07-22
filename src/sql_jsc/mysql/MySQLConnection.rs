@@ -276,7 +276,11 @@ impl MySQLConnection {
         self.write_buffer = OffsetByteList::default();
     }
 
-    pub(crate) fn clean_queue_and_close(&mut self, js_reason: Option<JSValue>, js_queries_array: JSValue) {
+    pub(crate) fn clean_queue_and_close(
+        &mut self,
+        js_reason: Option<JSValue>,
+        js_queries_array: JSValue,
+    ) {
         // cleanup requests
         self.queue.clean(
             js_reason,

@@ -1386,10 +1386,7 @@ pub(crate) mod tocss_servo {
         Ok(())
     }
 
-    fn to_css_selector(
-        selector: &parser::Selector,
-        dest: &mut Printer,
-    ) -> Result<(), PrintErr> {
+    fn to_css_selector(selector: &parser::Selector, dest: &mut Printer) -> Result<(), PrintErr> {
         // Compound selectors invert the order of their contents, so we need to
         // undo that during serialization.
         //

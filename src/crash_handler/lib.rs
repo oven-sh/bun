@@ -2511,10 +2511,7 @@ mod draft {
             }
         }
 
-        fn write_encoded(
-            self_: Option<&StackLine>,
-            writer: &mut impl Write,
-        ) -> crate::Result<()> {
+        fn write_encoded(self_: Option<&StackLine>, writer: &mut impl Write) -> crate::Result<()> {
             let Some(known) = self_ else {
                 writer.write_all(b"_")?;
                 return Ok(());
@@ -3720,10 +3717,7 @@ mod draft {
     /// # Safety
     /// `message_ptr` must be valid for reads of `message_len` bytes.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn Bun__crashHandler(
-        message_ptr: *const u8,
-        message_len: usize,
-    ) -> ! {
+    unsafe extern "C" fn Bun__crashHandler(message_ptr: *const u8, message_len: usize) -> ! {
         // SAFETY: caller passes a valid (ptr, len) byte slice
         let msg = unsafe { core::slice::from_raw_parts(message_ptr, message_len) };
         crash_handler(

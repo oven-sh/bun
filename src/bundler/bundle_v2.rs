@@ -103,7 +103,8 @@ pub struct BundleV2<'a> {
 
     /// There is a race condition where an onResolve plugin may schedule a task
     /// on the bundle thread before its parsing task completes.
-    pub(crate) resolve_tasks_waiting_for_import_source_index: ArrayHashMap<IndexInt, Vec<PendingImport>>,
+    pub(crate) resolve_tasks_waiting_for_import_source_index:
+        ArrayHashMap<IndexInt, Vec<PendingImport>>,
 
     /// Allocations not tracked by a threadlocal heap.
     pub(crate) free_list: Vec<Box<[u8]>>,

@@ -5,5 +5,4 @@
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct TransactionStatusIndicator(pub(crate) u8);
 
-impl TransactionStatusIndicator {
-}
+impl TransactionStatusIndicator {}

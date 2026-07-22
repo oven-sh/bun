@@ -1304,7 +1304,12 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) extern "C" fn write_binary_data(this_ptr: *mut Self, ptr: *const u8, len: usize, op: u8) {
+    pub(crate) extern "C" fn write_binary_data(
+        this_ptr: *mut Self,
+        ptr: *const u8,
+        len: usize,
+        op: u8,
+    ) {
         // In tunnel mode, SSLWrapper.writeData() can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before the catch block in enqueue_encoded_bytes/send_buffer runs.
@@ -2057,12 +2062,7 @@ impl Mask {
         entropy[..4].try_into().expect("infallible: size matches")
     }
 
-    fn fill(
-        global_this: &JSGlobalObject,
-        mask_buf: &mut [u8; 4],
-        output: &mut [u8],
-        input: &[u8],
-    ) {
+    fn fill(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], output: &mut [u8], input: &[u8]) {
         *mask_buf = Self::generate(global_this);
         let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
         if input.is_empty() {
@@ -2074,11 +2074,7 @@ impl Mask {
 
     /// In-place variant for when output and input alias the same buffer
     /// (borrowck forbids `&mut [u8]` + `&[u8]` aliasing in `fill`).
-    fn fill_in_place(
-        global_this: &JSGlobalObject,
-        mask_buf: &mut [u8; 4],
-        buf: &mut [u8],
-    ) {
+    fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
         *mask_buf = Self::generate(global_this);
         let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
         if buf.is_empty() {

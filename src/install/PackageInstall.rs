@@ -2086,7 +2086,11 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub(crate) fn install_from_link(&mut self, skip_delete: bool, destination_dir: &Dir) -> InstallResult {
+    pub(crate) fn install_from_link(
+        &mut self,
+        skip_delete: bool,
+        destination_dir: &Dir,
+    ) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error

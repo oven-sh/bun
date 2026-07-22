@@ -58,7 +58,11 @@ pub(crate) struct AstBuilder<'a, 'bump> {
 // AstBuilder emits; if `ImportScanner` ever grows a host trait in
 // `bun_js_parser`, these stubs are the surface it would formalize.
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
-    pub(crate) fn init(bump: &'bump Bump, source: &'a Source, hot_reloading: bool) -> Result<Self, OOM> {
+    pub(crate) fn init(
+        bump: &'bump Bump,
+        source: &'a Source,
+        hot_reloading: bool,
+    ) -> Result<Self, OOM> {
         let scope: *mut Scope = bump.alloc(Scope {
             kind: ScopeKind::Entry,
             label_ref: Ref::NONE,
@@ -130,7 +134,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         &mut self.symbols[ref_.inner_index() as usize]
     }
 
-    pub(crate) fn add_import_record(&mut self, path: &'static [u8], kind: ImportKind) -> Result<u32, OOM> {
+    pub(crate) fn add_import_record(
+        &mut self,
+        path: &'static [u8],
+        kind: ImportKind,
+    ) -> Result<u32, OOM> {
         let index = self.import_records.len();
         self.import_records.push(ImportRecord {
             path: FsPath::init(path),

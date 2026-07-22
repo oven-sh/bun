@@ -41,7 +41,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub(crate) fn skip_type_script_type_with_metadata(&mut self, level: Level) -> Result<Metadata, Error> {
+    pub(crate) fn skip_type_script_type_with_metadata(
+        &mut self,
+        level: Level,
+    ) -> Result<Metadata, Error> {
         self.mark_type_script_only();
         let mut result = Metadata::DEFAULT;
         self.skip_type_script_type_with_opts::<true>(
@@ -1531,7 +1534,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    pub(crate) fn skip_type_script_type_arguments_with_backtracking(&mut self) -> Result<bool, Error> {
+    pub(crate) fn skip_type_script_type_arguments_with_backtracking(
+        &mut self,
+    ) -> Result<bool, Error> {
         if self.skip_type_script_type_arguments::<false, true>()? {
             // Check the token after this and backtrack if it's the wrong one
             if !self.can_follow_type_arguments_in_expression() {
@@ -1542,7 +1547,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    pub(crate) fn skip_type_script_arrow_return_type_with_backtracking(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_type_script_arrow_return_type_with_backtracking(
+        &mut self,
+    ) -> Result<(), Error> {
         self.lexer.expect(T::TColon)?;
 
         self.skip_typescript_return_type()?;

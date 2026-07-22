@@ -235,7 +235,7 @@ impl<'a> MiniEventLoop<'a> {
         }
     }
 
-    /// Raw-pointer variant of [`file_polls`] for re-entrant callers.
+    /// Raw-pointer `FilePollStore` accessor for re-entrant callers.
     ///
     /// The `mini_ctx` vtable shim (`file_polls`) is reached
     /// via `EventLoopCtx` from inside FilePoll callbacks fired by

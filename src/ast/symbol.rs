@@ -102,8 +102,7 @@ pub struct Symbol {
     /// undefined, which this status is also used for.
     pub import_item_status: ImportItemStatus,
 
-    /// Packed boolean state — see [`SymbolFlags`]. Six former `bool` fields
-    /// collapsed into one byte.
+    /// Packed boolean state — see [`SymbolFlags`].
     pub flags: SymbolFlags,
 }
 

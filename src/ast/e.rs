@@ -1638,8 +1638,8 @@ impl EString {
         // `2 * data.len` bytes and reading `data.len` u16s is in-bounds. Can't be
         // `bytemuck::cast_slice(self.data.slice())` because that would yield
         // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
-        // `javascript_length()`/`has_prefix_comptime()` and changing it is a
-        // cross-crate refactor (see TODO above).
+        // `javascript_length()` and changing it is a cross-crate refactor (see
+        // TODO above).
         //
         // The `c_void` hop is clippy's documented escape hatch for
         // `cast_ptr_alignment` ("alignment is externally guaranteed" — see the

@@ -2,6 +2,7 @@
 'use strict';
 
 const ErrorPrototypeToString = Error.prototype.toString;
+const ArrayPrototypeSlice = Array.prototype.slice;
 
 var AssertionError;
 function loadAssertionError() {
@@ -306,7 +307,7 @@ export function innerOk(fn, ...args) {
       const errMsg = getErrMessage(args[1], args[0], fn);
       messageArgs = errMsg === undefined ? [] : [errMsg];
     } else {
-      messageArgs = args.slice(1);
+      messageArgs = ArrayPrototypeSlice.$call(args, 1);
     }
 
     innerFail({

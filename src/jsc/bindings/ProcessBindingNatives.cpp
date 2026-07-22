@@ -97,7 +97,6 @@ static JSValue processBindingNativesReturnUndefined(VM& vm, JSObject* bindingObj
     configs                  processBindingNativesReturnUndefined      PropertyCallback
     internal/abort_listener                     processBindingNativesGetter     PropertyCallback
     internal/assert/assertion_error             processBindingNativesGetter     PropertyCallback
-    internal/assert/calltracker                 processBindingNativesGetter     PropertyCallback
     internal/assert/myers_diff                  processBindingNativesGetter     PropertyCallback
     internal/assert/utils                       processBindingNativesGetter     PropertyCallback
     internal/buffer                             processBindingNativesGetter     PropertyCallback

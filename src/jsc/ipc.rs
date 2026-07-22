@@ -2576,9 +2576,11 @@ pub fn ipc_serialize(
     global_object: &JSGlobalObject,
     message: JSValue,
     handle: JSValue,
+    options: JSValue,
+    target: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
-    crate::cpp::IPCSerialize(global_object, message, handle)
+    crate::cpp::IPCSerialize(global_object, message, handle, options, target)
 }
 
 #[track_caller]

@@ -3430,6 +3430,7 @@ function Server(options?, connectionListener?) {
 
   this._handle = null as MaybeListener;
   this._usingWorkers = false;
+  this._workers = [];
   this.workers = [];
   this._unref = false;
   this._listeningId = 1;
@@ -3496,7 +3497,26 @@ Server.prototype.close = function close(callback) {
     this._handle = null;
   }
 
-  this._emitCloseIfDrained();
+  if (this._usingWorkers) {
+    let left = this._workers.length;
+    const onWorkerClose = () => {
+      if (--left !== 0) return;
+
+      this._connections = 0;
+      this._emitCloseIfDrained();
+    };
+
+    // Increment connections to be sure that, even if all sockets will be closed
+    // during polling of workers, `close` event will be emitted only once.
+    this._connections++;
+
+    // Poll workers
+    for (let n = 0; n < this._workers.length; n++) {
+      this._workers[n].close(onWorkerClose);
+    }
+  } else {
+    this._emitCloseIfDrained();
+  }
 
   return this;
 };
@@ -3536,13 +3556,42 @@ Server.prototype.address = function address() {
 };
 
 Server.prototype.getConnections = function getConnections(callback) {
-  if (typeof callback === "function") {
+  if (typeof callback !== "function") return this;
+  if (!this._usingWorkers) {
     //in Bun case we will never error on getConnections
     //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
     //if disconnected will only pass null as well and 0 connected
     callback(null, this._handle ? this._connections : 0);
+    return this;
+  }
+
+  // Poll the processes this server's sockets were sent to, like node.
+  function end(err, connections?) {
+    process.nextTick(callback, err, connections);
+  }
+  let left = this._workers.length;
+  let total = this._connections;
+  function oncount(err, count) {
+    if (err) {
+      left = -1;
+      return end(err);
+    }
+    total += count;
+    if (--left === 0) return end(null, total);
+  }
+  for (let n = 0; n < this._workers.length; n++) {
+    this._workers[n].getConnections(oncount);
   }
   return this;
+};
+
+Server.prototype._setupWorker = function _setupWorker(socketList) {
+  this._usingWorkers = true;
+  this._workers.push(socketList);
+  socketList.once("exit", socketList => {
+    const index = this._workers.indexOf(socketList);
+    this._workers.splice(index, 1);
+  });
 };
 
 Server.prototype.listen = function listen(port, hostname, onListen) {

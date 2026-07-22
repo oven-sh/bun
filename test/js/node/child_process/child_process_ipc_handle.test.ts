@@ -483,30 +483,35 @@ server.listen(0, '127.0.0.1', () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("sending a dgram socket fails loudly instead of dropping the handle", async () => {
-    using dir = tempDir("ipc-dgram-handle-loud", {
+  test.concurrent("sending a dgram socket delivers a dgram.Socket to the child", async () => {
+    using dir = tempDir("ipc-dgram-handle-pass", {
       "parent.js": `
 const { fork } = require('node:child_process');
 const dgram = require('node:dgram');
 const child = fork('child.js');
 const sock = dgram.createSocket('udp4');
 sock.bind(0, () => {
-  let result;
-  try {
-    child.send('msg', sock);
-    result = 'sent-silently';
-  } catch (err) {
-    result = err.code;
-  }
-  console.log('RESULT:' + result);
+  child.send('msg', sock, err => {
+    if (err) { console.log('RESULT:' + (err.code || err.message)); process.exit(1); }
+  });
+});
+child.on('message', m => {
+  console.log('RESULT:' + m.got + ':' + m.handle);
   sock.close();
   child.kill();
   process.exit(0);
 });
+// Watchdog: a dropped handle leaves both sides waiting with no observable
+// signal; fail with a diagnostic instead of hanging the test runner.
+setTimeout(() => { console.log('RESULT:timeout'); process.exit(1); }, 10000);
 `,
       "child.js": `
-// If the message arrives without its handle, the silent-drop bug is back.
-process.on('message', (m, handle) => process.send({ got: m, handle: handle === undefined ? 'missing' : 'present' }));
+process.on('message', (m, handle) => {
+  // If the message arrives without its handle, the silent-drop bug is back.
+  const kind = handle === undefined ? 'missing' : (handle.constructor && handle.constructor.name);
+  if (handle && typeof handle.close === 'function') { try { handle.close(); } catch {} }
+  process.send({ got: m, handle: kind });
+});
 setTimeout(() => process.exit(0), 5000);
 `,
     });
@@ -519,7 +524,7 @@ setTimeout(() => process.exit(0), 5000);
       stderr: "pipe",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
-    expect(stdout.trim()).toBe("RESULT:ERR_INVALID_HANDLE_TYPE");
+    expect(stdout.trim()).toBe("RESULT:msg:Socket");
     expect(exitCode).toBe(0);
   });
 });

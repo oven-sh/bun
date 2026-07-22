@@ -238,6 +238,7 @@ export const exposedInternals = {
   "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
   "internal/freelist": require("internal/freelist"),
   "internal/validators": require("internal/validators"),
+  "internal/timers": require("internal/timers"),
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
 };

@@ -1533,6 +1533,9 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
+        // Lets the IPC receive path (builtins/Ipc.ts parseHandle) find this
+        // wrapper from the subprocess to register received socket lists on it.
+        require("internal/socket_list").setChannelOwner(this.#handle, this);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1599,6 +1602,12 @@ class ChildProcess extends EventEmitter {
       if (typeof options !== "object" || options === null) {
         throw $ERR_INVALID_ARG_TYPE("options", "object", options);
       }
+    }
+
+    if (handle !== undefined && handle !== null) {
+      // serialize() (builtins/Ipc.ts) needs this ChildProcess for node's
+      // socket-tracking handleConversion; hand it over out-of-band.
+      options = { ...options, "$target": this };
     }
 
     if (!this.#handle) {

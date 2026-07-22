@@ -45,7 +45,7 @@ const buns = new Array(cpus);
 
 for (let i = 0; i < cpus; i++) {
   buns[i] = spawn({
-    cmd: ["bun", "./server.ts"],
+    cmd: ["/home/<USER>/.bun/bin/bun", "/home/<USER>/<your_development_folder>/server.ts"],  //important to USE ABSOLUT PATHS to avoid errors while using systmctl & clustering
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",

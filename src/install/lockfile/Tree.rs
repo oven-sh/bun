@@ -64,7 +64,6 @@ pub(crate) const INVALID_ID: Id = Id::MAX;
 
 impl Tree {
     pub const INVALID_ID: Id = INVALID_ID;
-    pub const ROOT_DEP_ID: DependencyID = ROOT_DEP_ID;
 }
 
 // max number of node_modules folders
@@ -854,13 +853,11 @@ impl Tree {
                     debug_assert!(pkg_id == invalid_package_id);
                     debug_assert!(res_id != invalid_package_id);
                     builder.resolutions[dep_id as usize] = res_id;
-                    if cfg!(debug_assertions) {
-                        debug_assert!(
-                            !builder
-                                .pending_optional_peers
-                                .contains_key(&dependency.name_hash)
-                        );
-                    }
+                    debug_assert!(
+                        !builder
+                            .pending_optional_peers
+                            .contains_key(&dependency.name_hash)
+                    );
 
                     if let Some(entry) = builder
                         .pending_optional_peers
@@ -957,9 +954,7 @@ impl Tree {
         // reshaped for borrowck — re-read `next` via index.
         let next: Tree = builder.list.items_tree()[next_id as usize];
         if next.dependencies.len == 0 {
-            if cfg!(debug_assertions) {
-                debug_assert!(builder.list.len() == (next.id as usize) + 1);
-            }
+            debug_assert!(builder.list.len() == (next.id as usize) + 1);
             let _ = builder.list.pop();
         }
 

@@ -20,7 +20,7 @@ use bun_core::ZStr;
 #[cfg(windows)]
 pub use bun_uws_sys::Timer;
 pub use bun_uws_sys::{
-    AnyWebSocket, BodyReaderMixin, ConnectingSocket, ListenSocket, NewApp, RawWebSocket, Request,
+    AnyWebSocket, BodyReaderMixin, ConnectingSocket, NewApp, RawWebSocket, Request,
     WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
 };
 
@@ -69,8 +69,6 @@ impl ResponseKind {
     }
 }
 
-pub(crate) const _COMPRESSOR_MASK: i32 = 255;
-pub(crate) const _DECOMPRESSOR_MASK: i32 = 3840;
 pub const SHARED_COMPRESSOR: i32 = 1;
 pub const SHARED_DECOMPRESSOR: i32 = 256;
 pub const DEDICATED_DECOMPRESSOR: i32 = 3840;
@@ -85,9 +83,8 @@ pub const DEDICATED_COMPRESSOR_256KB: i32 = 248;
 pub const DEDICATED_COMPRESSOR: i32 = 248;
 
 pub use bun_uws_sys::{
-    LIBUS_LISTEN_DEFAULT, LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE, LIBUS_LISTEN_EXCLUSIVE_PORT,
-    LIBUS_LISTEN_REUSE_ADDR, LIBUS_LISTEN_REUSE_PORT, LIBUS_SOCKET_ALLOW_HALF_OPEN,
-    LIBUS_SOCKET_IPV6_ONLY,
+    LIBUS_LISTEN_DEFAULT, LIBUS_LISTEN_EXCLUSIVE_PORT, LIBUS_LISTEN_REUSE_ADDR,
+    LIBUS_LISTEN_REUSE_PORT, LIBUS_SOCKET_ALLOW_HALF_OPEN, LIBUS_SOCKET_IPV6_ONLY,
 };
 
 // Re-export the `_sys` definitions so higher tiers see one type. `to_js`
@@ -295,16 +292,8 @@ pub mod ssl_wrapper {
             self.set_bit(Self::SENT_SSL_SHUTDOWN, v)
         }
         #[inline]
-        pub fn is_client(&self) -> bool {
-            self.bits() & Self::IS_CLIENT != 0
-        }
-        #[inline]
         pub fn set_is_client(&self, v: bool) {
             self.set_bit(Self::IS_CLIENT, v)
-        }
-        #[inline]
-        pub fn authorized(&self) -> bool {
-            self.bits() & Self::AUTHORIZED != 0
         }
         #[inline]
         pub fn set_authorized(&self, v: bool) {
@@ -704,15 +693,6 @@ pub mod ssl_wrapper {
         /// We sent and received the shutdown (fully closed)
         pub fn is_closed(&self) -> bool {
             self.flags.received_ssl_shutdown() && self.flags.sent_ssl_shutdown()
-        }
-
-        pub fn is_authorized(&self) -> bool {
-            // handshake ended we know if we are authorized or not
-            if self.flags.handshake_state() == HandshakeState::HandshakeCompleted {
-                return self.flags.authorized();
-            }
-            // hanshake still in progress
-            false
         }
 
         /// Receive data from the network (encrypted data)
@@ -1273,33 +1253,16 @@ pub mod ssl_wrapper {
 // from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
 // type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_loop_idle_ns, us_wakeup_loop};
-pub use bun_uws_sys::{InternalLoopData, Loop, NOW_NS_UNKNOWN, PosixLoop, Timespec, WindowsLoop};
-
-/// Carrier trait so `set_parent_event_loop` can accept the higher-tier
-/// `EventLoopHandle` without depending on it. The event-loop crate impls this
-/// on its enum (`.js` → tag 1, `.mini` → tag 2).
-pub trait ParentEventLoopHandle {
-    fn into_tag_ptr(self) -> (core::ffi::c_char, *mut c_void);
-}
+pub use bun_uws_sys::{InternalLoopData, Loop, NOW_NS_UNKNOWN};
 
 /// Extension methods on the re-exported `bun_uws_sys::InternalLoopData` for the
 /// typed parent-loop accessors. The sys crate only stores tag+ptr; this tier
-/// adds the trait-generic setter and the panicking getter that callers use.
+/// adds the getter that callers use.
 pub trait InternalLoopDataExt {
-    fn set_parent_event_loop<H: ParentEventLoopHandle>(&mut self, parent: H);
     fn get_parent(&self) -> (core::ffi::c_char, *mut c_void);
 }
 
 impl InternalLoopDataExt for InternalLoopData {
-    /// Tag 1 = JS
-    /// event loop, tag 2 = mini event loop. Generic over the handle so this
-    /// crate stays free of the `jsc` dependency.
-    #[inline]
-    fn set_parent_event_loop<H: ParentEventLoopHandle>(&mut self, parent: H) {
-        let (tag, ptr) = parent.into_tag_ptr();
-        self.set_parent_raw(tag, ptr);
-    }
-
     /// Low tier returns the (tag, ptr)
     /// pair; the typed enum wrapper lives in the higher-tier crate that can
     /// name `jsc::EventLoop` / `jsc::MiniEventLoop`.
@@ -1367,7 +1330,6 @@ pub type CloseKind = CloseCode;
 // deleted.
 pub use bun_uws_sys::socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
-    SocketTcp, SocketTls,
 };
 
 /// Runtime-tagged TCP/TLS socket with a `None` arm for the "no active socket"
@@ -1402,15 +1364,6 @@ impl MaybeAnySocket {
             MaybeAnySocket::Tcp(s) => s.write(data),
             MaybeAnySocket::Ssl(s) => s.write(data),
             MaybeAnySocket::None => 0,
-        }
-    }
-
-    #[inline]
-    pub fn is_closed(&self) -> bool {
-        match self {
-            MaybeAnySocket::Tcp(s) => s.is_closed(),
-            MaybeAnySocket::Ssl(s) => s.is_closed(),
-            MaybeAnySocket::None => true,
         }
     }
 }

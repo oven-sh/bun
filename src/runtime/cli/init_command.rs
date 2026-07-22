@@ -1368,23 +1368,11 @@ pub enum Template {
 pub struct TemplateFile {
     pub path: &'static [u8],
     pub contents: &'static [u8],
-    pub can_skip_if_exists: bool,
 }
 
 impl TemplateFile {
     const fn new(path: &'static [u8], contents: &'static [u8]) -> Self {
-        Self {
-            path,
-            contents,
-            can_skip_if_exists: false,
-        }
-    }
-    const fn new_skip(path: &'static [u8], contents: &'static [u8]) -> Self {
-        Self {
-            path,
-            contents,
-            can_skip_if_exists: true,
-        }
+        Self { path, contents }
     }
 }
 
@@ -1755,7 +1743,7 @@ static REACT_BLANK_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-app/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-app/src/index.ts"),
@@ -1808,7 +1796,7 @@ static REACT_TAILWIND_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-tailwind/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-tailwind/src/index.ts"),
@@ -1873,7 +1861,7 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-shadcn/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-shadcn/src/index.ts"),

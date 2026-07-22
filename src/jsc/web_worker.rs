@@ -1505,7 +1505,6 @@ impl WebWorker {
             // SAFETY: `heap::alloc`'d in `start_vm`; sole owner.
             drop(unsafe { bun_core::heap::take(env_map) });
         }
-        bun_core::delete_all_pools_for_thread_exit();
         // Same reason as the uWS loop below: this thread's C++ thread_local destructors are not
         // guaranteed to run before the process exits, so free the HPACK scratch buffer that any
         // http2 session on this thread allocated.

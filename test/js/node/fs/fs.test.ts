@@ -578,6 +578,52 @@ it("writeFileSync NOT in append SHOULD truncate the file", () => {
   }
 });
 
+// On Windows `fs.writeFileSync(path, ...)` opens via bun_sys::openat
+// (NtCreateFile), so this exercises the O_CREAT/O_EXCL/O_TRUNC -> create
+// disposition mapping in openat_windows_impl directly. On POSIX it is the
+// plain openat(2) flag behavior. Every row matches Node.
+describe("writeFileSync numeric open-flag matrix", () => {
+  const { O_WRONLY, O_RDWR, O_CREAT, O_EXCL, O_TRUNC, O_APPEND } = constants;
+
+  type Outcome = "ZZ23456789" | "ZZ" | "0123456789ZZ" | "ENOENT" | "EEXIST";
+  const cases: [number, string, { exists: Outcome; missing: Outcome }][] = [
+    // access | disposition flags ...           label                          over existing   over missing
+    [O_WRONLY, "WRONLY", { exists: "ZZ23456789", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT, "WRONLY|CREAT", { exists: "ZZ23456789", missing: "ZZ" }],
+    [O_WRONLY | O_TRUNC, "WRONLY|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_TRUNC, "WRONLY|CREAT|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+    [O_WRONLY | O_CREAT | O_EXCL, "WRONLY|CREAT|EXCL", { exists: "EEXIST", missing: "ZZ" }],
+    [O_WRONLY | O_CREAT | O_EXCL | O_TRUNC, "WRONLY|CREAT|EXCL|TRUNC", { exists: "EEXIST", missing: "ZZ" }],
+    [O_RDWR, "RDWR", { exists: "ZZ23456789", missing: "ENOENT" }],
+    [O_RDWR | O_CREAT, "RDWR|CREAT", { exists: "ZZ23456789", missing: "ZZ" }],
+    [O_RDWR | O_TRUNC, "RDWR|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_RDWR | O_CREAT | O_TRUNC, "RDWR|CREAT|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+    [O_RDWR | O_CREAT | O_EXCL, "RDWR|CREAT|EXCL", { exists: "EEXIST", missing: "ZZ" }],
+    [O_RDWR | O_CREAT | O_EXCL | O_TRUNC, "RDWR|CREAT|EXCL|TRUNC", { exists: "EEXIST", missing: "ZZ" }],
+    [O_WRONLY | O_APPEND, "WRONLY|APPEND", { exists: "0123456789ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_APPEND, "WRONLY|CREAT|APPEND", { exists: "0123456789ZZ", missing: "ZZ" }],
+    [O_WRONLY | O_APPEND | O_TRUNC, "WRONLY|APPEND|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_APPEND | O_TRUNC, "WRONLY|CREAT|APPEND|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+  ];
+
+  function probe(flag: number, seeded: boolean): string {
+    using dir = tempDir("wf-flag-matrix", seeded ? { "f.txt": "0123456789" } : {});
+    const p = join(String(dir), "f.txt");
+    try {
+      writeFileSync(p, "ZZ", { flag });
+      return readFileSync(p, "utf8");
+    } catch (e: any) {
+      return e.code;
+    }
+  }
+
+  for (const [flag, name, expected] of cases) {
+    it(`${name} (O_${name.replace(/\|/g, " | O_")})`, () => {
+      expect({ exists: probe(flag, true), missing: probe(flag, false) }).toEqual(expected);
+    });
+  }
+});
+
 describe("writeFile with a non-truncating flag", () => {
   const flags = ["r+", "rs+", constants.O_RDWR];
 
@@ -661,19 +707,6 @@ describe("writeFile with a non-truncating flag", () => {
     const path = join(tmpdirSync(), "truncating.txt");
     writeFileSync(path, "0123456789");
     writeFileSync(path, "ZZ", { flag });
-    expect(readFileSync(path, "utf8")).toBe("ZZ");
-  });
-
-  // O_APPEND writes land at the end of the file, so O_TRUNC has to empty it at
-  // open rather than afterwards. Skipped on Windows: openat() there picks its
-  // NtCreateFile disposition from O_WRONLY and ignores O_TRUNC, so this already
-  // yields "0123456789ZZ" on main. Separate bug, separate fix.
-  it.skipIf(isWindows)("writeFileSync with a numeric O_APPEND|O_TRUNC flag empties the file first", () => {
-    const path = join(tmpdirSync(), "append-truncating.txt");
-    writeFileSync(path, "0123456789");
-    writeFileSync(path, "ZZ", {
-      flag: constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_TRUNC,
-    });
     expect(readFileSync(path, "utf8")).toBe("ZZ");
   });
 });
@@ -3213,6 +3246,145 @@ describe("fs.WriteStream", () => {
     expect(ws.fd).toBe(2);
     expect(existsSync(path)).toBe(false);
   });
+
+  // Node.js defers closing the fd until in-flight IO completes (kIsPerformingIO / kIoDone).
+  it("_destroy waits for in-flight _write before closing fd", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    let finishWrite!: () => void;
+    const writeStarted = Promise.withResolvers<void>();
+
+    const customFs = {
+      open: fs.open,
+      write(fd: number, buf: Buffer, off: number, len: number, pos: number, cb: Function) {
+        events.push("write-start");
+        writeStarted.resolve();
+        finishWrite = () => {
+          events.push("write-cb");
+          cb(null, len, buf);
+        };
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.write(Buffer.from("hello"));
+    await writeStarted.promise;
+    stream.destroy();
+    await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+    finishWrite();
+    await closed.promise;
+
+    expect(events).toEqual(["write-start", "write-cb", "close", "error:ERR_STREAM_DESTROYED", "close-event"]);
+  });
+
+  it("_destroy waits for in-flight _writev before closing fd", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    let finishWritev!: () => void;
+    const writevStarted = Promise.withResolvers<void>();
+
+    const customFs = {
+      open: fs.open,
+      write: fs.write,
+      writev(fd: number, buffers: Buffer[], pos: number, cb: Function) {
+        events.push("writev-start");
+        writevStarted.resolve();
+        let total = 0;
+        for (const b of buffers) total += b.length;
+        finishWritev = () => {
+          events.push("writev-cb");
+          cb(null, total, buffers);
+        };
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    await new Promise<void>(r => stream.on("ready", () => r()));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.cork();
+    stream.write(Buffer.from("aa"));
+    stream.write(Buffer.from("bb"));
+    stream.uncork();
+    await writevStarted.promise;
+    stream.destroy();
+    await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+    finishWritev();
+    await closed.promise;
+
+    expect(events).toEqual(["writev-start", "writev-cb", "close", "error:ERR_STREAM_DESTROYED", "close-event"]);
+  });
+
+  // options.fs with write but no writev: corked writes must fall back to _write,
+  // not sync-throw inside _writev and strand kIsPerformingIO (hanging destroy()).
+  it("options.fs without writev falls back to _write for corked writes and destroy() closes", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    const writeDone = Promise.withResolvers<void>();
+    let pending = 2;
+
+    const customFs = {
+      open: fs.open,
+      write(fd: number, buf: Buffer, off: number, len: number, pos: number, cb: Function) {
+        events.push("write");
+        fs.write(fd, buf, off, len, pos, (...a: any[]) => {
+          cb(...a);
+          if (--pending === 0) writeDone.resolve();
+        });
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    expect(stream._writev).toBeNull();
+    await new Promise<void>(r => stream.on("ready", () => r()));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.cork();
+    stream.write(Buffer.from("aa"));
+    stream.write(Buffer.from("bb"));
+    stream.uncork();
+    await writeDone.promise;
+    stream.destroy();
+    await closed.promise;
+
+    expect(events).toEqual(["write", "write", "close", "close-event"]);
+    expect(readFileSync(join(pathToDir, "out.txt"), "utf8")).toBe("aabb");
+  });
 });
 
 describe("fs.ReadStream", () => {
@@ -4153,6 +4325,39 @@ describe("utimesSync", () => {
 
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+
+  // Windows wraps pre-epoch times through u32, matching Node (see Stat.rs)
+  it.skipIf(isWindows)("sets pre-epoch times from negative fractional string timestamps", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    fs.utimesSync(tmp, "-1.5", "-1.5");
+
+    const stats = fs.statSync(tmp);
+    expect(stats.atime.getTime()).toBe(-1500);
+    expect(stats.mtime.getTime()).toBe(-1500);
+
+    // rem_euclid rounds to exactly 1.0 here; must not produce tv_nsec == 1e9 (EINVAL)
+    fs.utimesSync(tmp, "-1e-17", "-1e-17");
+    expect(fs.statSync(tmp).mtime.getTime()).toBe(0);
+  });
+
+  it("treats negative number timestamps as the current time", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    // known-old precondition so the assertion below proves the call did something
+    fs.utimesSync(tmp, 0, 0);
+    expect(fs.statSync(tmp).mtime.getTime()).toBe(0);
+
+    // fs timestamp granularity can be coarser than Date.now()
+    const before = Date.now() - 1000;
+    fs.utimesSync(tmp, -1.5, -1.5);
+
+    const stats = fs.statSync(tmp);
+    expect(stats.mtime.getTime()).toBeGreaterThanOrEqual(before);
+    expect(stats.atime.getTime()).toBeGreaterThanOrEqual(before);
   });
 
   it("works with whole numbers", () => {

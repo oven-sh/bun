@@ -10,14 +10,65 @@ import {
   dummyBeforeAll,
   dummyBeforeEach,
   dummyRegistry,
+  makeGithubTarball,
   package_dir,
   requested,
   root_url,
+  setGithubTarball,
   setHandler,
 } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
+
+// GitHub-dependency tests previously fetched real tarballs from api.github.com,
+// which hard-fails CI whenever GitHub serves 5xx. They now point GITHUB_API_URL
+// at the dummy server and consume fixtures that reproduce the layout GitHub
+// returns (root dir `<owner>-<repo>-<short-sha>`, so the resolved commit is
+// still asserted end-to-end).
+const uglify_files = {
+  ".gitattributes": "",
+  ".github/": "",
+  ".gitignore": "",
+  "CONTRIBUTING.md": "",
+  "LICENSE": "",
+  "README.md": "",
+  "bin/": "",
+  "bin/uglifyjs": "#!/usr/bin/env node\n",
+  "lib/": "",
+  "package.json": JSON.stringify({
+    name: "uglify-js",
+    version: "3.14.1",
+    bin: { uglifyjs: "bin/uglifyjs" },
+  }),
+  "test/": "",
+  "tools/": "",
+};
+beforeAll(() => {
+  setGithubTarball("mishoo", "UglifyJS", "v3.14.1", makeGithubTarball("mishoo-UglifyJS-e219a9a", uglify_files));
+  setGithubTarball("dylan-conway", "install-test-3", "v1.0.0", makeGithubTarball("dylan-conway-install-test-3-d8f1c19", {}));
+  setGithubTarball(
+    "dylan-conway",
+    "install-test-3",
+    "v1.0.1",
+    makeGithubTarball("dylan-conway-install-test-3-3e1c0a8", { "package.json": "{}" }),
+  );
+  setGithubTarball(
+    "dylan-conway",
+    "install-test-3",
+    "v1.0.2",
+    makeGithubTarball("dylan-conway-install-test-3-5c761c3", { "package.json": JSON.stringify({ name: "" }) }),
+  );
+  setGithubTarball(
+    "liz3",
+    "empty-bun-repo",
+    "",
+    makeGithubTarball("liz3-empty-bun-repo-b02fe7c", { "package.json": JSON.stringify({ name: "test-repo" }) }),
+  );
+});
+function githubEnv() {
+  return { ...env, GITHUB_API_URL: root_url };
+}
 
 expect.extend({
   toHaveBins,
@@ -1029,7 +1080,7 @@ it("should add dependency (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err = await stderr.text();
   expect(err).not.toContain("error:");
@@ -1257,7 +1308,7 @@ it("should add aliased dependency (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err = await stderr.text();
   expect(err).not.toContain("error:");
@@ -1338,7 +1389,7 @@ for (const { desc, dep } of gitNameTests) {
       cwd: package_dir,
       stdout: "ignore",
       stderr: "pipe",
-      env,
+      env: githubEnv(),
     });
 
     const err = await stderr.text();
@@ -1732,7 +1783,7 @@ it("should not save git urls twice", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
 
   expect(await exited1).toBe(0);
@@ -1748,7 +1799,7 @@ it("should not save git urls twice", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
 
   expect(await exited2).toBe(0);
@@ -2003,7 +2054,7 @@ it("should add dependency without duplication (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
@@ -2063,7 +2114,7 @@ it("should add dependency without duplication (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");

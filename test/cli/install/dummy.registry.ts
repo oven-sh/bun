@@ -27,7 +27,7 @@
  * });
  * ```
  */
-import { file, Server } from "bun";
+import { file, gzipSync, Server } from "bun";
 import { tmpdirSync } from "harness";
 
 let expect: (typeof import("bun:test"))["expect"];
@@ -47,6 +47,73 @@ type Pkg = {
 let server: Server;
 export let root_url: string;
 export let check_npm_auth_type = { check: true };
+
+// ============================================================================
+// GitHub tarball fixtures (served at /repos/:owner/:repo/tarball/:ref)
+// ============================================================================
+
+/**
+ * Build a gzip'd tarball whose single top-level directory is `rootDir`,
+ * matching the layout GitHub's `api.github.com/repos/.../tarball/...` returns
+ * (root dir `<owner>-<repo>-<short-sha>`; bun reads the short sha from it).
+ *
+ * `files` maps paths relative to `rootDir` to file contents. A trailing `/`
+ * makes the entry a directory.
+ */
+export function makeGithubTarball(rootDir: string, files: Record<string, string>): Uint8Array {
+  const enc = new TextEncoder();
+  const blocks: Uint8Array[] = [];
+  const header = (name: string, size: number, type: "0" | "5") => {
+    const h = new Uint8Array(512);
+    h.set(enc.encode(name).slice(0, 100), 0);
+    h.set(enc.encode((type === "5" ? "0000755" : "0000644") + " "), 100);
+    h.set(enc.encode("0000000 "), 108);
+    h.set(enc.encode("0000000 "), 116);
+    h.set(enc.encode(size.toString(8).padStart(11, "0") + " "), 124);
+    h.set(enc.encode("00000000000 "), 136);
+    h.set(enc.encode("        "), 148);
+    h[156] = type.charCodeAt(0);
+    h.set(enc.encode("ustar"), 257);
+    h.set(enc.encode("00"), 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += h[i];
+    h.set(enc.encode(sum.toString(8).padStart(6, "0") + "\0 "), 148);
+    return h;
+  };
+  blocks.push(header(`${rootDir}/`, 0, "5"));
+  for (const [rel, body] of Object.entries(files)) {
+    const full = `${rootDir}/${rel}`;
+    if (rel.endsWith("/")) {
+      blocks.push(header(full, 0, "5"));
+    } else {
+      const bytes = enc.encode(body);
+      blocks.push(header(full, bytes.length, "0"));
+      blocks.push(bytes);
+      const pad = bytes.length % 512;
+      if (pad) blocks.push(new Uint8Array(512 - pad));
+    }
+  }
+  blocks.push(new Uint8Array(1024));
+  const total = blocks.reduce((n, b) => n + b.length, 0);
+  const tar = new Uint8Array(total);
+  let off = 0;
+  for (const b of blocks) {
+    tar.set(b, off);
+    off += b.length;
+  }
+  return gzipSync(tar);
+}
+
+const githubTarballs = new Map<string, Uint8Array>();
+
+/**
+ * Register a tarball fixture to serve for `owner/repo` at `ref` when the
+ * install under test points `GITHUB_API_URL` at this server. `ref` may be
+ * empty (matches `bun add https://github.com/owner/repo` with no committish).
+ */
+export function setGithubTarball(owner: string, repo: string, ref: string, tarball: Uint8Array) {
+  githubTarballs.set(`/repos/${owner}/${repo}/tarball/${ref}`, tarball);
+}
 
 // ============================================================================
 // Concurrent Test Context Support
@@ -340,6 +407,16 @@ export function dummyBeforeAll() {
   server = Bun.serve({
     async fetch(request) {
       const url = request.url;
+      const pathname = new URL(url).pathname;
+
+      // GITHUB_API_URL fixture route (hermetic stand-in for api.github.com).
+      if (pathname.startsWith("/repos/") && pathname.includes("/tarball/")) {
+        const tarball = githubTarballs.get(pathname);
+        if (tarball) {
+          return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
+        }
+        return new Response(`No GitHub fixture registered for ${pathname}`, { status: 404 });
+      }
 
       // Check if this is a prefixed request (for concurrent tests)
       const prefixInfo = extractTestPrefix(url);

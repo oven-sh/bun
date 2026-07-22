@@ -885,6 +885,30 @@ pub mod store {
             }))
         }
 
+        /// Borrow the storage of the `JSC::ArrayBuffer` behind `buffer` as a
+        /// `Store::Bytes` without copying. The native `ArrayBuffer` is
+        /// `ref()`ed and `pin()`ed so its contents stay attached for the
+        /// store's lifetime; the store's `Drop` releases both via
+        /// [`array_buffer::pinned_store_allocator`]. Returns `None` when the
+        /// backing buffer is resizable/growable or otherwise unsuitable for
+        /// borrowing.
+        pub fn init_pinned_array_buffer(buffer: &crate::ArrayBuffer) -> Option<StoreRef> {
+            debug_assert!(!buffer.ptr.is_null());
+            let allocator = crate::array_buffer::pinned_store_allocator::retain(buffer.value)?;
+            let len = buffer.byte_len as SizeType;
+            // SAFETY: `ptr[..byte_len]` is the view's slice of the live
+            // `JSC::ArrayBuffer` contents; the native ref keeps the
+            // allocation alive and the pin keeps it attached, so the region
+            // stays valid until the allocator's `free` releases both.
+            let bytes = unsafe { Bytes::from_raw_parts(buffer.ptr, len, len, allocator) };
+            Some(StoreRef::from(Store::new(Store {
+                data: Data::Bytes(bytes),
+                mime_type: bun_http_types::MimeType::NONE,
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                is_all_ascii: None,
+            })))
+        }
+
         pub fn get_path(&self) -> Option<&[u8]> {
             match &self.data {
                 Data::Bytes(bytes) => {
@@ -920,6 +944,20 @@ pub mod store {
             match &self.data {
                 Data::Bytes(b) => b.len(),
                 Data::File(_) | Data::S3(_) => MAX_SIZE,
+            }
+        }
+
+        /// Whether this store's `Bytes` borrow a user-visible JS ArrayBuffer
+        /// (see [`init_pinned_array_buffer`]). Such bytes must not be handed
+        /// to JSC as external-string or external-ArrayBuffer backing: JS can
+        /// mutate the source buffer, and strings must be immutable.
+        #[inline]
+        pub fn bytes_borrow_js_array_buffer(&self) -> bool {
+            match &self.data {
+                Data::Bytes(bytes) => {
+                    crate::array_buffer::pinned_store_allocator::is_instance(&bytes.allocator)
+                }
+                _ => false,
             }
         }
 

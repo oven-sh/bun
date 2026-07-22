@@ -749,6 +749,108 @@ describe.concurrent("string body consumption does not leak", () => {
   }
 });
 
+describe("constructing a body from a large ArrayBuffer borrows the storage", () => {
+  // Bodies from ArrayBuffers/views above the cork-buffer threshold wrap the
+  // JSC ArrayBuffer instead of cloning it. The borrow is exposed via a pin
+  // on the backing buffer: transfer() copies instead of detaching for its
+  // duration, and is released once the body has been consumed.
+  const N = 64 * 1024;
+
+  for (const { body: BodyType, fn } of bodyTypes) {
+    describe(BodyType.name, () => {
+      for (const method of ["arrayBuffer", "bytes", "text"] as const) {
+        test(`${method}() releases the borrow and returns a distinct buffer`, async () => {
+          const buf = new Uint8Array(N).fill(0x61);
+          const body = fn(buf);
+          const out: any = await (body as any)[method]();
+          // A subsequent mutation of the source must not be visible in the
+          // materialised body.
+          buf.fill(0x62);
+          if (method === "arrayBuffer") {
+            expect(out.byteLength).toBe(N);
+            expect(new Uint8Array(out)[0]).toBe(0x61);
+          } else if (method === "bytes") {
+            expect(out.byteLength).toBe(N);
+            expect(out[0]).toBe(0x61);
+          } else {
+            expect(out.length).toBe(N);
+            expect(out[0]).toBe("a");
+          }
+          // The body is consumed: the pin on `buf.buffer` is gone, so
+          // transfer() detaches again.
+          const moved = buf.buffer.transfer();
+          expect(buf.buffer.byteLength).toBe(0);
+          expect(moved.byteLength).toBe(N);
+        });
+      }
+
+      test("blob() readers return distinct buffers", async () => {
+        const buf = new Uint8Array(N).fill(0x61);
+        const blob = await fn(buf).blob();
+        // The body's borrow moved into the returned Blob; materialising it
+        // snapshots into a distinct buffer unaffected by later mutation.
+        const out = new Uint8Array(await blob.arrayBuffer());
+        buf.fill(0x62);
+        expect(out.byteLength).toBe(N);
+        expect(out[0]).toBe(0x61);
+        expect(await blob.text()).toHaveLength(N);
+      });
+
+      test("transfer() copies while the body holds the borrow, detaches after", async () => {
+        const buf = new Uint8Array(N).fill(0x61);
+        const body = fn(buf);
+        const moved = buf.buffer.transfer();
+        expect(moved.byteLength).toBe(N);
+        // Pinned: transfer() left the source attached (copy-instead-of-detach).
+        expect(buf.buffer.byteLength).toBe(N);
+        // The body still reads the original contents.
+        const out = await body.bytes();
+        expect(out.byteLength).toBe(N);
+        expect(out[0]).toBe(0x61);
+        // Consuming the body released the pin; transfer() now detaches.
+        const moved2 = buf.buffer.transfer();
+        expect(buf.buffer.byteLength).toBe(0);
+        expect(moved2.byteLength).toBe(N);
+      });
+
+      test("view offset/length are respected", async () => {
+        const raw = new Uint8Array(N);
+        for (let i = 0; i < N; i++) raw[i] = i & 0xff;
+        const view = new Uint8Array(raw.buffer, 17, N - 64);
+        const out = await fn(view).bytes();
+        expect(out.byteLength).toBe(N - 64);
+        expect(out[0]).toBe(17);
+        expect(out[out.byteLength - 1]).toBe((17 + N - 64 - 1) & 0xff);
+      });
+
+      test("resizable ArrayBuffer bodies snapshot at construction", async () => {
+        // @ts-ignore: maxByteLength is a recent option
+        const ab = new ArrayBuffer(N, { maxByteLength: N * 2 });
+        new Uint8Array(ab).fill(0x61);
+        const body = fn(new Uint8Array(ab));
+        // Borrow path rejects resizable; a subsequent resize must not affect
+        // the body.
+        // @ts-ignore
+        ab.resize(N / 2);
+        const out = await body.bytes();
+        expect(out.byteLength).toBe(N);
+        expect(out[out.byteLength - 1]).toBe(0x61);
+      });
+
+      test("GC of the source ArrayBuffer does not free the borrowed body", async () => {
+        let buf: Uint8Array | undefined = new Uint8Array(N).fill(0x61);
+        const body = fn(buf);
+        buf = undefined;
+        Bun.gc(true);
+        const out = await body.bytes();
+        expect(out.byteLength).toBe(N);
+        expect(out[0]).toBe(0x61);
+        expect(out[out.byteLength - 1]).toBe(0x61);
+      });
+    });
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/6860
 describe("constructing a body from an unusable ReadableStream", () => {
   const bytes = () =>

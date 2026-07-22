@@ -678,6 +678,13 @@ impl Value {
 }
 
 impl Value {
+    /// `new Response(arrayBuffer)` / `new Request(url, { body: arrayBuffer })`
+    /// borrows the buffer above this size; below it the copy is cheap and the
+    /// spec snapshot semantics are preserved exactly. Matches the uWS cork
+    /// buffer (`LoopData::CORK_BUFFER_SIZE`): a body that fits the cork buffer
+    /// is memcpy'd on the send path anyway.
+    pub const ARRAY_BUFFER_BORROW_THRESHOLD: usize = 16 * 1024;
+
     // We may not have all the data yet
     // So we can't know for sure if it's empty or not
     // We CAN know that it is definitely empty.
@@ -886,6 +893,20 @@ impl Value {
 
                 if bytes.is_empty() {
                     return Ok(Value::Empty);
+                }
+
+                // Above the cork-buffer size, borrow the ArrayBuffer's storage
+                // instead of `.to_vec()`ing it. A fetch handler that returns
+                // `new Response(sharedBuffer)` otherwise pays one body-sized
+                // memcpy + allocation per request, and under backpressure
+                // that per-connection copy is held until the socket drains,
+                // so N slow clients x an M-byte body costs N*M bytes of RSS.
+                // `init_pinned_array_buffer` rejects resizable/growable
+                // buffers (a shrink would invalidate the stored `(ptr, len)`).
+                if bytes.len() >= Self::ARRAY_BUFFER_BORROW_THRESHOLD {
+                    if let Some(store) = blob::Store::init_pinned_array_buffer(&buffer) {
+                        return Ok(Value::Blob(Blob::init_with_store(store, global_this)));
+                    }
                 }
 
                 // The global allocator aborts on OOM, so a "Failed to clone

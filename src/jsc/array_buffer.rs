@@ -135,6 +135,12 @@ unsafe extern "C" {
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+    // safe: by-value `JSValue`; returns the non-JS-cell `JSC::ArrayBuffer*`
+    // (or null when unsuitable for borrowing). See `pinned_store_allocator`.
+    safe fn Bun__ArrayBuffer__retainPinnedStore(v: JSValue) -> *mut JSCArrayBuffer;
+    // safe: `JSCArrayBuffer` is an `opaque_ffi!` ZST handle; releases exactly
+    // the pin + ref taken by `retainPinnedStore`.
+    safe fn Bun__ArrayBuffer__releasePinnedStore(buf: &JSCArrayBuffer);
 }
 
 impl JSValue {
@@ -142,6 +148,53 @@ impl JSValue {
     /// [`JSValue::as_pinned_arraybuffer`] or a pinning collector.
     pub fn unpin_array_buffer(self) {
         JSC__JSValue__unpinArrayBuffer(self);
+    }
+}
+
+/// A [`StdAllocator`] vtable whose context is a native `JSC::ArrayBuffer*`
+/// that has been `ref()`ed + `pin()`ed. `free` releases both; `alloc` /
+/// `resize` / `remap` are absent because the backing bytes belong to JSC and
+/// are never grown through this allocator.
+///
+/// Used by `Body::Value::from_js` so `new Response(arrayBuffer)` can borrow
+/// the buffer instead of `.to_vec()`ing it into a private per-request copy.
+/// The release path touches only the native `ArrayBuffer` (not a `JSCell`),
+/// so it is safe to run from a GC-sweep finalizer.
+pub mod pinned_store_allocator {
+    use super::{
+        Bun__ArrayBuffer__releasePinnedStore, Bun__ArrayBuffer__retainPinnedStore, JSCArrayBuffer,
+        JSValue,
+    };
+    use bun_alloc::{Alignment, AllocatorVTable, StdAllocator};
+    use core::ffi::c_void;
+
+    unsafe fn free(ctx: *mut c_void, _buf: &mut [u8], _: Alignment, _: usize) {
+        Bun__ArrayBuffer__releasePinnedStore(JSCArrayBuffer::opaque_ref(
+            ctx.cast::<JSCArrayBuffer>(),
+        ));
+    }
+
+    static VTABLE: &AllocatorVTable = &AllocatorVTable::free_only(free);
+
+    /// Retain `value`'s backing `JSC::ArrayBuffer` (pin + native ref) and
+    /// return an allocator whose `free` releases exactly that pin + ref.
+    /// `None` when `value` has no ArrayBuffer impl or the buffer is
+    /// resizable/growable (a shrink would invalidate borrowed storage).
+    #[inline]
+    pub fn retain(value: JSValue) -> Option<StdAllocator> {
+        let buf = Bun__ArrayBuffer__retainPinnedStore(value);
+        if buf.is_null() {
+            return None;
+        }
+        Some(StdAllocator {
+            ptr: buf.cast::<c_void>(),
+            vtable: VTABLE,
+        })
+    }
+
+    #[inline]
+    pub fn is_instance(alloc: &StdAllocator) -> bool {
+        core::ptr::eq(alloc.vtable, VTABLE)
     }
 }
 

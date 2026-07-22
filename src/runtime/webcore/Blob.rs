@@ -2693,6 +2693,22 @@ impl BlobExt for Blob {
             }
         }
 
+        // The external-string arms below hand `buf` to JSC as the StringImpl's
+        // character storage. When the Store borrows a user-visible JS
+        // ArrayBuffer (the `new Response(arrayBuffer)` path), that would make
+        // the string alias memory JS can mutate; copy instead.
+        if LIFETIME != Lifetime::Temporary
+            && self
+                .store()
+                .is_some_and(|s| s.bytes_borrow_js_array_buffer())
+        {
+            let out = OwnedString::new(BunString::clone_latin1(buf));
+            if LIFETIME == Lifetime::Transfer {
+                self.detach();
+            }
+            return out.to_js(global);
+        }
+
         match LIFETIME {
             // strings are immutable
             // we don't need to clone
@@ -3058,7 +3074,16 @@ impl BlobExt for Blob {
                 {
                     return Err(global.throw_out_of_memory());
                 }
-                let store = self.store().expect("infallible: store present").clone();
+                let store = self.store().expect("infallible: store present");
+                if store.bytes_borrow_js_array_buffer() {
+                    // SAFETY: same `buf` contract as the caller; the `Clone` arm only reads it.
+                    return unsafe {
+                        self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(
+                            global, buf,
+                        )
+                    };
+                }
+                let store = store.clone();
                 // SAFETY: `from_bytes` only records ptr+len into the FFI struct; the
                 // pointer is then handed to JSC as an external buffer backing whose
                 // lifetime is the cloned `store` ref above (the deallocator releases
@@ -3073,7 +3098,10 @@ impl BlobExt for Blob {
                 }
             }
             Lifetime::Transfer => {
-                if self.store().is_some_and(|s| !s.has_one_ref()) {
+                if self
+                    .store()
+                    .is_some_and(|s| !s.has_one_ref() || s.bytes_borrow_js_array_buffer())
+                {
                     // SAFETY: same `buf` contract as the caller; the `Clone` arm only reads it.
                     let copied = unsafe {
                         self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(

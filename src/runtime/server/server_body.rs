@@ -2514,28 +2514,26 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_port(&self, _: &JSGlobalObject) -> JSValue {
-        if matches!(self.config.address, server_config::Address::Unix(_)) {
-            return JSValue::UNDEFINED;
-        }
+        let config_port = match &self.config.address {
+            server_config::Address::Unix(_) => return JSValue::UNDEFINED,
+            server_config::Address::Tcp { port, .. } => *port,
+        };
 
         if let Some(listener) = self.listener {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-            return JSValue::js_number(
-                bun_opaque::opaque_deref_mut(listener).get_local_port() as f64
-            );
+            if let Ok(p) = u16::try_from(bun_opaque::opaque_deref_mut(listener).get_local_port()) {
+                return JSValue::js_number(p as f64);
+            }
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                return JSValue::js_number(
-                    bun_opaque::opaque_deref_mut(h3l).get_local_port() as f64
-                );
+                if let Ok(p) = u16::try_from(bun_opaque::opaque_deref_mut(h3l).get_local_port()) {
+                    return JSValue::js_number(p as f64);
+                }
             }
         }
-        match &self.config.address {
-            server_config::Address::Tcp { port, .. } => JSValue::js_number(*port as f64),
-            server_config::Address::Unix(_) => unreachable!(),
-        }
+        JSValue::js_number(config_port as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2569,7 +2567,12 @@ where
                 if let Some(listener) = self.listener {
                     // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
                     let listener = bun_opaque::opaque_deref_mut(listener);
-                    port = u16::try_from(listener.get_local_port()).expect("int cast");
+                    // `us_socket_local_port()` returns -1 when getsockname()
+                    // fails; fall back to the configured port rather than
+                    // panicking on the out-of-range cast.
+                    if let Ok(p) = u16::try_from(listener.get_local_port()) {
+                        port = p;
+                    }
 
                     let mut buf = [0u8; 64];
                     let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
@@ -2588,7 +2591,9 @@ where
                     if let Some(h3l) = self.h3_listener {
                         // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                         let h3l = bun_opaque::opaque_deref_mut(h3l);
-                        port = u16::try_from(h3l.get_local_port()).expect("int cast");
+                        if let Ok(p) = u16::try_from(h3l.get_local_port()) {
+                            port = p;
+                        }
                         let mut buf = [0u8; 64];
                         let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
                             return Ok(JSValue::NULL);

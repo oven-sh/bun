@@ -440,8 +440,10 @@ impl Listener {
                 });
                 if !ls.is_null() {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    *port = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
-                        .expect("int cast");
+                    if let Ok(p) = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
+                    {
+                        *port = p;
+                    }
                 }
                 ls
             }

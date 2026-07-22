@@ -52,35 +52,37 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 
     p.catch(txReady.reject);
     const { tx, pid } = await txReady.promise;
-    await adm`select pg_terminate_backend(${pid})`;
+    try {
+      await adm`select pg_terminate_backend(${pid})`;
 
-    // Wait until the terminated backend has exited (observed via adm on a
-    // separate connection). By the time it is gone from pg_stat_activity the
-    // server has already sent FATAL + FIN to the tx socket, and the adm
-    // round-trip yields to the event loop so the tx socket's readable event
-    // delivers the FATAL through the idle-connection ErrorResponse path.
-    let gone = false;
-    for (let i = 0; i < 500 && !gone; i++) {
-      const [{ n }] = await adm`select count(*)::int as n from pg_stat_activity where pid = ${pid}`;
-      gone = n === 0;
-      if (!gone) await new Promise<void>(r => setTimeout(r, 5));
+      // Wait until the terminated backend has exited (observed via adm on a
+      // separate connection). By the time it is gone from pg_stat_activity the
+      // server has already sent FATAL + FIN to the tx socket, and the adm
+      // round-trip yields to the event loop so the tx socket's readable event
+      // delivers the FATAL through the idle-connection ErrorResponse path.
+      let gone = false;
+      for (let i = 0; i < 500 && !gone; i++) {
+        const [{ n }] = await adm`select count(*)::int as n from pg_stat_activity where pid = ${pid}`;
+        gone = n === 0;
+        if (!gone) await new Promise<void>(r => setTimeout(r, 5));
+      }
+      expect(gone).toBe(true);
+
+      // Positive precondition: onTransactionDisconnected has fired (state is
+      // closed) so tx`...` rejects. Fail loudly if the disconnect never
+      // reached the tx handle before the ordering check below.
+      let txClosed = false;
+      for (let i = 0; i < 500 && !txClosed; i++) {
+        txClosed = await tx`select 1`.then(
+          () => false,
+          () => true,
+        );
+        if (!txClosed) await new Promise<void>(r => setTimeout(r, 5));
+      }
+      expect(txClosed).toBe(true);
+    } finally {
+      gate.resolve();
     }
-    expect(gone).toBe(true);
-
-    // Positive precondition: onTransactionDisconnected has fired (state is
-    // closed) so tx`...` rejects. Fail loudly if the disconnect never
-    // reached the tx handle before the ordering check below.
-    let txClosed = false;
-    for (let i = 0; i < 500 && !txClosed; i++) {
-      txClosed = await tx`select 1`.then(
-        () => false,
-        () => true,
-      );
-      if (!txClosed) await new Promise<void>(r => setTimeout(r, 5));
-    }
-    expect(txClosed).toBe(true);
-
-    gate.resolve();
     await settled;
 
     expect(callbackDone).toBe(true);

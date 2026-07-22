@@ -201,11 +201,30 @@ describe("backpressure", () => {
     // rejects the second write (socketOnEnd already called socket.end()); Bun
     // currently accepts and drains it. Both are consistent: the client sees
     // either the first write only, or both, never a torn second write.
-    // Same scenario over TLS: the server's TLS write-batch spill (up to one
-    // 128 KiB ciphertext batch the kernel did not fully accept) must be
-    // counted as buffered and drained before the post-FIN close gate fires.
-    // Cycling several times proves the on_writable drain loop, not just the
-    // first kernel-accepted write.
+    it("res.write() from 'drain' after client FIN is not torn mid-write", async () => {
+      await using server = http.createServer((req, res) => {
+        res.writeHead(200, { "Content-Length": String(BODY * 2) });
+        res.write(payload);
+        res.once("drain", () => {
+          res.write(payload);
+          res.end();
+        });
+        res.on("error", () => {});
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { body, ended } = await halfCloseRequestBodyBytes(server);
+      expect(ended).toBe(true);
+      expect([BODY, BODY * 2]).toContain(body);
+    });
+
+    // TLS variants of the it.each above: the server's TLS write-batch spill
+    // (up to one 128 KiB ciphertext batch the kernel did not fully accept) is
+    // reported as written by us_socket_write() while it sits in userspace, so
+    // getBufferedAmount() must count it before the post-FIN close gate fires.
+    // Looped a few times so the on_writable drain cycle is exercised past the
+    // first kernel-accepted write. This is also the client-side regression
+    // test for the Windows eof-drain (a half-closed client must read out the
+    // kernel receive buffer when AFD DISCONNECT is mapped to eof).
     describe("https", () => {
       const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
       const tlsOptions = {
@@ -213,11 +232,7 @@ describe("backpressure", () => {
         key: readFileSync(path.join(keysDir, "agent1-key.pem")),
       };
 
-      async function halfCloseTlsRequestBodyBytes(
-        port: number,
-        request: string,
-        halfClose: boolean,
-      ): Promise<{ body: number; ended: boolean }> {
+      async function halfCloseTlsRequestBodyBytes(port: number): Promise<{ body: number; ended: boolean }> {
         const socket = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
         let body = 0;
         let head = "";
@@ -238,17 +253,16 @@ describe("backpressure", () => {
         socket.on("end", () => (ended = true));
         socket.on("error", () => {});
         await once(socket, "secureConnect");
-        if (halfClose) socket.end(request);
-        else socket.write(request);
+        socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
         await once(socket, "close");
         return { body, ended };
       }
 
       it.each([
-        ["client half-close, res.write() then res.end()", "write-end", true],
-        ["client half-close, res.end(payload)", "end", true],
-        ["client half-close, httpAllowHalfOpen, res.end() after drain", "drain", true],
-      ] as const)("%s", async (_name, endMode, halfClose) => {
+        ["client half-close, res.write() then res.end()", "write-end"],
+        ["client half-close, res.end(payload)", "end"],
+        ["client half-close, httpAllowHalfOpen, res.end() after drain", "drain"],
+      ] as const)("%s", async (_name, endMode) => {
         await using server = https.createServer(tlsOptions, (req, res) => {
           res.writeHead(200, { "Content-Length": String(BODY) });
           if (endMode === "end") {
@@ -262,34 +276,10 @@ describe("backpressure", () => {
         if (endMode === "drain") server.httpAllowHalfOpen = true;
         await once(server.listen(0, "127.0.0.1"), "listening");
         const port = (server.address() as AddressInfo).port;
-        // Loop a few times: the bug is an ordering race between the final
-        // spilled TLS batch and the close gate, so a single pass on a fast
-        // loopback may not catch the last-batch truncation.
         for (let i = 0; i < 5; i++) {
-          const { body, ended } = await halfCloseTlsRequestBodyBytes(
-            port,
-            "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
-            halfClose,
-          );
-          expect({ body, ended }).toEqual({ body: BODY, ended: true });
+          expect(await halfCloseTlsRequestBodyBytes(port)).toEqual({ body: BODY, ended: true });
         }
       });
-    });
-
-    it("res.write() from 'drain' after client FIN is not torn mid-write", async () => {
-      await using server = http.createServer((req, res) => {
-        res.writeHead(200, { "Content-Length": String(BODY * 2) });
-        res.write(payload);
-        res.once("drain", () => {
-          res.write(payload);
-          res.end();
-        });
-        res.on("error", () => {});
-      });
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const { body, ended } = await halfCloseRequestBodyBytes(server);
-      expect(ended).toBe(true);
-      expect([BODY, BODY * 2]).toContain(body);
     });
   });
 

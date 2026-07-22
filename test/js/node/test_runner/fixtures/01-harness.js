@@ -30,7 +30,7 @@ test.describe("TestContext", () => {
     t.assert.ok(typeof t.assert === "object", "test() argument has an assert property");
     const actual = Object.keys(t.assert).sort();
     const expected = Object.keys({ ...assert })
-      .filter(key => !["CallTracker", "AssertionError", "strict"].includes(key))
+      .filter(key => !["Assert", "AssertionError", "strict"].includes(key))
       .concat(["fileSnapshot", "snapshot"])
       .sort();
     t.assert.deepEqual(actual, expected, "test() argument is the same as the node:assert module");

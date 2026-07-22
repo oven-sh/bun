@@ -143,8 +143,8 @@ impl CronExpression {
         dt: GregorianDateTime,
         from_ms: f64,
     ) -> JsResult<Option<f64>> {
-        let result =
-            global_object.gregorian_date_time_to_ms(dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0)?;
+        let result = global_object
+            .gregorian_date_time_to_ms(dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0)?;
         // During fall-back, `result` is the FORMER occurrence and the wall-clock
         // walk steps over the second one. For schedules with `*` minute or `*`
         // hour, scan real-time minutes (capped at the largest DST shift) for an

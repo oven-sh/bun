@@ -394,7 +394,9 @@ function connectionListenerHTTP1(server, socket, options) {
         socket.write(
           code === "HPE_HEADER_OVERFLOW"
             ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
-            : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+            : code === "HPE_CHUNK_EXTENSIONS_OVERFLOW"
+              ? "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n"
+              : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
           "latin1",
         );
       }

@@ -697,6 +697,25 @@ where
     }
 }
 
+/// The platform watcher init syscall (`inotify_init1` / `kqueue` / directory
+/// watch handle) failed. This is an ordinary kernel resource limit, not a bug
+/// in Bun, so print a clean error with an actionable hint and exit(1) instead
+/// of panicking with a crash-report banner.
+#[cold]
+fn fatal_watcher_init_error(err: bun_watcher::Error) -> ! {
+    bun_core::handle_error_return_trace(&err);
+    Output::err(err, "Failed to initialize file watcher", ());
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if matches!(err, bun_watcher::Error::Sys(bun_errno::SystemErrno::EMFILE)) {
+        Output::note(
+            "the per-user inotify instance limit is exhausted; raise \
+             <b>fs.inotify.max_user_instances<r> (sysctl) or close other file watchers",
+        );
+    }
+    Output::flush();
+    bun_core::Global::exit(1);
+}
+
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 where
@@ -727,17 +746,10 @@ where
         CLEAR_SCREEN.store(clear_screen_flag, core::sync::atomic::Ordering::Relaxed);
         let mut watcher = match Watcher::init(reloader, fs.top_level_dir) {
             Ok(w) => w,
-            Err(err) => {
-                bun_core::handle_error_return_trace(&err);
-                Output::panic(format_args!(
-                    "Failed to enable File Watcher: {}",
-                    err.name()
-                ));
-            }
+            Err(err) => fatal_watcher_init_error(err),
         };
         if let Err(err) = watcher.start() {
-            bun_core::handle_error_return_trace(&err);
-            Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
+            fatal_watcher_init_error(err);
         }
         watcher
     }
@@ -780,13 +792,7 @@ where
 
         let watcher = match Watcher::init(reloader, ctx.watcher_top_level_dir()) {
             Ok(w) => w,
-            Err(err) => {
-                bun_core::handle_error_return_trace(&err);
-                Output::panic(format_args!(
-                    "Failed to enable File Watcher: {}",
-                    err.name()
-                ));
-            }
+            Err(err) => fatal_watcher_init_error(err),
         };
 
         let watcher_ptr = ctx.install_bun_watcher(watcher, RELOAD_IMMEDIATELY);
@@ -798,8 +804,8 @@ where
         );
 
         // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
-        if unsafe { (*watcher_ptr).start() }.is_err() {
-            panic!("Failed to start File Watcher");
+        if let Err(err) = unsafe { (*watcher_ptr).start() } {
+            fatal_watcher_init_error(err);
         }
     }
 

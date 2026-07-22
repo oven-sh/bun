@@ -1162,13 +1162,13 @@ impl<'a> TablePrinter<'a> {
 /// recover `&mut Self` from the `*mut io::Writer` they receive (same pattern as
 /// `Output::QuietWriterAdapter::new_interface`).
 #[repr(C)]
-pub struct DynWriteAdapter<'a> {
+pub(crate) struct DynWriteAdapter<'a> {
     head: bun_core::io::Writer,
     inner: &'a mut dyn bun_io::Write,
 }
 
 impl<'a> DynWriteAdapter<'a> {
-    pub fn new(inner: &'a mut dyn bun_io::Write) -> Self {
+    pub(crate) fn new(inner: &'a mut dyn bun_io::Write) -> Self {
         Self {
             head: bun_core::io::Writer {
                 write_all: Self::thunk_write_all,
@@ -1180,7 +1180,7 @@ impl<'a> DynWriteAdapter<'a> {
 
     /// Reborrow as the `io::Writer` head.
     #[inline]
-    pub fn interface(&mut self) -> &mut bun_core::io::Writer {
+    pub(crate) fn interface(&mut self) -> &mut bun_core::io::Writer {
         // SAFETY: `head` is the first `#[repr(C)]` field, so `&mut self.head`
         // and `&mut *self as *mut io::Writer` are the same address; the thunks
         // below cast back to `*mut Self`.

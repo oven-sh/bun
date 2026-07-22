@@ -319,44 +319,63 @@ impl JunitReporter {
 
     // `pub const new = bun.TrivialNew(JunitReporter);` → Box::new
 
-    /// Capture the thrown value's name/message plus a plain-text (no ANSI)
-    /// rendering so the next `write_test_case` can populate `<failure>`.
-    pub fn record_failure(&mut self, global_this: &jsc::JSGlobalObject, exception: jsc::JSValue) {
-        let vm = global_this.bun_vm().as_mut();
-        let (value, exc_ref): (jsc::JSValue, Option<&jsc::Exception>) =
-            match exception.as_exception(vm.jsc_vm) {
-                // SAFETY: `as_exception` returned a live JSC-heap `Exception`;
-                // read-only for the duration of this call.
-                Some(exc) => unsafe { ((*exc).value(), Some(&*exc)) },
-                None => (exception, None),
-            };
-
-        let mut failure = JunitFailure::default();
-
-        {
-            let mut holder = jsc::zig_exception::Holder::init();
-            let zig_exc = holder.zig_exception();
-            value.to_zig_exception(global_this, zig_exc);
-            failure.name = zig_exc.name.to_utf8_bytes();
-            failure.message = zig_exc.message.to_utf8_bytes();
-            holder.deinit(vm);
+    /// Capture name/message/stack from the `ZigException` that
+    /// `print_error_instance_body` has already populated, so the next
+    /// `write_test_case` can emit a useful `<failure>` without re-running
+    /// the exception formatter.
+    pub fn record_failure(&mut self, exception: &jsc::ZigException) {
+        let failure = self.last_failure.get_or_insert_default();
+        if failure.name.is_empty() {
+            failure.name = exception.name.to_utf8_bytes();
+        }
+        if failure.message.is_empty() {
+            failure.message = exception.message.to_utf8_bytes();
         }
 
-        {
-            let mut adapter = jsc::console_object::DynWriteAdapter::new(&mut failure.body);
-            let mut formatter = jsc::console_object::Formatter::new(global_this);
-            vm.print_errorlike_object(
-                value,
-                exc_ref,
-                None,
-                &mut formatter,
-                adapter.interface(),
-                false,
-                false,
-            );
+        let body = &mut failure.body;
+        if !body.is_empty() {
+            body.push(b'\n');
         }
+        let name = exception.name.to_utf8();
+        let message = exception.message.to_utf8();
+        match (name.slice().is_empty(), message.slice().is_empty()) {
+            (true, true) => body.extend_from_slice(b"error"),
+            (true, false) => body.extend_from_slice(message.slice()),
+            (false, true) => body.extend_from_slice(name.slice()),
+            (false, false) => {
+                body.extend_from_slice(name.slice());
+                body.extend_from_slice(b": ");
+                body.extend_from_slice(message.slice());
+            }
+        }
+        body.push(b'\n');
+        let dir = FileSystem::instance().top_level_dir;
+        for frame in exception.stack.frames() {
+            let source_url = frame.source_url.to_utf8();
+            let file = resolve_path::relative(dir, source_url.slice());
+            let func = frame.function_name.to_utf8();
+            if file.is_empty() && func.slice().is_empty() {
+                continue;
+            }
+            body.extend_from_slice(b"      at ");
+            let name_fmt = frame.name_formatter(false);
+            let url_fmt = frame.source_url_formatter(file, None, false, false);
+            if func.slice().is_empty() {
+                let _ = write!(body, "{}", url_fmt);
+            } else {
+                let _ = write!(body, "{} ({})", name_fmt, url_fmt);
+            }
+            body.push(b'\n');
+        }
+    }
 
-        self.last_failure = Some(failure);
+    /// VirtualMachine::on_print_error_zig_exception thunk.
+    pub fn record_failure_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
+        // SAFETY: `ctx` was set to `&mut JunitReporter` by `on_uncaught_exception`
+        // for the duration of a single `run_error_handler` call; single-threaded,
+        // no other borrow of the reporter is live across that call.
+        let this = unsafe { &mut *ctx.cast::<JunitReporter>() };
+        this.record_failure(exception);
     }
 
     fn generate_properties_list(&mut self) -> crate::Result<()> {

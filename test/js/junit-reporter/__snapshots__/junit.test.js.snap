@@ -25,19 +25,12 @@ exports[`junit reporter more scenarios 1`] = `
 
 Expected: 3
 Received: 2
-">26 |           test(&quot;basic passing test&quot;, () =&gt; {
-27 |             expect(1 + 1).toBe(2);
-28 |           });
-29 | 
-30 |           test(&quot;basic failing test&quot;, () =&gt; {
-31 |             expect(1 + 1).toBe(3);
-                               ^
-error: expect(received).toBe(expected)
+">Error: expect(received).toBe(expected)
 
 Expected: 3
 Received: 2
 
-      at &lt;anonymous&gt; (<dir>/comprehensive.test.js:31:27)
+      at <dir>/comprehensive.test.js:31:27
 </failure>
       </testcase>
       <testcase name="basic skipped test" classname="comprehensive test suite" file="comprehensive.test.js" line="34" assertions="0">

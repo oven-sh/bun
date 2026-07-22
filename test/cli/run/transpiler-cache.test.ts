@@ -210,6 +210,75 @@ describe("transpiler cache", () => {
       chmodSync(join(cache_dir), "777");
     }
   });
+  describe("rejects tampered entries", () => {
+    // Metadata layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
+    //   0:u32 version, 4:u8 module_type, 5:u8 encoding, 6:u64 features_hash,
+    //   14:u64 input_byte_length, 22:u64 input_hash,
+    //   30:u64 output_byte_offset, 38:u64 output_byte_length, 46:u64 output_hash,
+    //   54:u64 sourcemap_byte_offset, 62:u64 sourcemap_byte_length, 70:u64 sourcemap_hash,
+    //   78:u64 esm_record_byte_offset, 86:u64 esm_record_byte_length, 94:u64 esm_record_hash,
+    //   102: payload.
+    const OUTPUT_BYTE_OFFSET_AT = 30;
+    const OUTPUT_BYTE_LENGTH_AT = 38;
+    const OUTPUT_HASH_AT = 46;
+
+    function primeAndLocateEntry(marker: string) {
+      // >= MINIMUM_CACHE_SIZE so the source is cached, and the marker string
+      // is printed verbatim so it appears as a literal in the transpiled
+      // output section.
+      writeFileSync(
+        join(temp_dir, "a.js"),
+        dummyFile(50 * 1024, "tamper", { code: JSON.stringify(marker) }),
+      );
+      const first = bunRun(join(temp_dir, "a.js"), env);
+      expect(first.stdout).toBe(marker);
+      const entries = readdirSync(cache_dir);
+      expect(entries.length).toBe(1);
+      return join(cache_dir, entries[0]);
+    }
+
+    function tamperOutput(entryPath: string, marker: string, replacement: string, outputHash: bigint) {
+      expect(replacement.length).toBe(marker.length);
+      const data = readFileSync(entryPath);
+      const outOff = Number(data.readBigUInt64LE(OUTPUT_BYTE_OFFSET_AT));
+      const outLen = Number(data.readBigUInt64LE(OUTPUT_BYTE_LENGTH_AT));
+      const output = data.subarray(outOff, outOff + outLen);
+      const idx = output.indexOf(marker);
+      expect(idx).toBeGreaterThanOrEqual(0);
+      output.write(replacement, idx, "utf-8");
+      data.writeBigUInt64LE(outputHash, OUTPUT_HASH_AT);
+      writeFileSync(entryPath, data);
+      return output;
+    }
+
+    test("when output_hash is zeroed", () => {
+      const entryPath = primeAndLocateEntry("ORIGINAL_OUTPUT_1");
+      tamperOutput(entryPath, "ORIGINAL_OUTPUT_1", "TAMPERED_OUTPUT_1", 0n);
+
+      // The tampered entry must be rejected; the source is re-transpiled and
+      // the original output printed. A fresh entry replaces the rejected one.
+      const second = bunRun(join(temp_dir, "a.js"), env);
+      expect(second.stdout).toBe("ORIGINAL_OUTPUT_1");
+      expect(readdirSync(cache_dir).length).toBe(1);
+      const rewritten = readFileSync(entryPath);
+      expect(rewritten.readBigUInt64LE(OUTPUT_HASH_AT)).not.toBe(0n);
+    });
+
+    test("when output_hash is recomputed with the fixed seed", () => {
+      const entryPath = primeAndLocateEntry("ORIGINAL_OUTPUT_2");
+      // Section hashes are keyed on the per-entry input hash, not a fixed
+      // seed, so a hash derived from the tampered bytes alone is still
+      // rejected.
+      const tampered = tamperOutput(entryPath, "ORIGINAL_OUTPUT_2", "TAMPERED_OUTPUT_2", 0n);
+      const forged = Bun.hash.wyhash(tampered, 42n);
+      const data = readFileSync(entryPath);
+      data.writeBigUInt64LE(forged, OUTPUT_HASH_AT);
+      writeFileSync(entryPath, data);
+
+      const second = bunRun(join(temp_dir, "a.js"), env);
+      expect(second.stdout).toBe("ORIGINAL_OUTPUT_2");
+    });
+  });
   test("does not inline process.env", () => {
     writeFileSync(
       join(temp_dir, "a.js"),
@@ -279,6 +348,7 @@ test("rejects cached module records containing out-of-range string indices", () 
   // serialize()):
   //   [record_kinds_len u32][record_kinds, 1 byte each][pad to 4]
   //   [buffer_len u32][buffer: u32 string index x buffer_len] ...
+  const INPUT_HASH_AT = 22;
   const ESM_RECORD_BYTE_OFFSET_AT = 78;
   const ESM_RECORD_BYTE_LENGTH_AT = 86;
   const ESM_RECORD_HASH_AT = 94;
@@ -303,10 +373,12 @@ test("rejects cached module records containing out-of-range string indices", () 
     for (let i = 0; i < bufferLen; i++) {
       data.writeUInt32LE(0x7fffffff, off + i * 4);
     }
-    // The cache loader skips esm-record content verification when the stored
-    // hash field is zero, so whoever writes the cache file controls exactly
-    // what reaches the module record deserializer.
-    data.writeBigUInt64LE(0n, ESM_RECORD_HASH_AT);
+    // Section hashes are keyed on the input hash; recompute it for the
+    // rewritten record so the entry passes the loader's hash check and the
+    // corrupted indices reach the module-record deserializer under test.
+    const inputHash = data.readBigUInt64LE(INPUT_HASH_AT);
+    const esmHash = Bun.hash.wyhash(data.subarray(esmOff, esmOff + esmLen), inputHash);
+    data.writeBigUInt64LE(esmHash, ESM_RECORD_HASH_AT);
     writeFileSync(file, data);
     return true;
   }

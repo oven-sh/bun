@@ -5,17 +5,20 @@ import http from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { join } from "path";
 
-// Each fixture internally loops thousands of requests to hit the abort/destroy
-// race; running the whole subprocess a second time adds no new coverage. On
-// ASAN/debug builds the access-after-free is caught on the first bad touch, so
-// the request count only needs to be large enough to land the timing window a
-// few times. Release builds keep the original counts.
+// Each fixture internally loops hundreds/thousands of requests to hit the
+// abort/destroy race. The counts below were validated by running the fixtures
+// against the pre-fix release build (bun 1.2.6, commit 8ebd5d53d, before both
+// #18485 and #18564) and counting crashes out of 10 runs:
+//
+//   fixture 1 (#18485): REQUESTS=500 5/5, 1000 5/5, 2000 10/10, 10000 10/10
+//   fixture 2 (#18564): ROUNDS=20 1/5, 40-100 8/10, 200 10/10
+//
+// so a single spawn at 2000 / 200 catches the original bugs 10/10 on a release
+// build without ASAN. ASAN/debug only reduces fixture 1 (the 80 s one); fixture
+// 2 stays at 200 everywhere, equal to the previous 2x100 total.
 const slow = isASAN || isDebug;
-// #18485: reporter "spammed in a bash while loop" to crash a release build; 2000
-// aborted requests at CONCURRENCY=100 is still 20 full windows under ASAN.
 uafTest("node-http-uaf-fixture.ts", { REQUESTS: slow ? "2000" : "10000" });
-// #18564: the repro in the PR body was a single request; 200 is 200x that.
-uafTest("node-http-uaf-fixture-2.ts", { ROUNDS: slow ? "20" : "100" });
+uafTest("node-http-uaf-fixture-2.ts", { ROUNDS: "200" });
 
 function uafTest(fixture: string, extraEnv: Record<string, string>) {
   test.concurrent(
@@ -33,10 +36,10 @@ function uafTest(fixture: string, extraEnv: Record<string, string>) {
       expect(stdout.trimEnd().split("\n").at(-1)).toBe("Done");
       expect(exitCode).toBe(0);
     },
-    // One reduced-count pass measured ~22 s (fixture 1) / ~3.5 s (fixture 2) on
-    // a 16-core debug+ASAN box with the other concurrent tests contending;
-    // release runs the full 10k in ~1 s. Keep the 20 s release ceiling for the
-    // windows-aarch64 lane that previously ran one fixture to 5006 ms.
+    // Measured ~21 s (fixture 1) / ~10 s (fixture 2) on a 16-core debug+ASAN
+    // box with the other concurrent tests contending; release runs the full
+    // 10k in ~1 s. Keep the 20 s release ceiling for the windows-aarch64 lane
+    // that previously ran one fixture to 5006 ms.
     slow ? 60_000 : 20_000,
   );
 }

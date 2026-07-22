@@ -72,6 +72,8 @@ test.concurrent("parentPort.close() stops delivery: late postMessage is dropped"
         import { parentPort } from "node:worker_threads";
         parentPort.on("message", (m) => {
           console.log("worker: got", m);
+          // Ack so the parent's once('message') handler fires and actually sends "late".
+          parentPort.postMessage("ack");
           parentPort.close();
         });
         // keep the worker up past the late post so, if close() were a no-op, it would arrive

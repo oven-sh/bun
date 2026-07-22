@@ -2345,9 +2345,16 @@ pub(crate) fn install_isolated_packages(
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
                         install::PreinstallState::Done => false,
+                        _ if installer.manager().options.enable.force_install() => true,
                         _ => 'missing_from_cache: {
                             if matches!(patch_info, installer::PatchInfo::None) {
-                                let exists = match pkg_res_tag {
+                                // The cache entry name is attacker-predictable,
+                                // so require a real directory (not a symlink)
+                                // before probing for package.json beneath it.
+                                let exists = matches!(
+                                    sys::lstatat(cache_dir, pkg_cache_dir_subpath.slice_z()),
+                                    Ok(st) if bun_sys::S::ISDIR(st.st_mode as _)
+                                ) && match pkg_res_tag {
                                     ResolutionTag::Npm => {
                                         // Reshaped for borrowck — capture length
                                         // instead of `save()` so the path stays unborrowed.
@@ -2360,11 +2367,7 @@ pub(crate) fn install_isolated_packages(
                                         pkg_cache_dir_subpath.set_length(cache_dir_path_save);
                                         exists
                                     }
-                                    _ => sys::directory_exists_at(
-                                        cache_dir,
-                                        pkg_cache_dir_subpath.slice_z(),
-                                    )
-                                    .unwrap_or(false),
+                                    _ => true,
                                 };
                                 if exists {
                                     installer.manager_mut().set_preinstall_state(

@@ -3007,6 +3007,9 @@ impl PostgresSQLConnection {
                         // execution re-prepares instead of failing forever on
                         // this connection.
                         stmt.status = StatementStatus::Failed;
+                        stmt.error_response = Some(
+                            crate::postgres::postgres_sql_statement::Error::Protocol(err),
+                        );
                         if self
                             .statements
                             .with_mut(|m| m.remove(&stmt.signature.name[..]))

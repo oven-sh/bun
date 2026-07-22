@@ -61,4 +61,32 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     // The second re-run must re-prepare and succeed.
     expect(await sql`SELECT ${3}::int AS v`).toEqual([{ v: 3 }]);
   });
+
+  test("26000 with a second queued request sharing the cached statement settles both", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1 });
+
+    expect(await sql`SELECT ${1}::int AS v`).toEqual([{ v: 1 }]);
+    await sql`DISCARD ALL`.simple();
+
+    // Two executions of the same cached statement queued back-to-back: the
+    // first sees 26000 and marks the shared statement Failed; the second is
+    // settled from statement.error_response by the flush loop. Both promises
+    // must reject rather than hang.
+    const [a, b] = await Promise.all([
+      sql`SELECT ${2}::int AS v`.then(
+        v => ({ ok: v }),
+        e => ({ err: (e as any).errno ?? (e as any).code }),
+      ),
+      sql`SELECT ${3}::int AS v`.then(
+        v => ({ ok: v }),
+        e => ({ err: (e as any).errno ?? (e as any).code }),
+      ),
+    ]);
+    expect(a).toEqual({ err: "26000" });
+    expect(b).toEqual({ err: "26000" });
+
+    // And the next execution re-prepares and succeeds.
+    expect(await sql`SELECT ${4}::int AS v`).toEqual([{ v: 4 }]);
+  });
 });

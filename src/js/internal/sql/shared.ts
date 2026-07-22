@@ -1329,6 +1329,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
               for (const c of this.connections) {
                 if (c) c.flags &= ~PooledConnectionFlags.preReserved;
               }
+              this.flushConcurrentQueries();
             }
           }
         }

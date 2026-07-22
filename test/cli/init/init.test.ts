@@ -63,42 +63,6 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
   }, 30_000);
 
-  test("bun init with piped cli", async () => {
-    const temp = tempDirWithFiles("bun-init-with-piped-cli", {});
-
-    const { exited } = Bun.spawn({
-      cmd: [bunExe(), "init"],
-      cwd: temp,
-      stdio: [new Blob(["\n\n\n\n\n\n\n\n\n\n\n\n"]), "inherit", "inherit"],
-      env: initEnv,
-    });
-
-    expect(await exited).toBe(0);
-
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
-    expect(pkg).toEqual({
-      "name": path.basename(temp).toLowerCase().replaceAll(" ", "-"),
-      "module": "index.ts",
-      "private": true,
-      "type": "module",
-      "devDependencies": {
-        "@types/bun": "latest",
-      },
-      "peerDependencies": {
-        "typescript": "^6",
-      },
-    });
-    const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
-    expect(readme).toStartWith("# " + path.basename(temp).toLowerCase().replaceAll(" ", "-") + "\n");
-    expect(readme).toInclude("v" + Bun.version.replaceAll("-debug", ""));
-    expect(readme).toInclude("index.ts");
-
-    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
-  }, 30_000);
-
   test("bun init falls back to --yes when stdin is not a TTY", async () => {
     const temp = tempDirWithFiles("bun-init-no-tty", {});
 

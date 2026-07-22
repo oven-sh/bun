@@ -405,6 +405,7 @@ pub(crate) fn install_hoisted_packages(
                                 dependencies: buf_deps,
                                 string_buf: buf_strings,
                             }),
+                            nested_binaries: Vec::new(),
                             pending_installs: Vec::new(),
                             install_count: 0,
                         });

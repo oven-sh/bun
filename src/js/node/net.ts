@@ -881,9 +881,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     // after secureConnection event we emmit secure and secureConnect
     self.emit("secure", self);
     self.emit("secureConnect", verifyError);
-    if (server?.pauseOnConnect) {
-      self.pause();
-    } else {
+    // onconnection already Duplex-paused for pauseOnConnect (native reads stay on
+    // so FIN/close_notify still arrive; ServerHandlers.data applies backpressure).
+    if (!server?.pauseOnConnect) {
       self.resume();
     }
   },
@@ -1027,7 +1027,11 @@ function onconnection(err, clientHandle) {
   _socket._server = self;
 
   if (pauseOnConnect) {
-    _socket.pause();
+    // For TLS, only pause the JS stream: the native handle keeps reading so the
+    // TLS engine sees the handshake and FIN; ServerHandlers.data buffers decrypted
+    // bytes into the paused Duplex and applies backpressure at highWaterMark.
+    if (isTLS) Duplex.prototype.pause.$call(_socket);
+    else _socket.pause();
   }
 
   if (typeof connectionListener === "function") {

@@ -8,11 +8,7 @@
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
-import { listeningServer, pgAuthenticationOk, pgCString, pgRaw, pgReadyForQuery } from "./wire-frames";
-
-// PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
-const pgParameterStatus = (name: string, value: string) =>
-  pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
+import { listeningServer, pgAuthenticationOk, pgParameterStatus, pgReadyForQuery } from "./wire-frames";
 
 // ---------------------------------------------------------------------------
 // Protocol-level: the StartupMessage must carry DateStyle=ISO so server-side

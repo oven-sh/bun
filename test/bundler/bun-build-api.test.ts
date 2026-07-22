@@ -684,6 +684,34 @@ describe("Bun.build", () => {
       });
       expect({ success: result.success, resolved }).toEqual({ success: true, resolved: ["virt:a"] });
     });
+
+    test.concurrent("frozen filter without g/y still works", async () => {
+      using dir = tempDir("plugin-filter-frozen", {
+        "entry.ts": `import a from "virt:a"; import b from "virt:b"; console.log(a, b);`,
+      });
+      let loads = 0;
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        throw: false,
+        plugins: [
+          {
+            name: "frozen",
+            setup(b) {
+              b.onResolve({ filter: Object.freeze(/^virt:/) }, args => ({ path: args.path, namespace: "virt" }));
+              b.onLoad({ filter: Object.freeze(/^virt:/), namespace: "virt" }, args => {
+                loads++;
+                return { contents: `export default ${JSON.stringify(args.path)};`, loader: "js" };
+              });
+            },
+          },
+        ],
+      });
+      expect({ success: result.success, loads, errors: result.logs.map(l => String(l.message)) }).toEqual({
+        success: true,
+        loads: 2,
+        errors: [],
+      });
+    });
   });
 
   test.concurrent("hash considers cross chunk imports", async () => {

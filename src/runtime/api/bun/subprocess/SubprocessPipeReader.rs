@@ -147,7 +147,7 @@ impl PipeReader {
         process: NonNull<Subprocess<'static>>,
         event_loop: NonNull<EventLoop>,
         lazy: bool,
-    ) -> bun_sys::Result<()> {
+    ) {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
         self.event_loop = event_loop.into();
@@ -165,7 +165,7 @@ impl PipeReader {
                 self.reader
                     .flags
                     .remove(bun_io::pipe_reader::WindowsFlags::IS_DONE);
-                return bun_sys::Result::Ok(());
+                return;
             }
             // Hold one more ref so `self` survives the on_reader_error() teardown
             // below long enough to return; matches the POSIX keepalive.
@@ -184,7 +184,6 @@ impl PipeReader {
                 // and on_process_exit's later drain then double-derefs them.
                 self.on_reader_error(err);
             }
-            return bun_sys::Result::Ok(());
         }
 
         #[cfg(not(windows))]
@@ -194,7 +193,7 @@ impl PipeReader {
                 // pipe buffer provides backpressure and the child blocks.
                 self.reader.flags.insert(PosixFlags::IS_PAUSED);
             }
-            // PosixBufferedReader.start() always returns .result, but if poll
+            // PosixBufferedReader.start() always returns Ok(()); if poll
             // registration fails it synchronously invokes onReaderError() first,
             // which drops both the Readable.pipe ref (via onCloseIO) and the ref we
             // just took above. Hold one more ref so `this` survives long enough to
@@ -205,29 +204,22 @@ impl PipeReader {
             // outlives the guard's drop on return.
             let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
 
-            match self.reader.start(self.stdio_result.unwrap(), true) {
-                bun_sys::Result::Err(err) => {
-                    return bun_sys::Result::Err(err);
-                }
-                bun_sys::Result::Ok(()) => {
-                    #[cfg(unix)]
-                    {
-                        if matches!(self.state, State::Err(_)) {
-                            // onReaderError already ran; `_keepalive`'s Drop on return
-                            // will drop the last ref and deinit() closes the handle.
-                            return bun_sys::Result::Ok(());
-                        }
-                        if let Some(poll) = self.reader.handle.get_poll() {
-                            poll.set_flag(FilePollFlag::Socket);
-                            poll.set_flag(FilePollFlag::Nonblocking);
-                        }
-                        self.reader.flags.insert(
-                            PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE,
-                        );
-                    }
+            let _ = self.reader.start(self.stdio_result.unwrap(), true);
 
-                    return bun_sys::Result::Ok(());
+            #[cfg(unix)]
+            {
+                if matches!(self.state, State::Err(_)) {
+                    // onReaderError already ran; `_keepalive`'s Drop on return
+                    // will drop the last ref and deinit() closes the handle.
+                    return;
                 }
+                if let Some(poll) = self.reader.handle.get_poll() {
+                    poll.set_flag(FilePollFlag::Socket);
+                    poll.set_flag(FilePollFlag::Nonblocking);
+                }
+                self.reader
+                    .flags
+                    .insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
             }
         }
     }

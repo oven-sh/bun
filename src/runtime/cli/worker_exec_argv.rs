@@ -179,47 +179,46 @@ static BUN_TABLE_REJECTS: &[&[u8]] = &[
 static ENV_DISALLOWED: &[&[u8]] = &[b"--eval", b"-e", b"--print", b"-p"];
 
 fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
-    static MAP: LazyLock<bun_collections::StringArrayHashMap<FlagSpec>> =
-        LazyLock::new(|| {
-            let mut map = bun_collections::StringArrayHashMap::<FlagSpec>::default();
-            let mut put = |key: Vec<u8>, spec: FlagSpec| {
-                bun_core::handle_oom(map.put(&key, spec));
+    static MAP: LazyLock<bun_collections::StringArrayHashMap<FlagSpec>> = LazyLock::new(|| {
+        let mut map = bun_collections::StringArrayHashMap::<FlagSpec>::default();
+        let mut put = |key: Vec<u8>, spec: FlagSpec| {
+            bun_core::handle_oom(map.put(&key, spec));
+        };
+        // Bun's runtime flag surface first, then NODE_FLAGS overrides.
+        for param in crate::cli::arguments::RUNTIME_PARAMS_
+            .iter()
+            .chain(crate::cli::arguments::TRANSPILER_PARAMS_)
+        {
+            let value = match param.takes_value {
+                bun_clap::Values::None => ValueMode::None,
+                bun_clap::Values::OneOptional => ValueMode::Optional,
+                bun_clap::Values::One | bun_clap::Values::Many => ValueMode::Required,
             };
-            // Bun's runtime flag surface first, then NODE_FLAGS overrides.
-            for param in crate::cli::arguments::RUNTIME_PARAMS_
-                .iter()
-                .chain(crate::cli::arguments::TRANSPILER_PARAMS_)
-            {
-                let value = match param.takes_value {
-                    bun_clap::Values::None => ValueMode::None,
-                    bun_clap::Values::OneOptional => ValueMode::Optional,
-                    bun_clap::Values::One | bun_clap::Values::Many => ValueMode::Required,
+            let mut names: [Option<Vec<u8>>; 2] = [None, None];
+            if let Some(long) = param.names.long {
+                let mut k = Vec::with_capacity(2 + long.len());
+                k.extend_from_slice(b"--");
+                k.extend_from_slice(long);
+                names[0] = Some(k);
+            }
+            if let Some(short) = param.names.short {
+                names[1] = Some(vec![b'-', short]);
+            }
+            for key in names.into_iter().flatten() {
+                let policy = if BUN_TABLE_REJECTS.contains(&&key[..]) {
+                    Policy::Reject
+                } else {
+                    Policy::Allow
                 };
-                let mut names: [Option<Vec<u8>>; 2] = [None, None];
-                if let Some(long) = param.names.long {
-                    let mut k = Vec::with_capacity(2 + long.len());
-                    k.extend_from_slice(b"--");
-                    k.extend_from_slice(long);
-                    names[0] = Some(k);
-                }
-                if let Some(short) = param.names.short {
-                    names[1] = Some(vec![b'-', short]);
-                }
-                for key in names.into_iter().flatten() {
-                    let policy = if BUN_TABLE_REJECTS.contains(&&key[..]) {
-                        Policy::Reject
-                    } else {
-                        Policy::Allow
-                    };
-                    let env = policy == Policy::Allow && !ENV_DISALLOWED.contains(&&key[..]);
-                    put(key, FlagSpec { value, policy, env });
-                }
+                let env = policy == Policy::Allow && !ENV_DISALLOWED.contains(&&key[..]);
+                put(key, FlagSpec { value, policy, env });
             }
-            for &(name, spec) in NODE_FLAGS {
-                put(name.to_vec(), spec);
-            }
-            map
-        });
+        }
+        for &(name, spec) in NODE_FLAGS {
+            put(name.to_vec(), spec);
+        }
+        map
+    });
     &MAP
 }
 

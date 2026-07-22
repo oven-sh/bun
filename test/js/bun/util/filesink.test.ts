@@ -12,7 +12,7 @@ import {
   tmpdirSync,
 } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, constants as fsConstants, openSync } from "node:fs";
+import { closeSync, constants as fsConstants, openSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("FileSink", () => {
@@ -445,13 +445,13 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
-// A regular file can't be polled for writability, so the streaming writer has
-// no way to re-drive an EAGAIN. If the fd is left O_NONBLOCK, a short write on
-// a filesystem that honors it (FUSE, NFS, overlay, cgroup writes) strands the
-// unwritten tail in the writer's buffer and the stream closes truncated with no
+// A regular file can't be polled for readability or writability, so the
+// streaming reader/writer have no poll to re-drive an EAGAIN. If the fd is
+// left O_NONBLOCK, a short write (or an EAGAIN read) on a filesystem that
+// honors it (FUSE, NFS, overlay, cgroup writes) strands the remainder with no
 // error. The open flags carry O_NONBLOCK only so open() itself never blocks on
 // a FIFO target; once fstat says "regular file" the flag must be cleared.
-describe.skipIf(!isPosix)("FileSink regular-file fd is kept blocking", () => {
+describe.skipIf(!isPosix)("Bun.file() regular-file fd is kept blocking", () => {
   const F_GETFL = 3; // same value on Linux, macOS and the BSDs
   const fcntl = isPosix
     ? dlopen(libcPathForDlopen(), { fcntl: { args: ["i32", "i32"], returns: "i32" } }).symbols.fcntl
@@ -471,6 +471,25 @@ describe.skipIf(!isPosix)("FileSink regular-file fd is kept blocking", () => {
       const after = nonblock(fd);
       await sink.end();
 
+      expect(after).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("Bun.file(fd).stream() clears O_NONBLOCK on a regular file", async () => {
+    const path = join(tmpdirSync(), "in.txt");
+    writeFileSync(path, "hello world");
+    const fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    try {
+      expect(nonblock(fd)).toBe(fsConstants.O_NONBLOCK);
+
+      const reader = Bun.file(fd).stream().getReader();
+      const { value } = await reader.read();
+      const after = nonblock(fd);
+      reader.releaseLock();
+
+      expect(Buffer.from(value!).toString()).toBe("hello world");
       expect(after).toBe(0);
     } finally {
       closeSync(fd);

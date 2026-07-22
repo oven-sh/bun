@@ -234,6 +234,14 @@ impl Lazy {
             }
 
             if sys::S::ISREG(mode) {
+                // A regular file can't be polled, so an EAGAIN would leave
+                // the reader with no re-drive path (PipeReader's FileType::File
+                // arm only warns and returns). O_NONBLOCK is on the open flags
+                // solely so open() itself never blocks on a FIFO; clear it now
+                // so read() blocks and drains synchronously.
+                if is_nonblocking {
+                    let _ = sys::update_nonblocking(fd, false);
+                }
                 is_nonblocking = false;
             }
 

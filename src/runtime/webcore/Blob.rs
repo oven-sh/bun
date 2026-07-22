@@ -4332,7 +4332,17 @@ pub extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
 pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
     this.is_jsdom_file.set(true);
 
-    // This is not 100% correct...
+    // `name` is per-Blob (not in the shared store), so assigning it on the
+    // DOMFormData-held dupe applies the entry's filename without touching the
+    // caller's original File. `get_name_string()` prefers this over the store's
+    // `stored_name`, so an explicit FormData `filename` is honored even when
+    // value was already a named File (https://xhr.spec.whatwg.org/#create-an-entry
+    // step 3). Empty means no filename was supplied; leave `name` as-is so a
+    // bare Blob entry keeps reporting `name: undefined`.
+    if !path_str.is_empty() {
+        this.name.set(path_str.dupe_ref());
+    }
+
     if let Some(store) = this.store() {
         if let store::Data::Bytes(bytes) = &mut store.data_mut() {
             if bytes.stored_name.is_empty() {

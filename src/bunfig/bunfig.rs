@@ -1301,9 +1301,8 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(exact) = install_obj.get(b"exact") {
-            if let Some(v) = exact.as_bool() {
-                install.exact = Some(v);
-            }
+            self.expect(&exact, ExprTag::EBoolean)?;
+            install.exact = Some(exact.as_bool().expect("infallible: type checked"));
         }
 
         if let Some(registry) = install_obj.get(b"registry") {
@@ -1332,29 +1331,30 @@ impl<'a> Parser<'a> {
             install.scoped = Some(registry_map);
         }
 
-        if let Some(v) = install_obj.get(b"dryRun").and_then(|e| e.as_bool()) {
-            install.dry_run = Some(v);
+        if let Some(expr) = install_obj.get(b"dryRun") {
+            self.expect(&expr, ExprTag::EBoolean)?;
+            install.dry_run = Some(expr.as_bool().expect("infallible: type checked"));
         }
-        if let Some(v) = install_obj.get(b"production").and_then(|e| e.as_bool()) {
-            install.production = Some(v);
+        if let Some(expr) = install_obj.get(b"production") {
+            self.expect(&expr, ExprTag::EBoolean)?;
+            install.production = Some(expr.as_bool().expect("infallible: type checked"));
         }
-        if let Some(v) = install_obj.get(b"frozenLockfile").and_then(|e| e.as_bool()) {
-            install.frozen_lockfile = Some(v);
+        if let Some(expr) = install_obj.get(b"frozenLockfile") {
+            self.expect(&expr, ExprTag::EBoolean)?;
+            install.frozen_lockfile = Some(expr.as_bool().expect("infallible: type checked"));
         }
-        if let Some(v) = install_obj
-            .get(b"saveTextLockfile")
-            .and_then(|e| e.as_bool())
-        {
-            install.save_text_lockfile = Some(v);
+        if let Some(expr) = install_obj.get(b"saveTextLockfile") {
+            self.expect(&expr, ExprTag::EBoolean)?;
+            install.save_text_lockfile = Some(expr.as_bool().expect("infallible: type checked"));
         }
         if let Some(jobs) = install_obj.get(b"concurrentScripts") {
-            if let Some(n) = jobs.as_number() {
-                let n = num_to_u32(n);
-                install.concurrent_scripts = if n == 0 { None } else { Some(n) };
-            }
+            self.expect(&jobs, ExprTag::ENumber)?;
+            let n = num_to_u32(jobs.as_number().expect("infallible: type checked"));
+            install.concurrent_scripts = if n == 0 { None } else { Some(n) };
         }
-        if let Some(v) = install_obj.get(b"ignoreScripts").and_then(|e| e.as_bool()) {
-            install.ignore_scripts = Some(v);
+        if let Some(expr) = install_obj.get(b"ignoreScripts") {
+            self.expect(&expr, ExprTag::EBoolean)?;
+            install.ignore_scripts = Some(expr.as_bool().expect("infallible: type checked"));
         }
         if let Some(node_linker_expr) = install_obj.get(b"linker") {
             self.expect_string(&node_linker_expr)?;
@@ -1368,8 +1368,9 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if let Some(v) = install_obj.get(b"globalStore").and_then(|e| e.as_bool()) {
-            install.global_store = Some(v);
+        if let Some(expr) = install_obj.get(b"globalStore") {
+            self.expect(&expr, ExprTag::EBoolean)?;
+            install.global_store = Some(expr.as_bool().expect("infallible: type checked"));
         }
 
         if let Some(lockfile_expr) = install_obj.get(b"lockfile") {
@@ -1387,43 +1388,55 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            if let Some(v) = lockfile_expr.get(b"save").and_then(|e| e.as_bool()) {
-                install.save_lockfile = Some(v);
+            if let Some(expr) = lockfile_expr.get(b"save") {
+                self.expect(&expr, ExprTag::EBoolean)?;
+                install.save_lockfile = Some(expr.as_bool().expect("infallible: type checked"));
             }
-            if let Some(v) = lockfile_expr
-                .get(b"path")
-                .and_then(|e| e.as_string(self.bump))
-            {
-                install.lockfile_path = Some(v.into());
+            if let Some(expr) = lockfile_expr.get(b"path") {
+                self.expect_string(&expr)?;
+                install.lockfile_path = Some(
+                    expr.as_string(self.bump)
+                        .expect("infallible: type checked")
+                        .into(),
+                );
             }
-            if let Some(v) = lockfile_expr
-                .get(b"savePath")
-                .and_then(|e| e.as_string(self.bump))
-            {
-                install.save_lockfile_path = Some(v.into());
+            if let Some(expr) = lockfile_expr.get(b"savePath") {
+                self.expect_string(&expr)?;
+                install.save_lockfile_path = Some(
+                    expr.as_string(self.bump)
+                        .expect("infallible: type checked")
+                        .into(),
+                );
             }
         }
 
-        if let Some(v) = install_obj.get(b"optional").and_then(|e| e.as_bool()) {
-            install.save_optional = Some(v);
+        if let Some(expr) = install_obj.get(b"optional") {
+            self.expect(&expr, ExprTag::EBoolean)?;
+            install.save_optional = Some(expr.as_bool().expect("infallible: type checked"));
         }
-        if let Some(v) = install_obj.get(b"peer").and_then(|e| e.as_bool()) {
-            install.save_peer = Some(v);
+        if let Some(expr) = install_obj.get(b"peer") {
+            self.expect(&expr, ExprTag::EBoolean)?;
+            install.save_peer = Some(expr.as_bool().expect("infallible: type checked"));
         }
-        if let Some(v) = install_obj.get(b"dev").and_then(|e| e.as_bool()) {
-            install.save_dev = Some(v);
+        if let Some(expr) = install_obj.get(b"dev") {
+            self.expect(&expr, ExprTag::EBoolean)?;
+            install.save_dev = Some(expr.as_bool().expect("infallible: type checked"));
         }
-        if let Some(v) = install_obj
-            .get(b"globalDir")
-            .and_then(|e| e.as_string(self.bump))
-        {
-            install.global_dir = Some(v.into());
+        if let Some(expr) = install_obj.get(b"globalDir") {
+            self.expect_string(&expr)?;
+            install.global_dir = Some(
+                expr.as_string(self.bump)
+                    .expect("infallible: type checked")
+                    .into(),
+            );
         }
-        if let Some(v) = install_obj
-            .get(b"globalBinDir")
-            .and_then(|e| e.as_string(self.bump))
-        {
-            install.global_bin_dir = Some(v.into());
+        if let Some(expr) = install_obj.get(b"globalBinDir") {
+            self.expect_string(&expr)?;
+            install.global_bin_dir = Some(
+                expr.as_string(self.bump)
+                    .expect("infallible: type checked")
+                    .into(),
+            );
         }
 
         if let Some(cache) = install_obj.get(b"cache") {
@@ -1440,24 +1453,32 @@ impl<'a> Parser<'a> {
                     break 'load;
                 }
                 if let ExprData::EObject(_) = cache.data {
-                    if let Some(v) = cache.get(b"disable").and_then(|e| e.as_bool()) {
-                        install.disable_cache = Some(v);
+                    if let Some(expr) = cache.get(b"disable") {
+                        self.expect(&expr, ExprTag::EBoolean)?;
+                        install.disable_cache =
+                            Some(expr.as_bool().expect("infallible: type checked"));
                     }
-                    if let Some(v) = cache.get(b"disableManifest").and_then(|e| e.as_bool()) {
-                        install.disable_manifest_cache = Some(v);
+                    if let Some(expr) = cache.get(b"disableManifest") {
+                        self.expect(&expr, ExprTag::EBoolean)?;
+                        install.disable_manifest_cache =
+                            Some(expr.as_bool().expect("infallible: type checked"));
                     }
-                    if let Some(v) = cache.get(b"dir").and_then(|e| e.as_string(self.bump)) {
-                        install.cache_directory = Some(v.into());
+                    if let Some(expr) = cache.get(b"dir") {
+                        self.expect_string(&expr)?;
+                        install.cache_directory = Some(
+                            expr.as_string(self.bump)
+                                .expect("infallible: type checked")
+                                .into(),
+                        );
                     }
                 }
             }
         }
 
-        if let Some(v) = install_obj
-            .get(b"linkWorkspacePackages")
-            .and_then(|e| e.as_bool())
-        {
-            install.link_workspace_packages = Some(v);
+        if let Some(expr) = install_obj.get(b"linkWorkspacePackages") {
+            self.expect(&expr, ExprTag::EBoolean)?;
+            install.link_workspace_packages =
+                Some(expr.as_bool().expect("infallible: type checked"));
         }
 
         if let Some(security_obj) = install_obj.get(b"security") {

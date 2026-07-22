@@ -129,6 +129,11 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // source tree (release embeds them). "Failed to load '<src path>'" is
       // an asset the user's binary never reads from disk - not user-facing.
       if (/Failed to load '[^']*[\\/]src[\\/][^']*'/.test(detail)) k = "debug-only";
+      // Rust cfg(debug_assertions) panics with a release fallback: the debug
+      // build panics on a fallible OS lookup where release returns a
+      // sentinel (user_unique_id: "GetUserNameW failed" -> return 0). The
+      // panic never exists in the binary users run.
+      if (/GetUserNameW failed/.test(detail)) k = "debug-only";
       if (k === "oom") {
         const bytes = /memory allocation of (\d+) bytes failed/i.exec(text)?.[1];
         if (bytes && Number(bytes) >= 256 * 1024 * 1024) k = "oom-large";

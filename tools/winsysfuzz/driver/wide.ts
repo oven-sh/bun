@@ -241,16 +241,13 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
     if (crash && !/oom|debug-only/.test(crash.kind) && crash.boundary !== "system-module") {
       outcome = "CRASH";
       detail = crash.signature;
-    } else {
-      const t = await readTraceDir(dir, { faultsOnly: true }).catch(() => null);
-      const surplus = t ? leakSurplus(t.leaksByProc) : [];
-      // Even against the standing set, one surplus kind is often just this
-      // test's legit data file - require a real excess before flagging.
-      if (surplus.length >= 2) {
-        outcome = "leak";
-        detail = surplus.slice(0, 6).join(", ");
-      }
     }
+    // No leak oracle in the wide pass: bun fast-exits without closing
+    // handles by design, so "named handle open at exit" is only meaningful
+    // against what the SAME program normally holds at exit - the sweeper
+    // and chaos have that baseline; a callsite-agnostic wide pass has no
+    // per-program baseline, and no standing set can cover every program's
+    // legitimate exit-time handles. Crash and hang stand alone here.
   }
   if (!outcome || rr.fired === 0) {
     try {

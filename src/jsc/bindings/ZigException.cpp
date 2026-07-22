@@ -299,8 +299,21 @@ public:
         offset = end;
 
         // the proper singular spelling is parenthesis
-        auto openingParentheses = line.find('(');
         auto closingParentheses = line.reverseFind(')');
+        size_t openingParentheses = WTF::notFound;
+        if (closingParentheses != WTF::notFound) {
+            // Balance parentheses from the end so nested "eval at <name> (<loc>)"
+            // origins and function names that themselves contain '(' both work.
+            size_t depth = 0;
+            for (size_t i = closingParentheses + 1; i-- > 0;) {
+                if (line[i] == ')') {
+                    depth++;
+                } else if (line[i] == '(' && --depth == 0) {
+                    openingParentheses = i;
+                    break;
+                }
+            }
+        }
 
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound || openingParentheses > closingParentheses) {
             // Special case: "unknown" frames don't have parentheses but are valid

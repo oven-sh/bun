@@ -30,21 +30,10 @@ export default class RoundRobinHandle {
     this.handle = null;
     this.listening = false;
     this.inFlight = new Map();
-    this.server = net.createServer({ pauseOnConnect: true, allowHalfOpen: true }, socket => {
-      const handle = makeAcceptedHandle(socket);
-      socket.once("close", () => {
-        remove(handle);
-        for (const [id, pending] of this.inFlight) {
-          if (pending === handle) {
-            this.inFlight.delete(id);
-            const worker = this.all.get(id);
-            if (worker !== undefined) this.handoff(worker);
-            break;
-          }
-        }
-      });
-      this.distribute(0, handle);
-    });
+    this.server = net.createServer(
+      { pauseOnConnect: true, allowHalfOpen: true },
+      RoundRobinHandle.prototype.onServerConnection.bind(this),
+    );
 
     if (fd >= 0) this.server.listen({ fd, backlog });
     else if (port >= 0) {
@@ -62,10 +51,31 @@ export default class RoundRobinHandle {
         readableAll,
         writableAll,
       }); // UNIX socket path.
-    this.server.once("listening", () => {
-      this.listening = true;
-      this.handle = this.server._handle;
-    });
+    this.server.once("listening", RoundRobinHandle.prototype.onServerListening.bind(this));
+  }
+
+  onServerConnection(socket) {
+    const handle = makeAcceptedHandle(socket);
+    socket.once("close", RoundRobinHandle.prototype.onAcceptedSocketClose.bind(this, handle));
+    this.distribute(0, handle);
+  }
+
+  onAcceptedSocketClose(handle) {
+    remove(handle);
+    const inFlight = this.inFlight;
+    for (const [id, pending] of inFlight) {
+      if (pending === handle) {
+        inFlight.delete(id);
+        const worker = this.all.get(id);
+        if (worker !== undefined) this.handoff(worker);
+        break;
+      }
+    }
+  }
+
+  onServerListening() {
+    this.listening = true;
+    this.handle = this.server._handle;
   }
 
   add(worker, send) {

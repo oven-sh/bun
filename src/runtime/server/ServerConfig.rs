@@ -792,12 +792,16 @@ impl ServerConfig {
                 {
                     args.enable_chrome_devtools_automatic_workspace_folders = v;
                 }
-            } else {
-                args.development = if dev.to_boolean() {
+            } else if dev.is_boolean() {
+                args.development = if dev.as_boolean() {
                     DevelopmentOption::Development
                 } else {
                     DevelopmentOption::Production
                 };
+            } else if !dev.is_null() {
+                return Err(
+                    global.throw_invalid_property_type("development", "boolean or object", dev)
+                );
             }
             args.reuse_port = args.development == DevelopmentOption::Production;
         }

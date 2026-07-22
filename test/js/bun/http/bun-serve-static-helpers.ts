@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import type { Server } from "bun";
-import { fillRepeating, isASAN, isWindows } from "harness";
+import { fillRepeating, isASAN, isDebug, isWindows } from "harness";
 
 // /big is 4MB so that the first send() cannot drain the body in one write: the
 // static-route sender has to take the to_async + on_writable backpressure loop
@@ -54,10 +54,13 @@ export async function runStress(
   method: (typeof stressMethods)[number],
 ) {
   const bytes = method === "blob" ? static_responses[path] : await static_responses[path][method]();
+  const contentLength = String(static_responses[path].size);
 
   // macOS limits backlog to 128.
   const batchSize = Math.ceil(64 / (isWindows ? 8 : 1));
-  const iterations = Math.ceil(12 / (isWindows ? 8 : 1));
+  // ASAN/debug: memory-safety faults are caught on the first offending access, so extra
+  // passes only add wall time. Release builds keep the full 12 for leak visibility.
+  const iterations = isWindows ? 2 : isASAN || isDebug ? 3 : 12;
 
   async function iterate() {
     let array = new Array(batchSize);
@@ -67,6 +70,7 @@ export async function runStress(
         .then(res => {
           expect(res.status).toBe(200);
           expect(res.url).toBe(route);
+          expect(res.headers.get("content-length")).toBe(contentLength);
           if (accessBody) {
             res.body;
           }
@@ -101,9 +105,17 @@ export async function runStress(
   Bun.gc(true);
 
   const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-  // ASAN's shadow memory + quarantine raise the absolute RSS floor.
-  expect(rss).toBeLessThan(isASAN ? 6144 : 4092);
   const delta = rss - baseline;
   console.log("Final RSS", rss);
   console.log("Delta RSS", delta);
+  // ASAN's shadow memory + quarantine raise the absolute RSS floor.
+  expect(rss).toBeLessThan(isASAN ? 6144 : 4092);
+  if (isASAN || isDebug) {
+    // The measurement half repeats the warmup half's work, so growth between the two
+    // Bun.gc(true) bookends is the leak signal. A single leaked 4MB body per batch is
+    // batchSize * 4MB = 256MB; 200 is under that and above observed jitter (±40MB).
+    // Release builds are not asserted: mimalloc page retention makes the delta swing
+    // by hundreds of MB between the two gc() calls (observed -644..+223).
+    expect(delta).toBeLessThan(200);
+  }
 }

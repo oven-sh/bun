@@ -2283,13 +2283,13 @@
   },
   "js/bun/http/bun-serve-static-stress-access-body.test.ts": {
     "default": 32903,
-    "asan": 65153,
+    "asan": 30000,
     "musl": 29873,
     "windows": 1057
   },
   "js/bun/http/bun-serve-static-stress-no-body.test.ts": {
     "default": 34371,
-    "asan": 62151,
+    "asan": 30000,
     "musl": 30951,
     "windows": 955
   },

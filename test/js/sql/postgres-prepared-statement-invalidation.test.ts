@@ -106,6 +106,33 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       await sql`drop table if exists ${sql(tbl)}`.simple();
     }
   });
+
+  test("inside a transaction block the original 0A000 is surfaced (not masked by a retry)", async () => {
+    await container.ready;
+    await using sql = connect();
+    const tbl = "t_inv_" + randomUUIDv7("hex").replaceAll("-", "");
+    try {
+      await sql`create table ${sql(tbl)}(a int, b int)`.simple();
+      await sql`insert into ${sql(tbl)} values (1, 2)`.simple();
+      const q = () => sql`select * from ${sql(tbl)}`;
+      expect(await q()).toEqual([{ a: 1, b: 2 }]);
+      await sql`alter table ${sql(tbl)} add column c int default 3`.simple();
+
+      // Inside an open transaction block a re-Parse would be rejected with
+      // 25P02 (current transaction is aborted), so the retry is suppressed
+      // and the caller sees the real invalidation error.
+      await sql`BEGIN`.simple();
+      const err = await q().catch(e => e);
+      await sql`ROLLBACK`.simple();
+      expect((err as any)?.errno).toBe("0A000");
+
+      // The cache was still evicted, so the connection recovers after
+      // ROLLBACK. Before the fix this rejected with errno 0A000 forever.
+      expect(await q()).toEqual([{ a: 1, b: 2, c: 3 }]);
+    } finally {
+      await sql`drop table if exists ${sql(tbl)}`.simple();
+    }
+  });
 });
 
 // Wire-level counterpart: runs without a container. The scripted server forgets
@@ -248,6 +275,70 @@ test("postgres: a 26000 on the re-prepared Bind is surfaced instead of retried a
     await using sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5 });
     const err = await sql`select v`.catch(e => e);
     expect({ errno: (err as any)?.errno, parses }).toEqual({ errno: "26000", parses: 2 });
+  } finally {
+    server.close();
+  }
+});
+
+// 0A000 is the generic feature_not_supported class; only the plancache
+// RevalidateCachedQuery case means the prepared statement is stale. An
+// execute-time 0A000 from anything else must not trigger a silent re-execute.
+test("postgres: a 0A000 without routine RevalidateCachedQuery is not retried", async () => {
+  let parses = 0;
+  let executes = 0;
+  const { port, server } = await listeningServer(socket => {
+    let sawStartup = false;
+    let pending = Buffer.alloc(0);
+    const rowDesc = pgRowDescription([{ name: "v", typeOid: 25 }]);
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      pending = Buffer.concat([pending, chunk]);
+      if (!sawStartup) {
+        if (pending.length < 4) return;
+        const len = pending.readInt32BE(0);
+        if (pending.length < len) return;
+        pending = pending.subarray(len);
+        sawStartup = true;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+      }
+      const out: Buffer[] = [];
+      pending = pgReadFrontendMessages(pending, type => {
+        if (type === 0x50 /* Parse */) {
+          parses++;
+          out.push(pgParseComplete());
+        } else if (type === 0x44 /* Describe */) {
+          out.push(rowDesc);
+        } else if (type === 0x42 /* Bind */) {
+          out.push(pgBindComplete());
+        } else if (type === 0x45 /* Execute */) {
+          executes++;
+          if (executes === 1) {
+            out.push(pgDataRow([Buffer.from("ok")]), pgCommandComplete("SELECT 1"));
+          } else {
+            out.push(pgErrorResponse({ S: "ERROR", C: "0A000", M: "feature not supported", R: "some_fdw_handler" }));
+          }
+        } else if (type === 0x53 /* Sync */) {
+          out.push(pgReadyForQuery());
+        }
+      });
+      if (out.length) socket.write(Buffer.concat(out));
+    });
+  });
+
+  try {
+    await using sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5 });
+    expect(await sql`select v`).toEqual([{ v: "ok" }]);
+    const err = await sql`select v`.catch(e => e);
+    // Exactly one Parse and two Executes: the first run prepared and
+    // succeeded, the second hit the cache and was rejected at Execute. No
+    // silent re-prepare (which would have bumped parses to 2 and executes
+    // to 3).
+    expect({ errno: (err as any)?.errno, routine: (err as any)?.routine, parses, executes }).toEqual({
+      errno: "0A000",
+      routine: "some_fdw_handler",
+      parses: 1,
+      executes: 2,
+    });
   } finally {
     server.close();
   }

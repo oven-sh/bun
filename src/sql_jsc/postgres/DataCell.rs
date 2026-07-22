@@ -828,10 +828,13 @@ pub(crate) fn from_bytes(
                 if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
                     return Ok(SQLDataCell::null());
                 }
-                // `timestamp` (without time zone) text carries no offset, so
-                // decode its components as UTC to match the binary path. `date`
-                // (UTC midnight) and `timestamptz` (explicit offset) already
-                // parse correctly via Date.parse, so only redirect `timestamp`.
+                // DateStyle is pinned to ISO in the startup packet, so the
+                // server always emits `YYYY-MM-DD[...]` here regardless of
+                // postgresql.conf / ALTER DATABASE / ALTER ROLE defaults.
+                // `timestamp` (no offset) is decoded as UTC components to
+                // agree with the binary path; `date` (UTC midnight) and
+                // `timestamptz` (explicit offset) go through Date.parse,
+                // which handles the ISO form unambiguously.
                 let date = match tag {
                     T::timestamp => crate::postgres::types::date::timestamp_text_to_ms_utc(global_object, bytes),
                     _ => None,

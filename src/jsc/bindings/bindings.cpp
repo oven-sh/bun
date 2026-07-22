@@ -3267,7 +3267,12 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    WTF::String message = Zig::toString(*arg3);
+    // External-tagged messages transfer ownership of their heap buffer to the
+    // JS string (VirtualMachine.rs marks the joined build-failure message
+    // global and relies on C++ freeing it); everything else is copied so an
+    // untagged ZigString can't leave the AggregateError aliasing the caller's
+    // buffer. See Zig::getErrorInstance.
+    WTF::String message = Zig::isTaggedExternalPtr(arg3->ptr) ? Zig::toString(*arg3) : Zig::toStringCopy(*arg3);
     JSC::JSValue cause = JSC::jsUndefined();
     JSC::JSArray* array = nullptr;
     {

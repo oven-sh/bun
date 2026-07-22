@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import { Worker } from "worker_threads";
 
@@ -61,5 +62,56 @@ describe("captured stdio drains on synchronous process.exit()", () => {
     );
     const { out, code } = await collect(worker, "stdout");
     expect({ out, code }).toEqual({ out: "before\nfrom-exit\ntail\n", code: 0 });
+  });
+});
+
+// Default worker stdio (no { stdout: true }) is also port-backed and auto-pipes
+// to the parent's stdout/stderr: the same parked-writev drop applies, so a
+// worker that logs N lines then calls process.exit() must surface all N.
+describe("auto-piped stdio drains on synchronous process.exit()", () => {
+  const N = 300;
+  function parentScript(exitCall: string) {
+    const workerBody =
+      `for (let i = 0; i < ${N}; i++) console.log("W" + i);` + `console.error("WERR");` + exitCall;
+    return (
+      `const { Worker } = require("node:worker_threads");` +
+      `const w = new Worker(${JSON.stringify(workerBody)}, { eval: true });` +
+      `w.on("exit", c => console.error("[worker exit " + c + "]"));`
+    );
+  }
+
+  test("worker console.log lines all reach the parent's stdout", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parentScript("process.exit(0);")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout.split("\n").filter(Boolean);
+    expect({
+      first: lines[0],
+      last: lines.at(-1),
+      count: lines.length,
+      stderr: stderr.split("\n").filter(Boolean).sort(),
+    }).toEqual({
+      first: "W0",
+      last: `W${N - 1}`,
+      count: N,
+      stderr: ["WERR", "[worker exit 0]"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("without process.exit() all lines already arrive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parentScript("")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split("\n").filter(Boolean).length).toBe(N);
+    expect(exitCode).toBe(0);
   });
 });

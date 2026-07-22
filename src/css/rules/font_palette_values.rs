@@ -109,7 +109,7 @@ impl FontPaletteValuesProperty {
             FontPaletteValuesProperty::Custom(custom) => {
                 dest.write_str(custom.name.as_str())?;
                 dest.delim(b':', false)?;
-                custom.value.to_css(dest, true)
+                custom.value.to_css(dest)
             }
         }
     }

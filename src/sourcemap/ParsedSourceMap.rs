@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// ParsedSourceMap can be acquired by different threads via the thread-safe
-/// source map store (SavedSourceMap), so the reference count must be thread-safe.
+/// source map store (SavedSourceMap).
 pub struct ParsedSourceMap {
     pub input_line_count: usize,
     pub mappings: mapping::List,

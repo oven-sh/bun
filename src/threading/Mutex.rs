@@ -37,7 +37,7 @@ use crate::Futex;
 pub struct Mutex {
     // `pub(crate)` so `Condition` can reach `srwlock` / `locking_thread` for
     // `SleepConditionVariableSRW`.
-    pub impl_: Impl,
+    pub(crate) impl_: Impl,
 }
 
 impl Mutex {
@@ -149,10 +149,10 @@ fn current_thread_id() -> ThreadId {
 
 #[cfg(debug_assertions)]
 #[derive(Default)]
-pub struct DebugImpl {
+pub(crate) struct DebugImpl {
     /// 0 means it's not locked.
-    pub locking_thread: AtomicU64,
-    pub impl_: ReleaseImpl,
+    pub(crate) locking_thread: AtomicU64,
+    pub(crate) impl_: ReleaseImpl,
 }
 
 #[cfg(debug_assertions)]

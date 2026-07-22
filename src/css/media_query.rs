@@ -86,9 +86,8 @@ pub trait QueryCondition: Sized + ToCss {
     fn as_not(&self) -> Option<&Self>;
     fn as_operation(&self) -> Option<(Operator, &[Self])>;
 
-    /// Serialize the leaf feature. Not defaulted: `Property::to_css` takes an
-    /// extra `is_custom_property` flag, and `QueryFeature::to_css` is inherent
-    /// (not the `ToCss` trait), so callers must spell the dispatch.
+    /// Serialize the leaf feature. Not defaulted: `QueryFeature::to_css` is
+    /// inherent (not the `ToCss` trait), so callers must spell the dispatch.
     fn feature_to_css(f: &Self::Feature, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
 
     /// Serialize a variant that isn't `Feature`/`Not`/`Operation`
@@ -1079,7 +1078,7 @@ impl MediaFeatureValue {
             MediaFeatureValue::Resolution(res) => res.to_css(dest),
             MediaFeatureValue::Ratio(ratio) => ratio.to_css(dest),
             MediaFeatureValue::Ident(id) => id.to_css(dest),
-            MediaFeatureValue::Env(env) => env.to_css(dest, false),
+            MediaFeatureValue::Env(env) => env.to_css(dest),
         }
     }
 

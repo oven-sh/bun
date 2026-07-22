@@ -79,7 +79,7 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
 
     /// Manual return path. Prefer dropping
     /// the `PoolGuard` instead.
-    pub fn put(buf: Box<T>) {
+    pub(crate) fn put(buf: Box<T>) {
         T::with_pool(|p| {
             let mut p = p.borrow_mut();
             if p.len() < POOL_CAP {
@@ -133,7 +133,7 @@ pub fn get() -> PoolGuard<PathBuffer> {
     PathBufferPoolT::<PathBuffer>::get()
 }
 #[inline]
-pub fn put(buf: Box<PathBuffer>) {
+pub(crate) fn put(buf: Box<PathBuffer>) {
     PathBufferPoolT::<PathBuffer>::put(buf)
 }
 

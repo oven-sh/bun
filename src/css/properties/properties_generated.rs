@@ -3989,10 +3989,10 @@ impl Property {
             Property::MaskBoxImageRepeat(v) => css::generic::to_css(&v.0, dest),
             Property::ColorScheme(v) => css::generic::to_css(v, dest),
             Property::All(v) => css::generic::to_css(v, dest),
-            Property::Unparsed(u) => u.value.to_css(dest, false),
+            Property::Unparsed(u) => u.value.to_css(dest),
             Property::Custom(c) => c
                 .value
-                .to_css(dest, matches!(c.name, CustomPropertyName::Custom(..))),
+                .to_css(dest),
         }
     }
 

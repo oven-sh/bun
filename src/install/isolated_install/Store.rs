@@ -333,9 +333,9 @@ pub mod entry {
     pub struct PeerHash(u64);
 
     impl PeerHash {
-        pub const NONE: Self = Self(0);
+        pub(crate) const NONE: Self = Self(0);
 
-        pub fn from(int: u64) -> Self {
+        pub(crate) fn from(int: u64) -> Self {
             Self(int)
         }
 
@@ -415,7 +415,7 @@ pub mod entry {
         }
     }
 
-    pub fn fmt_store_path<'a>(
+    pub(crate) fn fmt_store_path<'a>(
         entry_id: Id,
         store: &'a Store,
         lockfile: &'a Lockfile,
@@ -427,7 +427,7 @@ pub mod entry {
         }
     }
 
-    pub struct GlobalStorePathFormatter<'a> {
+    pub(crate) struct GlobalStorePathFormatter<'a> {
         inner: StorePathFormatter<'a>,
         entry_hash: u64,
     }
@@ -442,7 +442,7 @@ pub mod entry {
     /// Like `fmt_store_path` but suffixes the entry's content hash so the
     /// resulting name is safe to use as a key in the shared global virtual
     /// store (different dependency closures get different directory names).
-    pub fn fmt_global_store_path<'a>(
+    pub(crate) fn fmt_global_store_path<'a>(
         entry_id: Id,
         store: &'a Store,
         lockfile: &'a Lockfile,
@@ -453,7 +453,7 @@ pub mod entry {
         }
     }
 
-    pub fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
+    pub(crate) fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
         let mut i: usize = 0;
         let mut len: usize;
 
@@ -495,7 +495,7 @@ pub mod entry {
         pub dep_id: DependencyID,
     }
 
-    pub struct DependenciesOrderedArraySetCtx<'a> {
+    pub(crate) struct DependenciesOrderedArraySetCtx<'a> {
         pub string_buf: &'a [u8],
         pub dependencies: &'a [Dependency],
     }

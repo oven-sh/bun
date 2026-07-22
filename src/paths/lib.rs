@@ -436,9 +436,9 @@ pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
     /// `\??\` — NT object-manager prefix (UTF-16).
-    pub const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
+    pub(crate) const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
     /// `\??\UNC\` — NT object-manager UNC prefix (UTF-16).
-    pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
+    pub(crate) const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
         '\\' as u16,
         '?' as u16,
         '?' as u16,
@@ -449,19 +449,19 @@ pub mod windows {
         '\\' as u16,
     ];
     /// `\\?\` — Win32 long-path prefix (UTF-16).
-    pub const LONG_PATH_PREFIX: [u16; 4] = ['\\' as u16, '\\' as u16, '?' as u16, '\\' as u16];
+    pub(crate) const LONG_PATH_PREFIX: [u16; 4] = ['\\' as u16, '\\' as u16, '?' as u16, '\\' as u16];
 
     /// `\??\` — NT object-manager prefix (UTF-8/ASCII).
-    pub const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
+    pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
     /// `\??\UNC\` — NT object-manager UNC prefix (UTF-8/ASCII).
-    pub const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
+    pub(crate) const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
     /// `\\?\` — Win32 long-path prefix (UTF-8/ASCII).
     pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
     /// Per-width long-path prefix so `Path::<U, ..>::from_long_path` stays width-generic.
     #[inline]
     #[cfg(windows)]
-    pub fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
+    pub(crate) fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
         U::LONG_PATH_PREFIX
     }
 }

@@ -75,14 +75,6 @@ pub struct StoredTrace {
     index: usize,
 }
 impl StoredTrace {
-    pub const fn empty() -> Self {
-        Self {
-            data: [0; 31],
-            index: 0,
-        }
-    }
-}
-impl StoredTrace {
     pub const EMPTY: StoredTrace = StoredTrace {
         data: [0; 31],
         index: 0,

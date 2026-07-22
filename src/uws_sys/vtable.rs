@@ -201,8 +201,8 @@ impl<H: Handler> Make<H> {
     };
 }
 
-/// The trampolines themselves, exposed so `dispatch.rs` can direct-call them
-/// per-kind without going through the vtable pointer at all.
+/// The trampolines themselves, installed into the vtable by [`Make`] and
+/// reached only through the vtable pointer.
 struct Trampolines<H>(core::marker::PhantomData<H>);
 
 impl<H: Handler> Trampolines<H> {

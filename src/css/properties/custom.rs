@@ -269,7 +269,7 @@ pub struct TokenList {
 impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
-    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
@@ -282,7 +282,7 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::UnresolvedColor(color) => {
-                    color.to_css(dest, is_custom_property)?;
+                    color.to_css(dest)?;
                     has_whitespace = false;
                 }
                 TokenOrValue::Url(url) => {
@@ -290,15 +290,15 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::Var(var) => {
-                    var.to_css(dest, is_custom_property)?;
+                    var.to_css(dest)?;
                     has_whitespace = self.write_whitespace_if_needed(i, dest)?;
                 }
                 TokenOrValue::Env(env) => {
-                    env.to_css(dest, is_custom_property)?;
+                    env.to_css(dest)?;
                     has_whitespace = self.write_whitespace_if_needed(i, dest)?;
                 }
                 TokenOrValue::Function(f) => {
-                    f.to_css(dest, is_custom_property)?;
+                    f.to_css(dest)?;
                     has_whitespace = self.write_whitespace_if_needed(i, dest)?;
                 }
                 TokenOrValue::Length(v) => {
@@ -847,7 +847,7 @@ impl UnresolvedColor {
 
     // deinit(): body only freed owned `TokenList` fields — handled by `Drop`.
 
-    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         fn conv(c: f32) -> i32 {
             css_values::color::clamp_unit_f32(c) as i32
         }
@@ -864,7 +864,7 @@ impl UnresolvedColor {
                     css_parser::to_css::integer(conv(*g), dest)?;
                     dest.delim(b',', false)?;
                     css_parser::to_css::integer(conv(*b), dest)?;
-                    alpha.to_css(dest, is_custom_property)?;
+                    alpha.to_css(dest)?;
                     dest.write_char(b')')?;
                     return Ok(());
                 }
@@ -876,7 +876,7 @@ impl UnresolvedColor {
                 dest.write_char(b' ')?;
                 css_parser::to_css::integer(conv(*b), dest)?;
                 dest.delim(b'/', true)?;
-                alpha.to_css(dest, is_custom_property)?;
+                alpha.to_css(dest)?;
                 dest.write_char(b')')
             }
             UnresolvedColor::HSL { h, s, l, alpha } => {
@@ -891,7 +891,7 @@ impl UnresolvedColor {
                     dest.delim(b',', false)?;
                     Percentage { v: *l }.to_css(dest)?;
                     dest.delim(b',', false)?;
-                    alpha.to_css(dest, is_custom_property)?;
+                    alpha.to_css(dest)?;
                     dest.write_char(b')')?;
                     return Ok(());
                 }
@@ -903,26 +903,26 @@ impl UnresolvedColor {
                 dest.write_char(b' ')?;
                 Percentage { v: *l }.to_css(dest)?;
                 dest.delim(b'/', true)?;
-                alpha.to_css(dest, is_custom_property)?;
+                alpha.to_css(dest)?;
                 dest.write_char(b')')
             }
             UnresolvedColor::LightDark { light, dark } => {
                 if !dest.targets.is_compatible(css::compat::Feature::LightDark) {
                     dest.write_str("var(--buncss-light")?;
                     dest.delim(b',', false)?;
-                    light.to_css(dest, is_custom_property)?;
+                    light.to_css(dest)?;
                     dest.write_char(b')')?;
                     dest.whitespace()?;
                     dest.write_str("var(--buncss-dark")?;
                     dest.delim(b',', false)?;
-                    dark.to_css(dest, is_custom_property)?;
+                    dark.to_css(dest)?;
                     return dest.write_char(b')');
                 }
 
                 dest.write_str("light-dark(")?;
-                light.to_css(dest, is_custom_property)?;
+                light.to_css(dest)?;
                 dest.delim(b',', false)?;
-                dark.to_css(dest, is_custom_property)?;
+                dark.to_css(dest)?;
                 dest.write_char(b')')
             }
         }
@@ -1039,12 +1039,12 @@ impl Variable {
         Ok(Variable { name, fallback })
     }
 
-    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         dest.write_str("var(")?;
         ext::dashed_ident_ref_to_css(&self.name, dest)?;
         if let Some(fallback) = &self.fallback {
             dest.delim(b',', false)?;
-            fallback.to_css(dest, is_custom_property)?;
+            fallback.to_css(dest)?;
         }
         dest.write_char(b')')
     }
@@ -1110,7 +1110,7 @@ impl EnvironmentVariable {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         dest.write_str("env(")?;
         self.name.to_css(dest)?;
 
@@ -1121,7 +1121,7 @@ impl EnvironmentVariable {
 
         if let Some(fallback) = &self.fallback {
             dest.delim(b',', false)?;
-            fallback.to_css(dest, is_custom_property)?;
+            fallback.to_css(dest)?;
         }
 
         dest.write_char(b')')
@@ -1261,10 +1261,10 @@ pub struct Function {
 impl Function {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         IdentFns::to_css(&self.name, dest)?;
         dest.write_char(b'(')?;
-        self.arguments.to_css(dest, is_custom_property)?;
+        self.arguments.to_css(dest)?;
         dest.write_char(b')')
     }
 

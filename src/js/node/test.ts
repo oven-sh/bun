@@ -577,6 +577,7 @@ async function runOneFile(
     },
   });
   if (fileFailed) {
+    reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
     reporter.emitMessage("test:fail", {
       __proto__: null,
       ...fileNode,
@@ -753,7 +754,8 @@ function wrapTestError(error: unknown): Error {
     return wrapper;
   }
   // node: msg = error?.message ?? error, inspected when not a string.
-  const wrapper = new Error(typeof error === "string" ? error : Bun.inspect(error));
+  const msg = (error as { message?: unknown })?.message ?? error;
+  const wrapper = new Error(typeof msg === "string" ? msg : require("node:util").inspect(msg));
   (wrapper as { code?: string }).code = "ERR_TEST_FAILURE";
   (wrapper as { failureType?: string }).failureType = "testCodeFailure";
   (wrapper as { cause?: unknown }).cause = error;

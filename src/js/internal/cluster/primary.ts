@@ -174,6 +174,16 @@ cluster.fork = function (env) {
   });
 
   onInternalMessage(worker.process[kHandle], worker, onmessage);
+  // Node's primary receives cluster commands as ordinary 'internalMessage'
+  // events. The native hook above only sees internal-framed wire messages,
+  // so a cluster command whose '$internal' send option was lost (a user
+  // wrapper around process.send that truncates arguments) arrives external
+  // and is classified by cmd on the receive side - route it like node does.
+  worker.process.on("internalMessage", function forwardExternalClusterMessage(message, handle) {
+    if (message !== null && typeof message === "object" && message.cmd === "NODE_CLUSTER") {
+      onmessage.$call(worker, message, handle);
+    }
+  });
   process.nextTick(emitForkNT, worker);
   cluster.workers[worker.id] = worker;
   return worker;
@@ -362,7 +372,10 @@ class ReusePortHandle {
     }
     netForProbe ??= require("node:net");
     this.pending = [];
-    const server = (this.server = netForProbe.createServer());
+    // A stray client connecting inside the probe window would otherwise be
+    // accepted and never destroyed, blocking server.close() (and with it
+    // every parked probePort reply) until that client goes away.
+    const server = (this.server = netForProbe.createServer(probeConnection => probeConnection.destroy()));
     server.once("error", err => {
       const raw = typeof err.errno === "number" && err.errno !== 0 ? err.errno : null;
       this.errno = raw != null ? uvTranslateSysError(raw) : einvalErrorCode();
@@ -451,7 +464,15 @@ function probePort(worker, message) {
   let handle = handles.get(key);
 
   if (handle === undefined) {
-    handle = new ReusePortHandle(key, message, findOwnReusePort(message.port, message.address ?? null));
+    try {
+      handle = new ReusePortHandle(key, message, findOwnReusePort(message.port, message.address ?? null));
+    } catch {
+      // A malformed probe (an out-of-range port reaching net.Server.listen's
+      // synchronous validation, for example) must fail the worker's listen,
+      // never unwind the primary's message dispatch.
+      send(worker, { errno: einvalErrorCode(), ack: message.seq });
+      return;
+    }
     handles.set(key, handle);
   }
 

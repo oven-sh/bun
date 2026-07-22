@@ -1035,3 +1035,89 @@ if (cluster.isPrimary) {
   });
   expect(exitCode).toBe(0);
 }, 30_000);
+
+test("an out-of-range worker port throws in the worker and leaves the primary alive", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    console.log("sync code:", m.sync);
+    console.log("probe errno truthy:", !!m.probeErrno);
+    setTimeout(() => { console.log("primary alive"); worker.kill(); process.exit(0); }, 50);
+  });
+} else {
+  const http = require("node:http");
+  let sync = "no-throw";
+  try {
+    http.createServer().listen(70000);
+  } catch (e) {
+    sync = e.code;
+  }
+  // Also poke the primary directly with the malformed probe: it must reply
+  // with an errno instead of dying with an uncaughtException.
+  cluster._sendInternal({ act: "probePort", address: null, port: 70000, addressType: 4 }, reply => {
+    process.send({ sync, probeErrno: reply.errno });
+  });
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("sync code: ERR_SOCKET_BAD_PORT");
+  expect(stdout).toContain("probe errno truthy: true");
+  expect(stdout).toContain("primary alive");
+});
+
+test("closing a worker http server releases the primary's port claim", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+if (cluster.isPrimary) {
+  // Reserve a concrete free port, release it, then hand it to the worker.
+  const probe = net.createServer();
+  probe.listen(0, "127.0.0.1", () => {
+    const port = probe.address().port;
+    probe.close(() => {
+      const worker = cluster.fork({ TEST_PORT: String(port) });
+      let blocker;
+      worker.on("message", m => {
+        if (m.step === "closed") {
+          // Occupy the port OUTSIDE the cluster, then ask the worker to re-listen.
+          blocker = net.createServer(c => c.destroy());
+          blocker.listen(port, "127.0.0.1", () => worker.send("relisten"));
+        } else if (m.step === "relisten-error") {
+          console.log("relisten code:", m.code, "syscall:", m.syscall);
+          worker.kill();
+          process.exit(0);
+        } else if (m.step === "relisten-ok") {
+          console.log("relisten wrongly succeeded");
+          worker.kill();
+          process.exit(1);
+        }
+      });
+    });
+  });
+} else {
+  const http = require("node:http");
+  const port = Number(process.env.TEST_PORT);
+  const first = http.createServer();
+  first.listen(port, "127.0.0.1", () => {
+    first.close(() => process.send({ step: "closed" }));
+  });
+  process.on("message", m => {
+    if (m !== "relisten") return;
+    const second = http.createServer();
+    second.on("error", e => process.send({ step: "relisten-error", code: e.code, syscall: e.syscall }));
+    second.listen(port, "127.0.0.1", () => process.send({ step: "relisten-ok" }));
+  });
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  // The re-listen must hit a FRESH primary test bind (syscall "bind" from the
+  // probe reply), not a stale cached success that only fails later inside the
+  // worker's own listen.
+  expect(stdout).toContain("relisten code: EADDRINUSE syscall: bind");
+});

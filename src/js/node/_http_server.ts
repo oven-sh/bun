@@ -21,6 +21,7 @@ const { ConnResetException, ExceptionWithHostPort, hasObserver, startPerf, stopP
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
+const { validatePort } = require("internal/validators");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
@@ -84,6 +85,7 @@ const {
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
+const kClusterProbeKey = Symbol("kClusterProbeKey");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
@@ -505,6 +507,16 @@ Server.prototype.close = function (optionalCallback?) {
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.
   clearInterval(this[kConnectionsCheckingInterval]);
+  const probeKey = this[kClusterProbeKey];
+  if (probeKey !== undefined) {
+    this[kClusterProbeKey] = undefined;
+    if (process.connected && cluster?.worker) {
+      // Drop the primary's ReusePortHandle claim, mirroring net.ts's
+      // handle.close() message, so re-listening on this port test-binds
+      // afresh instead of reusing the cached errno.
+      cluster._sendInternal({ act: "close", key: probeKey });
+    }
+  }
   if (!server) {
     if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
     // Like Node.js's net.Server#close, close() returns the server.
@@ -608,6 +620,13 @@ Server.prototype.listen = function () {
     }
   }
 
+  // Node validates the port synchronously in listen() (net.Server.listen ->
+  // validatePort), before any cluster round-trip: an out-of-range port must
+  // throw ERR_SOCKET_BAD_PORT in the caller, not travel to the primary.
+  if (typeof port === "number" && !socketPath) {
+    validatePort(port);
+  }
+
   const lastArg = arguments[argc - 1];
   if ($isCallable(lastArg)) {
     onListen = lastArg;
@@ -683,6 +702,10 @@ Server.prototype.listen = function () {
           server.emit("error", new ExceptionWithHostPort(replyErrno, "bind", host ?? null, port));
           return;
         }
+        // Remember the primary's cache key: close() reports it back so the
+        // primary drops the claim and a later listen on this port gets a
+        // fresh test bind instead of the stale cached verdict.
+        server[kClusterProbeKey] = reply.key;
         try {
           server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
         } catch (err) {

@@ -596,7 +596,10 @@ test("CallFrame.p.getLineNumber/getColumnNumber return null for native frames", 
   expect(nativeFrame.getLineNumber()).toBeNull();
   expect(nativeFrame.getColumnNumber()).toBeNull();
   const json = nativeFrame.toJSON();
-  expect({ lineNumber: json.lineNumber, columnNumber: json.columnNumber }).toEqual({ lineNumber: null, columnNumber: null });
+  expect({ lineNumber: json.lineNumber, columnNumber: json.columnNumber }).toEqual({
+    lineNumber: null,
+    columnNumber: null,
+  });
 });
 
 test("return non-strings from Error.prepareStackTrace", () => {

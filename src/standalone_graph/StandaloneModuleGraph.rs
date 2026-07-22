@@ -1513,7 +1513,91 @@ pub(crate) fn inject(
 }
 
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
+use bun_core::env::Architecture as CompileTargetArch;
 pub use bun_options_types::compile_target::CompileTarget;
+
+/// Validate that the executable at `path` has a header (ELF / Mach-O / PE
+/// format and machine type) consistent with the requested cross-compile
+/// `target`. Guards `bun build --compile` against embedding a cached or
+/// downloaded base binary that was written under the wrong cache key.
+///
+/// On mismatch, returns a user-facing `CompileResult` error describing the
+/// detected vs. expected target and naming the offending file.
+fn validate_base_binary_header(target: &CompileTarget, path: &ZStr) -> Option<CompileResult> {
+    use bun_exe_format::{DetectedArch, DetectedFormat, detect_header};
+
+    let expected_format = match target.os {
+        CompileTargetOs::Mac => DetectedFormat::MachO,
+        CompileTargetOs::Windows => DetectedFormat::Pe,
+        CompileTargetOs::Linux | CompileTargetOs::Freebsd => DetectedFormat::Elf,
+        CompileTargetOs::Wasm => return None,
+    };
+    let expected_arch = match target.arch {
+        CompileTargetArch::X64 => DetectedArch::X64,
+        CompileTargetArch::Arm64 => DetectedArch::Arm64,
+        CompileTargetArch::Wasm => return None,
+    };
+
+    // PE's COFF header sits at DOSHeader.e_lfanew, which for a typical
+    // toolchain-produced binary is well under 1 KiB; ELF/Mach-O need <32 bytes.
+    let mut buf = [0u8; 1024];
+    let n = match bun_sys::File::open(path, bun_sys::O::RDONLY, 0) {
+        Ok(f) => match f.read_all(&mut buf) {
+            Ok(n) => n,
+            Err(err) => {
+                return Some(CompileResult::fail_fmt(format_args!(
+                    "failed to read base executable for '{}' at {}: {}",
+                    target,
+                    bstr::BStr::new(path.as_bytes()),
+                    err,
+                )));
+            }
+        },
+        Err(err) => {
+            return Some(CompileResult::fail_fmt(format_args!(
+                "failed to open base executable for '{}' at {}: {}",
+                target,
+                bstr::BStr::new(path.as_bytes()),
+                err,
+            )));
+        }
+    };
+
+    let Some(detected) = detect_header(&buf[..n]) else {
+        return Some(CompileResult::fail_fmt(format_args!(
+            "Base executable for '{}' at {} is not a recognized {} file. \
+             The cache entry may be corrupt or tampered with; delete it and try again.",
+            target,
+            bstr::BStr::new(path.as_bytes()),
+            expected_format.name(),
+        )));
+    };
+
+    if detected.format != expected_format {
+        return Some(CompileResult::fail_fmt(format_args!(
+            "Base executable for '{}' at {} is a {} file, expected {}. \
+             The cache entry may be corrupt or tampered with; delete it and try again.",
+            target,
+            bstr::BStr::new(path.as_bytes()),
+            detected.format.name(),
+            expected_format.name(),
+        )));
+    }
+
+    if detected.arch != expected_arch {
+        return Some(CompileResult::fail_fmt(format_args!(
+            "Base executable for '{}' at {} is {} {}, expected {}. \
+             The cache entry may be corrupt or tampered with; delete it and try again.",
+            target,
+            bstr::BStr::new(path.as_bytes()),
+            detected.format.name(),
+            detected.arch.name(),
+            expected_arch.name(),
+        )));
+    }
+
+    None
+}
 
 /// Moved up from `bun_options_types` (T3) so it can name
 /// `bun_http::AsyncHTTP` directly
@@ -1774,6 +1858,17 @@ pub fn to_executable(
 
         bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
     };
+
+    // When the base runtime is anything other than the running process itself
+    // (an explicit --compile-executable-path, a cwd/cache hit, or a fresh
+    // download), verify its on-disk header matches the requested target before
+    // embedding it verbatim. A wrong-arch or wrong-format file here becomes the
+    // runtime of every produced executable.
+    if self_exe_path.is_some() || !target.is_default() {
+        if let Some(failure) = validate_base_binary_header(target, &self_exe) {
+            return Ok(failure);
+        }
+    }
 
     let fd = inject(&bytes, &self_exe, windows_options, target);
     // Note: a scopeguard closure capturing `fd` by value would not observe

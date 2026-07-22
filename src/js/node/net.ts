@@ -2122,6 +2122,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     // this[kBytesRead] = this._handle.bytesRead;
     this[kBytesWritten] = this._handle.bytesWritten;
 
+    const currentHandle = this._handle;
     if (this.resetAndClosing) {
       this.resetAndClosing = false;
       // resetAndDestroy() must send an RST (not a graceful FIN) so the peer sees
@@ -2138,11 +2139,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // Enqueue closing the socket as a microtask, so that the socket can be
       // accessible when an `error` event is handled in the `next tick queue`.
       queueMicrotask(() => closeSocketHandle(this, isException, true));
-    } else if (this._handle[kAdoptedTLSRaw]) {
+    } else if (currentHandle[kAdoptedTLSRaw]) {
       // Shared-fd TLS pair: node's close-callbacks phase runs after the check
       // phase, so setImmediates registered at destroy() time must still see
       // the pair alive (test-tls-socket-close). Defer close past them.
-      const handle = this._handle;
+      const handle = currentHandle;
       const self = this;
       handle.pause?.();
       setImmediate(() => {

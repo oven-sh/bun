@@ -1,0 +1,155 @@
+name: Droid Focused Review
+
+# Fork-only auxiliary review beside the ub-review gate. Keep this small and
+# focused: one UB lane and one test-proof lane, both on MiniMax M3.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/workflows/ub-review-packet.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: droid-focused-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: droid focused review (${{ matrix.lane.id }})
+    if: github.repository == 'EffortlessSteven/bun'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        lane:
+          - id: tests
+            focus: |
+              # Your specialty: do the tests actually PROVE the fix?
+
+              The highest-value catch is a test that passes on both old and new
+              code. For each added/changed test:
+              - would it fail on unpatched main and pass on the patch?
+              - does it assert the real post-condition or only reach code?
+              - does it use public API behavior and active view regions?
+              - could timing, skips, missing tools, or global deps hide failure?
+
+              If nothing blocks, do not approve. Report what you checked, your
+              best failed objection, and residual risk.
+
+          - id: ub
+            focus: |
+              # Your specialty: memory-safety / undefined behaviour at the native boundary
+
+              Lead with the highest-severity way safe JS can corrupt memory or
+              trigger UB in native code. Hunt, in priority order:
+              - a pointer/length captured before an async hop, then used after
+                backing ArrayBuffer resize / detach / transfer / GC
+              - snapshot/copy mistakes: whole backing store vs active view region
+              - JSC protect/unprotect lifetime errors
+              - Rust/Zig/C++ FFI layout, aliasing, ownership, and mutability bugs
+              - allocator ownership mismatch, use-after-free, double free
+              - integer truncation / signed-unsigned / overflow on size or offset
+
+              If nothing blocks, do not approve. Report what you checked, your
+              best failed objection, and residual risk.
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Build MiniMax model config
+        shell: bash
+        env:
+          DROID: ${{ secrets.DROID }}
+          MINIMAX: ${{ secrets.MINIMAX }}
+        run: |
+          set -euo pipefail
+
+          test -n "${DROID:-}" || { echo "::error::Missing DROID secret"; exit 1; }
+          test -n "${MINIMAX:-}" || { echo "::error::Missing MINIMAX secret"; exit 1; }
+
+          # apiKey stays as an environment reference so the secret is not written
+          # to disk. Droid expands it when reading settings.
+          mkdir -p .factory
+          cat > .factory/byok-settings.json <<'JSON'
+          {
+            "customModels": [
+              {
+                "displayName": "MiniMax-M3",
+                "model": "MiniMax-M3",
+                "baseUrl": "https://api.minimax.io/anthropic",
+                "apiKey": "${MINIMAX}",
+                "provider": "anthropic",
+                "maxOutputTokens": 32768
+              }
+            ]
+          }
+          JSON
+
+          mkdir -p "$HOME/.factory"
+          cp .factory/byok-settings.json "$HOME/.factory/settings.json"
+
+      - name: Assemble focused review prompt
+        shell: bash
+        env:
+          LANE_FOCUS: ${{ matrix.lane.focus }}
+          LANE_ID: ${{ matrix.lane.id }}
+        run: |
+          set -euo pipefail
+
+          {
+            if [[ -f .factory/skills/review-guidelines/SKILL.md ]]; then
+              cat .factory/skills/review-guidelines/SKILL.md
+            else
+              echo "# Bun fork UB review guidelines"
+              echo
+              echo "Use the lane focus below. Report only new, useful findings."
+              echo "Do not approve. This is auxiliary beside the ub-review gate."
+            fi
+            echo
+            printf '%s\n' "$LANE_FOCUS"
+            echo
+            echo "## Attribution (required)"
+            echo "Begin every review comment with the literal prefix \`[droid-${LANE_ID}]\`. This is an auxiliary focused review beside the ub-review evidence gate. Be concise and avoid duplicate comments unless you have stronger evidence."
+          } > .factory/lane-prompt.md
+
+      - name: Run Droid focused lane
+        uses: EffortlessSteven/droid-action@cc240b7f6e3305cc8a3073ccaad4268d3b67361b
+        env:
+          MINIMAX: ${{ secrets.MINIMAX }}
+          ANTHROPIC_API_KEY: ""
+          ANTHROPIC_AUTH_TOKEN: ""
+          ANTHROPIC_BASE_URL: ""
+          OPENAI_API_KEY: ""
+          OPENAI_BASE_URL: ""
+        with:
+          factory_api_key: ${{ secrets.DROID }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          settings: .factory/byok-settings.json
+          automatic_review: true
+          automatic_security_review: false
+          review_model: custom:MiniMax-M3-0
+          review_label: droid-${{ matrix.lane.id }}
+          completion_show_model: true
+          include_suggestions: true
+          mention_trigger_user: false
+          droid_args: --append-system-prompt-file .factory/lane-prompt.md

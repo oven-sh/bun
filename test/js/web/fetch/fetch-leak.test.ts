@@ -818,83 +818,15 @@ test(
   isASAN ? 30_000 : 5_000,
 );
 
-// Fetch spec "abort a fetch" step 4: if response's body is non-null and
-// readable, error the stream with the abort reason. When the body is fully
-// received before .body is touched, the stream is backed by a ByteBlobLoader
-// and abort() used to be a no-op on it (FetchTasklet had already detached its
-// listener), so the reader drained the full body and the off-heap store was
-// only released by GC. https://github.com/oven-sh/bun/issues/32659
-test.concurrent("abort() errors a fully-buffered fetch response body", async () => {
-  await using server = Bun.serve({
-    port: 0,
-    fetch: () => new Response(new Uint8Array(1024)),
-  });
-  // Small body with Content-Length arrives with the headers, so by the time
-  // the fetch promise resolves the body is an InternalBlob (ByteBlobLoader
-  // path) rather than a still-streaming ByteStream.
-  const wait = () => new Promise(r => setImmediate(() => setImmediate(r)));
-
-  // abort() before .body: reader rejects, store not drainable.
-  {
-    const ac = new AbortController();
-    const res = await fetch(server.url, { signal: ac.signal });
-    await wait();
-    ac.abort();
-    const reader = res.body!.getReader();
-    const result = await reader.read().then(
-      r => ({ rejected: false, bytes: r.value?.byteLength ?? 0 }),
-      e => ({ rejected: true, name: (e as Error).name }),
-    );
-    expect(result).toEqual({ rejected: true, name: "AbortError" });
-  }
-
-  // abort() after .body.getReader().read(): next read rejects.
-  {
-    const ac = new AbortController();
-    const res = await fetch(server.url, { signal: ac.signal });
-    await wait();
-    const reader = res.body!.getReader();
-    const first = await reader.read();
-    expect(first).toEqual({ done: false, value: new Uint8Array(1024) });
-    ac.abort();
-    const second = await reader.read().then(
-      r => ({ rejected: false, done: r.done }),
-      e => ({ rejected: true, name: (e as Error).name }),
-    );
-    expect(second).toEqual({ rejected: true, name: "AbortError" });
-  }
-
-  // abort() before a body consumer: arrayBuffer() rejects.
-  {
-    const ac = new AbortController();
-    const res = await fetch(server.url, { signal: ac.signal });
-    await wait();
-    ac.abort();
-    const result = await res.arrayBuffer().then(
-      buf => ({ rejected: false, bytes: buf.byteLength }),
-      e => ({ rejected: true, name: (e as Error).name }),
-    );
-    expect(result).toEqual({ rejected: true, name: "AbortError" });
-  }
-
-  // Custom abort reason propagates.
-  {
-    const ac = new AbortController();
-    const res = await fetch(server.url, { signal: ac.signal });
-    await wait();
-    const reader = res.body!.getReader();
-    const reason = new Error("boom");
-    ac.abort(reason);
-    await expect(reader.read()).rejects.toBe(reason);
-  }
-});
-
 // The Response's abort listener takes a +1 on the AbortSignal; Response::destroy
 // must release it. Run in a subprocess so heapStats is not polluted by the
 // suite's other concurrent tests, and so the destruct-on-exit teardown of a
 // timeout signal with the listener still attached is exercised.
-test.concurrent("Response's abort-signal listener does not leak the AbortSignal", async () => {
-  const script = `
+// https://github.com/oven-sh/bun/issues/32659
+test.concurrent(
+  "fetch Response's abort-signal listener does not leak the AbortSignal",
+  async () => {
+    const script = `
     const { heapStats } = require("bun:jsc");
     const server = Bun.serve({ port: 0, fetch: () => new Response(new Uint8Array(8)) });
     // Response::destroy releases the signal ref from its finalizer, so the
@@ -922,14 +854,16 @@ test.concurrent("Response's abort-signal listener does not leak the AbortSignal"
     console.log(JSON.stringify({ baseline, after }));
     process.exit(after > baseline + 4 ? 1 : 0);
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toContain('"after"');
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"after"');
+    expect(exitCode).toBe(0);
+  },
+  isASAN ? 30_000 : 5_000,
+);

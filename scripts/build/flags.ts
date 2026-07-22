@@ -1398,26 +1398,28 @@ export const linkerFlags: Flag[] = [
 
 /**
  * Whether this target links with a symbol ordering file (lld
- * `--symbol-ordering-file` on linux, Apple ld `-order_file` on darwin). Only
- * where the startup win is worth a relink: release builds, not under a
- * sanitizer — the tracer swaps `.text` out for a private copy, and nobody
- * measures startup RSS on an ASAN build anyway.
+ * `--symbol-ordering-file` on linux, `-order_file` on darwin, which both Apple
+ * ld and ld64.lld take). Only where the startup win is worth a relink: release
+ * builds, not under a sanitizer — the tracer swaps `.text` out for a private
+ * copy, and nobody measures startup RSS on an ASAN build anyway.
+ *
+ * This says where the order file is CONSUMED, not where it is produced. A
+ * cross-compiled lane cannot trace its own binary (`canTraceOrderFile`), so it
+ * inherits an earlier build's file instead and still links ordered.
  *
  * linux gnu only: musl links statically, so LD_PRELOAD cannot load the tracer,
- * and android is cross-compiled, so the build host cannot run the binary to
- * trace it. Neither can produce an order file, so link them unordered rather
- * than attempt a trace that always fails and annotate every build about it.
+ * and no musl test host exists to trace on either. android has no order-file
+ * linker support. Neither can produce or consume one.
  *
- * darwin arm64 native only: x64 is cross-compiled (no native host to trace
- * on), the BRK-based tracer is arm64-only, and ld64.lld (the cross linker) has
- * no `-order_file`.
+ * darwin arm64 only: the BRK-based tracer is arm64-only, so x64 has nothing to
+ * inherit and linking with an always-empty order file just adds noise.
  */
 export function usesOrderFile(
-  cfg: Pick<Config, "linux" | "darwin" | "abi" | "arm64" | "release" | "asan" | "valgrind" | "crossTarget">,
+  cfg: Pick<Config, "linux" | "darwin" | "abi" | "arm64" | "release" | "asan" | "valgrind">,
 ): boolean {
   if (!cfg.release || cfg.asan || cfg.valgrind) return false;
   if (cfg.linux) return cfg.abi === "gnu";
-  if (cfg.darwin) return cfg.arm64 && cfg.crossTarget === undefined;
+  if (cfg.darwin) return cfg.arm64;
   return false;
 }
 

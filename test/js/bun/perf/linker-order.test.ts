@@ -62,8 +62,11 @@ describe("symbol ordering file", () => {
     expect(usesOrderFile(cfg())).toBe(true);
   });
 
-  it("is enabled for the native macOS arm64 release link", () => {
+  it("is enabled for the macOS arm64 release link, cross-compiled or not", () => {
     expect(usesOrderFile(cfg(darwinArm64))).toBe(true);
+    // The darwin build lane cross-compiles from linux; ld64.lld takes
+    // -order_file too, so it still links with an inherited one.
+    expect(usesOrderFile(cfg({ ...darwinArm64, crossTarget: "arm64-apple-macosx" }))).toBe(true);
   });
 
   it("is disabled where it cannot work or is not wanted", () => {
@@ -74,9 +77,8 @@ describe("symbol ordering file", () => {
     // annotate every build about it.
     expect(usesOrderFile(cfg({ abi: "musl" }))).toBe(false); // static: no LD_PRELOAD
     expect(usesOrderFile(cfg({ abi: "android" }))).toBe(false); // cross: cannot run the binary
-    // darwin x64 is cross-compiled and ld64.lld has no -order_file.
+    // darwin x64: the tracer is arm64-only, so nothing ever seeds the chain.
     expect(usesOrderFile(cfg({ ...darwinArm64, arm64: false }))).toBe(false);
-    expect(usesOrderFile(cfg({ ...darwinArm64, crossTarget: "arm64-apple-macosx" }))).toBe(false);
     expect(usesOrderFile(cfg({ linux: false, windows: true }))).toBe(false);
   });
 

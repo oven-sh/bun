@@ -453,7 +453,6 @@ for (let [gcTick, label] of [
             stdout: "pipe",
             stdin: new Blob([hugeString + "\n"]),
             stderr: "inherit",
-            lazy: true,
           });
         }
 
@@ -529,6 +528,31 @@ for (let [gcTick, label] of [
             });
           });
         }
+
+        it.skipIf(isWindows)("lazy: true releases an unread pipe after the child exits", async () => {
+          // With lazy the reader is paused until JS pulls. If a slot is never
+          // read, on_process_exit must still drain it so the fd and the
+          // Subprocess wrapper are released.
+          const refs: WeakRef<any>[] = [];
+          for (let i = 0; i < 50; i++) {
+            const p = spawn({
+              cmd: ["sh", "-c", "echo out; echo err >&2"],
+              stdout: "pipe",
+              stderr: "pipe",
+              lazy: true,
+            });
+            expect(await p.stdout.text()).toBe("out\n");
+            await p.exited;
+            refs.push(new WeakRef(p));
+          }
+          Bun.gc(true);
+          await Bun.sleep(0);
+          Bun.gc(true);
+          const alive = refs.filter(r => r.deref() !== undefined).length;
+          // Allow a couple of stragglers for GC timing; the regression kept
+          // all 50 Strong-rooted.
+          expect(alive).toBeLessThan(5);
+        });
 
         it("should allow reading stdout after a few milliseconds", async () => {
           for (let i = 0; i < 50; i++) {

@@ -33,9 +33,6 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// The standard parameters always emitted in a SETTINGS frame, in registry order.
-    pub const STANDARD_COUNT: usize = 7;
-
     pub fn apply(&mut self, id: SettingId, value: u32) {
         match id {
             SettingId::HeaderTableSize => self.header_table_size = value,
@@ -47,39 +44,6 @@ impl Settings {
             SettingId::EnableConnectProtocol => self.enable_connect_protocol = value,
             SettingId::NoRfc7540Priorities => {}
         }
-    }
-
-    /// Serialize all standard parameters as 6-byte big-endian units into `out`
-    /// (must be >= STANDARD_COUNT*6). Returns bytes written.
-    pub fn pack_standard(&self, out: &mut [u8]) -> usize {
-        let pairs = [
-            (SettingId::HeaderTableSize as u16, self.header_table_size),
-            (SettingId::EnablePush as u16, self.enable_push),
-            (
-                SettingId::MaxConcurrentStreams as u16,
-                self.max_concurrent_streams,
-            ),
-            (
-                SettingId::InitialWindowSize as u16,
-                self.initial_window_size,
-            ),
-            (SettingId::MaxFrameSize as u16, self.max_frame_size),
-            (
-                SettingId::MaxHeaderListSize as u16,
-                self.max_header_list_size,
-            ),
-            (
-                SettingId::EnableConnectProtocol as u16,
-                self.enable_connect_protocol,
-            ),
-        ];
-        let mut off = 0;
-        for (id, value) in pairs {
-            out[off..off + 2].copy_from_slice(&id.to_be_bytes());
-            out[off + 2..off + 6].copy_from_slice(&value.to_be_bytes());
-            off += 6;
-        }
-        off
     }
 }
 
@@ -124,13 +88,6 @@ pub fn validate_payload(payload: &[u8]) -> Option<ErrorCode> {
         i += 6;
     }
     None
-}
-
-/// §6.9.2: when INITIAL_WINDOW_SIZE changes, the delta (new - old) is applied to every stream's
-/// send window. May be negative (windows can legally go negative).
-#[inline]
-pub fn initial_window_delta(old_value: u32, new_value: u32) -> i64 {
-    new_value as i64 - old_value as i64
 }
 
 #[cfg(test)]

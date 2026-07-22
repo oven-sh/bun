@@ -2055,7 +2055,6 @@ pub struct PatchInfoRemove {
 
 pub struct PatchInfoPatch {
     pub name_and_version_hash: u64,
-    pub patch_path: Box<[u8]>, // owned copy of the lockfile string_buf slice
     pub contents_hash: u64,
 }
 
@@ -2127,7 +2126,6 @@ impl<'a> Installer<'a> {
         {
             return Ok(PatchInfo::Patch(PatchInfoPatch {
                 name_and_version_hash,
-                patch_path: patch.path.slice(string_buf).into(),
                 contents_hash: patch.patchfile_hash().unwrap(),
             }));
         }

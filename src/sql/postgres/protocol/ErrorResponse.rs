@@ -32,12 +32,6 @@ impl ErrorResponse {
         }
         Ok(Self::default())
     }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(NewReader { wrapped: context })
-    }
 }
 
 // `to_js` lives on an extension trait in the `bun_sql_jsc` crate.

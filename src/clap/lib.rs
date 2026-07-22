@@ -1,6 +1,5 @@
 #![warn(unused_must_use)]
 use core::fmt;
-use core::fmt::Write as _;
 
 use bun_core::fmt::CountingWriter;
 use bun_core::{self, Output};
@@ -852,120 +851,6 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
 #[inline(never)]
 pub fn help<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> crate::Result<()> {
     help_ex(stream, params, get_help_simple, get_value_simple)
-}
-
-/// Will print a usage message in the following format:
-/// [-abc] [--longa] [-d <valueText>] [--longb <valueText>] <valueText>
-///
-/// First all none value taking parameters, which have a short name are
-/// printed, then non positional parameters and finally the positinal.
-#[cold]
-#[inline(never)]
-pub fn usage_full<W, Id, E, C>(
-    stream: &mut W,
-    params: &[Param<Id>],
-    context: &C,
-    value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> crate::Result<()>
-where
-    W: fmt::Write,
-    Id: Copy,
-    E: Into<crate::Error>,
-{
-    let mut cos = CountingWriter::wrap(stream);
-    for param in params {
-        let Some(name) = param.names.short else {
-            continue;
-        };
-        if param.takes_value != Values::None {
-            continue;
-        }
-
-        if cos.count == 0 {
-            // "[-" goes to the inner writer (not `cs`), bypassing the counter.
-            write!(cos.inner(), "[-")?;
-        }
-        cos.write_char(name as char)?;
-    }
-    if cos.count != 0 {
-        cos.write_char(']')?;
-    }
-
-    let mut positional: Option<Param<Id>> = None;
-    for param in params {
-        if param.takes_value == Values::None && param.names.short.is_some() {
-            continue;
-        }
-
-        let prefix: &[u8] = if param.names.short.is_some() {
-            b"-"
-        } else {
-            b"--"
-        };
-
-        // A 1-elem array gives a 1-byte slice of the short char.
-        let short_buf;
-        let name: &[u8] = if let Some(s) = param.names.short {
-            short_buf = [s];
-            &short_buf
-        } else if let Some(l) = param.names.long {
-            l
-        } else {
-            positional = Some(*param);
-            continue;
-        };
-        if cos.count != 0 {
-            cos.write_char(' ')?;
-        }
-
-        write!(cos, "[{}{}", bstr::BStr::new(prefix), bstr::BStr::new(name))?;
-        write_takes_value_suffix(&mut cos, param, context, value_text)?;
-
-        cos.write_char(']')?;
-    }
-
-    if let Some(p) = positional {
-        if cos.count != 0 {
-            cos.write_char(' ')?;
-        }
-        write!(
-            cos,
-            "<{}>",
-            bstr::BStr::new(value_text(context, &p).map_err(Into::into)?)
-        )?;
-    }
-    Ok(())
-}
-
-/// A wrapper around usage_full for a simple value_text functions that
-/// cant return an error or take a context.
-#[cold]
-#[inline(never)]
-pub fn usage_ex<W, Id>(
-    stream: &mut W,
-    params: &[Param<Id>],
-    value_text: fn(&Param<Id>) -> &'static [u8],
-) -> crate::Result<()>
-where
-    W: fmt::Write,
-    Id: Copy,
-{
-    struct Context<Id> {
-        value_text: fn(&Param<Id>) -> &'static [u8],
-    }
-
-    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> crate::Result<&'static [u8]> {
-        Ok((c.value_text)(p))
-    }
-
-    usage_full(stream, params, &Context { value_text }, value::<Id>)
-}
-
-/// A wrapper around usage_ex that takes a `Param<Help>`.
-#[cold]
-#[inline(never)]
-pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> crate::Result<()> {
-    usage_ex(stream, params, get_value_simple)
 }
 
 #[cfg(test)]

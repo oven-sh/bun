@@ -163,9 +163,6 @@ impl FileCloser for WriteFile {
     fn close_after_io(&self) -> bool {
         self.close_after_io
     }
-    fn set_close_after_io(&mut self, v: bool) {
-        self.close_after_io = v;
-    }
     fn state(&self) -> &AtomicU8 {
         &self.state
     }
@@ -224,9 +221,6 @@ impl FileCloser for WriteFile {
 
 impl WriteFile {
     pub const IO_TAG: io::Tag = io::Tag::WriteFile;
-
-    pub const OPEN_FLAGS: i32 =
-        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
 
     pub fn on_writable(request: &mut io::Request) {
         // SAFETY: request points to WriteFile.io_request

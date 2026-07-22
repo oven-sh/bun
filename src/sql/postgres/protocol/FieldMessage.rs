@@ -8,7 +8,6 @@ use crate::postgres::AnyPostgresError;
 
 pub enum FieldMessage {
     Severity(String),
-    LocalizedSeverity(String),
     Code(String),
     Message(String),
     Detail(String),
@@ -38,7 +37,6 @@ impl FieldMessage {
     pub fn payload(&self) -> &String {
         match self {
             FieldMessage::Severity(s)
-            | FieldMessage::LocalizedSeverity(s)
             | FieldMessage::Code(s)
             | FieldMessage::Message(s)
             | FieldMessage::Detail(s)

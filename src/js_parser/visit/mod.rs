@@ -10,8 +10,8 @@ use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, TempRef,
-    VisitArgsOpts, is_eval_or_arguments,
+    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
+    is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -58,18 +58,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.temp_refs_to_declare = BumpVec::new_in(self.arena);
 
         self.visit_stmts(stmts, opts.kind)?;
-
-        // Prepend values for "this" and "arguments"
-        if let Some(fn_body_loc) = opts.fn_body_loc {
-            // Capture "this"
-            if let Some(ref_) = self.fn_only_data_visit.this_capture_ref {
-                let value = self.new_expr(E::This {}, fn_body_loc);
-                self.temp_refs_to_declare.push(TempRef {
-                    r#ref: ref_,
-                    value: Some(value),
-                });
-            }
-        }
         Ok(())
     }
 
@@ -140,7 +128,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts.extend_from_slice(body_stmts);
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
-            fn_body_loc: Some(body_loc),
         };
         let rc_binding = self.react_compiler_candidate_name.take();
         if rc_binding.is_some() {
@@ -872,7 +859,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.fn_or_arrow_data_visit = FnOrArrowDataVisit::default();
                     self.fn_only_data_visit = FnOnlyDataVisit {
                         is_this_nested: true,
-                        is_new_target_allowed: true,
                         class_name_ref: Some(shadow_ref),
 
                         // TODO: down transpilation
@@ -928,7 +914,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let old_is_this_captured = self.fn_only_data_visit.is_this_nested;
                 let old_class_name_ref = self.fn_only_data_visit.class_name_ref.take();
                 self.fn_only_data_visit.is_this_nested = true;
-                self.fn_only_data_visit.is_new_target_allowed = true;
                 self.fn_only_data_visit.class_name_ref = Some(shadow_ref);
                 // defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
                 // defer p.fn_only_data_visit.class_name_ref = old_class_name_ref;
@@ -1254,9 +1239,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-
-            // `p.macro.prepend_stmts` is write-only (nothing ever reads it),
-            // so the backref is intentionally not wired here.
 
             // visit all statements first
             let mut visited: ListManaged<'a, Stmt> =

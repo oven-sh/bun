@@ -471,34 +471,6 @@ fn registry() -> &'static Registry {
     &REG
 }
 
-/// Legacy runtime conversion. Kept for back-compat with out-of-tree callers;
-/// in-tree code goes through [`ConvertedTable::for_params`] /
-/// [`convert_params_array`].
-pub fn convert_params<Id>(params: &[Param<Id>]) -> (Vec<Param<usize>>, usize, usize, usize) {
-    let mut flags = 0usize;
-    let mut single = 0usize;
-    let mut multi = 0usize;
-    let mut converted: Vec<Param<usize>> = Vec::with_capacity(params.len());
-    for param in params {
-        let mut index = 0usize;
-        if param.names.long.is_some() || param.names.short.is_some() {
-            let ptr = match param.takes_value {
-                Values::None => &mut flags,
-                Values::OneOptional | Values::One => &mut single,
-                Values::Many => &mut multi,
-            };
-            index = *ptr;
-            *ptr += 1;
-        }
-        converted.push(Param {
-            id: index,
-            names: param.names,
-            takes_value: param.takes_value,
-        });
-    }
-    (converted, flags, single, multi)
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // ComptimeClap
 // ─────────────────────────────────────────────────────────────────────────────
@@ -668,21 +640,6 @@ impl<Id> ComptimeClap<Id> {
         &self.multi_options[param.id]
     }
 
-    /// Direct slot accessors — pair with [`find_param_index`] inside
-    /// `const { }` for zero-cost lookup at the call site.
-    #[inline]
-    pub fn flag_at(&self, converted_idx: usize) -> bool {
-        self.flags[self.table.converted[converted_idx].id]
-    }
-    #[inline]
-    pub fn option_at(&self, converted_idx: usize) -> Option<&'static [u8]> {
-        self.single_options[self.table.converted[converted_idx].id]
-    }
-    #[inline]
-    pub fn options_at(&self, converted_idx: usize) -> &[&'static [u8]] {
-        &self.multi_options[self.table.converted[converted_idx].id]
-    }
-
     pub fn positionals(&self) -> &[&'static [u8]] {
         &self.pos
     }
@@ -720,11 +677,5 @@ impl<Id> ComptimeClap<Id> {
             i += 1;
         }
         false
-    }
-
-    /// Exposed for `Args::find_param` callers; resolves via the hashed index.
-    #[inline]
-    pub fn find_param(&self, name: &[u8]) -> &'static Param<usize> {
-        self.table.find(name)
     }
 }

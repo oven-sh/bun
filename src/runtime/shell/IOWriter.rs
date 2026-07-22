@@ -162,7 +162,7 @@ pub(crate) type WriterImpl = bun_io::pipe_writer::PosixBufferedWriter<IOWriter>;
 pub(crate) type WriterImpl = bun_io::pipe_writer::WindowsBufferedWriter<IOWriter>;
 
 /// The `FilePoll.Owner` payload type for `SHELL_BUFFERED_WRITER`.
-#[allow(dead_code)]
+#[cfg(not(windows))]
 pub(crate) type Poll = WriterImpl;
 
 /// Poll-dispatch entry for `SHELL_BUFFERED_WRITER`. Holds an extra Arc strong
@@ -1092,17 +1092,6 @@ impl IOWriter {
             bytelist,
         });
         self.enqueue_internal(child)
-    }
-
-    /// Format `args` into the write buffer and enqueue the resulting chunk
-    /// for `child` (no builtin-name prefix).
-    pub fn enqueue_fmt(
-        &self,
-        child: ChildPtr,
-        bytelist: Option<*mut Vec<u8>>,
-        args: core::fmt::Arguments<'_>,
-    ) -> Yield {
-        self.enqueue_fmt_bltn(child, bytelist, None, args)
     }
 }
 

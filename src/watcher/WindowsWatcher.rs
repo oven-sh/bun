@@ -8,7 +8,6 @@ use bun_core::strings;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
 use bun_paths::{PathBuffer, WPathBuffer};
 use bun_ptr::{BackRef, RawSlice};
-use bun_threading::Mutex;
 
 use bun_sys::windows as w;
 use bun_sys::windows::HANDLE;
@@ -18,7 +17,6 @@ bun_core::declare_scope!(watcher, visible);
 pub(crate) type Platform = WindowsWatcher;
 
 pub struct WindowsWatcher {
-    pub mutex: Mutex,
     pub iocp: HANDLE,
     pub watcher: DirWatcher,
     pub buf: PathBuffer,
@@ -28,7 +26,6 @@ pub struct WindowsWatcher {
 impl Default for WindowsWatcher {
     fn default() -> Self {
         Self {
-            mutex: Mutex::default(),
             iocp: w::INVALID_HANDLE_VALUE,
             watcher: DirWatcher {
                 overlapped: bun_core::ffi::zeroed(),
@@ -45,12 +42,8 @@ impl Default for WindowsWatcher {
 pub enum Error {
     #[error("IocpFailed")]
     IocpFailed,
-    #[error("ReadDirectoryChangesFailed")]
-    ReadDirectoryChangesFailed,
     #[error("CreateFileFailed")]
     CreateFileFailed,
-    #[error("InvalidPath")]
-    InvalidPath,
 }
 
 #[repr(u32)]

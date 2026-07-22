@@ -164,7 +164,6 @@ pub mod lockfile {
     }
     pub use package::{HasInstallScript, Meta};
     pub mod tree {
-        pub use crate::lockfile_real::tree::IteratorPathStyle as PathStyle;
         pub use crate::lockfile_real::tree::*;
     }
 }
@@ -200,14 +199,6 @@ pub mod package_manager {
         GetJSONOptions as GetJsonOptions, GetResult as GetJsonResult,
         MapEntry as WorkspacePackageJsonCacheEntry, WorkspacePackageJSONCache,
     };
-
-    /// `populateManifestCache` `Packages` union.
-    pub enum ManifestCacheOptions<'a> {
-        Ids(&'a [crate::PackageID]),
-        Names(&'a [&'a [u8]]),
-    }
-    /// Alias used by `outdated_command.rs`.
-    pub type ManifestCacheRequest<'a> = ManifestCacheOptions<'a>;
 
     /// `PackageManifestMap.load` `When` enum — re-export the real enum so
     /// callers naming either path agree on one type.
@@ -258,8 +249,7 @@ pub mod windows_shim {
     #[cfg(windows)]
     pub use crate::_bun_shim_impl as bun_shim_impl;
     pub use bin_linking_shim::{
-        BinLinkingShim, Decoded, EMBEDDED_EXECUTABLE_DATA, Flags, Shebang,
-        embedded_executable_data, loose_decode,
+        BinLinkingShim, EMBEDDED_EXECUTABLE_DATA, Flags, Shebang, embedded_executable_data,
     };
 }
 
@@ -305,8 +295,7 @@ pub use extract_tarball::ExtractTarball;
 pub use lockfile::{LoadResult, LoadStep, Lockfile, PatchedDep};
 pub use package_manager::Options::LogLevel;
 pub use package_manager::{
-    GetJsonOptions, GetJsonResult, ManifestCacheOptions, ManifestCacheRequest, ManifestLoad,
-    WorkspaceFilter, WorkspacePackageJsonCacheEntry,
+    GetJsonOptions, GetJsonResult, ManifestLoad, WorkspaceFilter, WorkspacePackageJsonCacheEntry,
 };
 pub use repository::{Repository, RepositoryExt};
 pub use resolution::Tag as ResolutionTag;
@@ -344,59 +333,6 @@ pub use package_manager_real::{
 // ──────────────────────────────────────────────────────────────────────────
 pub type PackageManagerDoStub = package_manager_real::package_manager_options::Do;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
-
-/// Callback bundle passed to `PackageManager.runTasks`. Generic over each
-/// slot so call sites can pass `()` for unused hooks and a
-/// fn item for active ones. The trait-based dispatch lives in
-/// `package_manager_real::run_tasks::RunTasksCallbacks`; this value-level
-/// struct is only the call-site spelling.
-pub struct RunTasksCallbacks<E = (), R = (), M = (), D = ()> {
-    pub on_extract: E,
-    pub on_resolve: R,
-    pub on_package_manifest_error: M,
-    pub on_package_download_error: D,
-    pub progress_bar: bool,
-    pub manifests_only: bool,
-}
-impl<E: Default, R: Default, M: Default, D: Default> Default for RunTasksCallbacks<E, R, M, D> {
-    fn default() -> Self {
-        Self {
-            on_extract: E::default(),
-            on_resolve: R::default(),
-            on_package_manifest_error: M::default(),
-            on_package_download_error: D::default(),
-            progress_bar: false,
-            manifests_only: false,
-        }
-    }
-}
-
-/// MOVE_DOWN: `bun_resolver::package_json::PackageJSON` — the resolver crate
-/// depends on `bun_install` (for `Dependency`), so re-importing `PackageJSON`
-/// from there would create a cycle. Mounted here with the install-side field
-/// surface (`name`/`version`/`dependencies`/`arch`/`os`) so
-/// `lockfile::Package::from_package_json` can type-check; the resolver-only
-/// fields (`browser_map`, `exports`, …) stay in `bun_resolver` until the type
-/// is split into install-layer / resolver-layer halves.
-#[derive(Default)]
-pub struct PackageJSON {
-    pub name: Box<[u8]>,
-    pub version: Box<[u8]>,
-    pub arch: npm::Architecture,
-    pub os: npm::OperatingSystem,
-    pub package_manager_package_id: PackageID,
-    pub dependencies: PackageJSONDependencyMap,
-}
-
-#[derive(Default)]
-pub struct PackageJSONDependencyMap {
-    pub map: bun_collections::ArrayHashMap<bun_semver::String, Dependency>,
-    // Erased borrow of the package.json source contents (mirrors
-    // `bun_resolver::package_json::DependencyMap::source_buf`, which is
-    // likewise `'static`-erased); kept alive by the originating
-    // `PackageJSON::source_contents` for the lifetime of the map.
-    pub source_buf: &'static [u8],
-}
 
 /// `crate::ci_info` — install-tier shim for `bun_runtime::cli::ci_info`
 /// (`src/runtime/cli/ci_info.rs`). Only `detect_ci_name` is exposed; the

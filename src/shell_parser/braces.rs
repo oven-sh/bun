@@ -23,7 +23,6 @@ use bun_core::strings::{CodepointIterator, Cursor};
 pub enum StringEncoding {
     Ascii,
     Wtf8,
-    Utf16,
 }
 
 // ─── SrcAscii ──────────────────────────────────────────────────────────────
@@ -47,7 +46,6 @@ pub struct InputChar {
 #[derive(Copy, Clone)]
 struct AsciiIndexValue {
     char: u32,
-    escaped: bool,
 }
 
 impl SrcAscii {
@@ -71,7 +69,6 @@ impl SrcAscii {
         }
         Some(AsciiIndexValue {
             char: u32::from(b[self.i]),
-            escaped: false,
         })
     }
     #[inline]
@@ -82,7 +79,6 @@ impl SrcAscii {
         }
         Some(AsciiIndexValue {
             char: u32::from(b[self.i + 1]),
-            escaped: false,
         })
     }
     #[inline]
@@ -102,7 +98,6 @@ struct SrcUnicode {
 #[derive(Copy, Clone)]
 struct UnicodeIndexValue {
     char: u32,
-    width: u8,
 }
 
 impl SrcUnicode {
@@ -137,7 +132,6 @@ impl SrcUnicode {
         }
         Some(UnicodeIndexValue {
             char: self.cursor.c as u32,
-            width: self.cursor.width,
         })
     }
     #[inline]
@@ -147,7 +141,6 @@ impl SrcUnicode {
         }
         Some(UnicodeIndexValue {
             char: self.next_cursor.c as u32,
-            width: self.next_cursor.width,
         })
     }
     #[inline]
@@ -167,13 +160,6 @@ impl SrcUnicode {
 
 // ─── ShellCharIter ─────────────────────────────────────────────────────────
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ShellCharIterState {
-    Normal,
-    Single,
-    Double,
-}
-
 // PERF: Rust const
 // generics can't pick a field type from an enum value without an aux trait, so we
 // store both arms in a small enum and branch at runtime. Could split into three
@@ -186,9 +172,6 @@ enum ShellSrc {
 
 pub struct ShellCharIter<const E: StringEncoding> {
     src: ShellSrc,
-    pub state: ShellCharIterState,
-    pub prev: Option<InputChar>,
-    pub current: Option<InputChar>,
 }
 
 /// Surface trait so callers can name `<ShellCharIter<E> as CharIter>::InputChar` /
@@ -198,21 +181,7 @@ pub trait CharIter: Sized {
     type InputChar: Copy;
     fn init(bytes: &[u8]) -> Self;
     fn eat(&mut self) -> Option<Self::InputChar>;
-    fn peek(&mut self) -> Option<Self::InputChar>;
     fn read_char(&mut self) -> Option<Self::InputChar>;
-    fn src_bytes(&self) -> &[u8];
-    fn src_bytes_at_cursor(&self) -> &[u8];
-    fn cursor_pos(&self) -> usize;
-}
-
-impl<const E: StringEncoding> ShellCharIter<E> {
-    #[inline]
-    pub fn is_whitespace(c: InputChar) -> bool {
-        matches!(
-            c.char,
-            0x09 /* \t */ | 0x0D /* \r */ | 0x0A /* \n */ | 0x20 /* ' ' */
-        )
-    }
 }
 
 impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
@@ -226,50 +195,11 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
         } else {
             ShellSrc::Unicode(SrcUnicode::init(bytes))
         };
-        Self {
-            src,
-            state: ShellCharIterState::Normal,
-            prev: None,
-            current: None,
-        }
-    }
-
-    fn src_bytes(&self) -> &[u8] {
-        match &self.src {
-            ShellSrc::Ascii(a) => a.bytes(),
-            ShellSrc::Unicode(u) => u.iter.bytes,
-        }
-    }
-
-    fn src_bytes_at_cursor(&self) -> &[u8] {
-        let bytes = self.src_bytes();
-        match &self.src {
-            ShellSrc::Ascii(a) => {
-                if a.i >= bytes.len() {
-                    return b"";
-                }
-                &bytes[a.i..]
-            }
-            ShellSrc::Unicode(u) => {
-                if u.cursor.i as usize >= bytes.len() {
-                    return b"";
-                }
-                &bytes[u.cursor.i as usize..]
-            }
-        }
-    }
-
-    fn cursor_pos(&self) -> usize {
-        match &self.src {
-            ShellSrc::Ascii(a) => a.i,
-            ShellSrc::Unicode(u) => u.cursor.i as usize,
-        }
+        Self { src }
     }
 
     fn eat(&mut self) -> Option<InputChar> {
         if let Some(result) = self.read_char() {
-            self.prev = self.current;
-            self.current = Some(result);
             match &mut self.src {
                 ShellSrc::Ascii(a) => a.eat(result.escaped),
                 ShellSrc::Unicode(u) => u.eat(result.escaped),
@@ -279,25 +209,12 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
         None
     }
 
-    fn peek(&mut self) -> Option<InputChar> {
-        self.read_char()
-    }
-
     fn read_char(&mut self) -> Option<InputChar> {
-        let (mut ch, _width_or_escaped);
-        match &self.src {
-            ShellSrc::Ascii(a) => {
-                let iv = a.index()?;
-                ch = iv.char;
-                _width_or_escaped = iv.escaped as u8;
-            }
-            ShellSrc::Unicode(u) => {
-                let iv = u.index()?;
-                ch = iv.char;
-                _width_or_escaped = iv.width;
-            }
-        }
-        if ch != u32::from(b'\\') || self.state == ShellCharIterState::Single {
+        let mut ch = match &self.src {
+            ShellSrc::Ascii(a) => a.index()?.char,
+            ShellSrc::Unicode(u) => u.index()?.char,
+        };
+        if ch != u32::from(b'\\') {
             return Some(InputChar {
                 char: ch,
                 escaped: false,
@@ -305,43 +222,10 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
         }
 
         // Handle backslash
-        match self.state {
-            ShellCharIterState::Normal => {
-                let peeked = match &self.src {
-                    ShellSrc::Ascii(a) => a.index_next()?.char,
-                    ShellSrc::Unicode(u) => u.index_next()?.char,
-                };
-                ch = peeked;
-            }
-            ShellCharIterState::Double => {
-                let peeked = match &self.src {
-                    ShellSrc::Ascii(a) => a.index_next()?.char,
-                    ShellSrc::Unicode(u) => u.index_next()?.char,
-                };
-                match peeked {
-                    // Backslash only applies to these characters
-                    c if c == u32::from(b'$')
-                        || c == u32::from(b'`')
-                        || c == u32::from(b'"')
-                        || c == u32::from(b'\\')
-                        || c == u32::from(b'\n')
-                        || c == u32::from(b'#') =>
-                    {
-                        ch = peeked;
-                    }
-                    _ => {
-                        return Some(InputChar {
-                            char: ch,
-                            escaped: false,
-                        });
-                    }
-                }
-            }
-            // We checked `self.state == .Single` above so this is impossible.
-            // was `unreachable_unchecked()`; the lexer is on a
-            // cold path so trade the elided check for a defined panic.
-            ShellCharIterState::Single => unreachable!(),
-        }
+        ch = match &self.src {
+            ShellSrc::Ascii(a) => a.index_next()?.char,
+            ShellSrc::Unicode(u) => u.index_next()?.char,
+        };
 
         Some(InputChar {
             char: ch,
@@ -1101,7 +985,6 @@ fn build_expansion_table(
     #[derive(Copy, Clone)]
     struct BraceState {
         tok_idx: u16,
-        variants: u16,
         prev_tok_end: u16,
     }
     let mut brace_stack: SmallVec<[BraceState; MAX_NESTED_BRACES]> = SmallVec::new();
@@ -1111,7 +994,6 @@ fn build_expansion_table(
     }
 
     let mut i: u16 = 0;
-    let mut prev_close = false;
     while (i as usize) < tokens.len() {
         match &mut tokens[i as usize] {
             Token::Open(open) => {
@@ -1119,40 +1001,29 @@ fn build_expansion_table(
                 open.idx = table_idx;
                 brace_stack.push(BraceState {
                     tok_idx: i,
-                    variants: 0,
                     prev_tok_end: i,
                 });
             }
             Token::Close => {
-                let mut top = brace_stack.pop().unwrap();
+                let top = brace_stack.pop().unwrap();
 
                 table.push(ExpansionVariant::new(top.prev_tok_end + 1, i));
-
-                top.prev_tok_end = i;
-                top.variants += 1;
 
                 if let Token::Open(open) = &mut tokens[top.tok_idx as usize] {
                     open.end = u16::try_from(table.len()).expect("int cast");
                 }
-                prev_close = true;
             }
             Token::Comma => {
                 let top = brace_stack.last_mut().unwrap();
 
                 table.push(ExpansionVariant::new(top.prev_tok_end + 1, i));
 
-                prev_close = false;
-
                 top.prev_tok_end = i;
-                top.variants += 1;
             }
-            _ => {
-                prev_close = false;
-            }
+            _ => {}
         }
         i += 1;
     }
-    let _ = prev_close;
 
     if cfg!(debug_assertions) {
         for variant in table.iter() {
@@ -1370,7 +1241,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             if let Token::Text(last) = &mut self.tokens[last_idx] {
                 if ENCODING == Encoding::Ascii {
                     // SAFETY: ascii codepoint is u8
-                    last.append_char(char as u8)?;
+                    last.append_slice(&[char as u8])?;
                     return Ok(());
                 }
                 let mut buf = [0u8; 4];

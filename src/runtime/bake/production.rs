@@ -1402,7 +1402,8 @@ pub(super) extern "C" fn BakeProdResolve(
 /// Canonical definition lives in `bun_bundler::bake_types::production` (lower
 /// tier) so the bundler and runtime share ONE nominal type. Re-exported here
 /// for `bake::production::EntryPointMap` callers.
-pub use bun_bundler::bake_types::production::{EntryPointHashMap, EntryPointMap, InputFile};
+pub use bun_bundler::bake_types::production::EntryPointMap;
+use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
 impl framework_router::InsertionHandler for EntryPointMap {
     fn get_file_id_for_router(
@@ -1674,18 +1675,6 @@ impl TypeAndFlags {
 
     pub const fn bits(self) -> i32 {
         self.0
-    }
-
-    pub const fn r#type(self) -> u8 {
-        (self.0 & 0xFF) as u8
-    }
-
-    /// Don't inclue the runtime client code (e.g.
-    /// bun-framework-react/client.tsx). This is used if we know a server
-    /// component does not include any downstream usages of "use client" and so
-    /// we can omit the client code entirely.
-    pub const fn no_client(self) -> bool {
-        ((self.0 >> 8) & 1) != 0
     }
 }
 

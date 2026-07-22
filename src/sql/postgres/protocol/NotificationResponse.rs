@@ -30,10 +30,4 @@ impl NotificationResponse {
                 .map_err(|_| AnyPostgresError::OutOfMemory)?,
         })
     }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(NewReader { wrapped: context })
-    }
 }

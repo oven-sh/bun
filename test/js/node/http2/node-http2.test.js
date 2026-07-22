@@ -857,8 +857,11 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(client.destroyed).toBeFalse();
             expect(client.originSet.length).toBe(1);
             expect(client.pendingSettingsAck).toBeTrue();
-            assertSettings(client.localSettings);
-            expect(client.remoteSettings).toBeNull();
+            // node: while `connecting || destroyed` both getters return a fresh empty object; the
+            // first SETTINGS ACK populates localSettings, the peer's first SETTINGS frame populates
+            // remoteSettings.
+            expect(client.localSettings).toEqual({});
+            expect(client.remoteSettings).toEqual({});
             const headers = { ":path": "/" };
             const req = client.request(headers);
             expect(req.closed).toBeFalse();
@@ -3535,6 +3538,75 @@ it("http2 server sends each session's frames to its own peer under interleaved r
       { i: 1, status: 200, total: BIG.length * N },
     ]);
   } finally {
+    server.close();
+  }
+});
+
+// node's Http2Session.remoteSettings/localSettings getters return `{}` while the session is
+// connecting or destroyed and a cached Settings object once the handle is live, so
+// `session.remoteSettings.maxConcurrentStreams` is always a safe read. Bun previously returned
+// `null` in the connect()-to-first-SETTINGS window, throwing TypeError on property access.
+it("remoteSettings/localSettings are never null before the peer's SETTINGS arrives", async () => {
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  const { promise: serverSessionPromise, resolve: resolveServerSession } = Promise.withResolvers();
+  server.on("session", resolveServerSession);
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  let client;
+  try {
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`, {
+      settings: { enablePush: false, initialWindowSize: 99999 },
+    });
+    const { promise: donePromise, resolve: resolveDone, reject: rejectDone } = Promise.withResolvers();
+    const { promise: remotePromise, resolve: resolveRemote, reject: rejectRemote } = Promise.withResolvers();
+    const { promise: localPromise, resolve: resolveLocal, reject: rejectLocal } = Promise.withResolvers();
+    client.on("error", err => {
+      rejectRemote(err);
+      rejectLocal(err);
+      rejectDone(err);
+    });
+    client.once("remoteSettings", resolveRemote);
+    client.once("localSettings", resolveLocal);
+
+    // Synchronously after connect(): node returns a fresh {} each read; bun used to return null.
+    expect(client.remoteSettings).toEqual({});
+    expect(client.localSettings).toEqual({});
+    // The documented use (deciding how many requests to pipeline) must not throw.
+    expect(client.remoteSettings.maxConcurrentStreams).toBeUndefined();
+
+    const remote = await remotePromise;
+    expect(typeof remote.maxConcurrentStreams).toBe("number");
+    // After the peer's SETTINGS arrives the getter reports it and caches the object identity.
+    expect(client.remoteSettings).toBe(remote);
+    expect(client.remoteSettings).toBe(client.remoteSettings);
+
+    const local = await localPromise;
+    // localSettings reflects the ACKed values (the constructor's submitted settings), not pre-ACK.
+    expect(local.enablePush).toBe(false);
+    expect(local.initialWindowSize).toBe(99999);
+    expect(client.localSettings).toBe(local);
+
+    // Server side: the incoming socket is already connected, so the getter falls through to the
+    // protocol defaults immediately (never `{}` on the server path).
+    const serverSession = await serverSessionPromise;
+    expect(typeof serverSession.remoteSettings).toBe("object");
+    expect(serverSession.remoteSettings).not.toBeNull();
+    expect(typeof serverSession.remoteSettings.maxConcurrentStreams).toBe("number");
+    expect(typeof serverSession.localSettings).toBe("object");
+    expect(serverSession.localSettings).not.toBeNull();
+
+    client.on("close", resolveDone);
+    client.destroy();
+    await donePromise;
+    // After destroy both getters go back to {}.
+    expect(client.remoteSettings).toEqual({});
+    expect(client.localSettings).toEqual({});
+  } finally {
+    client?.destroy();
     server.close();
   }
 });

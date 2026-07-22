@@ -984,112 +984,40 @@ impl Do {
         self.contains(Do::SAVE_LOCKFILE)
     }
     #[inline]
-    pub fn set_save_lockfile(&mut self, v: bool) {
-        self.set(Do::SAVE_LOCKFILE, v);
-    }
-    #[inline]
     pub fn load_lockfile(self) -> bool {
         self.contains(Do::LOAD_LOCKFILE)
-    }
-    #[inline]
-    pub fn set_load_lockfile(&mut self, v: bool) {
-        self.set(Do::LOAD_LOCKFILE, v);
     }
     #[inline]
     pub fn install_packages(self) -> bool {
         self.contains(Do::INSTALL_PACKAGES)
     }
     #[inline]
-    pub fn set_install_packages(&mut self, v: bool) {
-        self.set(Do::INSTALL_PACKAGES, v);
-    }
-    #[inline]
-    pub fn write_package_json(self) -> bool {
-        self.contains(Do::WRITE_PACKAGE_JSON)
-    }
-    #[inline]
-    pub fn set_write_package_json(&mut self, v: bool) {
-        self.set(Do::WRITE_PACKAGE_JSON, v);
-    }
-    #[inline]
     pub fn run_scripts(self) -> bool {
         self.contains(Do::RUN_SCRIPTS)
-    }
-    #[inline]
-    pub fn set_run_scripts(&mut self, v: bool) {
-        self.set(Do::RUN_SCRIPTS, v);
     }
     #[inline]
     pub fn save_yarn_lock(self) -> bool {
         self.contains(Do::SAVE_YARN_LOCK)
     }
     #[inline]
-    pub fn set_save_yarn_lock(&mut self, v: bool) {
-        self.set(Do::SAVE_YARN_LOCK, v);
-    }
-    #[inline]
     pub fn print_meta_hash_string(self) -> bool {
         self.contains(Do::PRINT_META_HASH_STRING)
-    }
-    #[inline]
-    pub fn set_print_meta_hash_string(&mut self, v: bool) {
-        self.set(Do::PRINT_META_HASH_STRING, v);
-    }
-    #[inline]
-    pub fn verify_integrity(self) -> bool {
-        self.contains(Do::VERIFY_INTEGRITY)
-    }
-    #[inline]
-    pub fn set_verify_integrity(&mut self, v: bool) {
-        self.set(Do::VERIFY_INTEGRITY, v);
     }
     #[inline]
     pub fn summary(self) -> bool {
         self.contains(Do::SUMMARY)
     }
     #[inline]
-    pub fn set_summary(&mut self, v: bool) {
-        self.set(Do::SUMMARY, v);
-    }
-    #[inline]
     pub fn trust_dependencies_from_args(self) -> bool {
         self.contains(Do::TRUST_DEPENDENCIES_FROM_ARGS)
-    }
-    #[inline]
-    pub fn set_trust_dependencies_from_args(&mut self, v: bool) {
-        self.set(Do::TRUST_DEPENDENCIES_FROM_ARGS, v);
     }
     #[inline]
     pub fn update_to_latest(self) -> bool {
         self.contains(Do::UPDATE_TO_LATEST)
     }
     #[inline]
-    pub fn set_update_to_latest(&mut self, v: bool) {
-        self.set(Do::UPDATE_TO_LATEST, v);
-    }
-    #[inline]
-    pub fn analyze(self) -> bool {
-        self.contains(Do::ANALYZE)
-    }
-    #[inline]
-    pub fn set_analyze(&mut self, v: bool) {
-        self.set(Do::ANALYZE, v);
-    }
-    #[inline]
     pub fn recursive(self) -> bool {
         self.contains(Do::RECURSIVE)
-    }
-    #[inline]
-    pub fn set_recursive(&mut self, v: bool) {
-        self.set(Do::RECURSIVE, v);
-    }
-    #[inline]
-    pub fn prefetch_resolved_tarballs(self) -> bool {
-        self.contains(Do::PREFETCH_RESOLVED_TARBALLS)
-    }
-    #[inline]
-    pub fn set_prefetch_resolved_tarballs(&mut self, v: bool) {
-        self.set(Do::PREFETCH_RESOLVED_TARBALLS, v);
     }
 }
 
@@ -1100,10 +1028,6 @@ impl Enable {
     #[inline]
     pub fn cache(self) -> bool {
         self.contains(Enable::CACHE)
-    }
-    #[inline]
-    pub fn set_cache(&mut self, v: bool) {
-        self.set(Enable::CACHE, v);
     }
     #[inline]
     pub fn manifest_cache(self) -> bool {

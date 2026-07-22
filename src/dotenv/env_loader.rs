@@ -20,12 +20,6 @@ pub enum DotEnvFileSuffix {
     Test,
 }
 
-/// Downstream callers (transpiler, install, lockfile) variously spell the load-mode
-/// discriminant `Kind` or `Mode`; both alias the same `DotEnvFileSuffix` enum so the
-/// crate exports a single canonical type without forcing a tree-wide rename.
-pub type Kind = DotEnvFileSuffix;
-pub type Mode = DotEnvFileSuffix;
-
 /// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
 /// `bun_resolver` in the crate graph, so the concrete
 /// `bun_resolver::fs::DirEntry` is taken generically; the only operation
@@ -476,7 +470,6 @@ impl<'a> Loader<'a> {
                 *cxx_gop.key_ptr = Box::<[u8]>::from(&**cxx_gop.key_ptr);
                 *cxx_gop.value_ptr = HashTableValue {
                     value: ccache_path.clone(),
-                    conditional: false,
                 };
             }
             let c_gop = self
@@ -484,10 +477,7 @@ impl<'a> Loader<'a> {
                 .get_or_put_without_value(b"CMAKE_C_COMPILER_LAUNCHER")?;
             if !c_gop.found_existing {
                 *c_gop.key_ptr = Box::<[u8]>::from(&**c_gop.key_ptr);
-                *c_gop.value_ptr = HashTableValue {
-                    value: ccache_path,
-                    conditional: false,
-                };
+                *c_gop.value_ptr = HashTableValue { value: ccache_path };
             }
         }
         Ok(())
@@ -1258,10 +1248,7 @@ impl<'a> Parser<'a> {
                 }
                 // else: previous value freed by Drop on assignment below
             }
-            *entry.value_ptr = HashTableValue {
-                value: value_owned,
-                conditional: false,
-            };
+            *entry.value_ptr = HashTableValue { value: value_owned };
         }
         if !IS_PROCESS && EXPAND {
             // borrowck — index-based iteration: clone the value bytes, run
@@ -1275,7 +1262,6 @@ impl<'a> Parser<'a> {
                 if let Some(expanded) = self.expand_value(map, &current)? {
                     map.map.values_mut()[idx] = HashTableValue {
                         value: Box::from(expanded),
-                        conditional: false,
                     };
                 }
                 idx += 1;
@@ -1307,16 +1293,11 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Downstream callers spell this `dot_env::Value` / `dotenv::map::Entry`; both alias the
-/// canonical `HashTableValue`.
-pub type Value = HashTableValue;
-
 #[derive(Default, Clone)]
 pub struct HashTableValue {
     // `Box<[u8]>` is owned-by-default, trading some copies for uniform
     // ownership.
     pub value: Box<[u8]>,
-    pub conditional: bool,
 }
 
 // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
@@ -1430,23 +1411,6 @@ impl Map {
         self.map.iterator()
     }
 
-    /// Shared-borrow iteration over `(key, value)` pairs in insertion order.
-    /// This is the `&self` surface for callers (e.g. shell `EnvMapIter`) that
-    /// only read entries.
-    #[inline]
-    pub fn iter(
-        &self,
-    ) -> core::iter::Zip<core::slice::Iter<'_, Box<[u8]>>, core::slice::Iter<'_, HashTableValue>>
-    {
-        self.map.iter()
-    }
-
-    /// Number of entries in the env map.
-    #[inline]
-    pub fn count(&self) -> usize {
-        self.map.count()
-    }
-
     #[inline]
     pub fn init() -> Map {
         Map {
@@ -1464,7 +1428,6 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
-                conditional: false,
             },
         )
     }
@@ -1482,7 +1445,6 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
-                conditional: false,
             },
         );
     }
@@ -1492,19 +1454,11 @@ impl Map {
         let gop = self.map.get_or_put(key)?;
         *gop.value_ptr = HashTableValue {
             value: Box::from(value),
-            conditional: false,
         };
         if !gop.found_existing {
             *gop.key_ptr = Box::from(key);
         }
         Ok(())
-    }
-
-    #[inline]
-    pub fn put_alloc_key(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        // `Box<[u8]>` storage forces a copy, making this equivalent to
-        // `put_alloc_key_and_value` (which dupes both key and value).
-        self.put_alloc_key_and_value(key, value)
     }
 
     #[inline]
@@ -1523,28 +1477,6 @@ impl Map {
         self.map.get_or_put(key)
     }
 
-    pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // `iterator()` requires `&mut self`; iterate parallel slices instead.
-        let count = self.map.count();
-        writer.write_str("{")?;
-        for (i, (k, v)) in self
-            .map
-            .keys()
-            .iter()
-            .zip(self.map.values().iter())
-            .enumerate()
-        {
-            writer.write_str("\n    ")?;
-            write!(writer, "{}", bstr::BStr::new(k))?;
-            writer.write_str(": ")?;
-            write!(writer, "{}", bstr::BStr::new(&v.value))?;
-            if i < count - 1 {
-                writer.write_str(", ")?;
-            }
-        }
-        writer.write_str("\n}")
-    }
-
     #[inline]
     pub fn get(&self, key: &[u8]) -> Option<&[u8]> {
         self.map.get(key).map(|entry| entry.value.as_ref())
@@ -1556,16 +1488,9 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
-                conditional: false,
             },
         )?;
         Ok(())
-    }
-
-    #[inline]
-    pub fn get_or_put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        // Alias of `put_default`.
-        self.put_default(key, value)
     }
 
     pub fn remove(&mut self, key: &[u8]) {

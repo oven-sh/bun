@@ -194,10 +194,6 @@ impl Indent {
         self.0 += n;
     }
 
-    pub fn dec(&mut self, n: usize) {
-        self.0 -= n;
-    }
-
     pub fn add(self, n: usize) -> Indent {
         Indent(self.0 + n)
     }
@@ -316,14 +312,6 @@ impl Pos {
         }
     }
 
-    pub fn inc(&mut self, n: usize) {
-        self.0 += n;
-    }
-
-    pub fn dec(&mut self, n: usize) {
-        self.0 -= n;
-    }
-
     pub fn add(self, n: usize) -> Pos {
         Pos(self.0 + n)
     }
@@ -366,10 +354,6 @@ impl Line {
 
     pub fn inc(&mut self, n: usize) {
         self.0 += n;
-    }
-
-    pub fn dec(&mut self, n: usize) {
-        self.0 -= n;
     }
 
     pub fn add(self, n: usize) -> Line {
@@ -689,40 +673,6 @@ pub mod chars {
         cw == 0x20 || cw == 0x09
     }
 
-    pub fn is_ns_plain_safe_out<Enc: Encoding>(c: Enc::Unit) -> bool {
-        is_ns_char::<Enc>(c)
-    }
-
-    pub fn is_ns_plain_safe_in<Enc: Encoding>(c: Enc::Unit) -> bool {
-        // TODO: inline isCFlowIndicator
-        is_ns_char::<Enc>(c) && !is_c_flow_indicator::<Enc>(c)
-    }
-
-    pub fn is_c_indicator<Enc: Encoding>(c: Enc::Unit) -> bool {
-        matches!(
-            Enc::wide(c),
-            // - ? : , [ ] { } # & * ! | > ' " % @ `
-            0x2D | 0x3F
-                | 0x3A
-                | 0x2C
-                | 0x5B
-                | 0x5D
-                | 0x7B
-                | 0x7D
-                | 0x23
-                | 0x26
-                | 0x2A
-                | 0x21
-                | 0x7C
-                | 0x3E
-                | 0x27
-                | 0x22
-                | 0x25
-                | 0x40
-                | 0x60
-        )
-    }
-
     pub fn is_c_flow_indicator<Enc: Encoding>(c: Enc::Unit) -> bool {
         matches!(Enc::wide(c), 0x2C | 0x5B | 0x5D | 0x7B | 0x7D)
     }
@@ -973,25 +923,6 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
         Ok(())
     }
 
-    pub fn append_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
-        self.drain_whitespace()?;
-        let input = self.input;
-        match &mut self.str {
-            YamlString::Range(range) => {
-                if range.is_empty() {
-                    range.off = off;
-                    range.end = off;
-                }
-                debug_assert!(range.end == off);
-                range.end = end;
-            }
-            YamlString::List(list) => {
-                list.extend_from_slice(&input[off.cast()..end.cast()]);
-            }
-        }
-        Ok(())
-    }
-
     pub fn append_expected_source_slice(
         &mut self,
         off: Pos,
@@ -1048,24 +979,6 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
                 self.str = YamlString::List(list);
             }
             YamlString::List(list) => list.extend_from_slice(s),
-        }
-        Ok(())
-    }
-
-    pub fn append_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
-        if n == 0 {
-            return Ok(());
-        }
-        self.drain_whitespace()?;
-        let input = self.input;
-        match &mut self.str {
-            YamlString::Range(range) => {
-                let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + n);
-                list.extend_from_slice(range.slice(input));
-                bun_core::vec::push_n(&mut list, unit, n);
-                self.str = YamlString::List(list);
-            }
-            YamlString::List(list) => bun_core::vec::push_n(list, unit, n),
         }
         Ok(())
     }
@@ -1176,16 +1089,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_source_whitespace(unit, pos)
     }
 
-    pub fn append_source_slice(
-        &mut self,
-        parser: &Parser<'i, Enc>,
-        off: Pos,
-        end: Pos,
-    ) -> Result<(), AllocError> {
-        self.check_append(parser);
-        self.str_builder.append_source_slice(off, end)
-    }
-
     // may or may not contain whitespace
     pub fn append_unknown_source_slice(
         &mut self,
@@ -1225,19 +1128,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
     ) -> Result<(), AllocError> {
         self.check_append(parser);
         self.str_builder.append_slice(str)
-    }
-
-    pub fn append_n_times(
-        &mut self,
-        parser: &Parser<'i, Enc>,
-        unit: Enc::Unit,
-        n: usize,
-    ) -> Result<(), AllocError> {
-        if n == 0 {
-            return Ok(());
-        }
-        self.check_append(parser);
-        self.str_builder.append_n_times(unit, n)
     }
 
     pub fn append_whitespace_n_times(
@@ -3435,19 +3325,6 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         self.has_anchor.as_ref().map(|t| t.line)
     }
 
-    pub fn anchor_indent(&self) -> Option<Indent> {
-        self.has_anchor.as_ref().map(|t| t.indent)
-    }
-
-    pub fn mapping_anchor(&self) -> Option<StringRange> {
-        self.has_mapping_anchor
-            .as_ref()
-            .and_then(|t| match &t.data {
-                TokenData::Anchor(r) => Some(*r),
-                _ => None,
-            })
-    }
-
     pub fn implicit_key_anchors(
         &self,
         implicit_key_line: Line,
@@ -3526,10 +3403,6 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         let t = self.tag();
         self.has_tag = None;
         t
-    }
-
-    pub fn tag_indent(&self) -> Option<Indent> {
-        self.has_tag.as_ref().map(|t| t.indent)
     }
 }
 

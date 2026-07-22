@@ -63,11 +63,4 @@ impl StartupMessage {
         writer.write(&[0u8])?;
         Ok(())
     }
-
-    pub fn write<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
-        self.write_internal(writer)
-    }
 }

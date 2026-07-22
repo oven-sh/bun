@@ -5,7 +5,7 @@ use core::cell::{Cell, UnsafeCell};
 use core::mem::MaybeUninit;
 
 use bun_collections::LinearFifo;
-use bun_collections::linear_fifo::{DynamicBuffer, LinearFifoBuffer, SliceBuffer, StaticBuffer};
+use bun_collections::linear_fifo::{DynamicBuffer, LinearFifoBuffer, StaticBuffer};
 
 use crate::Condition;
 use crate::Mutex;
@@ -51,21 +51,6 @@ impl<T: Copy, const N: usize> Channel<T, StaticBuffer<T, N>> {
     }
 }
 
-impl<'a, T: Copy> Channel<T, SliceBuffer<'a, T>> {
-    #[inline]
-    pub fn init_slice(buf: &'a mut [T]) -> Self {
-        Self::with_buffer(LinearFifo::<T, SliceBuffer<'a, T>>::init(buf))
-    }
-}
-
-impl<T: Copy> Channel<T, DynamicBuffer<T>> {
-    #[inline]
-    pub fn init_dynamic() -> Self {
-        // No allocator param; this non-AST crate uses the global mimalloc.
-        Self::with_buffer(LinearFifo::<T, DynamicBuffer<T>>::init())
-    }
-}
-
 // `T: Copy` because `LinearFifo::write`/`read` are slice-copy based. All
 // in-tree channel payloads are POD; revisit if a non-`Copy` T appears.
 impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
@@ -79,39 +64,8 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         }
     }
 
-    pub fn close(&self) {
-        let _guard = self.mutex.lock_guard();
-        if self.is_closed.get() {
-            return;
-        }
-        self.is_closed.set(true);
-        self.putters.broadcast();
-        self.getters.broadcast();
-    }
-
-    pub fn try_write_item(&self, item: T) -> Result<bool, ChannelError> {
-        let wrote = self.write(core::slice::from_ref(&item))?;
-        Ok(wrote == 1)
-    }
-
     pub fn write_item(&self, item: T) -> Result<(), ChannelError> {
         self.write_all(core::slice::from_ref(&item))
-    }
-
-    pub fn write(&self, items: &[T]) -> Result<usize, ChannelError> {
-        self.write_items(items, false)
-    }
-
-    pub fn try_read_item(&self) -> Result<Option<T>, ChannelError> {
-        let mut items: [MaybeUninit<T>; 1] = [MaybeUninit::uninit()];
-        // SAFETY: `read` only writes initialized `T` into the first `n` slots
-        // and returns `n`; we never read an uninitialized slot.
-        let slice = unsafe { &mut *items.as_mut_ptr().cast::<[T; 1]>() };
-        if self.read(slice)? != 1 {
-            return Ok(None);
-        }
-        // SAFETY: read() returned 1, so items[0] is initialized.
-        Ok(Some(unsafe { items[0].assume_init_read() }))
     }
 
     pub fn read_item(&self) -> Result<T, ChannelError> {
@@ -121,10 +75,6 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         self.read_all(slice)?;
         // SAFETY: read_all() filled all slots.
         Ok(unsafe { items[0].assume_init_read() })
-    }
-
-    pub fn read(&self, items: &mut [T]) -> Result<usize, ChannelError> {
-        self.read_items(items, false)
     }
 
     pub fn write_all(&self, items: &[T]) -> Result<(), ChannelError> {

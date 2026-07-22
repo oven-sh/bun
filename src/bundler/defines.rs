@@ -32,25 +32,6 @@ pub(crate) use bun_ast::ExprData as DefineValue;
 
 // `Expr::Data` stores `Number`/`Undefined` inline (not via pointer), so no
 // pointer indirection is needed for these constants.
-pub struct Globals;
-impl Globals {
-    pub const UNDEFINED: bun_ast::E::Undefined = bun_ast::E::Undefined;
-    pub const NAN: bun_ast::E::Number = bun_ast::E::Number::new(f64::NAN);
-    pub const INFINITY: bun_ast::E::Number = bun_ast::E::Number::new(f64::INFINITY);
-
-    #[inline]
-    pub fn undefined_data() -> ExprData {
-        ExprData::EUndefined(bun_ast::E::Undefined)
-    }
-    #[inline]
-    pub fn nan_data() -> ExprData {
-        ExprData::ENumber(Globals::NAN)
-    }
-    #[inline]
-    pub fn infinity_data() -> ExprData {
-        ExprData::ENumber(Globals::INFINITY)
-    }
-}
 
 use bun_paths::fs::Path as FsPath;
 // `Path::init` is not `const fn`; lazily build the path.

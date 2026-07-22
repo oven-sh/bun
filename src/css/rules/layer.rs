@@ -2,7 +2,6 @@ use core::fmt;
 
 use bun_alloc::Arena;
 use bun_ast::ImportRecord;
-use bun_collections::ArrayHashMap;
 
 use crate as css;
 use crate::css_rules::{CssRuleList, Location};
@@ -22,7 +21,6 @@ pub struct LayerName {
 // The inline hash/eql context is replaced by `Hash`/`PartialEq` impls on `LayerName` below.
 // Iteration order is insertion order (collections/array_hash_map.rs)
 // regardless of hash function.
-pub type LayerNameHashMap<V> = ArrayHashMap<LayerName, V>;
 
 impl core::hash::Hash for LayerName {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {

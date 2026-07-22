@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::sync::atomic::AtomicU32;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
@@ -66,8 +65,6 @@ pub struct AsyncModule {
     pub any_task: bun_event_loop::AnyTask::AnyTask,
 }
 
-pub type Id = u32;
-
 pub(crate) struct PackageDownloadError<'a> {
     pub name: &'a [u8],
     pub resolution: Resolution,
@@ -88,7 +85,6 @@ pub type Map = Vec<AsyncModule>;
 pub struct Queue {
     pub map: Map,
     pub scheduled: u32,
-    pub concurrent_task_count: AtomicU32,
 }
 
 impl Queue {

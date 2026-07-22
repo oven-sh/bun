@@ -521,7 +521,6 @@ pub(crate) fn writable_stream(
         content_disposition: content_disposition.map(Box::<[u8]>::from),
         content_encoding: content_encoding.map(Box::<[u8]>::from),
         upload_id: Box::default(),
-        uploadid_buffer: MutableString::default(),
         multipart_etags: Vec::new(),
         multipart_upload_list: Vec::new(),
         state: MultiPartUploadState::NotStarted,
@@ -572,9 +571,6 @@ pub struct S3UploadStreamWrapper {
     pub path: bun_ptr::RawSlice<u8>,
     pub global: GlobalRef, // JSC_BORROW
 }
-
-/// finalizer body when the last ref is released.
-pub type S3UploadStreamWrapperRef = *mut S3UploadStreamWrapper;
 
 // Inherent associated types are unstable; expose as a module-level alias instead.
 pub(crate) type ResumableSink = ResumableS3UploadSink;
@@ -878,7 +874,6 @@ pub fn upload_stream(
         content_disposition: content_disposition.map(Box::<[u8]>::from),
         content_encoding: content_encoding.map(Box::<[u8]>::from),
         upload_id: Box::default(),
-        uploadid_buffer: MutableString::default(),
         multipart_etags: Vec::new(),
         multipart_upload_list: Vec::new(),
         state: MultiPartUploadState::WaitStreamCheck,

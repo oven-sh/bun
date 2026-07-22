@@ -114,11 +114,6 @@ impl<'a> NoOpRenamer<'a> {
         NoOpRenamer { symbols, source }
     }
 
-    #[inline]
-    pub(crate) fn original_name(&self, ref_: Ref) -> &[u8] {
-        self.name_for_symbol(ref_)
-    }
-
     pub(crate) fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         if ref_.is_source_contents_slice() {
             return &self.source.contents[ref_.source_index() as usize
@@ -168,14 +163,6 @@ impl<'r, 'src> Renamer<'r, 'src> {
             Renamer::NumberRenamer(r) => r.name_for_symbol(ref_),
             Renamer::NoOpRenamer(r) => r.name_for_symbol(ref_),
             Renamer::MinifyRenamer(r) => r.name_for_symbol(ref_),
-        }
-    }
-
-    pub fn original_name(&self, ref_: Ref) -> Option<&[u8]> {
-        match self {
-            Renamer::NumberRenamer(r) => Some(r.original_name(ref_)),
-            Renamer::NoOpRenamer(r) => Some(r.original_name(ref_)),
-            Renamer::MinifyRenamer(r) => r.original_name(ref_),
         }
     }
 }
@@ -309,10 +296,6 @@ impl MinifyRenamer {
         }))
     }
 
-    pub fn to_renamer(&mut self) -> Renamer<'_, 'static> {
-        Renamer::MinifyRenamer(self)
-    }
-
     pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
         let ref_ = self.symbols.follow(ref_);
         let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
@@ -335,10 +318,6 @@ impl MinifyRenamer {
 
         // This has to be a pointer because the string might be stored inline
         self.slots[ns][i].name.slice()
-    }
-
-    pub fn original_name(&self, _ref: Ref) -> Option<&[u8]> {
-        None
     }
 
     pub fn accumulate_symbol_use_counts(
@@ -545,24 +524,6 @@ pub struct NumberRenamer {
 }
 
 impl NumberRenamer {
-    pub fn to_renamer(&mut self) -> Renamer<'_, 'static> {
-        Renamer::NumberRenamer(self)
-    }
-
-    pub fn original_name(&self, ref_: Ref) -> &[u8] {
-        if ref_.is_source_contents_slice() {
-            unreachable!();
-        }
-
-        let resolved = self.symbols.follow(ref_);
-        // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-        self.symbols
-            .get_const(resolved)
-            .unwrap()
-            .original_name
-            .slice()
-    }
-
     pub fn assign_name(&mut self, scope: &mut NumberScope, input_ref: Ref) {
         let ref_ = self.symbols.follow(input_ref);
 
@@ -631,28 +592,6 @@ impl NumberRenamer {
             root,
             arena,
         }))
-    }
-
-    pub fn assign_names_recursive(
-        &mut self,
-        scope: &js_ast::Scope,
-        source_index: u32,
-        parent: Option<bun_ptr::ParentRef<NumberScope>>,
-        sorted: &mut Vec<u32>,
-    ) {
-        let s: *mut NumberScope = self
-            .number_scope_pool
-            .get_init(NumberScope {
-                parent,
-                name_counts: NameCountMap::default(),
-            })
-            .as_ptr();
-
-        self.assign_names_recursive_with_number_scope(s, scope, source_index, sorted);
-
-        // SAFETY: s came from number_scope_pool.get() and was initialized above;
-        // `put` drops `name_counts` in place before recycling the slot.
-        unsafe { self.number_scope_pool.put(s) };
     }
 
     fn assign_names_in_scope(

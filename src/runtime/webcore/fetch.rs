@@ -333,19 +333,13 @@ impl StringOrURL {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Bun__fetch / nodeHttpClient entry points
+// Bun__fetch entry point
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
-}
-
-/// Internal entry point for Node.js HTTP client - allows body on GET/HEAD/OPTIONS
-#[bun_jsc::host_fn]
-pub(crate) fn node_http_client(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<true>(ctx, callframe))
 }
 
 /// WHATWG fetch step 3: an exception thrown while processing `input`/`init`

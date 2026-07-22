@@ -288,10 +288,6 @@ impl LinuxMemFdAllocator {
             }
         }
     }
-
-    pub fn is_instance(alloc: StdAllocator) -> bool {
-        core::ptr::eq(alloc.vtable, allocator_interface::VTABLE)
-    }
 }
 
 // ─── AllocatorInterface ─────────────────────────────────────────────────────

@@ -229,13 +229,6 @@ node_accessors! {
 pub type ExitCode = u16;
 pub type Pipe = [Fd; 2];
 
-/// Stand-in for the shell's `SmolList<T, N>` (inline small-vec). The parser's
-/// `bun_shell_parser::parse::SmolList` is arena-backed (its heap variant
-/// allocates from the parse arena, which the interpreter frees eagerly — see
-/// `take_args`), so it cannot back long-lived interpreter fields like
-/// `async_pids`. `Vec` is the deliberate choice here.
-pub type SmolList<T, const N: usize> = Vec<T>;
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 pub enum StateKind {
@@ -259,22 +252,6 @@ pub enum StateKind {
 pub enum OutputNeedsIOSafeGuard {
     OutputNeedsIo,
 }
-
-#[repr(u8)]
-#[derive(Clone, Copy)]
-pub enum CallstackGuard {
-    IKnowWhatIAmDoing,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CoroutineResult {
-    Cont,
-    Yield,
-}
-
-pub const STDIN_NO: usize = 0;
-pub const STDOUT_NO: usize = 1;
-pub const STDERR_NO: usize = 2;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Interpreter
@@ -330,10 +307,6 @@ pub struct Interpreter {
     pub this_jsvalue: Cell<crate::jsc::JSValue>,
     pub cleanup_state: Cell<CleanupState>,
     pub estimated_size_for_gc: Cell<usize>,
-
-    /// Side-channel for `try_()`: lets init/setup paths use `?`-style cleanup
-    /// while still surfacing the rich syscall error at the boundary.
-    pub last_err: JsCell<Option<bun_sys::Error>>,
 
     /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
     /// when running under a Worker). See [`Interpreter::get_vm_args_utf8`].
@@ -587,7 +560,6 @@ impl Interpreter {
                 __prev_cwd: cwd_arr.clone(),
                 __cwd: cwd_arr,
                 cwd_fd,
-                async_pids: SmolList::default(),
             }),
             root_io: JsCell::new(IO {
                 stdin: crate::shell::io::InKind::Fd(stdin_reader),
@@ -610,7 +582,6 @@ impl Interpreter {
             this_jsvalue: Cell::new(crate::jsc::JSValue::ZERO),
             cleanup_state: Cell::new(CleanupState::NeedsFullCleanup),
             estimated_size_for_gc: Cell::new(0),
-            last_err: JsCell::new(None),
             vm_args_utf8: JsCell::new(Vec::new()),
             command_ctx: ctx,
         });
@@ -931,41 +902,6 @@ impl Interpreter {
         unsafe { &mut self.nodes_mut()[id.idx()] }
     }
 
-    /// Look up the `parent` field of any state node. (Replaces
-    /// `StatePtrUnion.ptr.is::<T>()` checks.)
-    #[inline]
-    pub fn parent_of(&self, id: NodeId) -> NodeId {
-        self.nodes.get()[id.idx()]
-            .base()
-            .map(|b| b.parent)
-            .unwrap_or(NodeId::INTERPRETER)
-    }
-
-    #[inline]
-    pub fn kind_of(&self, id: NodeId) -> StateKind {
-        if id == NodeId::INTERPRETER {
-            // The interpreter is not stored in `nodes`; callers that need to
-            // distinguish "parent is the interpreter" check the sentinel id
-            // directly. Returning `Free` here would be wrong, so this is its
-            // own variant in callers' matches.
-            return StateKind::Script; // unused — callers test the sentinel first
-        }
-        self.nodes.get()[id.idx()].kind()
-    }
-
-    /// Shell exec env for the node at `id` (or the root env if `id` is the
-    /// interpreter sentinel).
-    #[inline]
-    pub fn shell_env(&self, id: NodeId) -> *mut ShellExecEnv {
-        if id == NodeId::INTERPRETER {
-            return self.root_shell.as_ptr();
-        }
-        self.nodes.get()[id.idx()]
-            .base()
-            .map(|b| b.shell)
-            .unwrap_or(self.root_shell.as_ptr())
-    }
-
     // ── hoisted dispatch (PORTING.md §Dispatch hot-path) ───────────────────
 
     shell_state_dispatch! {
@@ -1077,31 +1013,6 @@ impl Interpreter {
                 self.finish(exit).run(self);
             }
         }
-    }
-
-    // ── error side-channel (Base::try_) ────────────────────────────────────
-
-    /// Unwrap a `Maybe(T)` into `Result<T, TryError>`, stashing the rich
-    /// syscall error on the interpreter for later retrieval.
-    #[inline]
-    pub fn try_<T>(
-        &self,
-        m: bun_sys::Result<T>,
-    ) -> Result<T, crate::shell::states::base::TryError> {
-        match m {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                self.last_err.set(Some(e));
-                Err(crate::shell::states::base::TryError::Sys)
-            }
-        }
-    }
-
-    #[inline]
-    pub fn take_err(&self) -> bun_sys::Error {
-        self.last_err
-            .with_mut(|e| e.take())
-            .expect("take_err() with no stashed error")
     }
 
     #[inline]
@@ -1476,88 +1387,6 @@ impl Interpreter {
         // WTF backing.
     }
 
-    /// JS `interp.setQuiet()`.
-    pub fn set_quiet(
-        &self,
-        _: &crate::jsc::JSGlobalObject,
-        _: &crate::jsc::CallFrame,
-    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-        log!(
-            "Interpreter(0x{:x}) setQuiet()",
-            std::ptr::from_ref(self) as usize
-        );
-        self.update_flags(|f| f.set_quiet(true));
-        Ok(crate::jsc::JSValue::UNDEFINED)
-    }
-
-    /// JS `interp.setCwd(path)`.
-    pub fn set_cwd(
-        &self,
-        global_this: &crate::jsc::JSGlobalObject,
-        callframe: &crate::jsc::CallFrame,
-    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-        let value = callframe.argument(0);
-        let str = crate::jsc::bun_string_jsc::from_js(value, global_this)?;
-        let slice = str.to_utf8();
-        let result = self.root_shell.with_mut(|rs| rs.change_cwd(slice.slice()));
-        drop(slice);
-        str.deref();
-        if let Err(e) = result {
-            use bun_sys_jsc::SystemErrorJsc as _;
-            return Err(
-                global_this.throw_value(e.to_shell_system_error().to_error_instance(global_this))
-            );
-        }
-        Ok(crate::jsc::JSValue::UNDEFINED)
-    }
-
-    /// JS `interp.setEnv({ FOO: "bar" })`.
-    pub fn set_env(
-        &self,
-        global_this: &crate::jsc::JSGlobalObject,
-        callframe: &crate::jsc::CallFrame,
-    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-        use crate::jsc::{JSPropertyIterator, JSPropertyIteratorOptions};
-        use crate::shell::env_str::EnvStr;
-
-        let value1 = callframe.argument(0);
-        if !value1.is_object() {
-            return Err(global_this.throw_invalid_arguments(format_args!("env must be an object")));
-        }
-
-        let mut object_iter = JSPropertyIterator::init(
-            global_this,
-            value1.to_object(global_this)?,
-            JSPropertyIteratorOptions::new(false, true),
-        )?;
-
-        self.root_shell.with_mut(|rs| {
-            rs.export_env.clear_retaining_capacity();
-            rs.export_env.ensure_total_capacity(object_iter.len);
-        });
-
-        // If the env object does not include a $PATH, it must disable path
-        // lookup for argv[0].
-
-        while let Some(key) = object_iter.next()? {
-            let value = object_iter.value;
-            if value.is_undefined() {
-                continue;
-            }
-            let keyslice = key.to_owned_slice();
-            let value_str = value.get_zig_string(global_this)?;
-            let slice = value_str.to_owned_slice();
-            let keyref = EnvStr::init_ref_counted(keyslice.into_boxed_slice());
-            let valueref = EnvStr::init_ref_counted(slice.into_boxed_slice());
-            self.root_shell
-                .with_mut(|rs| rs.export_env.insert(keyref, valueref));
-            keyref.deref();
-            valueref.deref();
-        }
-
-        Ok(crate::jsc::JSValue::UNDEFINED)
-    }
-
     pub fn is_running(
         &self,
         _: &crate::jsc::JSGlobalObject,
@@ -1626,22 +1455,6 @@ impl Interpreter {
             "Interpreter decr pending activity {}",
             has_pending_activity.load(Ordering::SeqCst)
         );
-    }
-
-    /// Lazily caches the worker's `argv` as UTF-8 slices so `$@`/`$N`
-    /// expansion can index without re-converting on every reference.
-    pub fn get_vm_args_utf8(&self, argv: &[bun_core::WTFStringImpl], idx: u8) -> &[u8] {
-        self.vm_args_utf8.with_mut(|v| {
-            if v.len() != argv.len() {
-                v.reserve(argv.len());
-                for arg in argv {
-                    // SAFETY: each `WTFStringImpl` in `argv` is a live
-                    // `*WTF::StringImpl` borrowed from `worker.argv`.
-                    v.push(unsafe { (**arg).to_utf8() });
-                }
-            }
-        });
-        self.vm_args_utf8.get()[idx as usize].slice()
     }
 
     /// Appends the value of `$N` to
@@ -1773,11 +1586,6 @@ pub fn throw_shell_err(
 // ShellExecEnv
 // ────────────────────────────────────────────────────────────────────────────
 
-#[cfg(unix)]
-type PidT = libc::pid_t;
-#[cfg(windows)]
-type PidT = i32; // bun_sys::windows::libuv::uv_pid_t
-
 /// Shell execution environment (env vars, cwd, captured stdout/stderr).
 /// Every state node holds a `*mut ShellExecEnv` in its `Base`; some nodes
 /// (Script, Subshell, command-substitution, pipeline children) own a duped
@@ -1792,7 +1600,6 @@ pub struct ShellExecEnv {
     pub __prev_cwd: Vec<u8>,
     pub __cwd: Vec<u8>,
     pub cwd_fd: Fd,
-    pub async_pids: SmolList<PidT, 4>,
 }
 
 pub enum Bufio {
@@ -1836,8 +1643,6 @@ impl ShellExecEnv {
         size += self.__prev_cwd.capacity();
         size += self._buffered_stderr.memory_cost();
         size += self._buffered_stdout.memory_cost();
-        // `async_pids` is a `Vec`; report its heap capacity directly.
-        size += self.async_pids.capacity() * core::mem::size_of::<PidT>();
         size
     }
 
@@ -1957,7 +1762,6 @@ impl ShellExecEnv {
             __prev_cwd: self.__prev_cwd.clone(),
             __cwd: self.__cwd.clone(),
             cwd_fd: dupedfd,
-            async_pids: SmolList::default(),
         });
         Ok(bun_core::heap::into_raw(duped))
     }
@@ -2129,10 +1933,10 @@ impl ShellExecEnv {
         Ok(())
     }
 
-    /// Routes `label = value` into one of the three env maps depending on
-    /// where the assignment appeared (`FOO=1 cmd` → cmd-local, bare `FOO=1` →
-    /// shell, `export FOO=1` → exported). NOTE: `EnvMap::insert` `.ref()`s the
-    /// value, so callers should deref `value` after the call.
+    /// Routes `label = value` into an env map depending on where the
+    /// assignment appeared (`FOO=1 cmd` → cmd-local, bare `FOO=1` → shell).
+    /// NOTE: `EnvMap::insert` `.ref()`s the value, so callers should deref
+    /// `value` after the call.
     pub fn assign_var(
         &mut self,
         label: crate::shell::env_str::EnvStr,
@@ -2142,7 +1946,6 @@ impl ShellExecEnv {
         match assign_ctx {
             AssignCtx::Cmd => self.cmd_local_env.insert(label, value),
             AssignCtx::Shell => self.shell_env.insert(label, value),
-            AssignCtx::Exported => self.export_env.insert(label, value),
         }
     }
 
@@ -2199,7 +2002,6 @@ pub use bun_event_loop::EventLoopHandle;
 pub struct CowFd {
     __fd: Fd,
     refcount: u32,
-    being_used: bool,
 }
 
 impl CowFd {
@@ -2207,44 +2009,9 @@ impl CowFd {
         let new = bun_core::heap::into_raw(Box::new(CowFd {
             __fd: fd,
             refcount: 1,
-            being_used: false,
         }));
         bun_core::scoped_log!(CowFd, "init {:x} fd={}", new as usize, fd);
         new
-    }
-
-    /// Fresh `CowFd` wrapping a `dup()`'d fd. Errors
-    /// surface the syscall error (the freshly-allocated box is dropped).
-    pub fn dup(&self) -> bun_sys::Result<*mut CowFd> {
-        let fd = bun_sys::dup(self.__fd)?;
-        Ok(Self::init(fd))
-    }
-
-    /// Copy-on-write borrow. If nobody is currently
-    /// writing through this fd, mark it in-use and return it (refcount +1);
-    /// otherwise hand out a fresh `dup()`.
-    pub fn use_(&mut self) -> bun_sys::Result<*mut CowFd> {
-        if !self.being_used {
-            self.being_used = true;
-            self.ref_();
-            return Ok(std::ptr::from_mut(self));
-        }
-        self.dup()
-    }
-
-    /// Paired with [`use_`].
-    pub fn done_using(&mut self) {
-        self.being_used = false;
-    }
-
-    pub fn ref_(&mut self) {
-        self.refcount += 1;
-    }
-
-    /// Bump refcount and return the same pointer.
-    pub fn dupe_ref(&mut self) -> *mut CowFd {
-        self.ref_();
-        self
     }
 
     /// # Safety
@@ -2490,27 +2257,6 @@ pub fn shell_openat(
     }
 }
 
-/// `bun_sys::open` already routes through `sys_uv` on Windows (returns a uv
-/// fd), so unlike `openat`'s NT-handle directory path this needs no explicit
-/// `makeLibUVOwnedForSyscall`.
-// no callers yet; kept for syscall-wrapper surface parity
-pub fn shell_open(
-    file_path: &bun_core::ZStr,
-    flags: i32,
-    perm: bun_sys::Mode,
-) -> bun_sys::Result<Fd> {
-    #[cfg(windows)]
-    {
-        use bun_sys::FdExt;
-        return bun_sys::open(file_path, flags, perm)?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
-    }
-    #[cfg(not(windows))]
-    {
-        bun_sys::open(file_path, flags, perm)
-    }
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Builtin flag-parsing infra
 // ────────────────────────────────────────────────────────────────────────────
@@ -2619,19 +2365,12 @@ fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
 pub enum OutputSrc {
     /// Owned, freed on drop.
     Arrlist(Vec<u8>),
-    /// Heap slice owned by us (freed on drop).
-    OwnedBuf(Box<[u8]>),
-    /// Borrowed; not freed (e.g. arena-backed).
-    BorrowedBuf(*const [u8]),
 }
 
 impl OutputSrc {
     pub fn slice(&self) -> &[u8] {
         match self {
             OutputSrc::Arrlist(v) => v.as_slice(),
-            OutputSrc::OwnedBuf(b) => b,
-            // SAFETY: caller guarantees the borrow outlives the OutputTask.
-            OutputSrc::BorrowedBuf(p) => unsafe { &**p },
         }
     }
 }

@@ -24,11 +24,4 @@ impl CommandComplete {
         *self = Self { command_tag: tag };
         Ok(())
     }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        &mut self,
-        context: Container,
-    ) -> crate::Result<()> {
-        self.decode_internal(NewReader { wrapped: context })
-    }
 }

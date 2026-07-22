@@ -164,22 +164,6 @@ pub(crate) fn create_and_schedule_completion_task(
     Ok(completion)
 }
 
-/// `BundleV2.generateFromJavaScript` — schedule a build and return its Promise.
-pub fn generate_from_javascript(
-    config: JSBundlerConfig,
-    plugins: Option<NonNull<Plugin>>,
-    global_this: &JSGlobalObject,
-    event_loop: *mut EventLoop,
-) -> crate::Result<JSValue> {
-    let completion = create_and_schedule_completion_task(config, plugins, global_this, event_loop)?;
-    // SAFETY: `completion` is the freshly-boxed allocation; sole owner on the JS
-    // thread until the enqueued task runs.
-    unsafe {
-        (*completion).promise = jsc::JSPromiseStrong::init(global_this);
-        Ok((*completion).promise.value())
-    }
-}
-
 /// `if (s.slice().len > 0) s.slice() else null` for the windows-options block.
 #[inline]
 fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {

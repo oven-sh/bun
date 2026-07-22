@@ -1,7 +1,7 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { promisify } from "node:util";
@@ -918,5 +918,57 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
 
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
     expect(r.error?.code).toBe("ENOTSUP");
+  });
+});
+
+// Regression: Bun registered the stdout/stderr poll immediately, so the native
+// reader drained the child's output into an unbounded in-memory buffer before
+// any JS consumer attached. The child never blocked on a full pipe, and once
+// 'exit' fired the autoResume path discarded the entire buffered output, so a
+// late reader received 0 bytes. With kernel backpressure the child blocks at
+// the pipe buffer until JS starts reading, matching Node.
+describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
+  it("blocks the child until a reader attaches and delivers every byte", async () => {
+    const SIZE = 1024 * 1024;
+    const c = spawn("sh", ["-c", `head -c ${SIZE} /dev/zero`], {
+      stdio: ["ignore", "pipe", "ignore"],
+      env: bunEnv,
+    });
+    try {
+      // Give the event loop time to do whatever eager draining it would do
+      // without backpressure. Deadline-polled: breaks early if the child
+      // manages to exit.
+      const deadline = Date.now() + 1000;
+      while (c.exitCode === null && Date.now() < deadline) {
+        await new Promise(r => setImmediate(r));
+      }
+
+      // SIZE is larger than the kernel socket buffer, so the child cannot
+      // have finished writing without the parent reading.
+      expect(c.exitCode).toBeNull();
+
+      // Attach late and count every byte. Previously this reported 0.
+      let got = 0;
+      c.stdout!.on("data", chunk => {
+        got += chunk.length;
+      });
+      await once(c.stdout!, "end");
+      expect(got).toBe(SIZE);
+
+      await once(c, "close");
+      expect(c.exitCode).toBe(0);
+    } finally {
+      c.kill();
+    }
+  });
+
+  it("still drains a paused stdout to 'close' after the child exits", async () => {
+    const c = spawn("sh", ["-c", "echo hello"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      env: bunEnv,
+    });
+    c.stdout!.pause();
+    await once(c, "close");
+    expect(c.exitCode).toBe(0);
   });
 });

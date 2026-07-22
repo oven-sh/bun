@@ -47,14 +47,6 @@ impl AdditionalOnAbortCallback {
 // as `AnyRequestContext` / `AnyServer`. The const params still pick which
 // variant `create()` constructs and gate H3-specific code paths.
 pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
-pub type Resp<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
-
-// Surface gaps `AnyResponse` doesn't expose yet — hand-dispatched here so the
-// state machine can call them without touching `bun_uws_sys`.
-pub trait AnyResponseExt {
-    fn has_responded(self) -> bool;
-    fn override_write_offset(self, offset: u64);
-}
 
 /// Extract the raw FFI pointer from an `AnyResponse` for C-ABI shims that
 /// take `*mut c_void` (e.g. `FetchHeaders::to_uws_response`, `CookieMap::write`).
@@ -64,34 +56,6 @@ fn any_response_as_ptr(r: uws::AnyResponse) -> *mut c_void {
         uws::AnyResponse::SSL(p) => p.cast::<c_void>(),
         uws::AnyResponse::TCP(p) => p.cast::<c_void>(),
         uws::AnyResponse::H3(p) => p.cast::<c_void>(),
-    }
-}
-
-impl AnyResponseExt for uws::AnyResponse {
-    #[inline]
-    fn has_responded(self) -> bool {
-        // S012: variant payloads are ZST opaques (`Response<SSL>` / `H3Response`);
-        // route the `*mut → &mut` deref through the const-asserted
-        // `bun_opaque::opaque_deref_mut` so dispatch is `unsafe`-free.
-        match self {
-            uws::AnyResponse::SSL(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-            uws::AnyResponse::TCP(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-        }
-    }
-    #[inline]
-    fn override_write_offset(self, offset: u64) {
-        match self {
-            uws::AnyResponse::SSL(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
-            uws::AnyResponse::TCP(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
-            uws::AnyResponse::H3(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
-        }
     }
 }
 
@@ -115,6 +79,7 @@ pub const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::E
 } else {
     2048
 };
+
 pub type RequestContextStackAllocator<
     ThisServer,
     const SSL: bool,
@@ -1145,16 +1110,6 @@ where
             // SAFETY: FFI handle
             resp.on_writable(
                 |this, off, resp| Self::on_writable_complete_response_buffer(this, off, resp),
-                self,
-            );
-        }
-    }
-
-    pub fn render_response_buffer(&mut self) {
-        if let Some(resp) = self.resp {
-            // SAFETY: FFI handle
-            resp.on_writable(
-                |this, off, resp| Self::on_writable_response_buffer(this, off, resp),
                 self,
             );
         }

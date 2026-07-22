@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use bun_ast::Loc;
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
-use bun_core::{self, ZigStringSlice, strings};
+use bun_core::{self, ZigStringSlice};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
     LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap, internal_source_map,
@@ -478,10 +478,6 @@ impl ByteRangeMapping {
     /// PORTING.md §Global mutable state.
     pub fn map() -> Option<NonNull<ByteRangeMappingHashMap>> {
         thread_map_opt()
-    }
-
-    pub fn is_less_than(_: (), a: &ByteRangeMapping, b: &ByteRangeMapping) -> bool {
-        strings::order(a.source_url.slice(), b.source_url.slice()) == core::cmp::Ordering::Less
     }
 
     pub fn generate_report_from_blocks(

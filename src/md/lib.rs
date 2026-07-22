@@ -6,7 +6,6 @@ pub mod autolinks;
 pub mod blocks;
 pub mod containers;
 pub mod entity;
-pub mod error;
 pub mod helpers;
 pub mod html_renderer;
 pub mod inlines;
@@ -20,5 +19,4 @@ pub mod root;
 pub mod types;
 pub mod unicode;
 
-pub use error::{Error, Result};
 pub use root::RenderOptions;

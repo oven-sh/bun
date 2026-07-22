@@ -294,12 +294,6 @@ pub struct GraphMemoryCost {
 }
 
 impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
-    /// Helper for `DevServer::is_file_cached`.
-    #[inline]
-    pub fn file_kind_at(&self, index: usize) -> FileKind {
-        self.bundled_files.values()[index].kind
-    }
-
     /// `@fieldParentPtr(@tagName(side) ++ "_graph", g)` — recover the owning
     /// `DevServer` from this inline field. Returns a raw pointer because the
     /// caller already holds `&mut self` (a sub-borrow of `*dev`); forming
@@ -377,17 +371,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 
     // ── per-bundle scratch accessors (kept for existing call sites) ────────
-    #[inline]
-    pub fn current_chunk_parts_len(&self) -> usize {
-        match SIDE {
-            Side::Client => self.current_chunk_parts.len(),
-            Side::Server => self.current_chunk_code.len(),
-        }
-    }
-    #[inline]
-    pub fn current_chunk_source_maps_is_empty(&self) -> bool {
-        self.current_chunk_source_maps.is_empty()
-    }
 
     /// Does NOT count `size_of::<Self>()`.
     pub fn memory_cost_detailed(&self) -> GraphMemoryCost {

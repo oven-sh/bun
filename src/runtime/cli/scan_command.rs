@@ -1,35 +1,12 @@
 use crate::Command;
 use bun_core::{Global, Output};
 use bun_install::lockfile::LoadResult;
-use bun_install::package_manager::{self, security_scanner};
-use bun_install::{CommandLineArguments, Lockfile, PackageManager, Subcommand};
+use bun_install::package_manager::security_scanner;
+use bun_install::{Lockfile, PackageManager};
 
 pub struct ScanCommand;
 
 impl ScanCommand {
-    pub fn exec(ctx: Command::Context) -> crate::Result<()> {
-        let cli = CommandLineArguments::parse(Subcommand::Scan)?;
-
-        let (manager, original_cwd) = match package_manager::init(&mut *ctx, cli, Subcommand::Scan)
-        {
-            Ok(v) => v,
-            Err(e) => {
-                if e == bun_install::Error::MissingPackageJSON {
-                    Output::err_generic(
-                        "No package.json found. 'bun pm scan' requires a lockfile to analyze dependencies.",
-                        (),
-                    );
-                    bun_core::note!("Run \"bun install\" first to generate a lockfile");
-                    Global::exit(1);
-                }
-                return Err(e.into());
-            }
-        };
-        // `defer ctx.allocator.free(cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
-
-        Self::exec_with_manager(ctx, manager, &original_cwd)
-    }
-
     pub fn exec_with_manager(
         ctx: Command::Context,
         manager: &mut PackageManager,

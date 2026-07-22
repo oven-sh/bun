@@ -81,13 +81,6 @@ pub enum Status {
     Connected,
 }
 
-impl Status {
-    #[inline]
-    pub fn is_active(self) -> bool {
-        matches!(self, Status::Connected | Status::Connecting)
-    }
-}
-
 pub use super::valkey_command_body as Command_;
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
@@ -121,10 +114,6 @@ impl Protocol {
 
     pub fn is_tls(self) -> bool {
         matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)
-    }
-
-    pub fn is_unix(self) -> bool {
-        matches!(self, Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix)
     }
 }
 
@@ -1548,10 +1537,6 @@ impl ValkeyClient {
 
     pub fn on_valkey_close(&mut self) -> JsTerminated<()> {
         self.parent().on_valkey_close()
-    }
-
-    pub fn on_valkey_timeout(&mut self) {
-        self.parent().on_valkey_timeout();
     }
 }
 

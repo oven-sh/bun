@@ -61,7 +61,6 @@ pub struct ServerConfig {
     pub http3: bool,
     pub http1: bool,
 
-    pub is_node_http: bool,
     pub had_routes_object: bool,
 
     pub static_routes: Vec<StaticRouteEntry>,
@@ -94,7 +93,6 @@ impl Default for ServerConfig {
             ipv6_only: false,
             http3: false,
             http1: true,
-            is_node_http: false,
             had_routes_object: false,
             static_routes: Vec::new(),
             negative_routes: Vec::new(),
@@ -144,14 +142,6 @@ impl DevelopmentOption {
 impl ServerConfig {
     pub fn is_development(&self) -> bool {
         self.development.is_development()
-    }
-
-    /// Parsed view over [`Self::base_uri`].
-    // PERF: re-parses on each call. The only out-of-module reader takes
-    // `href` (== `base_uri`) directly; in-module reads happen once in `from_js`.
-    #[inline]
-    pub fn base_url(&self) -> URL<'_> {
-        URL::parse(&self.base_uri)
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -287,7 +277,6 @@ impl ServerConfig {
             ipv6_only: self.ipv6_only,
             http3: self.http3,
             http1: self.http1,
-            is_node_http: self.is_node_http,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
             negative_routes: core::mem::take(&mut self.negative_routes),
@@ -499,12 +488,6 @@ pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
         resp: bun_uws_sys::AnyResponse,
     );
 }
-
-// NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
-// were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse`. Re-export the
-// real types so any straggler reference resolves to the canonical opaque.
-pub use bun_uws_sys::AnyRequest as RequestUnion;
-pub use bun_uws_sys::AnyResponse as ResponseUnion;
 
 impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {

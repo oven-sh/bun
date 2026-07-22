@@ -252,9 +252,6 @@ impl FileCloser for ReadFile {
     fn close_after_io(&self) -> bool {
         self.close_after_io
     }
-    fn set_close_after_io(&mut self, v: bool) {
-        self.close_after_io = v;
-    }
     fn state(&self) -> &AtomicU8 {
         &self.state
     }
@@ -993,9 +990,6 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     // code paths.
     fn close_after_io(&self) -> bool {
         false
-    }
-    fn set_close_after_io(&mut self, _: bool) {
-        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
     fn state(&self) -> &AtomicU8 {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")

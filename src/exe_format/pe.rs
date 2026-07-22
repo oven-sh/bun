@@ -704,46 +704,6 @@ impl PEFile {
         Ok(())
     }
 
-    /// Find the .bun section and return its data
-    pub fn get_bun_section_data(&self) -> Result<&[u8], Error> {
-        let section_headers = self.get_section_headers()?;
-        for section in section_headers {
-            if section.name[0..8] == BUN_SECTION_NAME {
-                // Header: 8 bytes size (u64)
-                if (section.size_of_raw_data as usize) < size_of::<u64>() {
-                    return Err(Error::InvalidBunSection);
-                }
-
-                // Bounds check
-                if section.pointer_to_raw_data as usize >= self.data.len()
-                    || (section.pointer_to_raw_data + section.size_of_raw_data) as usize
-                        > self.data.len()
-                {
-                    return Err(Error::InvalidBunSection);
-                }
-
-                let section_data = &self.data[section.pointer_to_raw_data as usize..]
-                    [..section.size_of_raw_data as usize];
-                let data_size = u64::from_le_bytes(
-                    section_data[0..8]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-
-                let total_size = data_size
-                    .checked_add(size_of::<u64>() as u64)
-                    .ok_or(Error::InvalidBunSection)?;
-                if total_size > section.size_of_raw_data as u64 {
-                    return Err(Error::InvalidBunSection);
-                }
-
-                // Data starts at offset 8 (after u64 size)
-                return Ok(&section_data[8..][..data_size as usize]);
-            }
-        }
-        Err(Error::BunSectionNotFound)
-    }
-
     /// Get the length of the Bun section data
     pub fn get_bun_section_length(&self) -> Result<u64, Error> {
         let section_headers = self.get_section_headers()?;

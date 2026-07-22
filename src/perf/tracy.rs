@@ -8,7 +8,6 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_core::env_var;
 
-pub const ENABLE_ALLOCATION: bool = false;
 pub const ENABLE_CALLSTACK: bool = false;
 
 // An AtomicBool keeps reads safe from any thread without `unsafe`. All
@@ -39,38 +38,6 @@ impl ___tracy_c_zone_context {
             return;
         }
         ___tracy_emit_zone_end(self);
-    }
-
-    #[inline]
-    pub fn add_text(self, text: &[u8]) {
-        if !enable() {
-            return;
-        }
-        ___tracy_emit_zone_text(self, text.as_ptr(), text.len());
-    }
-
-    #[inline]
-    pub fn set_name(self, name: &[u8]) {
-        if !enable() {
-            return;
-        }
-        ___tracy_emit_zone_name(self, name.as_ptr(), name.len());
-    }
-
-    #[inline]
-    pub fn set_color(self, color: u32) {
-        if !enable() {
-            return;
-        }
-        ___tracy_emit_zone_color(self, color);
-    }
-
-    #[inline]
-    pub fn set_value(self, value: u64) {
-        if !enable() {
-            return;
-        }
-        ___tracy_emit_zone_value(self, value);
     }
 }
 
@@ -155,26 +122,6 @@ macro_rules! tracy_trace_named {
     }};
 }
 
-pub fn tracy_allocator() -> TracyAllocator {
-    TracyAllocator::init()
-}
-
-/// Per PORTING.md §Allocators, `src/perf/` is not an AST crate, so there is
-/// no allocator parameter; the parent is implicitly the
-/// global mimalloc (`#[global_allocator]`).
-// The tracy alloc/free hooks (`___tracy_emit_memory_alloc` etc.) are not
-// wired up: `ENABLE_ALLOCATION` is `false`,
-// so allocation tracking is intentionally dead.
-// If it is ever flipped on, express it as a `core::alloc::GlobalAlloc` shim
-// over the global mimalloc that emits the tracy hooks.
-pub struct TracyAllocator {}
-
-impl TracyAllocator {
-    pub fn init() -> Self {
-        Self {}
-    }
-}
-
 /// This function only accepts `'static` strings, see `message_copy` for runtime strings
 #[inline]
 pub fn message(msg: &'static core::ffi::CStr) {
@@ -185,60 +132,6 @@ pub fn message(msg: &'static core::ffi::CStr) {
         msg.as_ptr(),
         if ENABLE_CALLSTACK { CALLSTACK_DEPTH } else { 0 },
     );
-}
-
-/// This function only accepts `'static` strings, see `message_color_copy` for runtime strings
-#[inline]
-pub fn message_color(msg: &'static core::ffi::CStr, color: u32) {
-    if !enable() {
-        return;
-    }
-    ___tracy_emit_message_lc(
-        msg.as_ptr(),
-        color,
-        if ENABLE_CALLSTACK { CALLSTACK_DEPTH } else { 0 },
-    );
-}
-
-#[inline]
-pub fn message_copy(msg: &[u8]) {
-    if !enable() {
-        return;
-    }
-    ___tracy_emit_message(
-        msg.as_ptr(),
-        msg.len(),
-        if ENABLE_CALLSTACK { CALLSTACK_DEPTH } else { 0 },
-    );
-}
-
-#[inline]
-pub fn message_color_copy(msg: &bun_core::ZStr, color: u32) {
-    if !enable() {
-        return;
-    }
-    ___tracy_emit_message_c(
-        msg.as_bytes().as_ptr(),
-        msg.as_bytes().len(),
-        color,
-        if ENABLE_CALLSTACK { CALLSTACK_DEPTH } else { 0 },
-    );
-}
-
-#[inline]
-pub fn frame_mark() {
-    if !enable() {
-        return;
-    }
-    ___tracy_emit_frame_mark(ptr::null());
-}
-
-#[inline]
-pub fn frame_mark_named(name: &'static core::ffi::CStr) {
-    if !enable() {
-        return;
-    }
-    ___tracy_emit_frame_mark(name.as_ptr());
 }
 
 #[inline]
@@ -292,23 +185,10 @@ mod tracy_fns {
         active: c_int,
     )
         -> ___tracy_c_zone_context;
-    pub(super) type emit_zone_text =
-        unsafe extern "C" fn(ctx: ___tracy_c_zone_context, txt: *const u8, size: usize);
-    pub(super) type emit_zone_name =
-        unsafe extern "C" fn(ctx: ___tracy_c_zone_context, txt: *const u8, size: usize);
-    pub(super) type emit_zone_color =
-        unsafe extern "C" fn(ctx: ___tracy_c_zone_context, color: u32);
-    pub(super) type emit_zone_value =
-        unsafe extern "C" fn(ctx: ___tracy_c_zone_context, value: u64);
     pub(super) type emit_zone_end = unsafe extern "C" fn(ctx: ___tracy_c_zone_context);
     pub(super) type emit_message =
         unsafe extern "C" fn(txt: *const u8, size: usize, callstack: c_int);
     pub(super) type emit_message_l = unsafe extern "C" fn(txt: *const c_char, callstack: c_int);
-    pub(super) type emit_message_c =
-        unsafe extern "C" fn(txt: *const u8, size: usize, color: u32, callstack: c_int);
-    pub(super) type emit_message_lc =
-        unsafe extern "C" fn(txt: *const c_char, color: u32, callstack: c_int);
-    pub(super) type emit_frame_mark = unsafe extern "C" fn(name: *const c_char);
     pub(super) type connected = unsafe extern "C" fn() -> c_int;
     pub(super) type set_thread_name = unsafe extern "C" fn(name: *const c_char);
     pub(super) type startup_profiler = unsafe extern "C" fn();
@@ -356,20 +236,6 @@ pub fn stop() {
 }
 
 #[allow(non_snake_case)]
-fn ___tracy_connected() -> c_int {
-    let f = dlsym::<tracy_fns::connected>(c"___tracy_connected").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f() }
-}
-
-#[allow(non_snake_case)]
-fn ___tracy_set_thread_name(name: *const c_char) {
-    let f = dlsym::<tracy_fns::set_thread_name>(c"___tracy_set_thread_name").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(name) }
-}
-
-#[allow(non_snake_case)]
 fn ___tracy_emit_frame_mark_start(name: *const c_char) {
     let f = dlsym::<tracy_fns::emit_frame_mark_start>(c"___tracy_emit_frame_mark_start")
         .expect("tracy symbol");
@@ -404,64 +270,16 @@ fn ___tracy_emit_zone_begin_callstack(
     unsafe { f(srcloc, depth, active) }
 }
 #[allow(non_snake_case)]
-fn ___tracy_emit_zone_text(ctx: ___tracy_c_zone_context, txt: *const u8, size: usize) {
-    let f = dlsym::<tracy_fns::emit_zone_text>(c"___tracy_emit_zone_text").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ctx, txt, size) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_zone_name(ctx: ___tracy_c_zone_context, txt: *const u8, size: usize) {
-    let f = dlsym::<tracy_fns::emit_zone_name>(c"___tracy_emit_zone_name").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ctx, txt, size) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_zone_color(ctx: ___tracy_c_zone_context, color: u32) {
-    let f = dlsym::<tracy_fns::emit_zone_color>(c"___tracy_emit_zone_color").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ctx, color) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_zone_value(ctx: ___tracy_c_zone_context, value: u64) {
-    let f = dlsym::<tracy_fns::emit_zone_value>(c"___tracy_emit_zone_value").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ctx, value) }
-}
-#[allow(non_snake_case)]
 fn ___tracy_emit_zone_end(ctx: ___tracy_c_zone_context) {
     let f = dlsym::<tracy_fns::emit_zone_end>(c"___tracy_emit_zone_end").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ctx) }
 }
 #[allow(non_snake_case)]
-fn ___tracy_emit_message(txt: *const u8, size: usize, callstack: c_int) {
-    let f = dlsym::<tracy_fns::emit_message>(c"___tracy_emit_message").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(txt, size, callstack) }
-}
-#[allow(non_snake_case)]
 fn ___tracy_emit_message_l(txt: *const c_char, callstack: c_int) {
     let f = dlsym::<tracy_fns::emit_message_l>(c"___tracy_emit_messageL").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(txt, callstack) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_message_c(txt: *const u8, size: usize, color: u32, callstack: c_int) {
-    let f = dlsym::<tracy_fns::emit_message_c>(c"___tracy_emit_messageC").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(txt, size, color, callstack) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_message_lc(txt: *const c_char, color: u32, callstack: c_int) {
-    let f = dlsym::<tracy_fns::emit_message_lc>(c"___tracy_emit_messageLC").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(txt, color, callstack) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_frame_mark(name: *const c_char) {
-    let f = dlsym::<tracy_fns::emit_frame_mark>(c"___tracy_emit_frame_mark").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(name) }
 }
 
 pub fn init() -> bool {

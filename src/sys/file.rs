@@ -30,15 +30,6 @@ pub struct ReadToEndResult {
     pub bytes: Vec<u8>,
     pub err: Option<Error>,
 }
-impl ReadToEndResult {
-    #[inline]
-    pub fn unwrap(self) -> core::result::Result<Vec<u8>, Error> {
-        match self.err {
-            Some(e) => Err(e),
-            None => Ok(self.bytes),
-        }
-    }
-}
 
 // `File` high-level helpers — wrap the syscall surface above.
 impl File {
@@ -81,12 +72,6 @@ impl File {
     pub fn stdout() -> Self {
         Self {
             handle: Fd::stdout(),
-        }
-    }
-    #[inline]
-    pub fn stderr() -> Self {
-        Self {
-            handle: Fd::stderr(),
         }
     }
 
@@ -432,16 +417,6 @@ impl File {
     }
 
     // ── std::io adapters ─────────────────────────────────────────────────
-    /// `File.writer()` — `std.Io.GenericWriter(File, anyerror, stdIoWrite)`.
-    #[inline]
-    pub fn writer(&self) -> FileWriter {
-        FileWriter(self.handle)
-    }
-    /// `File.reader()` — `std.Io.GenericReader(File, anyerror, stdIoRead)`.
-    #[inline]
-    pub fn reader(&self) -> FileReader {
-        FileReader(self.handle)
-    }
     /// Buffered writer (`std::io::BufWriter`) wrapping this fd.
     pub fn buffered_writer(&self) -> std::io::BufWriter<FileWriter> {
         std::io::BufWriter::new(FileWriter(self.handle))

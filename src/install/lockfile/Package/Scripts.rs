@@ -57,12 +57,6 @@ impl Scripts {
         ]
     }
 
-    /// Alias of [`hooks`].
-    #[inline]
-    pub fn iter_all(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
-        self.hooks()
-    }
-
     #[inline]
     pub fn hooks_mut(&mut self) -> [&mut SemverString; SCRIPT_NAMES_LEN] {
         [

@@ -114,7 +114,6 @@ pub struct BundleV2<'a> {
     /// See the comment in `Chunk.OutputPiece`.
     pub unique_key: u64,
     pub dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
-    pub has_on_parse_plugins: bool,
 
     pub finalizers: Vec<ExternalFreeFunction>,
 
@@ -164,10 +163,6 @@ impl<'a> BundleV2<'a> {
     #[inline]
     pub fn transpiler(&self) -> &Transpiler<'a> {
         &*self.transpiler
-    }
-    #[inline]
-    pub fn transpiler_mut(&mut self) -> &mut Transpiler<'a> {
-        &mut *self.transpiler
     }
 
     #[inline]
@@ -468,8 +463,6 @@ pub mod bv2_impl {
             /// Mirrors `Framework.is_built_in_react` — read by
             /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
             pub is_built_in_react: bool,
-            /// Read by `entry_points.rs` (FallbackEntryPoint/ClientEntryPoint::generate).
-            pub client_css_in_js: crate::options::ClientCssInJs,
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
@@ -487,7 +480,6 @@ pub mod bv2_impl {
                     server_components,
                     react_fast_refresh,
                     is_built_in_react,
-                    client_css_in_js: crate::options::ClientCssInJs::default(),
                 }
             }
         }
@@ -513,24 +505,10 @@ pub mod bv2_impl {
         #[derive(Clone, Copy)]
         pub struct HmrRuntime {
             pub code: &'static [u8],
-            /// Precomputed `\n` count — sourcemap generation skips this many lines.
-            pub line_count: u32,
         }
         impl HmrRuntime {
             pub const fn init(code: &'static [u8]) -> Self {
-                // const-fn newline counter.
-                let mut n: u32 = 0;
-                let mut i = 0usize;
-                while i < code.len() {
-                    if code[i] == b'\n' {
-                        n += 1;
-                    }
-                    i += 1;
-                }
-                Self {
-                    code,
-                    line_count: n,
-                }
+                Self { code }
             }
         }
         /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
@@ -706,14 +684,6 @@ pub mod bv2_impl {
     /// JSC. The JS-thread halves (dispatch onto the JS event loop, `toJS`, plugin
     /// FFI bodies) stay in tier-6 (`bun_runtime::api`) and re-export these.
     pub mod api {
-        /// `BuildArtifact.OutputKind`.
-        /// Canonical definition lives in `crate::options::OutputKind`; re-exported
-        /// here so the documented CYCLEBREAK path `api::build_artifact::OutputKind`
-        /// keeps resolving.
-        pub mod build_artifact {
-            pub use crate::options::OutputKind;
-        }
-
         /// `JSBundler` — TYPE_ONLY subset.
         /// Exposed as a module (not a struct) so callers can write
         /// `api::JSBundler::Load` / `api::JSBundler::Resolve::MiniImportRecord`.
@@ -1248,18 +1218,6 @@ pub mod bv2_impl {
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
-                /// Raw backref to the owning `BundleV2`.
-                ///
-                /// No `&`/`&mut`-returning accessor is provided: the bundle is
-                /// reachable from both the bundler thread and JS-thread plugin
-                /// callbacks, and several callers (`on_load_async`,
-                /// `on_load_from_js_loop`) need `&mut BundleV2` *alongside*
-                /// `&mut Load`, which a borrowing accessor cannot express. Callers
-                /// must keep the raw deref + SAFETY note locally.
-                #[inline]
-                pub fn bv2_ptr(&self) -> *mut BundleV2<'static> {
-                    self.bv2
-                }
                 /// Shared access to the heap-allocated `ParseTask` this load wraps.
                 ///
                 /// `parse_task` is a `BackRef` set from `&mut ParseTask` in `init`
@@ -1332,21 +1290,6 @@ pub mod bv2_impl {
             }
         }
     }
-
-    /// `SavedFile`'s only member is `toJS`, which
-    /// is JSC-bound and stays in T6. The bundler stores it as an `OutputFile` value
-    /// tag, so a unit struct here is sufficient.
-    pub mod saved_file {
-        #[derive(Default, Clone, Copy)]
-        pub struct SavedFile;
-    }
-
-    // ── crate-root re-exports for forward-refs left by move-out ───────────────
-    pub use self::bake_types::{HmrRuntimeSide, get_hmr_runtime};
-
-    /// `crate::bundle_v2::JSBundlerPlugin` — see BundleThread.rs.
-    pub type JSBundlerPlugin = self::api::JSBundler::Plugin;
-    pub type FileMap = self::api::JSBundler::FileMap;
 
     use bun_sourcemap as SourceMap;
 
@@ -1695,9 +1638,6 @@ pub mod bv2_impl {
         pub all_loaders: &'a [Loader],
         pub all_urls_for_css: &'a [&'a [u8]],
         pub redirects: &'a [u32],
-        // `PathToSourceIndexMap` is `!Clone` and the field is unread in `visit`, so
-        // store a raw backref to satisfy the struct shape without forcing `Clone`.
-        pub redirect_map: *const PathToSourceIndexMap,
         pub dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
         /// Files which are Server Component Boundaries
         pub scb_bitset: Option<DynamicBitSetUnmanaged>,
@@ -1952,8 +1892,6 @@ pub mod bv2_impl {
             // reshaped for borrowck — hoist the values that would
             // otherwise re-borrow `self`/`self.graph` while the visitor holds
             // disjoint column refs.
-            let redirect_map: *const PathToSourceIndexMap =
-                std::ptr::from_ref(self.path_to_source_index_map(self.transpiler.options.target));
             // Always materialize a valid slice; when the boundary list is empty
             // this is a cheap `{ list: empty, map: &map }`. Avoids constructing a
             // null `&Map` via `mem::zeroed()` (UB even though it was never read
@@ -1976,7 +1914,6 @@ pub mod bv2_impl {
                 all_import_records,
                 all_loaders: self.graph.input_files.items_loader(),
                 all_urls_for_css,
-                redirect_map,
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
                 scb_bitset,
                 scb_list,
@@ -2792,7 +2729,6 @@ pub mod bv2_impl {
                 free_list: Vec::new(),
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
-                has_on_parse_plugins: false,
                 finalizers: Vec::new(),
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
@@ -7276,11 +7212,6 @@ pub mod bv2_impl {
         }
 
         /// To satisfy the interface from NewHotReloader()
-        pub fn get_loaders(&mut self) -> &mut options::LoaderHashTable {
-            &mut self.transpiler.options.loaders
-        }
-
-        /// To satisfy the interface from NewHotReloader()
         pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
             self.transpiler.resolver.bust_dir_cache(path)
         }
@@ -7686,20 +7617,6 @@ pub mod bv2_impl {
         pub chunks: &'a mut [Chunk],
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub html_files: ArrayHashMap<Index, ()>,
-    }
-
-    impl<'a> DevServerOutput<'a> {
-        pub fn js_pseudo_chunk(&mut self) -> &mut Chunk {
-            &mut self.chunks[0]
-        }
-
-        pub fn css_chunks(&mut self) -> &mut [Chunk] {
-            &mut self.chunks[1..][..self.css_file_list.count()]
-        }
-
-        pub fn html_chunks(&mut self) -> &mut [Chunk] {
-            &mut self.chunks[1 + self.css_file_list.count()..][..self.html_files.count()]
-        }
     }
 
     pub fn generate_unique_key() -> u64 {

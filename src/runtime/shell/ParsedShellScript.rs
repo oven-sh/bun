@@ -8,9 +8,10 @@ use bun_jsc::{
     JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 
+use super::env_map::EnvMap;
 use super::interpreter::ShellArgs;
 use super::shell_body::{JsStrings, shell_cmd_from_js};
-use super::{EnvMap, EnvStr, Interpreter};
+use super::{EnvStr, Interpreter};
 
 // NOTE: `pub const js = jsc.Codegen.JSParsedShellScript;` and the
 // `toJS`/`fromJS`/`fromJSDirect` re-exports are provided by the

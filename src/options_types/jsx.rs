@@ -255,12 +255,6 @@ impl Pragma {
         str
     }
 
-    pub fn is_react_like(&self) -> bool {
-        &*self.package_name == b"react"
-            || &*self.package_name == b"@emotion/jsx"
-            || &*self.package_name == b"@emotion/react"
-    }
-
     /// When `package_name` is the default `"react"`, this borrows the
     /// interned `defaults::IMPORT_SOURCE*` with zero allocations.
     pub fn set_import_source(&mut self) {
@@ -289,10 +283,6 @@ impl Pragma {
         out.extend_from_slice(pkg);
         out.extend_from_slice(suffix);
         Cow::Owned(out)
-    }
-
-    pub fn set_production(&mut self, is_production: bool) {
-        self.development = !is_production;
     }
 
     // "React.createElement" => ["React", "createElement"]

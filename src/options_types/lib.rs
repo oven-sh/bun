@@ -46,9 +46,6 @@ pub mod standalone_path {
     #[cfg(windows)]
     pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 
-    #[cfg(not(windows))]
-    pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =
-        const_format::concatcp!(BASE_PUBLIC_PATH, "root/");
     #[cfg(windows)]
     pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =
         const_format::concatcp!(BASE_PUBLIC_PATH, "root/");

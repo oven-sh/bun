@@ -82,12 +82,6 @@ pub struct ExpansionOut {
     pub has_quoted_empty: bool,
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct ExpansionOpts {
-    pub for_spawn: bool,
-    pub single: bool,
-}
-
 impl Expansion {
     pub fn init(
         interp: &Interpreter,
@@ -95,10 +89,9 @@ impl Expansion {
         node: *const ast::Atom,
         parent: NodeId,
         io: IO,
-        _opts: ExpansionOpts,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
-            base: Base::new(StateKind::Expansion, parent, shell),
+            base: Base::new(parent, shell),
             // SAFETY: `node` is non-null and points into the AST arena
             // (`ShellArgs::__arena`), which the interpreter holds for its
             // entire lifetime — strictly outliving every state node (the

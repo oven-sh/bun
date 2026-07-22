@@ -8,7 +8,6 @@
 
 use crate::schema::api;
 use bun_ast::{Loader, LoaderOptional, Target};
-use bun_collections;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -40,11 +39,6 @@ pub enum Format {
 
 impl Format {
     pub fn keep_es6_import_export_syntax(self) -> bool {
-        self == Format::Esm
-    }
-
-    #[inline]
-    pub fn is_esm(self) -> bool {
         self == Format::Esm
     }
 
@@ -91,8 +85,6 @@ pub enum BundlePackage {
     Always,
     Never,
 }
-
-pub type BundlePackageMap = bun_collections::StringArrayHashMap<BundlePackage>;
 
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────
 

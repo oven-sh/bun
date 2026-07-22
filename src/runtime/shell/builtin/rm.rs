@@ -55,9 +55,6 @@ impl ExecState {
 
 #[derive(Clone, Copy)]
 pub struct Opts {
-    /// `--no-preserve-root` / `--preserve-root` — if false, allow recursive
-    /// removal of `/`.
-    pub preserve_root: bool,
     /// `-f`, `--force` — ignore nonexistent files and arguments, never prompt.
     pub force: bool,
     /// Configures how the user should be prompted on removal of files.
@@ -73,7 +70,6 @@ pub struct Opts {
 impl Default for Opts {
     fn default() -> Self {
         Self {
-            preserve_root: true,
             force: false,
             prompt_behaviour: PromptBehaviour::Never,
             recursive: false,
@@ -329,17 +325,8 @@ impl Rm {
                         };
                         for i in args_start..argc {
                             let root = Builtin::of(interp, cmd).arg_bytes(i);
-                            let is_absolute = Platform::AUTO.is_absolute(root);
                             let task = ShellRmTask::create(
-                                cmd,
-                                opts,
-                                root,
-                                cwd,
-                                sig,
-                                out_count,
-                                is_absolute,
-                                evtloop,
-                                interp_ptr,
+                                cmd, opts, root, cwd, sig, out_count, evtloop, interp_ptr,
                             );
                             // SAFETY: freshly heap-allocated.
                             unsafe { ShellRmTask::schedule(task) };
@@ -546,14 +533,7 @@ impl Rm {
         }
         if flag.len() > 2 && flag[1] == b'-' {
             return match flag {
-                b"--preserve-root" => {
-                    opts.preserve_root = true;
-                    RmParseFlag::ContinueParsing
-                }
-                b"--no-preserve-root" => {
-                    opts.preserve_root = false;
-                    RmParseFlag::ContinueParsing
-                }
+                b"--preserve-root" | b"--no-preserve-root" => RmParseFlag::ContinueParsing,
                 b"--recursive" => {
                     opts.recursive = true;
                     RmParseFlag::ContinueParsing
@@ -657,7 +637,6 @@ pub struct ShellRmTask {
     /// Borrows. Freed in `Drop`.
     pub root_task: *mut DirTask,
     pub root_path: ZBox,
-    pub root_is_absolute: bool,
     /// Backref into `Rm::ExecState.error_signal`; the boxed `Rm` ExecState
     /// outlives every in-flight `ShellRmTask`.
     pub error_signal: bun_ptr::BackRef<AtomicBool>,
@@ -715,7 +694,6 @@ impl ShellRmTask {
         cwd: bun_sys::Fd,
         error_signal: bun_ptr::BackRef<AtomicBool>,
         output_count: bun_ptr::BackRef<AtomicUsize>,
-        is_absolute: bool,
         evtloop: EventLoopHandle,
         interp: *mut Interpreter,
     ) -> *mut ShellRmTask {
@@ -745,7 +723,6 @@ impl ShellRmTask {
             cwd,
             root_task,
             root_path: root_path_z,
-            root_is_absolute: is_absolute,
             error_signal,
             output_count,
             pending_main_callbacks: AtomicU32::new(1),

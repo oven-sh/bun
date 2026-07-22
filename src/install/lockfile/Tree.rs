@@ -64,7 +64,6 @@ pub(crate) const INVALID_ID: Id = Id::MAX;
 
 impl Tree {
     pub const INVALID_ID: Id = INVALID_ID;
-    pub const ROOT_DEP_ID: DependencyID = ROOT_DEP_ID;
 }
 
 // max number of node_modules folders

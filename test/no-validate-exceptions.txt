@@ -1,20 +1,20 @@
 # List of tests for which we do NOT set validateExceptionChecks=1 when running in ASAN CI
 
 # List of tests that potentially throw inside of reifyStaticProperties
-test/js/node/module/node-module-module.test.js
-test/js/node/module/module-resolve-filename-paths.test.js
 test/bake/dev/production.test.ts
+test/cli/install/bun-install-lifecycle-scripts.test.ts
+test/integration/vite-build/vite-build.test.ts
 test/js/bun/resolve/import-meta.test.js
+test/js/bun/resolve/resolve.test.ts
+test/js/bun/test/parallel/test-integration-rspack.ts
 test/js/bun/util/BunObject.test.ts
 test/js/bun/util/fuzzy-wuzzy.test.ts
-test/js/web/websocket/websocket.test.js
+test/js/node/module/module-resolve-filename-paths.test.js
+test/js/node/module/node-module-module.test.js
 test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
-test/js/bun/resolve/resolve.test.ts
-test/integration/vite-build/vite-build.test.ts
 test/js/third_party/astro/astro-post.test.js
+test/js/web/websocket/websocket.test.js
 test/regression/issue/ctrl-c.test.ts
-test/cli/install/bun-install-lifecycle-scripts.test.ts
-test/js/bun/test/parallel/test-integration-rspack.ts
 
 # hit a debug assert
 test/bundler/bundler_compile.test.ts

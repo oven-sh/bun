@@ -756,10 +756,6 @@ impl FileSink {
         Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
-    pub fn connect(&self, signal: streams::Signal) {
-        self.signal.set(signal);
-    }
-
     pub fn start(&self, stream_start: &streams::Start) -> sys::Result<()> {
         match stream_start {
             streams::Start::FileSink(file)
@@ -1153,10 +1149,6 @@ impl FileSink {
         }
     }
 
-    pub fn sink(&mut self) -> crate::webcore::sink::Sink<'_> {
-        crate::webcore::sink::Sink::init(self)
-    }
-
     pub fn update_ref(&self, value: bool) {
         // `with_mut`: the Windows `BaseWindowsPipeWriter` impls take `&mut self`
         // (the posix `PosixStreamingWriter` impls are `&self`); `with_mut`
@@ -1175,7 +1167,6 @@ impl FileSink {
 pub type JSSink = crate::webcore::sink::JSSink<FileSink>;
 pub type SinkSignal = crate::webcore::sink::SinkSignal<FileSink>;
 
-crate::impl_sink_handler!(FileSink);
 crate::impl_js_sink_abi!(FileSink, "FileSink");
 
 // `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via
@@ -1184,8 +1175,6 @@ crate::impl_js_sink_abi!(FileSink, "FileSink");
 impl crate::webcore::sink::JsSinkType for FileSink {
     const NAME: &'static str = "FileSink";
     const HAS_CONSTRUCT: bool = true;
-    const HAS_SIGNAL: bool = true;
-    const HAS_DONE: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const HAS_PROTECT_JS_WRAPPER: bool = true;
     const HAS_UPDATE_REF: bool = true;

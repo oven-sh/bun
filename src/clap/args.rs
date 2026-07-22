@@ -1,4 +1,3 @@
-use core::convert::Infallible;
 use std::borrow::Cow;
 
 /// Arg-iterator surface. Implemented by
@@ -8,15 +7,6 @@ pub trait ArgIter<'a> {
     fn next(&mut self) -> Option<&'a [u8]>;
     /// Remaining unconsumed args as a slice (for `stop_after_positional_at`).
     fn remain(&self) -> &[&'a [u8]];
-}
-
-/// An example of what methods should be implemented on an arg iterator.
-pub struct ExampleArgIterator;
-
-impl ExampleArgIterator {
-    pub fn next(&mut self) -> Result<Option<&'static [u8]>, Infallible> {
-        Ok(Some(b"2"))
-    }
 }
 
 /// Pop the first element of `remain`, advancing the slice. Shared body for

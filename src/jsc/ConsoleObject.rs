@@ -2698,12 +2698,61 @@ pub mod formatter {
                             PercentTag::J => {
                                 // JSON.stringify the value using FastStringifier
                                 // for SIMD optimization
-                                // `OwnedString` releases the
-                                // +1 WTF ref on every exit (incl. the `?` below).
+                                // `OwnedString` releases the +1 WTF ref on
+                                // every exit (incl. the early-return arms).
                                 let mut str = OwnedString::new(BunString::empty());
-                                next_value.json_stringify_fast(global, &mut str)?;
-                                writer.add_for_new_line(str.length());
-                                writer.print(format_args!("{str}"));
+                                match next_value.json_stringify_fast(global, &mut str) {
+                                    Ok(()) => {
+                                        writer.add_for_new_line(str.length());
+                                        writer.print(format_args!("{str}"));
+                                    }
+                                    Err(jsc::JsError::Thrown) => {
+                                        // Node's `%j` prints `[Circular]` for the
+                                        // cyclic-structure TypeError and rethrows
+                                        // everything else (toJSON throws, BigInt).
+                                        let Some(exception) = global.try_take_exception() else {
+                                            return Err(jsc::JsError::Thrown);
+                                        };
+                                        let err = exception.to_error().unwrap_or(exception);
+                                        let is_circular = 'c: {
+                                            if !err.is_object() {
+                                                break 'c false;
+                                            }
+                                            let Some(name) =
+                                                err.fast_get(global, jsc::BuiltinName::name)?
+                                            else {
+                                                break 'c false;
+                                            };
+                                            if !name.is_string() {
+                                                break 'c false;
+                                            }
+                                            let name =
+                                                OwnedString::new(name.to_bun_string(global)?);
+                                            if !name.eql_comptime(b"TypeError") {
+                                                break 'c false;
+                                            }
+                                            let Some(msg) =
+                                                err.fast_get(global, jsc::BuiltinName::Message)?
+                                            else {
+                                                break 'c false;
+                                            };
+                                            if !msg.is_string() {
+                                                break 'c false;
+                                            }
+                                            let msg = OwnedString::new(msg.to_bun_string(global)?);
+                                            msg.eql_comptime(
+                                                b"JSON.stringify cannot serialize cyclic structures.",
+                                            )
+                                        };
+                                        if is_circular {
+                                            writer.add_for_new_line(10);
+                                            writer.write_all(b"[Circular]");
+                                        } else {
+                                            return Err(global.throw_value(err));
+                                        }
+                                    }
+                                    Err(e) => return Err(e),
+                                }
                             }
                         }
                         if self.remaining_values.is_empty() {

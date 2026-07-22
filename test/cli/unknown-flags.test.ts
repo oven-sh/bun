@@ -222,4 +222,24 @@ describe("unknown CLI flags", () => {
     expect(combined).not.toContain("unknown option");
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("--help wins over an unknown flag", async () => {
+    using dir = tempDir("unknown-flag-help", {
+      "package.json": JSON.stringify({ name: "c", version: "1.0.0" }),
+    });
+    const { combined, exitCode } = await run(["install", "--totally-fake-flag", "--help"], String(dir));
+    expect(combined).not.toContain("unknown option");
+    expect(combined).toContain("Usage");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--no-warnings is accepted without a diagnostic", async () => {
+    using dir = tempDir("unknown-flag-no-warnings", {
+      "script.js": "console.log('RAN')\n",
+    });
+    const { stdout, stderr, exitCode } = await run(["--no-warnings", "script.js"], String(dir));
+    expect(stderr).toBe("");
+    expect(stdout).toContain("RAN");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -393,27 +393,31 @@ impl Diagnostic {
     /// one unknown flag was seen. Callers that must refuse typo'd flags
     /// (`bun install --frozen-lockfil`, `bun upgrade --dry-run`, …) call this
     /// after a successful `parse` and exit non-zero when it returns `true`.
-    #[cold]
-    #[inline(never)]
+    ///
+    /// The empty check is inlined so the `bun <file>` hot path never jumps
+    /// into the `#[cold]` body when there is nothing to report.
+    #[inline]
     pub fn reject_unknown<Id>(&self, params: &[Param<Id>]) -> bool {
+        if self.unknown_long.is_empty() {
+            return false;
+        }
         self.print_unknown(params, true)
     }
 
     /// Like [`reject_unknown`] but emits `warn:` instead of `error:`. Used by
     /// `bun run` / bare `bun <file>` where an unknown flag might be a Node/V8
     /// option Bun has not declared yet and hard-failing would be a regression.
-    #[cold]
-    #[inline(never)]
+    #[inline]
     pub fn warn_unknown<Id>(&self, params: &[Param<Id>]) -> bool {
+        if self.unknown_long.is_empty() {
+            return false;
+        }
         self.print_unknown(params, false)
     }
 
     #[cold]
     #[inline(never)]
     fn print_unknown<Id>(&self, params: &[Param<Id>], as_error: bool) -> bool {
-        if self.unknown_long.is_empty() {
-            return false;
-        }
         for name in &self.unknown_long {
             let suggestion = closest_long_name(params, name);
             if as_error {

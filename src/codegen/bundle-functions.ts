@@ -48,7 +48,7 @@ import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
-import { addCPPCharArray, cap, low, writeIfNotChanged } from "./helpers";
+import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
 import { applyGlobalReplacements, define } from "./replacements";
 
 const PARALLEL = false;
@@ -410,18 +410,14 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     }
   }
 
-  let combinedSourceCodeChars = "";
-  let combinedSourceCodeLength = 0;
+  let combinedSourceCode = "";
   // Compute source offsets
   {
     for (const { basename, functions } of files) {
       for (const fn of functions) {
-        fn.sourceOffset = combinedSourceCodeLength;
-        combinedSourceCodeLength += fn.source.length;
-        if (combinedSourceCodeChars && !combinedSourceCodeChars.endsWith(",")) {
-          combinedSourceCodeChars += ",";
-        }
-        combinedSourceCodeChars += addCPPCharArray(fn.source, false);
+        checkAscii(fn.source);
+        fn.sourceOffset = combinedSourceCode.length;
+        combinedSourceCode += fn.source;
 
         // If you want to see the individual function sources:
         // if (true) {
@@ -430,6 +426,11 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
       }
     }
   }
+  const combinedSourceCodeLength = combinedSourceCode.length;
+  // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
+  // same linked blob carries both the builtin function sources and the internal
+  // module sources.
+  globalThis.internalFunctionCombinedSource = combinedSourceCode;
 
   let additionalPrivateNames = new Set();
 
@@ -449,9 +450,12 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     #include <JavaScriptCore/JSObjectInlines.h>
     #include "BunBuiltinNames.h"
 
+    // The builtin function sources are linked at the start of bun_internal_modules_data
+    // (see bundle-modules.ts / InternalModuleRegistryConstants.S).
+    extern "C" const char bun_internal_modules_data[];
+
     namespace WebCore {
-        static const Latin1Character combinedSourceCodeBuffer[${combinedSourceCodeLength + 1}] = { ${combinedSourceCodeChars}, 0 };
-        static const std::span<const Latin1Character> internalCombinedSource = { combinedSourceCodeBuffer, ${combinedSourceCodeLength} };
+        static const std::span<const Latin1Character> internalCombinedSource = { reinterpret_cast<const Latin1Character*>(bun_internal_modules_data), ${combinedSourceCodeLength} };
     `;
 
   for (const { basename, functions } of files) {

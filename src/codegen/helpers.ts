@@ -2,16 +2,6 @@ import { isAscii } from "buffer";
 import fs from "fs";
 import path from "path";
 
-export function addCPPCharArray(str: string, nullTerminated: boolean = true) {
-  const normalized = str.trim() + "\n";
-  return (
-    normalized
-      .split("")
-      .map(a => a.charCodeAt(0))
-      .join(",") + (nullTerminated ? ",0" : "")
-  );
-}
-
 export function cap(str: string) {
   return str[0].toUpperCase() + str.slice(1);
 }

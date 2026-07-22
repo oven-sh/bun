@@ -330,19 +330,25 @@ writeIfNotChanged(
 `,
 );
 
-// The bundled JS module sources are linked into the executable as one contiguous
-// read-only blob (via `.incbin` in the generated `.S` below) and addressed by
-// {offset, length}. Emitting them as per-module `static constexpr const char[]`
-// byte-array initializers instead costs clang's frontend ~15s on the release
-// build — millions of integer tokens to parse for ~1.5 MB of payload.
+// The bundled JS sources (builtin functions + internal modules) are linked into
+// the executable as one contiguous read-only blob via `.incbin` in the generated
+// `.S` below and addressed by {offset, length}. Emitting them as C++
+// `static constexpr const char[]` byte-array initializers instead costs clang's
+// frontend ~15s on the release build — millions of integer tokens to parse for
+// ~2 MB of payload.
 //
-// In debug builds the sources are read from disk (BUN_DYNAMIC_JS_LOAD_PATH), so
-// the blob is a single NUL and every offset/length is 0.
+// Layout: [builtin functions combined source][\0][module 0][\n\0][module 1][\n\0]...
+// WebCoreJSBuiltins.cpp's internalCombinedSource is the span at offset 0; the
+// internal modules follow at known offsets.
+//
+// In debug builds the module sources are read from disk (BUN_DYNAMIC_JS_LOAD_PATH),
+// so every module offset/length is 0. The functions span is still real in debug.
+const functionsSource: string = globalThis.internalFunctionCombinedSource;
 const moduleSpans: { enumName: string; offset: number; length: number }[] = [];
 let blob: Buffer;
 {
-  const chunks: Buffer[] = [];
-  let offset = 0;
+  const chunks: Buffer[] = [Buffer.from(functionsSource + "\0", "latin1")];
+  let offset = chunks[0].length;
   for (const id of moduleList.slice(0, nativeStartIndex)) {
     const enumName = idToEnumName(id);
     if (debug) {
@@ -359,7 +365,7 @@ let blob: Buffer;
     moduleSpans.push({ enumName, offset, length: bytes.length - 1 });
     offset += bytes.length;
   }
-  blob = debug ? Buffer.from("\0") : Buffer.concat(chunks);
+  blob = Buffer.concat(chunks);
 }
 
 writeIfNotChangedBinary(path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.bin"), blob);

@@ -796,7 +796,6 @@ describe("fetch", () => {
     }),
   );
 
-  // https://github.com/oven-sh/bun/issues/2730
   // WHATWG Fetch only forbids a body for GET and HEAD. OPTIONS with content is
   // legal HTTP (RFC 9110 §9.3.7) and must be sent, not rejected.
   it.concurrent("OPTIONS with body is sent and delivered", async () => {

@@ -65,9 +65,10 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // unwinding back through the emit loop — the 'exit' event has already
         // been dispatched by the caller.
         if bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal() {
-            let should_clear_terminal = !vm
-                .env_loader()
-                .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
+            let should_clear_terminal =
+                !vm.env_loader().has_set_no_clear_terminal_on_reload(
+                    !bun_core::Output::enable_ansi_colors_stdout(),
+                );
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }

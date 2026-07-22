@@ -635,7 +635,7 @@ describe("package.json exports/imports array target fallback", () => {
         }
         for (const s of ["arrpkg/miss", "arrpkg/allinv", "arrpkg/allnul"]) {
           try { await import(s); out["import " + s] = "resolved"; }
-          catch (e) { out["import " + s] = "THREW"; }
+          catch (e) { out["import " + s] = "THREW " + (e.code || e.name); }
         }
         console.log(JSON.stringify(out));
       `,
@@ -666,9 +666,24 @@ describe("package.json exports/imports array target fallback", () => {
       "#ctl": imp,
     });
 
-    expect(() => Bun.resolveSync("arrpkg/miss", root)).toThrow();
-    expect(() => Bun.resolveSync("arrpkg/allinv", root)).toThrow();
-    expect(() => Bun.resolveSync("arrpkg/allnul", root)).toThrow();
+    const resolveError = (spec: string) => {
+      try {
+        return { resolved: Bun.resolveSync(spec, root) };
+      } catch (e: any) {
+        return { name: e.name, code: e.code };
+      }
+    };
+    // Node reports ERR_INVALID_PACKAGE_TARGET for allinv and ERR_PACKAGE_PATH_NOT_EXPORTED
+    // for allnul; Bun currently surfaces all three as ERR_MODULE_NOT_FOUND.
+    expect({
+      miss: resolveError("arrpkg/miss"),
+      allinv: resolveError("arrpkg/allinv"),
+      allnul: resolveError("arrpkg/allnul"),
+    }).toEqual({
+      miss: { name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" },
+      allinv: { name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" },
+      allnul: { name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" },
+    });
   });
 
   it.concurrent("import() and require() fall through invalid/null array entries", async () => {
@@ -698,9 +713,9 @@ describe("package.json exports/imports array target fallback", () => {
       "require #nul": "imp.mjs",
       "import #ctl": "imp.mjs",
       "require #ctl": "imp.mjs",
-      "import arrpkg/miss": "THREW",
-      "import arrpkg/allinv": "THREW",
-      "import arrpkg/allnul": "THREW",
+      "import arrpkg/miss": "THREW ERR_MODULE_NOT_FOUND",
+      "import arrpkg/allinv": "THREW ERR_MODULE_NOT_FOUND",
+      "import arrpkg/allnul": "THREW ERR_MODULE_NOT_FOUND",
     });
     expect(exitCode).toBe(0);
   });

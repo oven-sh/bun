@@ -9,9 +9,8 @@ import { generateUnifiedSources } from "../../../../scripts/build/unified.ts";
  *   codegen-critical-path + pch + max(cxx) + sum(cxx)/cores
  * so an outsized bundle or a directory compiling standalone dominates both the
  * tail and the aggregate. `bun run build:analyze` surfaces the numbers, and
- * these checks lock in the two worst offenders it found: webcore/streams
- * bundled (not `noUnifyDirs`) and `InternalModuleRegistry.cpp` compiled on its
- * own instead of inflating its siblings.
+ * these checks lock in the bundling decisions it informed, chiefly
+ * webcore/streams bundled (not `noUnifyDirs`).
  */
 
 const repo = resolve(import.meta.dir, "../../../..");
@@ -58,21 +57,17 @@ describe("unified-source bundling", () => {
     expect(unified).toEqual(["UnifiedSource-src_jsc_bindings_webcore_streams-0.cpp"]);
   });
 
-  test("InternalModuleRegistry.cpp compiles standalone", () => {
-    // It #includes InternalModuleRegistryConstants.h, a multi-megabyte
-    // byte-array header (~16s frontend). Bundled, it made its unified TU the
-    // release critical-path straggler; standalone it runs alongside them.
+  test("InternalModuleRegistry.cpp bundles with its siblings", () => {
+    // InternalModuleRegistryConstants.h stopped embedding module source bytes
+    // (#35071 links them via .incbin), so the file is an ordinary small TU.
     const bindings = [
       "src/jsc/bindings/AsyncContextFrame.cpp",
       "src/jsc/bindings/InternalModuleRegistry.cpp",
       "src/jsc/bindings/ErrorCode.cpp",
     ];
     const { standalone, bundled } = split(true, bindings);
-    expect(standalone.has("src/jsc/bindings/InternalModuleRegistry.cpp")).toBe(true);
-    expect(bundled.has("src/jsc/bindings/InternalModuleRegistry.cpp")).toBe(false);
-    // siblings still bundle
-    expect(bundled.has("src/jsc/bindings/AsyncContextFrame.cpp")).toBe(true);
-    expect(bundled.has("src/jsc/bindings/ErrorCode.cpp")).toBe(true);
+    expect(standalone.has("src/jsc/bindings/InternalModuleRegistry.cpp")).toBe(false);
+    expect(bundled.has("src/jsc/bindings/InternalModuleRegistry.cpp")).toBe(true);
   });
 
   test("the heavy standalone list stays in noUnify", () => {

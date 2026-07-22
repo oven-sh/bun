@@ -59,12 +59,6 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/webcore/SerializedScriptValue.cpp",
   "src/jsc/bindings/webcore/HTTPParsers.cpp",
 
-  // #includes InternalModuleRegistryConstants.h — ~3 MB of embedded byte
-  // arrays for every bundled JS module, ~16s to parse on its own
-  // (-ftime-trace). Bundling it made its unified TU ~18s slower than its
-  // siblings and put it on the release critical path.
-  "src/jsc/bindings/InternalModuleRegistry.cpp",
-
   // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;
   // both end up in the same bundle. TODO: extract helpers to a shared header.
   "src/jsc/bindings/webcore/JSMIMEType.cpp",

@@ -842,6 +842,10 @@ class TestNode {
   // Inline subtests are serialized through this chain. `concurrency` is
   // validated for Node-compat error codes but subtests always run serially.
   subtestChain: Promise<void> = Promise.resolve();
+  // True when no subtest step is in flight on the chain; appendSubtestStep()
+  // starts the next step inline (Node starts a subtest's body synchronously
+  // at the t.test() call when the parent has a free concurrency slot).
+  subtestChainIdle = true;
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
   // First failure from a before hook created while this test was running.
@@ -1444,10 +1448,29 @@ function runBeforeHookOnce(hook: Hook, owner: TestNode, arg: unknown): Promise<v
   return (hook.result ??= runHook(hook, owner, arg));
 }
 
+// Appends an async step to a node's subtest chain. When nothing is in flight
+// the step is started inline so its synchronous prefix runs before this
+// function returns, matching Node's Test.start() calling run() directly when
+// the parent has a free concurrency slot.
+function appendSubtestStep(owner: TestNode, step: () => Promise<void>): Promise<void> {
+  let link: Promise<void>;
+  if (owner.subtestChainIdle) {
+    owner.subtestChainIdle = false;
+    link = step();
+  } else {
+    link = owner.subtestChain.then(step);
+  }
+  owner.subtestChain = link;
+  link.then(() => {
+    if (owner.subtestChain === link) owner.subtestChainIdle = true;
+  });
+  return link;
+}
+
 // Failures fail the owning test (Node: hook.error -> test.fail) instead of
 // poisoning the subtest chain, so they are reported even when nothing awaits.
 function scheduleImmediateBeforeHook(node: TestNode, hook: Hook, arg: unknown) {
-  node.subtestChain = node.subtestChain.then(async () => {
+  appendSubtestStep(node, async () => {
     try {
       await runBeforeHookOnce(hook, node, arg);
     } catch (err) {
@@ -1456,25 +1479,32 @@ function scheduleImmediateBeforeHook(node: TestNode, hook: Hook, arg: unknown) {
   });
 }
 
-async function runOwnBeforeHooks(node: TestNode) {
+function runOwnBeforeHooks(node: TestNode): Promise<void> | undefined {
   // Node runs suites strictly sequentially, so a subtest is gated on the before
   // hooks of every enclosing inline suite and the owning test, outermost first;
   // runBeforeHookOnce memoizes each, so the racing siblings share one result.
   const owners: TestNode[] = [];
+  let any = false;
   for (let owner: TestNode | undefined = node; owner !== undefined; owner = owner.parent) {
     owners.unshift(owner);
+    if (owner.hooks.before.length > 0) any = true;
     // Stop at the owning collection-phase test/suite: hooks above it were
     // registered through bun:test's own beforeAll and are not run by the shim.
     if (!owner.isExecutionPhase) break;
   }
-  for (const owner of owners) {
-    const { before } = owner.hooks;
-    if (before.length === 0) continue;
-    const arg = owner.isSuite ? owner.getSuiteCtx() : owner.getCtx();
-    for (const hook of before) {
-      await runBeforeHookOnce(hook, owner, arg);
+  // With no hooks return undefined, not a promise: an `await` here would cost
+  // the synchronous start of the subtest body that Node provides.
+  if (!any) return undefined;
+  return (async () => {
+    for (const owner of owners) {
+      const { before } = owner.hooks;
+      if (before.length === 0) continue;
+      const arg = owner.isSuite ? owner.getSuiteCtx() : owner.getCtx();
+      for (const hook of before) {
+        await runBeforeHookOnce(hook, owner, arg);
+      }
     }
-  }
+  })();
 }
 
 async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
@@ -1610,7 +1640,12 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise
     }
     let failure: unknown;
     try {
-      await runOwnBeforeHooks(parent);
+      // Only await when there are hooks: executeTestNode() is called as the
+      // operand of the next await, so its synchronous prefix (which reaches
+      // the test body when no beforeEach hooks exist) runs before this
+      // function first suspends.
+      const beforeHooks = runOwnBeforeHooks(parent);
+      if (beforeHooks !== undefined) await beforeHooks;
       failure = await executeTestNode(child, fn);
     } catch (err) {
       failure = err;
@@ -1620,8 +1655,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise
       parent.firstSubtestError ??= failure;
     }
   };
-  const result = (parent.subtestChain = parent.subtestChain.then(run));
-  return result.then(() => undefined);
+  return appendSubtestStep(parent, run).then(() => undefined);
 }
 
 function recordSuiteFailure(suite: TestNode, err: unknown) {
@@ -1679,8 +1713,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown)
       parent.firstSubtestError ??= suite.firstSubtestError;
     }
   };
-  const result = (parent.subtestChain = parent.subtestChain.then(run));
-  return result.then(() => undefined);
+  return appendSubtestStep(parent, run).then(() => undefined);
 }
 
 // -----------------------------------------------------------------------------
@@ -1837,6 +1870,7 @@ function addSuite(
     // chain through a gate the callback's settlement opens.
     const gate = Promise.withResolvers<void>();
     suite.subtestChain = runningNode.subtestChain.then(() => gate.promise);
+    suite.subtestChainIdle = false;
     // Build the suite eagerly (Node also runs describe callbacks immediately),
     // collecting children onto the suite's own subtest chain.
     let build: unknown;

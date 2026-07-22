@@ -147,7 +147,7 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// `instance` must be valid for `'static` (the spawned thread runs forever and
     /// accesses it). After this returns the bundle thread concurrently accesses
     /// `*instance`; callers must only touch it via the raw-pointer methods on this
-    /// impl (e.g. `enqueue`) and never materialize a `&mut Self`.
+    /// impl (e.g. `enqueue_or_spawn`) and never materialize a `&mut Self`.
     pub unsafe fn spawn(instance: *mut Self) -> std::io::Result<std::thread::JoinHandle<()>> {
         // `std::thread::Builder` (not `std::thread::spawn`) so the spawn error
         // is surfaced to the caller.
@@ -162,7 +162,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
                 // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
-                // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
+                // and is the sole writer of `waker`/`generation`, so concurrent `enqueue_or_spawn()`
                 // from other threads is sound.
                 unsafe { Self::thread_main(ptr.0) }
             })?;
@@ -241,7 +241,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         Output::Source::configure_named_thread(zstr!("Bundler"));
 
         // SAFETY: `waker` is written exactly once here, before `ready_event.set()`
-        // releases any thread that could call `enqueue` (which reads `waker`).
+        // releases any thread that could call `enqueue_or_spawn` (which reads `waker`).
         unsafe {
             core::ptr::addr_of_mut!((*instance).waker)
                 .write(Async::Waker::init().unwrap_or_else(|_| panic!("Failed to create waker")));
@@ -262,7 +262,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         {
             // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
             // write-once in `Waker::init()` above and never mutated by `wake()`, so a
-            // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)
+            // concurrent `enqueue_or_spawn()` (possible now that `ready_event.set()` has fired)
             // does not conflict. No `&Waker`/`&mut Waker` is materialized here.
             timer.init(unsafe { (*instance).waker.uv_loop() });
             timer.start(u64::MAX, u64::MAX, Some(timer_callback));
@@ -272,12 +272,12 @@ impl<C: CompletionStruct> BundleThread<C> {
         loop {
             loop {
                 // SAFETY: `UnboundedQueue::pop` takes `&self`; concurrent `push` from
-                // `enqueue` is the lock-free queue's intended use.
+                // `enqueue_or_spawn` is the lock-free queue's intended use.
                 let completion = unsafe { (*instance).queue.pop() };
                 if completion.is_null() {
                     break;
                 }
-                // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
+                // SAFETY: queue stores non-null *mut C pushed via enqueue_or_spawn(); owner keeps it alive
                 // until complete_on_bundle_thread() signals completion.
                 let completion = unsafe { &mut *completion };
                 // SAFETY: atomic field projected via raw ptr; overflow threads may
@@ -312,7 +312,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 has_bundled = false;
             }
 
-            // SAFETY: `Waker::wait` takes `&self`; concurrent `wake()` from `enqueue` is by design.
+            // SAFETY: `Waker::wait` takes `&self`; concurrent `wake()` from `enqueue_or_spawn` is by design.
             unsafe { (*instance).waker.wait() };
         }
     }

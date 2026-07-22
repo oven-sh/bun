@@ -676,6 +676,41 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
     });
   });
 
+  test("fetch() keep-alive pool does not reach a stopped server on a reused port (#6632)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const serverA = Bun.serve({
+            port: 0, hostname: "127.0.0.1",
+            fetch: () => new Response("A"),
+          });
+          const port = serverA.port;
+          const url = "http://127.0.0.1:" + port + "/";
+          const first = await (await fetch(url)).text();
+          await serverA.stop();
+          const serverB = Bun.serve({
+            port, hostname: "127.0.0.1", reusePort: true,
+            fetch: () => new Response("B"),
+          });
+          const second = await (await fetch(url)).text();
+          await serverB.stop(true);
+          console.log(JSON.stringify({ first, second }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { first: "A", second: "B" },
+      exitCode: 0,
+    });
+  });
+
   test("graceful stop() closes a connection once its in-flight request completes", async () => {
     await using proc = Bun.spawn({
       cmd: [

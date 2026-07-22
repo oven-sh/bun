@@ -2091,6 +2091,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 }
 
 fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
+    // us_create_loop discards the real errno by returning NULL, so the exact
+    // cause (EMFILE vs ENFILE, epoll_create1 vs eventfd) is not recoverable
+    // here. Report the common case with a platform-appropriate syscall name.
     let err = SystemError {
         message: BunString::static_(
             b"spawnSync failed to initialize its event loop (system resource exhaustion)",
@@ -2098,7 +2101,12 @@ fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
         code: BunString::static_("EMFILE"),
         errno: -UV_E::MFILE,
         path: BunString::EMPTY,
+        #[cfg(windows)]
         syscall: BunString::static_("uv_loop_init"),
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        syscall: BunString::static_("epoll_create1"),
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        syscall: BunString::static_("kqueue"),
         hostname: BunString::EMPTY,
         fd: -1,
         dest: BunString::EMPTY,

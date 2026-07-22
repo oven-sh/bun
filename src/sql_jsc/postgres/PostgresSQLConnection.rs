@@ -982,7 +982,9 @@ impl PostgresSQLConnection {
         if self.read_buffer.get().remaining().is_empty() {
             let mut consumed: usize = 0;
             let mut offset: usize = 0;
-            let reader = protocol::StackReader::init(data, &mut consumed, &mut offset);
+            let mut packet_end: usize = usize::MAX;
+            let reader =
+                protocol::StackReader::init(data, &mut consumed, &mut offset, &mut packet_end);
             match PostgresRequest::on_data(self, reader) {
                 Ok(()) => {}
                 Err(err) => {

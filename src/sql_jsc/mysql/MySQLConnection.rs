@@ -55,6 +55,7 @@ pub struct MySQLConnection {
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
     last_message_start: u32,
+    packet_end: u32,
     sequence_id: u8,
 
     // TODO: move it to JSMySQLConnection
@@ -98,6 +99,7 @@ impl Default for MySQLConnection {
             write_buffer: OffsetByteList::default(),
             read_buffer: OffsetByteList::default(),
             last_message_start: 0,
+            packet_end: u32::MAX,
             sequence_id: 0,
             queue: MySQLRequestQueue::init(),
             statements: PreparedStatementsMap::default(),
@@ -486,7 +488,8 @@ impl MySQLConnection {
             // so the post-error read of `offset`/`consumed` doesn't conflict.
             let consumed = core::cell::Cell::new(0usize);
             let offset = core::cell::Cell::new(0usize);
-            let reader = StackReader::init(data, &consumed, &offset);
+            let packet_end = core::cell::Cell::new(usize::MAX);
+            let reader = StackReader::init(data, &consumed, &offset, &packet_end);
             match self.process_packets(reader) {
                 Ok(()) => {}
                 Err(err) => {
@@ -581,6 +584,10 @@ impl MySQLConnection {
             reader
                 .ensure_capacity(packet_length)
                 .map_err(|_| AnyMySQLError::ShortRead)?;
+            // The full packet is now buffered; bound every body read to it so a
+            // server-controlled lenenc length can't pull bytes from the next
+            // packet (silent corruption) or return ShortRead (permanent wedge).
+            reader.set_packet_limit_from_start(packet_length);
             // `NewReader<C>: Copy` so the scopeguard captures by copy; the inner
             // `C` writes through a raw pointer so the offset update still lands.
             // Always skip the full packet, we dont care about padding or unread bytes.
@@ -603,6 +610,10 @@ impl MySQLConnection {
                     // reject them instead of feeding them to the auth/command handlers.
                     if self.tls_status == TLSStatus::MessageSent {
                         reader.set_offset_from_start(packet_length);
+                        // This check is explicitly looking for bytes buffered
+                        // AFTER the handshake packet, so drop the per-packet
+                        // window before peeking.
+                        reader.clear_packet_limit();
                         if !reader.peek().is_empty() {
                             return Err(AnyMySQLError::UnexpectedPacket);
                         }
@@ -1654,15 +1665,41 @@ impl Reader {
         // through `&mut self` while the reader is live.
         unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).last_message_start) }
     }
+
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn packet_end(&self) -> &mut u32 {
+        // SAFETY: same justification as `read_buffer()` / `last_message_start()`.
+        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).packet_end) }
+    }
 }
 
 impl ReaderContext for Reader {
     fn mark_message_start(self) {
         *self.last_message_start() = self.read_buffer().head;
+        *self.packet_end() = u32::MAX;
     }
 
     fn set_offset_from_start(self, offset: usize) {
         self.read_buffer().head = *self.last_message_start() + (offset as u32);
+    }
+
+    fn packet_remaining(&self) -> usize {
+        let end = *self.packet_end();
+        if end == u32::MAX {
+            return usize::MAX;
+        }
+        end.saturating_sub(self.read_buffer().head) as usize
+    }
+
+    fn set_packet_limit_from_start(self, packet_length: usize) {
+        // packet_length = PacketHeader::SIZE + a 24-bit body length, so the sum
+        // always fits in u32.
+        *self.packet_end() = *self.last_message_start() + packet_length as u32;
+    }
+
+    fn clear_packet_limit(self) {
+        *self.packet_end() = u32::MAX;
     }
 
     fn peek(&self) -> &[u8] {

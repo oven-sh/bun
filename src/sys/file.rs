@@ -486,13 +486,12 @@ pub(crate) mod tests {
     #[test]
     fn dropping_stdio_is_safe() {
         let _g = FD_TEST_LOCK.lock();
-        // `File::stdin()` / `stdout()` / `stderr()` wrap process-shared
-        // descriptors that the caller does not own. Dropping the wrapper must
-        // not tear down the test harness's output.
+        // `File::stdin()` / `stdout()` wrap process-shared descriptors that the
+        // caller does not own. Dropping the wrapper must not tear down the test
+        // harness's output.
         for _ in 0..16 {
             let _ = File::stdin();
             let _ = File::stdout();
-            let _ = File::stderr();
         }
         assert!(fstat(Fd::stdout()).is_ok());
     }

@@ -1587,6 +1587,108 @@ pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> 
     Err(global.throw(format_args!("Expected a Listener instance")))
 }
 
+const TICKET_KEY_SIZE: usize = 48;
+
+impl Listener {
+    /// The `SSL_CTX*` backing accepted sockets: `secure_ctx` for TCP listeners,
+    /// or the named-pipe context's ctx on Windows. `None` before `listen()`
+    /// builds the context.
+    fn ssl_ctx(&self) -> Option<NonNull<boring_sys::SSL_CTX>> {
+        if let Some(ctx) = self.secure_ctx {
+            return Some(ctx);
+        }
+        #[cfg(windows)]
+        if let ListenerType::NamedPipe(np) = self.listener.get() {
+            // SAFETY: from_js kept the Listener alive; the named-pipe context
+            // outlives it until close_pipe_and_deinit.
+            return unsafe { np.as_ref() }.ctx;
+        }
+        None
+    }
+
+    pub fn get_ticket_keys(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if !this.ssl {
+            return Err(global.throw_invalid_arguments(format_args!("getTicketKeys requires TLS")));
+        }
+        let Some(ctx) = this.ssl_ctx() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let mut buf = [0u8; TICKET_KEY_SIZE];
+        // SAFETY: FFI — ctx is a live SSL_CTX; buf is 48 bytes, the size BoringSSL requires.
+        let ok = unsafe {
+            boring_sys::SSL_CTX_get_tlsext_ticket_keys(
+                ctx.as_ptr(),
+                buf.as_mut_ptr().cast::<c_void>(),
+                TICKET_KEY_SIZE,
+            )
+        };
+        if ok != 1 {
+            return Err(global.throw(format_args!("Failed to get ticket keys")));
+        }
+        jsc::ArrayBuffer::create_buffer(global, &buf)
+    }
+
+    pub fn set_ticket_keys(
+        this: &Self,
+        global: &JSGlobalObject,
+        keys: JSValue,
+    ) -> JsResult<JSValue> {
+        if !this.ssl {
+            return Err(global.throw_invalid_arguments(format_args!("setTicketKeys requires TLS")));
+        }
+        let Some(ctx) = this.ssl_ctx() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let Some(buffer) = keys.as_array_buffer(global) else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("keys must be a Buffer or TypedArray"))
+            );
+        };
+        let slice = buffer.byte_slice();
+        if slice.len() != TICKET_KEY_SIZE {
+            return Err(global.throw(format_args!("Session ticket keys must be exactly 48 bytes")));
+        }
+        // SAFETY: FFI — ctx is a live SSL_CTX; slice is exactly 48 bytes.
+        let ok = unsafe {
+            boring_sys::SSL_CTX_set_tlsext_ticket_keys(
+                ctx.as_ptr(),
+                slice.as_ptr().cast::<c_void>(),
+                TICKET_KEY_SIZE,
+            )
+        };
+        if ok != 1 {
+            return Err(global.throw(format_args!("Failed to set ticket keys")));
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+}
+
+#[bun_jsc::host_fn]
+pub(crate) fn js_get_ticket_keys(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+
+    let args = frame.arguments_as_array::<1>();
+    if let Some(this) = Listener::from_js(args[0]) {
+        // SAFETY: from_js returned a non-null *mut Listener; the JS wrapper holds it.
+        // R-2: deref as shared (`&*`) — `get_ticket_keys` takes `&Self`.
+        return Listener::get_ticket_keys(unsafe { &*this }, global);
+    }
+    Err(global.throw(format_args!("Expected a Listener instance")))
+}
+
+#[bun_jsc::host_fn]
+pub(crate) fn js_set_ticket_keys(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+
+    let args = frame.arguments_as_array::<2>();
+    if let Some(this) = Listener::from_js(args[0]) {
+        // SAFETY: from_js returned a non-null *mut Listener; the JS wrapper holds it.
+        // R-2: deref as shared (`&*`) — `set_ticket_keys` takes `&Self`.
+        return Listener::set_ticket_keys(unsafe { &*this }, global, args[1]);
+    }
+    Err(global.throw(format_args!("Expected a Listener instance")))
+}
+
 #[cfg(windows)]
 fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
     // check for valid pipe names

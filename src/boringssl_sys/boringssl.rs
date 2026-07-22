@@ -860,6 +860,13 @@ unsafe extern "C" {
     pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
     pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
     pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
+    pub fn SSL_CTX_get_tlsext_ticket_keys(ctx: *mut SSL_CTX, out: *mut c_void, len: usize)
+    -> c_int;
+    pub fn SSL_CTX_set_tlsext_ticket_keys(
+        ctx: *mut SSL_CTX,
+        r#in: *const c_void,
+        len: usize,
+    ) -> c_int;
     pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: usize) -> c_int;
     pub fn SSL_get0_alpn_selected(ssl: *const SSL, out_data: *mut *const u8, out_len: *mut c_uint);
     pub fn SSL_set_options(ssl: *mut SSL, options: u32) -> u32;

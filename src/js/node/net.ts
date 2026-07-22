@@ -109,6 +109,7 @@ const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSo
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const setTicketKeys = $newRustFunction("Listener.rs", "jsSetTicketKeys", 2);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
 const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
@@ -3645,6 +3646,13 @@ Server.prototype[kRealListen] = function (
   if (addr && typeof addr === "object") {
     const familyLast = String(addr.family).slice(-1);
     this._connectionKey = `${familyLast}:${addr.address}:${port}`;
+  }
+
+  if (tls) {
+    // Bun.listen() just built the SSL_CTX; apply the session-ticket key
+    // material now so it is in place before the first accept callback runs.
+    const ticketKeys = tls.ticketKeys;
+    if (ticketKeys !== undefined) setTicketKeys(this._handle, ticketKeys);
   }
 
   if (contexts) {

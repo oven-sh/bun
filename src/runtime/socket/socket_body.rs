@@ -2357,7 +2357,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 WriteResult::Success { wrote, total } => {
                     // Partial write arms uSockets' writable retry; re-ref at
                     // the write site (like libuv's uv_write active_req).
-                    if usize::try_from(wrote.max(0)).expect("int cast") < total {
+                    if wrote >= 0 && usize::try_from(wrote).expect("int cast") < total {
                         this.recompute_poll_ref();
                     }
                     JSValue::js_number_from_int32(wrote)
@@ -2605,6 +2605,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             WriteResult::Success { wrote, total } => {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = this.internal_flush();
+                } else if wrote >= 0 {
+                    // Partial write queued into buffered_data_for_node_net:
+                    // the pending bytes hold the loop like a uv_write req.
+                    this.recompute_poll_ref();
                 }
 
                 JSValue::from(usize::try_from(wrote.max(0)).expect("int cast") == total)
@@ -3217,7 +3221,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             WriteResult::Success { wrote, total } => {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = this.internal_flush();
-                } else {
+                } else if wrote >= 0 {
                     // Partial write arms uSockets' writable retry; re-ref so
                     // the drain can fire before the loop exits.
                     this.recompute_poll_ref();

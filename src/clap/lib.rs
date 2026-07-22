@@ -488,9 +488,12 @@ pub fn closest_name<'a>(
 pub fn closest_long_name<Id>(params: &[Param<Id>], name: &[u8]) -> Option<&'static [u8]> {
     closest_name(
         name,
-        params
-            .iter()
-            .flat_map(|p| p.names.long.into_iter().chain(p.names.long_aliases.iter().copied())),
+        params.iter().flat_map(|p| {
+            p.names
+                .long
+                .into_iter()
+                .chain(p.names.long_aliases.iter().copied())
+        }),
     )
 }
 

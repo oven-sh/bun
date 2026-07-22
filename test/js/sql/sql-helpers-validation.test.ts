@@ -172,6 +172,19 @@ describe("sqlite helper behavior preserved", () => {
       { id: 2, a: "hasB", b: "IMPORTANT-DATA" },
       { id: 3, a: null, b: "b-only" },
     ]);
+
+    // Boundary case of the same widening: an empty first row contributes no
+    // keys of its own, so the column list comes entirely from later rows.
+    const withEmptyFirst = await sql`INSERT INTO h ${sql([{}, { id: 4, a: "later" }])} RETURNING id, a, b`;
+    expect(withEmptyFirst).toEqual([
+      { id: null, a: null, b: null },
+      { id: 4, a: "later", b: null },
+    ]);
+
+    // When no row supplies any key, the INSERT path's own guard still fires.
+    const err = await sql`INSERT INTO h ${sql([{}, {}])}`.catch(e => e);
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect(err.message).toBe("Insert needs to have at least one column with a defined value");
   });
 
   test("batch insert helper with explicit columns ignores extra keys", async () => {

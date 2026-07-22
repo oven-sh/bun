@@ -457,7 +457,9 @@ function normalizeQuery(
           const command = adapter.getHelperCommand(query);
           const { columns, value: items, autoColumns } = value as SQLHelper<any>;
           const columnCount = columns.length;
-          if (columnCount === 0 && command !== SQLCommand.in) {
+          // INSERT widens the column list below and has its own empty-column
+          // guard after widening, so an empty first row is allowed here.
+          if (columnCount === 0 && command !== SQLCommand.in && command !== SQLCommand.insert) {
             throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
           }
           const lastColumnIndex = columns.length - 1;

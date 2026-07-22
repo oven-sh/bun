@@ -1,4 +1,6 @@
 #![warn(unused_must_use)]
+use bun_alloc::ArenaVecExt as _;
+
 use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
@@ -1551,6 +1553,88 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::Backtrack);
         }
         Ok(())
+    }
+
+    /// Like `skip_type_script_arrow_return_type_with_backtracking`, but for the
+    /// `a ? (b) : T => body` ambiguity: the arrow interpretation only wins when
+    /// another ":" follows the body to pair with the leading "?". tsc and
+    /// esbuild both decide this by speculatively parsing the body and checking
+    /// the token after it, so this helper also rewinds the parser state that a
+    /// body parse touches (scopes, log, and the position-keyed side tables),
+    /// unlike the lexer-only `lexer_backtracker_bool`.
+    pub fn try_skip_type_script_arrow_return_type_after_question_with_backtracking(
+        &mut self,
+    ) -> bool {
+        // The verdict depends only on the tokens from this ":", so reuse a prior
+        // attempt at the same offset (same guard as `ts_infer_constraint_backtracks`
+        // below: without it each nesting level runs the inner levels twice).
+        debug_assert!(self.lexer.start <= (u32::MAX >> 1) as usize);
+        let memo_key = self.lexer.start as u32;
+        let memo = &mut self.ts_arrow_after_question_memo;
+        match memo.binary_search_by(|e| (e >> 1).cmp(&memo_key)) {
+            Ok(i) => {
+                let ok = memo[i] & 1 != 0;
+                if ok {
+                    let _ = self.lexer.next();
+                    let _ = self.skip_typescript_return_type();
+                }
+                return ok;
+            }
+            Err(at) => memo.insert(at, memo_key << 1),
+        }
+
+        let old_comments = core::mem::take(&mut self.lexer.comments_to_preserve_before);
+        let old_lexer = self.lexer.snapshot();
+        let old_log_disabled = self.lexer.is_log_disabled;
+        let log = self.log();
+        let (old_errors, old_warnings, old_msgs) = (log.errors, log.warnings, log.msgs.len());
+        let old_current_scope = self.current_scope;
+        let old_scopes_len = self.scopes_in_order.len();
+        let old_enum_scopes_len = self.scopes_in_order_for_enum.len();
+        let old_imports_len = self.import_records.len();
+        let old_fn_or_arrow_data = self.fn_or_arrow_data_parse.clone();
+        let old_after_arrow_body_loc = self.after_arrow_body_loc;
+        self.lexer.is_log_disabled = true;
+
+        let ok = (|| -> Result<(), Error> {
+            self.skip_type_script_arrow_return_type_with_backtracking()?;
+            let args = bun_alloc::ArenaVec::new_in(self.arena).into_bump_slice_mut();
+            self.parse_arrow_body(args, &mut crate::parser::FnOrArrowDataParse::default())?;
+            if self.lexer.token != T::TColon {
+                return Err(crate::Error::Backtrack);
+            }
+            Ok(())
+        })()
+        .is_ok();
+
+        self.lexer.restore(&old_lexer);
+        self.lexer.comments_to_preserve_before = old_comments;
+        self.lexer.is_log_disabled = old_log_disabled;
+        let log = self.log();
+        log.errors = old_errors;
+        log.warnings = old_warnings;
+        log.msgs.truncate(old_msgs);
+        self.current_scope = old_current_scope;
+        self.discard_scopes_up_to(old_scopes_len);
+        while self.scopes_in_order_for_enum.len() > old_enum_scopes_len {
+            self.scopes_in_order_for_enum.pop();
+        }
+        self.import_records.truncate(old_imports_len);
+        self.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+        self.after_arrow_body_loc = old_after_arrow_body_loc;
+
+        if ok {
+            // Nested attempts may have inserted entries since the reservation above.
+            let memo = &mut self.ts_arrow_after_question_memo;
+            if let Ok(i) = memo.binary_search_by(|e| (e >> 1).cmp(&memo_key)) {
+                memo[i] |= 1;
+            }
+            // Re-skip the return type for real; the arrow body is re-parsed by
+            // the caller with the real argument list.
+            let _ = self.lexer.next();
+            let _ = self.skip_typescript_return_type();
+        }
+        ok
     }
 
     // ─────────────────────── try_* wrappers ───────────────────────

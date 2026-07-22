@@ -546,12 +546,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if p.lexer.token == T::TEqualsGreaterThan
-                || (Self::IS_TYPESCRIPT_ENABLED
-                    && invalid_log.is_empty()
-                    && p.try_skip_type_script_arrow_return_type_with_backtracking())
-                || opts.force_arrow_fn
+            let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
+            if !is_arrow_fn
+                && Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && invalid_log.is_empty()
             {
+                is_arrow_fn = if opts.is_after_question_and_before_colon {
+                    p.try_skip_type_script_arrow_return_type_after_question_with_backtracking()
+                } else {
+                    p.try_skip_type_script_arrow_return_type_with_backtracking()
+                };
+            }
+            if is_arrow_fn || opts.force_arrow_fn {
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
 

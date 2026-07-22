@@ -203,17 +203,17 @@ private:
          * so a client that connects and never sends anything still expires. */
         if constexpr (IsNodeHttp) {
             ((HttpResponseData<SSL, true> *) us_socket_ext(s))->lastMessageStartMs = nodeCompatMonotonicMs();
-            /* A peer FIN must not tear the connection down at the loop level:
-             * onEnd() below decides whether to close right away (idle) or to
-             * keep writing the responses that are still in flight / pipelined
-             * (Node's socketOnEnd semantics). Without this flag the loop
-             * force-closes the socket right after dispatching onEnd. TLS
-             * (openssl.c us_internal_ssl_on_end) does not consult this flag
-             * and force-closes on FIN regardless, so this half of the compat
-             * block is http-only for now. */
-            if constexpr (!SSL) {
-                s->flags.allow_half_open = 1;
-            }
+        }
+
+        /* A peer FIN must not tear the connection down at the loop level:
+         * onEnd() below decides whether to close right away (idle) or to keep
+         * writing response bytes that are already queued (and for node:http
+         * compat, in-flight / pipelined responses). Without this flag the loop
+         * force-closes the socket right after dispatching onEnd. TLS
+         * (openssl.c us_internal_ssl_on_end) does not consult this flag and
+         * force-closes on FIN regardless, so this is http-only for now. */
+        if constexpr (!SSL) {
+            s->flags.allow_half_open = 1;
         }
 
         if(!SSL) {
@@ -666,14 +666,12 @@ private:
             size_t flushed = asyncSocket->flush();
             /* Check if there's still data waiting to be sent after flush attempt */
             if (asyncSocket->getBufferedAmount() > 0) {
-                if constexpr (IsNodeHttp) {
-                    /* onEnd deferred close for these bytes; a writable event that
-                     * moves nothing (EPIPE) means the peer is gone and this would
-                     * otherwise spin onWritable/onEnd until idle timeout. */
-                    if (flushed == 0
-                        && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)) {
-                        return asyncSocket->close();
-                    }
+                /* onEnd deferred close for these bytes; a writable event that
+                 * moves nothing (EPIPE) means the peer is gone and this would
+                 * otherwise spin onWritable/onEnd until idle timeout. */
+                if (flushed == 0
+                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)) {
+                    return asyncSocket->close();
                 }
                 /* Socket buffer is not completely empty yet
                 * - Reset the timeout to prevent premature connection closure
@@ -759,6 +757,7 @@ private:
     template <bool IsNodeHttp>
     static us_socket_t *onEnd(us_socket_t *s) {
         auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
+        HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
         /* node:http compat: an EOF in the middle of a request head is a parse error.
          * Node calls parser.finish() when the socket ends and surfaces it as
@@ -766,7 +765,6 @@ private:
          * (if anything) to write and when to destroy the connection. */
         if constexpr (IsNodeHttp) {
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
             /* CONNECT/Upgrade tunnels allow half-open: the peer finishing its
              * writable side ends the JS socket's readable side ('end' event) but
@@ -791,23 +789,24 @@ private:
                 }
             }
 
-            /* Node's socketOnEnd: with httpAllowHalfOpen, in-flight and queued
+            /* Node's socketOnEnd with httpAllowHalfOpen: in-flight and queued
              * responses keep writing (Node marks the last one `_last` so
-             * resOnFinish destroySoon()s after it). Without it, Node does
-             * `socket.end()`, which drains bytes already handed to the socket
-             * before FIN. Either way, response bytes already queued
-             * (AsyncSocketData::buffer, or a pinned write an onWritable
-             * callback is still draining) must not be discarded by the close()
-             * below; the connection shuts down from the shouldCloseConnection()
-             * gates once they have flushed. */
-            bool hasQueuedOutgoing = asyncSocket->getBufferedAmount() > 0
-                || httpResponseData->onWritable != nullptr;
-            bool responseInFlight = httpResponseData->nodeHttpQueuedPipelinedCount > 0
-                || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
-            if (hasQueuedOutgoing || (httpContextData->flags.httpAllowHalfOpen && responseInFlight)) {
+             * resOnFinish destroySoon()s after it). */
+            if (httpContextData->flags.httpAllowHalfOpen
+                && (httpResponseData->nodeHttpQueuedPipelinedCount > 0
+                    || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING))) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN;
                 return s;
             }
+        }
+
+        /* Response bytes already queued (AsyncSocketData::buffer, or a pinned
+         * write / streaming body an onWritable callback is still draining) must
+         * not be discarded by the close() below; the connection shuts down from
+         * the shouldCloseConnection() gates once they have flushed. */
+        if (asyncSocket->getBufferedAmount() > 0 || httpResponseData->onWritable != nullptr) {
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN;
+            return s;
         }
 
         asyncSocket->uncorkWithoutSending();

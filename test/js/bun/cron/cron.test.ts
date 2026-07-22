@@ -1,3 +1,4 @@
+import { cronInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -397,6 +398,78 @@ describe.skipIf(!hasSchtasks)("Windows XML code paths", () => {
     } finally {
       deleteSchtask("test-win-hourly-rep");
     }
+  });
+});
+
+// Task Scheduler only activates a trigger's Repetition window when the trigger
+// itself fires. A daily CalendarTrigger fires at midnight, so a repeating task
+// registered mid-day would not run until the next day. Repetition schedules
+// must use a TimeTrigger with a past StartBoundary, which activates its
+// Repetition immediately. https://github.com/oven-sh/bun/issues/34195
+describe("Windows task XML trigger shape", () => {
+  test.each([
+    ["* * * * *", "PT1M"],
+    ["*/10 * * * *", "PT10M"],
+    ["*/15 * * * *", "PT15M"],
+    ["0 * * * *", "PT60M"],
+    ["0 */3 * * *", "PT3H"],
+    ["30 */6 * * *", "PT6H"],
+  ])("%s repeats via TimeTrigger with interval %s", (expr, interval) => {
+    const xml = cronInternals.taskXml(expr);
+    expect(xml).toContain("<TimeTrigger>");
+    expect(xml).toContain(`<Repetition><Interval>${interval}</Interval></Repetition>`);
+    expect(xml).not.toContain("<CalendarTrigger>");
+    expect(xml).not.toContain("<ScheduleByDay>");
+  });
+
+  test("*/10 * * * * full XML", () => {
+    expect(cronInternals.taskXml("*/10 * * * *")).toMatchInlineSnapshot(`
+      "<?xml version="1.0"?>
+      <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+      <Triggers>
+          <TimeTrigger>
+            <StartBoundary>2000-01-01T00:00:00</StartBoundary>
+            <Repetition><Interval>PT10M</Interval></Repetition>
+          </TimeTrigger>
+        </Triggers>
+      <Principals>
+      <Principal>
+      <LogonType>S4U</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+      </Principal>
+      </Principals>
+      <Settings>
+      <Enabled>true</Enabled>
+      <AllowStartOnDemand>true</AllowStartOnDemand>
+      <AllowHardTerminate>true</AllowHardTerminate>
+      <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+      <StartWhenAvailable>true</StartWhenAvailable>
+      </Settings>
+      <Actions>
+      <Exec>
+      <Command>C:\\bun\\bun.exe</Command>
+      <Arguments>run --cron-title=test-title --cron-period="*/10 * * * *" "C:\\jobs\\job.ts"</Arguments>
+      </Exec>
+      </Actions>
+      </Task>
+      "
+    `);
+  });
+
+  test("once-a-day schedule keeps a daily CalendarTrigger with no Repetition", () => {
+    const xml = cronInternals.taskXml("30 5 * * *");
+    expect(xml).toContain("<CalendarTrigger>");
+    expect(xml).toContain("<StartBoundary>2000-01-01T05:30:00</StartBoundary>");
+    expect(xml).toContain("<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>");
+    expect(xml).not.toContain("<Repetition>");
+    expect(xml).not.toContain("<TimeTrigger>");
+  });
+
+  test("complex schedules keep CalendarTriggers", () => {
+    const xml = cronInternals.taskXml("0 9 * * 1");
+    expect(xml).toContain("<CalendarTrigger>");
+    expect(xml).toContain("<ScheduleByWeek>");
+    expect(xml).not.toContain("<TimeTrigger>");
   });
 });
 

@@ -473,3 +473,8 @@ export const fetchH3Internals = {
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
+
+export const cronInternals = {
+  /** Windows Task Scheduler XML for a cron expression (buildable on all platforms). */
+  taskXml: $newRustFunction("cron.rs", "TestingAPIs.taskXml", 1) as (expr: string) => string,
+};

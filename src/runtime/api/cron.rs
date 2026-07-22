@@ -2749,8 +2749,10 @@ pub fn cron_to_task_xml(
 
     // Case 1: All hours active, evenly-spaced minutes that divide 60
     //   e.g. "* * * * *" → PT1M, "*/5 * * * *" → PT5M, "*/15 * * * *" → PT15M
-    // Case 2: Single minute, evenly-spaced hours that divide 24
-    //   e.g. "0 * * * *" → PT1H, "0 */2 * * *" → PT2H, "30 */6 * * *" → PT6H
+    // Case 2: Single minute, evenly-spaced sub-daily hours that divide 24
+    //   e.g. "0 */2 * * *" → PT2H, "30 */6 * * *" → PT6H
+    // Once-a-day schedules need no Repetition and use the CalendarTrigger
+    // path below, which fires at its time-of-day directly.
     let can_use_repetition = days_is_wild
         && weekdays_is_wild
         && months_is_wild
@@ -2765,7 +2767,7 @@ pub fn cron_to_task_xml(
             }
             if minutes_count == 1
                 && hour_interval.is_some()
-                && hour_interval.unwrap() <= 24
+                && hour_interval.unwrap() < 24
                 && 24 % hour_interval.unwrap() == 0
                 && hours_count == 24 / hour_interval.unwrap()
             {
@@ -2775,6 +2777,10 @@ pub fn cron_to_task_xml(
         };
 
     if can_use_repetition {
+        // A CalendarTrigger's Repetition window only activates when the trigger
+        // itself fires (midnight for a daily schedule), so a task registered
+        // mid-day would not run until the next day. A one-time TimeTrigger with
+        // a past StartBoundary activates its Repetition immediately (#34195).
         let first_min: u32 = cron.minutes.trailing_zeros();
         let first_hour: u32 = cron.hours.trailing_zeros();
 
@@ -2785,7 +2791,7 @@ pub fn cron_to_task_xml(
         )
         .map_err(|_| TaskXmlError::InvalidCron)?;
 
-        xml.extend_from_slice(b"    <CalendarTrigger>\n");
+        xml.extend_from_slice(b"    <TimeTrigger>\n");
         let _ = writeln!(
             &mut xml,
             "      <StartBoundary>{}</StartBoundary>",
@@ -2795,33 +2801,22 @@ pub fn cron_to_task_xml(
         if hours_count == 24 {
             // Case 1: minute-based repetition
             let m = minute_interval.unwrap();
-            if m == 1 {
-                xml.extend_from_slice(
-                    b"      <Repetition><Interval>PT1M</Interval></Repetition>\n",
-                );
-            } else {
-                let _ = writeln!(
-                    &mut xml,
-                    "      <Repetition><Interval>PT{}M</Interval></Repetition>",
-                    m
-                );
-            }
+            let _ = writeln!(
+                &mut xml,
+                "      <Repetition><Interval>PT{}M</Interval></Repetition>",
+                m
+            );
         } else {
             // Case 2: hour-based repetition
             let h = hour_interval.unwrap();
-            if h > 1 {
-                let _ = writeln!(
-                    &mut xml,
-                    "      <Repetition><Interval>PT{}H</Interval></Repetition>",
-                    h
-                );
-            }
+            let _ = writeln!(
+                &mut xml,
+                "      <Repetition><Interval>PT{}H</Interval></Repetition>",
+                h
+            );
         }
 
-        xml.extend_from_slice(
-            b"      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>\n",
-        );
-        xml.extend_from_slice(b"    </CalendarTrigger>\n");
+        xml.extend_from_slice(b"    </TimeTrigger>\n");
     } else {
         // Complex pattern: emit CalendarTriggers for each hour×minute pair.
         // Cap at 48 triggers (Task Scheduler limit).
@@ -3099,5 +3094,47 @@ fn compute_step_interval<T: StepBits>(bits: T, _min: u8, max: u8) -> Option<u32>
     }
     Some(step)
 }
+
+/// Used in JS tests, see `internal-for-testing.ts` and cron tests.
+pub mod testing_apis {
+    use super::*;
+
+    /// Build the Windows Task Scheduler XML for a cron expression so tests can
+    /// validate the trigger shape on any platform.
+    #[bun_jsc::host_fn]
+    pub fn task_xml(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let args = frame.arguments_as_array::<1>();
+        if !args[0].is_string() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "cronInternals.taskXml expects a string cron expression"
+            )));
+        }
+        let expr_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+        let expr_slice = expr_str.to_utf8();
+        let parsed = match CronExpression::parse(expr_slice.slice()) {
+            Ok(p) => p,
+            Err(e) => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "{}",
+                    bstr::BStr::new(CronExpression::error_message(e))
+                )));
+            }
+        };
+        let xml = match cron_to_task_xml(
+            &parsed,
+            b"C:\\bun\\bun.exe",
+            b"test-title",
+            expr_slice.slice(),
+            b"C:\\jobs\\job.ts",
+        ) {
+            Ok(x) => x,
+            Err(e) => return Err(global.throw(format_args!("{}", e))),
+        };
+        jsc::bun_string_jsc::create_utf8_for_js(global, &xml)
+    }
+}
+
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
+pub use testing_apis as testing_ap_is;
 
 use bun_core::fmt::buf_print;

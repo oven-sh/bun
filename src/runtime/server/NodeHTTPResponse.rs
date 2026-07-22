@@ -1822,10 +1822,16 @@ impl NodeHTTPResponse {
 
         // Partial pinned progress: return false so onWritable's close gate
         // waits (bufferedAmount does not count the pinned tail). Zero progress
-        // on a writable event is EPIPE: fall through so the gate can close.
+        // on a writable event is EPIPE: drop the tail and disarm so the gate
+        // can close instead of spinning this callback.
         let pinned_before = self.pending_pinned_write.get().remaining.len();
         if self.drain_pending_pinned_write(response) {
-            return self.pending_pinned_write.get().remaining.len() >= pinned_before;
+            if self.pending_pinned_write.get().remaining.len() < pinned_before {
+                return false;
+            }
+            self.clear_pending_pinned_write(self.server.global_this(), JSValue::ZERO);
+            response.clear_on_writable();
+            return true;
         }
 
         // Drained: disarm so onEnd's `onWritable != nullptr` probe does not see

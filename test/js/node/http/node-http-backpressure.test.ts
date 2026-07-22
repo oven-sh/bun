@@ -190,6 +190,28 @@ describe("backpressure", () => {
       const { body, ended } = await halfCloseRequestBodyBytes(server);
       expect({ body, ended }).toEqual({ body: BODY, ended: true });
     });
+
+    // A 'drain' listener that writes again after the first chunk has flushed
+    // re-arms onWritable; the !httpAllowHalfOpen close gate must not fire over
+    // the freshly-pinned bytes (bufferedAmount does not count them). Node
+    // rejects the second write (socketOnEnd already called socket.end()); Bun
+    // currently accepts and drains it. Both are consistent: the client sees
+    // either the first write only, or both, never a torn second write.
+    it("res.write() from 'drain' after client FIN is not torn mid-write", async () => {
+      await using server = http.createServer((req, res) => {
+        res.writeHead(200, { "Content-Length": String(BODY * 2) });
+        res.write(payload);
+        res.once("drain", () => {
+          res.write(payload);
+          res.end();
+        });
+        res.on("error", () => {});
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { body, ended } = await halfCloseRequestBodyBytes(server);
+      expect(ended).toBe(true);
+      expect([BODY, BODY * 2]).toContain(body);
+    });
   });
 
   it("should handle backpressure with INT_MAX bytes", async () => {

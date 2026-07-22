@@ -733,9 +733,12 @@ private:
             if constexpr (IsNodeHttp) {
                 /* Node's socketOnEnd (!httpAllowHalfOpen) issues socket.end():
                  * once already-queued bytes have drained the connection shuts
-                 * down regardless of whether res.end() was ever called. */
+                 * down regardless of whether res.end() was ever called. A
+                 * re-armed onWritable (a 'drain' listener wrote again) means a
+                 * fresh pinned write that bufferedAmount does not count. */
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
-                    && !httpContextData->flags.httpAllowHalfOpen) {
+                    && !httpContextData->flags.httpAllowHalfOpen
+                    && httpResponseData->onWritable == nullptr) {
                     responseDone = true;
                 }
             }

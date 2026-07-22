@@ -304,6 +304,52 @@ describe("TextDecoder", () => {
       const decoder = new TextDecoder("utf-8", undefined);
     }).not.toThrow();
   });
+
+  // https://webidl.spec.whatwg.org/#es-dictionary step 1:
+  // "If Type(V) is not Undefined, Null or Object, then throw a TypeError."
+  describe("options WebIDL dictionary conversion", () => {
+    const bytes = new Uint8Array([0x41, 0x42, 0x43]);
+
+    it.each([5, "x", true, 0n])("decode() rejects primitive options: %p", opt => {
+      const decoder = new TextDecoder();
+      expect(() => decoder.decode(bytes, opt)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
+    it("decode() rejects symbol options", () => {
+      const decoder = new TextDecoder();
+      expect(() => decoder.decode(bytes, Symbol())).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
+    it.each([[null], [undefined], [{}], [() => {}], [[]]])("decode() accepts %p options", opt => {
+      expect(new TextDecoder().decode(bytes, opt)).toBe("ABC");
+    });
+
+    it("decode() with bad options throws before touching stream state", () => {
+      const decoder = new TextDecoder();
+      decoder.decode(new Uint8Array([0xf0, 0x9f]), { stream: true });
+      expect(() => decoder.decode(new Uint8Array(), 5)).toThrow(TypeError);
+      // The streamed partial sequence is still buffered: the throw above did
+      // not flush it.
+      expect(decoder.decode(new Uint8Array([0x92, 0xa9]))).toBe("\u{1F4A9}");
+    });
+
+    it("constructor accepts null options", () => {
+      const decoder = new TextDecoder("utf-8", null);
+      expect(decoder.encoding).toBe("utf-8");
+      expect(decoder.fatal).toBe(false);
+      expect(decoder.ignoreBOM).toBe(false);
+    });
+
+    it("constructor rejects primitive options with ERR_INVALID_ARG_TYPE", () => {
+      expect(() => new TextDecoder("utf-8", 5)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+  });
 });
 
 describe("TextDecoder ignoreBOM", () => {

@@ -328,9 +328,6 @@ impl FileRoute {
         // SAFETY: see fn-level Safety doc.
         let this = unsafe { &*this_ptr };
         debug_assert!(this.server.get().is_some());
-        if super::server_body::refuse_if_stopped_any(this.server.get(), resp) {
-            return;
-        }
         this.ref_();
         if let Some(mut server) = this.server.get() {
             server.on_pending_request();

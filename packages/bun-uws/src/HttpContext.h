@@ -424,6 +424,16 @@ private:
                 }
             }
 
+            /* The listen socket is gone (Bun.serve graceful stop): refuse this
+             * request with 503 + Connection: close rather than dispatching it.
+             * Covers every route (static/dynamic/upgrade) in one place, before
+             * any route handler runs. */
+            if (httpContextData->flags.draining) [[unlikely]] {
+                ((HttpResponse<SSL> *) s)->writeStatus("503 Service Unavailable");
+                ((HttpResponse<SSL> *) s)->endWithoutBody(std::nullopt, true);
+                return s;
+            }
+
             /* Select the router based on SNI (only possible for SSL) */
             auto *selectedRouter = &httpContextData->router;
             if constexpr (SSL) {

@@ -267,9 +267,6 @@ impl Route {
             resp.end_without_body(true);
             return;
         };
-        if super::server_body::refuse_if_stopped_any(Some(server), resp) {
-            return;
-        }
 
         if server.config().is_development() {
             if let Some(dev) = server.dev_server_mut() {

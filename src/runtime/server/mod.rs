@@ -541,21 +541,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn js_value_for_dispatch(&self) -> Option<JSValue> {
         self.js_value.try_get()
     }
-
-    /// Dispatch gate for a *new* HTTP request on the Bun.serve path: `None`
-    /// once the server has stopped listening (graceful or abrupt). Idle
-    /// keep-alive sockets are closed by `stop_listening`, but a request
-    /// already in the kernel buffer (or racing the close on a socket that was
-    /// in-flight at stop time) still reaches the trampoline; refuse it so the
-    /// stopped server never dispatches work that arrived after `stop()`.
-    /// node:http dispatch keeps the `Finalized`-only gate above because Node's
-    /// `server.close()` lets in-flight keep-alive connections continue.
-    pub fn js_value_for_new_request(&self) -> Option<JSValue> {
-        if !self.has_listener() {
-            return None;
-        }
-        self.js_value.try_get()
-    }
 }
 
 /// gcProtect every handler callback `ServerConfig::from_js` / `Handler::from_js`
@@ -1070,11 +1055,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) {
-        // Refuse once the listener is gone (graceful or abrupt stop): an idle
-        // keep-alive socket that survived `stop()` must not dispatch new work.
-        // Also covers the post-finalize window.
+        // Idle keep-alive sockets aren't counted in pending_requests, so the
+        // wrapper can have been finalized before this fires. Refuse and close
+        // rather than dispatching with a stale handler shadow.
         // SAFETY: `this` is the live server backref for this request.
-        let Some(js_value) = unsafe { &*this }.js_value_for_new_request() else {
+        let Some(js_value) = unsafe { &*this }.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
@@ -1124,7 +1109,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let index = user_route.id;
 
         // SAFETY: `server` is the live backref stored in `user_route`.
-        let Some(server_js) = unsafe { &*server }.js_value_for_new_request() else {
+        let Some(server_js) = unsafe { &*server }.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
@@ -1653,17 +1638,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !abrupt {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             bun_opaque::opaque_deref_mut(listener).close();
-            // Close every idle keep-alive connection: they have no in-flight
-            // work, are not counted in `pending_requests`, and with
-            // `idleTimeout: 0` would otherwise hold their fds forever. Any
-            // request that races this on a surviving socket is answered 503
-            // by the `js_value_for_new_request` gate. node:http's
+            // Close every idle keep-alive connection (no in-flight work, not
+            // counted in `pending_requests`, and with `idleTimeout: 0` would
+            // otherwise hold their fds forever) and mark the uWS context
+            // draining so any request that later reaches a surviving socket
+            // is answered 503 + Connection: close before routing. node:http's
             // `server.close()` calls `closeIdleConnections()` itself and then
             // keeps non-idle sockets serviceable per Node semantics, so skip.
             if self.config.on_node_http_request.is_empty() {
                 if let Some(app) = self.app {
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).close_idle_connections();
+                    bun_opaque::opaque_deref_mut(app).start_draining();
                 }
             }
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
@@ -3182,16 +3167,10 @@ mod trampoline {
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         _req: *mut UwsRequest,
-        user_data: *mut c_void,
+        _user_data: *mut c_void,
     ) {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>());
-        // SAFETY: `user_data` is the `*mut NewServer<..>` registered in
-        // set_routes, live for the request's duration.
-        if !unsafe { &*user_data.cast::<NewServer<SSL, DEBUG>>() }.has_listener() {
-            server_body::respond_stopped_503(resp);
-            return;
-        }
         resp.write_status(b"404 Not Found");
         resp.end(b"", false);
     }
@@ -3722,11 +3701,6 @@ impl AnyServer {
     #[inline]
     pub fn js_value_for_dispatch(&self) -> Option<JSValue> {
         any_server_dispatch!(self, |s| s.js_value_for_dispatch())
-    }
-
-    #[inline]
-    pub fn has_listener(&self) -> bool {
-        any_server_dispatch!(self, |s| s.has_listener())
     }
 
     pub fn h3_alt_svc(&self) -> Option<&[u8]> {

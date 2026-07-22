@@ -401,6 +401,15 @@ public:
         return std::move(*this);
     }
 
+    /* Mark the server as draining: close every idle keep-alive connection and
+     * refuse subsequent requests on surviving sockets with 503 + Connection:
+     * close before routing. Used by Bun.serve's graceful stop(). */
+    TemplatedApp &&startDraining() {
+        httpContext->getSocketContextData()->flags.draining = true;
+        closeIdle();
+        return std::move(*this);
+    }
+
     template <typename UserData>
     TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior) {
         /* Don't compile if alignment rules cannot be satisfied */

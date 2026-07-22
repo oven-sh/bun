@@ -266,9 +266,6 @@ impl StaticRoute {
     pub unsafe fn on_head_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
-            if super::server_body::refuse_if_stopped_any((*this).server.get(), resp) {
-                return;
-            }
             // Evaluate conditional request preconditions for HEAD with 200 status
             if (*this).status_code == 200 {
                 if Self::render_304_if_not_modified(this, &mut req, resp) {
@@ -317,9 +314,6 @@ impl StaticRoute {
     pub unsafe fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
-            if super::server_body::refuse_if_stopped_any((*this).server.get(), resp) {
-                return;
-            }
             let method = Method::find(req.method()).unwrap_or(Method::GET);
             if method == Method::GET {
                 Self::on_get(this, req, resp);

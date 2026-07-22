@@ -401,6 +401,18 @@ extern "C"
     }
   }
 
+  void uws_app_start_draining(int ssl, uws_app_t *app)
+  {
+    if (ssl)
+    {
+      ((uWS::SSLApp *) app)->startDraining();
+    }
+    else
+    {
+      ((uWS::App *) app)->startDraining();
+    }
+  }
+
   void uws_app_set_on_clienterror(int ssl, uws_app_t *app, void (*handler)(void *user_data, int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength), void *user_data)
   {
     if (ssl)

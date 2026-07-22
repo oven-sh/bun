@@ -415,29 +415,6 @@ pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.end_without_body(!R::IS_H3);
 }
 
-/// Shared `has_listener()` gate for the `AnyResponse`-taking route trampolines
-/// (StaticRoute / FileRoute / HTMLBundle): answer 503 + `Connection: close`
-/// and return `true` once the listener is gone, so a keep-alive socket that
-/// survived `stop()` cannot keep dispatching to a static route. `None` (no
-/// server bound yet) is left to the caller. Same gate as
-/// [`NewServer::js_value_for_new_request`].
-#[inline]
-pub(super) fn refuse_if_stopped_any(
-    server: Option<super::AnyServer>,
-    resp: uws::AnyResponse,
-) -> bool {
-    if let Some(server) = server {
-        if !server.has_listener() {
-            // `AnyResponse` has no `RespLike` impl (its IS_H3 is a runtime
-            // tag), so dispatch the close flag by variant.
-            resp.write_status(b"503 Service Unavailable");
-            resp.end_without_body(!matches!(resp, uws::AnyResponse::H3(_)));
-            return true;
-        }
-    }
-    false
-}
-
 pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
@@ -2779,10 +2756,6 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
-        if !self.has_listener() {
-            respond_stopped_503(resp);
-            return;
-        }
         if !matches!(self.config.address, server_config::Address::Unix(_))
             && (!bake::is_allowed_host_header(req, Some(&self.config.address))
                 || !resp
@@ -2833,7 +2806,7 @@ where
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
-        let Some(server_js) = server.js_value_for_new_request() else {
+        let Some(server_js) = server.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
@@ -2921,7 +2894,7 @@ where
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
     ) {
-        let Some(js_value) = self.js_value_for_new_request() else {
+        let Some(js_value) = self.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
@@ -3216,7 +3189,7 @@ where
         let server_ptr = server_ref.as_ptr();
         let index = this.id;
 
-        let Some(server_js) = server_ref.js_value_for_new_request() else {
+        let Some(server_js) = server_ref.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
@@ -3307,12 +3280,6 @@ where
             // NOTE: receiver is `*mut Self` (mod.rs) — the callee re-enters
             // JS, so a long-lived `&mut self` here would alias on callback.
             Self::on_node_http_request_with_upgrade_ctx(self_ptr, req, resp, upgrade_ctx);
-            return;
-        }
-        // Bun.serve path from here on: refuse new work once the listener is
-        // gone, same gate as `on_request`.
-        if !this.has_listener() {
-            respond_stopped_503(resp);
             return;
         }
         if this.config.on_request.is_empty() {
@@ -3420,10 +3387,6 @@ where
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
-        if !self.has_listener() {
-            respond_stopped_503(resp);
-            return;
-        }
         if cfg!(debug_assertions) {
             // NOTE: scoped_log! expands each arg twice (ANSI/no-ANSI branches);
             // copy to owned buffers so the two `&req` borrows in the expansion

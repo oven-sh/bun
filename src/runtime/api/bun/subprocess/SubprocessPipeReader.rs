@@ -10,7 +10,6 @@ use bun_io::max_buf::MaxBuf;
 use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
-#[cfg(not(windows))]
 use bun_ptr::ScopedRef;
 use bun_ptr::{IntrusiveRc, ParentRef, RefCount};
 use bun_sys;
@@ -168,7 +167,24 @@ impl PipeReader {
                     .remove(bun_io::pipe_reader::WindowsFlags::IS_DONE);
                 return bun_sys::Result::Ok(());
             }
-            return self.reader.start_with_current_pipe();
+            // Hold one more ref so `self` survives the on_reader_error() teardown
+            // below long enough to return; matches the POSIX keepalive.
+            //
+            // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
+            // derefs on Drop. The deref may free `*self`, but no borrow of `self`
+            // outlives the guard's drop on return.
+            let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
+            if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
+                // Route through the same teardown as a read-callback error
+                // (matches POSIX's register_poll failure path): state=Err,
+                // detach from the Subprocess via on_close_io, release the
+                // start() ref, and let the caller proceed to the sibling pipe.
+                // Returning Err would have the caller throw after try_kill
+                // without unwinding this pipe or the never-started sibling,
+                // and on_process_exit's later drain then double-derefs them.
+                self.on_reader_error(err);
+            }
+            return bun_sys::Result::Ok(());
         }
 
         #[cfg(not(windows))]

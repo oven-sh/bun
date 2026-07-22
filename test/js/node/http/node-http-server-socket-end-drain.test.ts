@@ -5,11 +5,9 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 
-// The first handler's res.end() leaves 8 MiB in the socket's send buffer, so
-// req.socket.end() has to defer its FIN until the buffer drains. The pipelined
-// second request in the same read must not wipe that deferred shutdown (its
-// per-response state reset would otherwise clear HTTP_CONNECTION_CLOSE and the
-// connection never closes).
+// res.end(8 MiB) overflows the send buffer, so req.socket.end() defers its FIN.
+// A pipelined request in the same read must not wipe that deferred shutdown
+// (its resetResponseState() cleared HTTP_CONNECTION_CLOSE and the socket hung).
 test("req.socket.end() with a large response buffered still closes when a pipelined request follows", async () => {
   const BIG = Buffer.alloc(8 << 20, 0x61);
   let handlerCalls = 0;
@@ -41,9 +39,9 @@ test("req.socket.end() with a large response buffered still closes when a pipeli
   // response's writes because the socket's writable side is already ended).
   expect(bytes).toBeGreaterThanOrEqual(BIG.length);
   expect(bytes).toBeLessThan(BIG.length + 1024);
-  // Node.js still dispatches the second request; Bun stops parsing (the
-  // immediate-shutdown path already did, so the deferred path now matches it).
-  expect(handlerCalls).toBeLessThanOrEqual(2);
+  // Bun stops parsing before the second request (Node.js dispatches it but its
+  // writes never reach the wire), matching the immediate-shutdown path.
+  expect(handlerCalls).toBe(1);
 });
 
 // res.socket.end() half-closes the connection; the server must still release the

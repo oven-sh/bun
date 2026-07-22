@@ -245,14 +245,9 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
     if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
         return false;
     }
-    /* HttpContext<SSL>::onWritable shuts the socket down once the buffered
-     * response data has flushed and HTTP_CONNECTION_CLOSE is set, so the FIN
-     * is sequenced after the response bytes (like Node's destroySoon).
-     * HTTP_NODE_PARSING_STOPPED: a pipelined request still in the read buffer
-     * would otherwise be dispatched and its resetResponseState() clear
-     * HTTP_CONNECTION_CLOSE, losing the deferred shutdown; the immediate
-     * (getBufferedAmount() == 0) path already stops parsing via
-     * us_socket_is_shut_down(). */
+    /* onWritable shuts down once the buffer has flushed and HTTP_CONNECTION_CLOSE
+     * is set. Stop parsing too: a pipelined request's resetResponseState() would
+     * otherwise clear that bit (the immediate path stops via is_shut_down()). */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE
         | uWS::HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;

@@ -667,6 +667,9 @@ for (const r of results) {
   // sweep-load artifact, not something worth a human look - it stays in
   // the roll-up but does not enter the triage queue.
   if (v.verdict === "load-dependent" && v.outcomes.every(o => o === "clean")) continue;
+  // An allocator-failure fault whose replays exit with an error is
+  // crash-on-OOM by design, not a finding worth a human look.
+  if (r.job.expect === "abort-expected" && v.outcomes.every(o => o !== "HANG" && o !== "CRASH")) continue;
   const dedupeKey = r.crashSig ? `crash: ${r.crashSig.signature}` : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;
   queueLines.push(
     JSON.stringify({

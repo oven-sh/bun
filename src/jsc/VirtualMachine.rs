@@ -5002,14 +5002,14 @@ impl VirtualMachine {
                 };
             }
             if file.is_empty() {
-                // Builtin JS (JSC or Bun) frame with no source URL: line/col
-                // point into generated builtin source and are meaningless on
-                // their own. Label it `(native)` to match the `.stack` string
-                // (FormatStackTraceForJS.cpp).
+                // Builtin JS / WASM frame with no source URL: line/col point
+                // into generated builtin source and are meaningless on their
+                // own. Render a fixed label matching the `.stack` string.
                 if has_name {
                     pretty_write!(
-                        "<r>      <d>at <r>{}<d> (native)<r>\n",
+                        "<r>      <d>at <r>{}<d> ({})<r>\n",
                         frame.name_formatter(allow_ansi_colors),
+                        frame.empty_source_url_label(),
                     )?;
                 }
                 continue;
@@ -6292,6 +6292,17 @@ impl VirtualMachine {
                     let _ = write!(probe, "{name_fmt}");
                     !probe.is_empty()
                 };
+                if source_url.slice().is_empty() {
+                    if has_name {
+                        let _ = write!(
+                            writer,
+                            "%0A      at {} ({})",
+                            name_fmt,
+                            frame.empty_source_url_label(),
+                        );
+                    }
+                    continue;
+                }
                 if has_name {
                     let _ = write!(
                         writer,

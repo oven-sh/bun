@@ -614,11 +614,13 @@ pub(crate) fn js_node_test_late_report(
 
     // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
     // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
-    // every BunTest.
-    let reporter: &mut CommandLineReporter = unsafe { &mut *reporter_ptr.as_ptr() };
-    let dots = reporter.reporters.dots;
-    let only_failures = reporter.reporters.only_failures;
-    let worker_idx = reporter.worker_ipc_file_idx;
+    // every BunTest. Scoped read so the SharedReadOnly tag is dead before the
+    // full-line arm's `on_before_print()` derives `&CommandLineReporter` from
+    // the same `NonNull` (stacked-borrows hygiene, see handle_test_completed).
+    let (dots, only_failures, worker_idx) = {
+        let r: &CommandLineReporter = unsafe { &*reporter_ptr.as_ptr() };
+        (r.reporters.dots, r.reporters.only_failures, r.worker_ipc_file_idx)
+    };
 
     let colors = Output::enable_ansi_colors_stderr();
     let mut line: Vec<u8> = Vec::new();
@@ -631,7 +633,9 @@ pub(crate) fn js_node_test_late_report(
         } else {
             let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>.<r>");
         }
-        reporter.last_printed_dot.set(true);
+        // SAFETY: same NonNull; `last_printed_dot` is a `Cell` so a shared
+        // borrow is enough and no Unique tag is pushed.
+        unsafe { &*reporter_ptr.as_ptr() }.last_printed_dot.set(true);
     } else if only_failures && !failed {
         // suppressed
     } else {
@@ -655,6 +659,9 @@ pub(crate) fn js_node_test_late_report(
         let _ = Output::error_writer().write_all(&line);
     }
 
+    // SAFETY: re-derived after `on_before_print()` (which creates a sibling
+    // `&CommandLineReporter`) so the Unique tag is live for the writes below.
+    let reporter: &mut CommandLineReporter = unsafe { &mut *reporter_ptr.as_ptr() };
     let fill_repeat = !dots && !only_failures;
     if mode == 1 {
         reporter.summary().skip += 1;

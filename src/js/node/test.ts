@@ -2078,7 +2078,11 @@ function hookArgFor(node: TestNode) {
 function before(arg0: unknown, arg1: unknown) {
   const hook = createHook(arg0, arg1);
   const owner = hookOwner();
-  if (owner.isRunning()) {
+  // Registered from a macrotask after collection: bunTest().beforeAll would
+  // throw and abort the callback before later test() calls in it register.
+  // Push to the root so the registration succeeds (same acknowledged ordering
+  // limitation as a sync-registered after(): the hook may not run).
+  if (owner.isRunning() || (owner.parent === undefined && wantDrainAndPhase() !== 0)) {
     owner.hooks.before.push(hook);
     if (owner.started && !owner.finished) {
       scheduleImmediateBeforeHook(owner, hook, hookArgFor(owner));
@@ -2097,7 +2101,7 @@ function before(arg0: unknown, arg1: unknown) {
 function after(arg0: unknown, arg1: unknown) {
   const hook = createHook(arg0, arg1);
   const owner = hookOwner();
-  if (owner.isRunning()) {
+  if (owner.isRunning() || (owner.parent === undefined && wantDrainAndPhase() !== 0)) {
     owner.hooks.after.push(hook);
     return;
   }

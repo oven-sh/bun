@@ -296,6 +296,10 @@ it("process.env.TZ reverts on delete / empty / invalid instead of staying stuck"
     process.env.TZ = "";
     const afterEmpty = snap();
 
+    process.env.TZ = target;
+    process.env.TZ = undefined;
+    const afterUndefined = snap();
+
     // Guard against the JSProcessEnv classInfo falling out of the
     // structured-clone plain-object allow-list. Windows wraps process.env in
     // a Proxy, which structured clone rejects independently of this change.
@@ -303,7 +307,7 @@ it("process.env.TZ reverts on delete / empty / invalid instead of staying stuck"
       ? "skipped"
       : Object.getPrototypeOf(structuredClone(process.env)) === Object.prototype;
 
-    process.stdout.write(JSON.stringify({ initial, target, afterSet, afterDelete, afterReSet, afterInvalid, afterEmpty, cloneIsPlainObject }));
+    process.stdout.write(JSON.stringify({ initial, target, afterSet, afterDelete, afterReSet, afterInvalid, afterEmpty, afterUndefined, cloneIsPlainObject }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
@@ -327,6 +331,7 @@ it("process.env.TZ reverts on delete / empty / invalid instead of staying stuck"
     // previous zone.
     afterInvalid: out.initial,
     afterEmpty: out.initial,
+    afterUndefined: out.initial,
     cloneIsPlainObject: isWindows ? "skipped" : true,
     exitCode: 0,
   });

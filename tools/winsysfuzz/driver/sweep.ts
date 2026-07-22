@@ -123,9 +123,15 @@ if (!baseTrace) {
 
 // Baseline leak set: named handles the program legitimately holds to exit.
 // A run's leaks are only interesting where they EXCEED this set. Normalize
-// away the volatile handle value (name+kind is the identity).
-const baseLeakSet = new Set((baseTrace.leaks ?? []).map(l => l.trim()));
-const newLeaks = (leaks: string[]): string[] => [...new Set(leaks.map(l => l.trim()))].filter(l => !baseLeakSet.has(l));
+// away the volatile handle value (name+kind is the identity), and drop
+// harness-owned paths outright: every run gets its own uniquely-named work
+// directory (cwd, log dir, stdout/stderr files) - a handle on those (a
+// process holding its own cwd is normal) is our artifact, not a bun leak,
+// and the unique name defeats a plain baseline diff.
+const harnessPath = /\\runs\\|\\cwd\b|\\wsf-\d+\.log|\\(stdout|stderr)\.txt|\bwsffeed\b|\bwsfchaos\b|\bwsfsweep\b/i;
+const cleanLeaks = (leaks: string[]) => leaks.map(l => l.trim()).filter(l => !harnessPath.test(l));
+const baseLeakSet = new Set(cleanLeaks(baseTrace.leaks ?? []));
+const newLeaks = (leaks: string[]): string[] => [...new Set(cleanLeaks(leaks))].filter(l => !baseLeakSet.has(l));
 
 // --- coordinates --------------------------------------------------------------
 // A coordinate = (syscall, key). The KEY is the syscall's immediate return

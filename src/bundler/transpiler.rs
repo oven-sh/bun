@@ -1881,8 +1881,10 @@ fn parse_data_loader<'a>(
                 Err(_) => return None,
             }
         }
-        // SAFETY: outer match arm guarantees one of the five.
-        _ => unsafe { core::hint::unreachable_unchecked() },
+        // The outer match in the caller narrows `loader` to one of the five
+        // arms above; the path is cold either way (`#[cold]` on this fn), so
+        // panic on the impossible arm instead of UB.
+        _ => unreachable!("parse_data_loader called with non-data loader: {loader:?}"),
     };
     let mut expr = value_expr;
 

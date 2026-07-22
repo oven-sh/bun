@@ -1,0 +1,8 @@
+error[E0277]: `Cell<u32>` cannot be shared between threads safely
+  --> tests/compile_fail/racycell_sync_compilefail.rs
+   |
+   | requires_sync(&r);
+   |               ^^ `Cell<u32>` cannot be shared between threads safely
+   |
+   = help: the trait `Sync` is not implemented for `Cell<u32>`
+note: required because it appears within the type `RacyCell<Cell<u32>>`

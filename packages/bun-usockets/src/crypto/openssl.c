@@ -1929,8 +1929,18 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
    * raw-close now — deferring (the code==0 path in ssl_close) would wait
    * forever. */
   s = ssl_close(s, 0, NULL);
-  if (s && !us_socket_is_closed(s) && !s->ssl_close_after_spill) {
-    s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+  if (s && !us_socket_is_closed(s)) {
+    if (s->ssl_close_after_spill) {
+      /* The close spill-deferred. When on_writable resumes it, the peer's
+       * FIN above means its close_notify is never coming, so record the
+       * shutdown as received now — otherwise ssl_handle_shutdown defers
+       * for the missing alert and the socket hangs. */
+      if (!ssl_gone(s)) {
+        SSL_set_shutdown(s_ssl(s), SSL_get_shutdown(s_ssl(s)) | SSL_RECEIVED_SHUTDOWN);
+      }
+    } else {
+      s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+    }
   }
   return s;
 }

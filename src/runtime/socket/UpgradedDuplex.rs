@@ -303,13 +303,15 @@ impl UpgradedDuplex {
         // chunk was originally delivered on its own; `receive_data` casts the
         // length to `c_int` with a panicking `expect`, so handing it the sum of
         // every chunk staged in the window would turn a large pre-start burst
-        // into a process abort. Re-check `wrapper` each round: BoringSSL can
-        // re-enter and tear the engine down partway through.
+        // into a process abort. Re-check the engine each round: BoringSSL can
+        // re-enter and tear it down partway through, and `teardown()` neuters
+        // in place (frees the SSL, keeps the Option `Some`), so the live
+        // signal is the SSL handle, not the Option.
         for chunk in staged.chunks(64 * 1024) {
-            let Some(wrapper) = &mut self.wrapper else {
-                break;
-            };
-            wrapper.receive_data(chunk);
+            match &mut self.wrapper {
+                Some(wrapper) if wrapper.ssl.is_some() => wrapper.receive_data(chunk),
+                _ => break,
+            }
         }
         self.drain_pending_end();
     }
@@ -322,9 +324,10 @@ impl UpgradedDuplex {
             return;
         }
         self.pending_end = false;
-        // A re-entrant teardown during the byte replay above can neuter the
-        // engine; do not synthesize an EOF into a dead socket.
-        if self.wrapper.is_none() {
+        // A re-entrant teardown during the byte replay above neuters the
+        // engine in place (`teardown()` keeps the Option `Some` but frees the
+        // SSL); do not synthesize an EOF into a dead socket.
+        if self.wrapper.as_ref().is_none_or(|w| w.ssl.is_none()) {
             return;
         }
         (self.handlers.on_end)(self.handlers.ctx);

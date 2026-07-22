@@ -958,9 +958,14 @@ impl TimerObjectInternals {
     }
 
     pub fn has_ref(&self) -> JsResult<JSValue> {
-        Ok(JSValue::from(
-            self.flags.get().is_keeping_event_loop_alive(),
-        ))
+        let flags = self.flags.get();
+        // Node's Timeout.prototype.hasRef reports the sticky [kRefed] slot,
+        // which clearTimeout/fire leave untouched. Node's Immediate nulls
+        // [kRefed] on clear/fire; `is_keeping_event_loop_alive` mirrors that.
+        Ok(JSValue::from(match flags.kind() {
+            Kind::SetTimeout | Kind::SetInterval => flags.has_js_ref(),
+            Kind::SetImmediate => flags.is_keeping_event_loop_alive(),
+        }))
     }
 
     /// First access mints an

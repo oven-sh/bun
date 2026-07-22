@@ -1303,14 +1303,18 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         if (timer !== null) clearTimeout(timer);
         callback(err, connection);
       };
-      timer = setTimeout(() => {
+      const onAcquisitionTimeout = () => {
         timer = null;
         if (settled) return;
         // Only a pool with at least one established connection can be
         // "exhausted". If every slot is still connecting or closed, the
         // native connect timeout / retry budget owns the outcome and will
-        // drain the queue with the underlying error.
-        if (!this.isConnected()) return;
+        // drain the queue with the underlying error. Re-arm so a slot that
+        // connects after the first deadline still leaves this waiter bounded.
+        if (!this.isConnected()) {
+          timer = setTimeout(onAcquisitionTimeout, 100);
+          return;
+        }
         settled = true;
         let idx = this.waitingQueue.indexOf(wrapped);
         if (idx !== -1) this.waitingQueue.splice(idx, 1);
@@ -1322,7 +1326,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
           this.onAllQueriesFinished();
         }
-      }, connectionTimeout);
+      };
+      timer = setTimeout(onAcquisitionTimeout, connectionTimeout);
       onConnected = wrapped;
     }
 

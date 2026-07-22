@@ -289,23 +289,21 @@ declare module "bun" {
       connectionTimeout?: number | undefined;
 
       /**
-       * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
+       * Alias for {@link connectionTimeout}.
        * @deprecated Prefer {@link connectionTimeout}
        * @default 30
        */
       connection_timeout?: number | undefined;
 
       /**
-       * Maximum time in seconds to wait when establishing a connection (alias
-       * for connectionTimeout)
+       * Alias for {@link connectionTimeout}.
        * @deprecated Prefer {@link connectionTimeout}
        * @default 30
        */
       connectTimeout?: number | undefined;
 
       /**
-       * Maximum time in seconds to wait when establishing a connection (alias
-       * for connectionTimeout)
+       * Alias for {@link connectionTimeout}.
        * @deprecated Prefer {@link connectionTimeout}
        * @default 30
        */

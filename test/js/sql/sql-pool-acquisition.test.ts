@@ -41,28 +41,33 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   test("a dropped reserve() handle returns its pool slot on GC", async () => {
     await container.ready;
     // connectionTimeout: 0 disables the acquisition timeout so only the GC
-    // safety net can unblock the second query.
-    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 0 });
+    // safety net can unblock the second query. Force-close in the finally so
+    // a regression fails the assertion instead of hanging the disposer.
+    const sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 0 });
+    try {
+      // Leak the handle inside an inner scope so nothing on this frame
+      // retains it once the inner async function returns.
+      await (async () => {
+        await sql.reserve();
+      })();
 
-    // Leak the handle inside an inner scope so nothing on this frame retains
-    // it once the inner async function returns.
-    await (async () => {
-      await sql.reserve();
-    })();
-
-    let result: unknown = "pending";
-    const probe = sql`select 42 as v`.then(
-      ([{ v }]) => (result = v),
-      e => (result = e),
-    );
-    // Drive GC until the FinalizationRegistry releases the slot; give up
-    // after a bounded number of sweeps instead of waiting on wall-clock time.
-    for (let i = 0; i < 400 && result === "pending"; i++) {
-      Bun.gc(true);
-      await Bun.sleep(10);
+      let result: unknown = "pending";
+      const probe = sql`select 42 as v`.then(
+        ([{ v }]) => (result = v),
+        e => (result = e),
+      );
+      // Drive GC until the FinalizationRegistry releases the slot; give up
+      // after a bounded number of sweeps instead of waiting on wall-clock
+      // time.
+      for (let i = 0; i < 400 && result === "pending"; i++) {
+        Bun.gc(true);
+        await Bun.sleep(10);
+      }
+      await Promise.race([probe, Promise.resolve()]);
+      expect(result).toBe(42);
+    } finally {
+      await sql.close({ timeout: 0 });
     }
-    await Promise.race([probe, Promise.resolve()]);
-    expect(result).toBe(42);
   });
 
   test("sql.begin() times out instead of hanging when the pool is fully reserved", async () => {

@@ -655,8 +655,7 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
           server.stop(false);
           await new Promise(r => setImmediate(r));
           const openAfterGraceful = !closed;
-          // Escalate: must tear down the surviving connection and drop the
-          // event-loop ref even though the handler never resolves.
+          // Escalate: must tear down the surviving connection.
           server.stop(true);
           const until = Date.now() + 2000;
           while (!closed && Date.now() < until) await new Promise(r => setTimeout(r, 10));
@@ -713,7 +712,7 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
     });
   });
 
-  test("graceful stop() closes a connection once its in-flight request completes", async () => {
+  test("graceful stop() answers 503 + close to requests pipelined behind an in-flight one", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

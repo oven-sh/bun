@@ -281,7 +281,9 @@ declare module "bun" {
       idle_timeout?: number | undefined;
 
       /**
-       * Maximum time in seconds to wait when establishing a connection
+       * Maximum time in seconds to wait for a connection to become available:
+       * bounds both establishing a new connection and waiting for a free pool
+       * slot. Set to `0` to disable.
        * @default 30
        */
       connectionTimeout?: number | undefined;

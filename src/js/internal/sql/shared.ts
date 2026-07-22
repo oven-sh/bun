@@ -937,6 +937,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   abstract getRollbackDistributedSQL(name: string): string;
   abstract escapeIdentifier(name: string): string;
   abstract connectionClosedError(): Error;
+  abstract acquisitionTimeoutError(ms: number, max: number): Error;
   abstract notTaggedCallError(): Error;
   abstract queryCancelledError(): Error;
   abstract invalidTransactionStateError(message: string): Error;
@@ -1282,6 +1283,47 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   connect(onConnected: (err: Error | null, result: any) => void, reserved: boolean = false) {
     if (this.closed) {
       return onConnected(this.connectionClosedError(), null);
+    }
+
+    // connectionTimeout bounds the total time to obtain a usable connection,
+    // including waiting for a free pool slot. Without this, a pool whose slots
+    // are all reserved (or leaked) leaves every later caller pending forever.
+    const connectionTimeout = this.connectionInfo.connectionTimeout ?? 30 * 1000;
+    if (connectionTimeout > 0) {
+      const callback = onConnected;
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const wrapped = (err: Error | null, connection: any) => {
+        if (settled) {
+          // Timed out before the pool delivered this slot; don't leak it.
+          if (!err && connection) this.release(connection);
+          return;
+        }
+        settled = true;
+        if (timer !== null) clearTimeout(timer);
+        callback(err, connection);
+      };
+      timer = setTimeout(() => {
+        timer = null;
+        if (settled) return;
+        // Only a pool with at least one established connection can be
+        // "exhausted". If every slot is still connecting or closed, the
+        // native connect timeout / retry budget owns the outcome and will
+        // drain the queue with the underlying error.
+        if (!this.isConnected()) return;
+        settled = true;
+        let idx = this.waitingQueue.indexOf(wrapped);
+        if (idx !== -1) this.waitingQueue.splice(idx, 1);
+        else {
+          idx = this.reservedQueue.indexOf(wrapped);
+          if (idx !== -1) this.reservedQueue.splice(idx, 1);
+        }
+        callback(this.acquisitionTimeoutError(connectionTimeout, this.connections.length), null);
+        if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+          this.onAllQueriesFinished();
+        }
+      }, connectionTimeout);
+      onConnected = wrapped;
     }
 
     if (this.readyConnections.size === 0) {

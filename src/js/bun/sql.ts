@@ -22,9 +22,31 @@ enum ReservedConnectionState {
 
 interface TransactionState {
   connectionState: ReservedConnectionState;
-  reject: (err: Error) => void;
+  reject: ((err: Error) => void) | undefined;
   storedError?: Error | null | undefined;
   queries: Set<Query<any, any>>;
+}
+
+interface ReservedConnectionHeld {
+  pool: ReturnType<typeof adapterFromOptions>;
+  pooledConnection: unknown;
+  state: TransactionState;
+  onClose: (err: Error) => void;
+}
+
+// Safety net for `sql.reserve()` handles that are dropped without
+// `release()` / `close()` / `using`. Without this the pool slot stays
+// reserved for the lifetime of the process.
+let reservedConnectionRegistry: FinalizationRegistry<ReservedConnectionHeld> | undefined;
+function onReservedConnectionCollected(held: ReservedConnectionHeld) {
+  const { pool, pooledConnection, state, onClose } = held;
+  if (state.connectionState & ReservedConnectionState.closed) return;
+  state.connectionState |= ReservedConnectionState.closed;
+  state.connectionState &= ~ReservedConnectionState.acceptQueries;
+  if (pool.detachConnectionCloseHandler) {
+    pool.detachConnectionCloseHandler(pooledConnection, onClose);
+  }
+  pool.release(pooledConnection);
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
@@ -232,7 +254,7 @@ const SQL: typeof Bun.SQL = function SQL(
       query.reject(err);
     }
 
-    if (err) {
+    if (err && reject) {
       return reject(err);
     }
   }
@@ -387,6 +409,7 @@ const SQL: typeof Bun.SQL = function SQL(
         return Promise.$resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      reservedConnectionRegistry?.unregister(state);
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
@@ -435,6 +458,7 @@ const SQL: typeof Bun.SQL = function SQL(
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      reservedConnectionRegistry?.unregister(state);
       // Use adapter method to detach connection close handler
       if (pool.detachConnectionCloseHandler) {
         pool.detachConnectionCloseHandler(pooledConnection, onClose);
@@ -451,6 +475,15 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.distributed = reserved_sql.beginDistributed;
     reserved_sql.end = reserved_sql.close;
     resolve(reserved_sql);
+    // The promise is fulfilled; drop reject so its captured promise (whose
+    // [[PromiseResult]] is reserved_sql) stops keeping reserved_sql alive and
+    // the FinalizationRegistry can reclaim a leaked handle.
+    state.reject = undefined;
+    (reservedConnectionRegistry ??= new FinalizationRegistry(onReservedConnectionCollected)).register(
+      reserved_sql,
+      { pool, pooledConnection, state, onClose },
+      state,
+    );
   }
   async function onTransactionConnected(
     callback,

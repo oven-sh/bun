@@ -1047,12 +1047,6 @@ impl All {
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
-        // Scrub here, not at the per-platform call sites: this covers every
-        // entry point (unix auto_tick, windows on_uv_timer, the host-export
-        // thunk) with one placement directly above the dispatch chain whose
-        // callee frames spill JSValues (fire -> Bun__JSTimeout__call -> JS).
-        bun_jsc::event_loop::EventLoop::scrub_callee_stack();
-
         // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
         // `vm.timer.remove(...)`). In Rust those re-entrant calls resolve to

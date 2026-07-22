@@ -4698,10 +4698,6 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
         // long as compilation is starved. Explicit sync GC must not observe
         // those transient roots — drain the plans first.
         vm->heap.completeAllJITPlans();
-        // Zero dead stack ranges so the conservative scan cannot pin dead
-        // wrappers via stale pointers in already-returned deeper frames
-        // (single-survivor wedges: Windows timer leak, musl http client).
-        JSC::sanitizeStackForVM(*vm);
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);

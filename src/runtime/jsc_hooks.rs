@@ -900,12 +900,6 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick(vm: *mut VirtualMachine) {
-    // Loop-turn-top scrub: this frame is the shallowest recurring point of
-    // the event-loop iteration, so the zeroed callee window below it covers
-    // the poll/dispatch region (on Windows: uv_run and on_uv_timer frames)
-    // where earlier, deeper excursions left dead frames that callee-side
-    // scrubs cannot reach. Unconditional: one 32 KB memset per loop turn.
-    bun_jsc::event_loop::EventLoop::scrub_callee_stack();
     // Note: reshaped for borrowck — `EventLoop` is a value field of
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
@@ -1069,12 +1063,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
-    // Loop-turn-top scrub: this frame is the shallowest recurring point of
-    // the event-loop iteration, so the zeroed callee window below it covers
-    // the poll/dispatch region (on Windows: uv_run and on_uv_timer frames)
-    // where earlier, deeper excursions left dead frames that callee-side
-    // scrubs cannot reach. Unconditional: one 32 KB memset per loop turn.
-    bun_jsc::event_loop::EventLoop::scrub_callee_stack();
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;

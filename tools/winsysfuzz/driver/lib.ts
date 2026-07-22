@@ -314,7 +314,15 @@ export function moduleOf(r: Rec, syms: Map<string, Sym>): string {
 export interface RunOpts {
   bun: string; // path to the bun binary under test
   args: string[]; // program + args
-  workDir: string; // cwd + log dir for this run
+  workDir: string; // log/capture dir for this run
+  // Target cwd. Defaults to a "cwd" subdir of workDir, NOT workDir itself:
+  // a target that operates on relative paths (mkdir/watch/etc) must not do
+  // so inside the directory the injected DLL is streaming trace logs into
+  // and the driver is writing stdout/stderr files into - an fs-heavy
+  // workload otherwise observes/collides with the harness's own writes
+  // (recursive watchers over the log tree, self-generated change storms)
+  // and its trace is no longer a picture of the program's own I/O.
+  cwd?: string;
   timeoutMs: number;
   schedule?: string; // schedule file path -> inject mode
   env?: Record<string, string>;
@@ -629,8 +637,10 @@ export async function runOnce(o: RunOpts): Promise<RunResult> {
   const outFile = join(o.workDir, "stdout.txt");
   const errFile = join(o.workDir, "stderr.txt");
   const t0 = performance.now();
+  const cwd = o.cwd ?? join(o.workDir, "cwd");
+  ensureDir(cwd);
   const proc = Bun.spawn([wsfrun, "--", o.bun, ...o.args], {
-    cwd: o.workDir,
+    cwd,
     env,
     stdin: "ignore",
     stdout: Bun.file(outFile),

@@ -391,13 +391,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::HTTPError);
 
-                    // An idle-timeout means the socket sat with zero bytes in
-                    // either direction for the full `BUN_CONFIG_HTTP_IDLE_TIMEOUT`
-                    // (default 5 min). Retrying against the same wedged endpoint
-                    // just burns another full timeout per attempt, stretching a
-                    // silent-registry failure to ~30 min with the default 5
-                    // retries. Fail fast instead; transient transport errors
-                    // (ConnectionRefused/Closed, DNS) still retry.
+                    // A full idle-timeout (default 5 min) against a wedged
+                    // endpoint won't recover on immediate retry; fail fast
+                    // instead of multiplying it by `max_retry_count` (~30 min).
                     let is_idle_timeout = matches!(task.response.fail, Some(http::Error::Timeout));
 
                     if !is_idle_timeout && task.retried < manager.options.max_retry_count {

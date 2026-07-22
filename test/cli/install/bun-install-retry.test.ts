@@ -50,60 +50,107 @@ afterEach(async () => {
   await dummyAfterEach();
 });
 
-// A registry that accepts the TCP connection but never writes a byte back
-// should fail after ONE idle-timeout, not be retried `max_retry_count` times.
-// With the default 5-minute idle timeout and 5 retries that was ~30 minutes of
-// silent hang at "Resolving dependencies"; now it's one timeout.
-it("does not retry a manifest request that idle-timed out against a silent registry", async () => {
-  let connects = 0;
-  const sockets = new Set<net.Socket>();
-  const server = net.createServer(socket => {
-    connects++;
-    sockets.add(socket);
-    socket.on("data", () => {});
-    socket.on("close", () => sockets.delete(socket));
-    socket.on("error", () => {});
-  });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const silentPort = (server.address() as net.AddressInfo).port;
+// An endpoint that accepts the TCP connection but never writes a byte back
+// should fail after ONE idle-timeout, not be retried `max_retry_count` times
+// (which stretched the default 5-min timeout to ~30 min).
+describe("does not retry after an idle-timeout", () => {
+  async function silentServer() {
+    const state = { connects: 0 };
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer(socket => {
+      state.connects++;
+      sockets.add(socket);
+      socket.on("data", () => {});
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return {
+      state,
+      port: (server.address() as net.AddressInfo).port,
+      [Symbol.asyncDispose]: async () => {
+        for (const s of sockets) s.destroy();
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      },
+    };
+  }
 
-  try {
+  const installEnv = {
+    ...env,
+    // Trip the idle timer in seconds instead of the 5-minute default so
+    // one attempt (and, on a regressed build, all 6) finishes in-test.
+    BUN_CONFIG_HTTP_IDLE_TIMEOUT: "2",
+  };
+
+  it("against a silent registry (manifest path)", async () => {
+    await using silent = await silentServer();
     using dir = tempDir("install-silent-registry", {
-      "package.json": JSON.stringify({
-        name: "x",
-        version: "1.0.0",
-        dependencies: { "any-pkg": "1.0.0" },
-      }),
-      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${silentPort}/"\n`,
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { "any-pkg": "1.0.0" } }),
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${silent.port}/"\n`,
     });
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", "--no-progress"],
-      env: {
-        ...env,
-        // Trip the idle timer in seconds instead of the 5-minute default so
-        // the single attempt (and, on a regressed build, all 6) completes
-        // inside the test timeout.
-        BUN_CONFIG_HTTP_IDLE_TIMEOUT: "2",
-      },
+      env: installEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
-
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ connects, stderr, exitCode }).toEqual({
+    expect({ connects: silent.state.connects, stderr, exitCode }).toEqual({
       connects: 1,
       stderr: expect.stringContaining("Timeout"),
       exitCode: 1,
     });
     expect(stdout).not.toContain("installed");
-  } finally {
-    for (const s of sockets) s.destroy();
-    await new Promise<void>(resolve => server.close(() => resolve()));
-  }
-}, 60_000);
+  }, 60_000);
+
+  it("against a silent tarball host (extract path)", async () => {
+    await using silent = await silentServer();
+    // The registry serves a valid manifest whose `dist.tarball` points at the
+    // silent TCP listener, so the idle-timeout fires on the tarball download.
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/BaR") {
+          return Response.json({
+            name: "BaR",
+            "dist-tags": { latest: "0.0.2" },
+            versions: {
+              "0.0.2": {
+                name: "BaR",
+                version: "0.0.2",
+                dist: { tarball: `http://127.0.0.1:${silent.port}/BaR-0.0.2.tgz` },
+              },
+            },
+          });
+        }
+        return new Response("unexpected", { status: 404 });
+      },
+    });
+    using dir = tempDir("install-silent-tarball", {
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { BaR: "0.0.2" } }),
+      "bunfig.toml": `[install]\ncache = false\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-progress"],
+      env: installEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ connects: silent.state.connects, stderr, exitCode }).toEqual({
+      connects: 1,
+      stderr: expect.stringContaining("Timeout"),
+      exitCode: 1,
+    });
+    expect(stdout).not.toContain("installed");
+  }, 60_000);
+});
 
 // Manifest request 302-redirects and the redirect target answers a retryable
 // 500 once. The install retry must restart from the original manifest URL.

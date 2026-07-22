@@ -87,6 +87,32 @@ test.if(isPosix)(
   20_000,
 );
 
+// On POSIX a native stack overflow faults on the thread's guard page and the
+// kernel delivers SIGSEGV. The handler must recognise that address and report
+// `StackOverflow` (trace-string reason byte '7') rather than a generic
+// "Segmentation fault at 0x<guard page>", or bun.report buckets every deep
+// recursion in native code as an arbitrary wild-pointer crash. Windows gets
+// `EXCEPTION_STACK_OVERFLOW` from the kernel and never needed this detection.
+test.if(isPosix)("native stack overflow is reported as StackOverflow, not SegmentationFault", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      path.join(import.meta.dir, "fixture-crash.js"),
+      "stackOverflow",
+      "--debug-crash-handler-use-trace-string",
+    ],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("Stack overflow");
+  expect(stderr).not.toContain("Segmentation fault at address");
+  expect(proc.signalCode).toBe("SIGSEGV");
+  expect(exitCode).not.toBe(0);
+  void stdout;
+});
+
 // After printing the crash report the handler must terminate with a signal
 // that reflects the crash cause: panics abort (SIGABRT), a caught fault is
 // re-raised as the original signal. Previously the handler ended in a trap

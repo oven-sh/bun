@@ -12,7 +12,7 @@ pub mod js_bindings {
     use super::*;
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 8);
+        let obj = JSValue::create_empty_object(global, 9);
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
@@ -23,6 +23,7 @@ pub mod js_bindings {
             ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
+            ("stackOverflow", __jsc_host_js_stack_overflow),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -90,6 +91,58 @@ pub mod js_bindings {
             core::ptr::write_unaligned(ptr, 0xDEADBEEF);
             core::hint::black_box(ptr);
         }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_stack_overflow(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        #[cfg(unix)]
+        {
+            // Under ASAN the POSIX handler is not installed (`reset_on_posix`
+            // early-returns so ASAN keeps SIGSEGV): exercise the classifier
+            // directly with a fault address just below the current SP.
+            if Environment::ENABLE_ASAN {
+                let probe = 0u8;
+                let sp = core::hint::black_box(&probe) as *const u8 as usize;
+                let addr = sp.saturating_sub(128);
+                crash_handler::crash_handler(
+                    crash_handler::posix_fault_reason(libc::SIGSEGV, addr, sp),
+                    crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
+                );
+            }
+            // JSC's wasm-fault `jscSignalHandler` is installed over Bun's at VM
+            // init without `SA_ONSTACK`, so a guard-page SIGSEGV can't be
+            // delivered on the exhausted stack and the process dies before any
+            // handler runs. Re-arm Bun's handler (now with `SA_ONSTACK` on a
+            // second call) so the real signal path is what the test observes.
+            crash_handler::reset_on_posix();
+            // CI runs with `ulimit -s unlimited`; cap the main-thread stack so
+            // recursion faults on the guard page instead of exhausting RAM.
+            // SAFETY: get/setrlimit take valid pointers; the process is about
+            // to crash so lowering limits in the test hook is harmless.
+            unsafe {
+                let mut lim: libc::rlimit = core::mem::zeroed();
+                if libc::getrlimit(libc::RLIMIT_STACK, &raw mut lim) == 0 {
+                    const CAP: libc::rlim_t = 16 << 20;
+                    if lim.rlim_cur == libc::RLIM_INFINITY || lim.rlim_cur > CAP {
+                        lim.rlim_cur = CAP.min(lim.rlim_max);
+                        let _ = libc::setrlimit(libc::RLIMIT_STACK, &raw const lim);
+                    }
+                }
+            }
+        }
+        #[inline(never)]
+        #[allow(unconditional_recursion)]
+        fn recurse(n: usize) -> usize {
+            let frame = [n; 64];
+            core::hint::black_box(&frame);
+            core::hint::black_box(recurse(core::hint::black_box(n).wrapping_add(1)))
+        }
+        core::hint::black_box(recurse(0));
         Ok(JSValue::UNDEFINED)
     }
 

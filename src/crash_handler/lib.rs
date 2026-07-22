@@ -638,7 +638,6 @@ mod draft {
         FloatingPointError(usize),
         /// Windows-only
         DatatypeMisalignment,
-        /// Windows-only
         StackOverflow,
 
         /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
@@ -660,10 +659,12 @@ mod draft {
                 CrashReason::IllegalInstruction(_) => libc::SIGILL,
                 CrashReason::BusError(_) => libc::SIGBUS,
                 CrashReason::FloatingPointError(_) => libc::SIGFPE,
+                // On POSIX a stack overflow arrives as SIGSEGV on the guard
+                // page; re-raise as SIGSEGV so the parent sees the real fault.
+                CrashReason::StackOverflow => libc::SIGSEGV,
                 CrashReason::Panic(_)
                 | CrashReason::Unreachable
                 | CrashReason::DatatypeMisalignment
-                | CrashReason::StackOverflow
                 | CrashReason::ZigError(_)
                 | CrashReason::OutOfMemory => libc::SIGABRT,
             }
@@ -1601,27 +1602,41 @@ mod draft {
         ARCH_DISPLAY_STRING,
     );
 
-    /// Extract `(pc, fp)` from the `ucontext_t` the kernel hands the signal
+    #[cfg(unix)]
+    #[derive(Clone, Copy)]
+    struct FaultRegs {
+        pc: usize,
+        fp: usize,
+        sp: usize,
+    }
+
+    /// Extract `pc`/`fp`/`sp` from the `ucontext_t` the kernel hands the signal
     /// handler. Seeds the frame-pointer walk from the faulting frame. Returns
     /// `None` on arch/OS combos we don't have register offsets for (the caller
     /// then falls back to a current-stack capture).
     #[cfg(unix)]
-    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize)> {
+    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<FaultRegs> {
         debug_assert!(!ctx.is_null());
         let uc = ctx.cast::<libc::ucontext_t>().cast_const();
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            let pc = mc.gregs[libc::REG_RIP as usize] as usize;
-            let fp = mc.gregs[libc::REG_RBP as usize] as usize;
-            Some((pc, fp))
+            Some(FaultRegs {
+                pc: mc.gregs[libc::REG_RIP as usize] as usize,
+                fp: mc.gregs[libc::REG_RBP as usize] as usize,
+                sp: mc.gregs[libc::REG_RSP as usize] as usize,
+            })
         }
         #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            Some((mc.pc as usize, mc.regs[29] as usize))
+            Some(FaultRegs {
+                pc: mc.pc as usize,
+                fp: mc.regs[29] as usize,
+                sp: mc.sp as usize,
+            })
         }
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1630,7 +1645,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__rip as usize, (*mc).__ss.__rbp as usize))
+            Some(FaultRegs {
+                pc: (*mc).__ss.__rip as usize,
+                fp: (*mc).__ss.__rbp as usize,
+                sp: (*mc).__ss.__rsp as usize,
+            })
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1639,7 +1658,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__pc as usize, (*mc).__ss.__fp as usize))
+            Some(FaultRegs {
+                pc: (*mc).__ss.__pc as usize,
+                fp: (*mc).__ss.__fp as usize,
+                sp: (*mc).__ss.__sp as usize,
+            })
         }
         #[cfg(not(any(
             all(target_os = "linux", target_arch = "x86_64"),
@@ -1653,23 +1676,44 @@ mod draft {
         }
     }
 
+    /// `si_addr` within this distance of the faulting thread's stack pointer
+    /// is classified as a stack overflow rather than a stray dereference.
+    /// x86 exceptions are precise, so `push`/`call` fault with SP still at its
+    /// pre-decrement value and `addr == sp - 8`; explicit `sub rsp, N` runs
+    /// before the faulting store so `addr` is near the already-lowered SP
+    /// regardless of frame size.
+    #[cfg(unix)]
+    const STACK_OVERFLOW_SP_SLOP: usize = 0x10000;
+
+    /// Async-signal-safe: reads only the kernel-provided `si_addr` and `sp`.
+    #[cfg(unix)]
+    pub fn posix_fault_reason(sig: c_int, addr: usize, sp: usize) -> CrashReason {
+        match sig {
+            libc::SIGSEGV | libc::SIGBUS
+                if addr != 0 && sp != 0 && addr.abs_diff(sp) < STACK_OVERFLOW_SP_SLOP =>
+            {
+                CrashReason::StackOverflow
+            }
+            libc::SIGSEGV => CrashReason::SegmentationFault(addr),
+            libc::SIGILL => CrashReason::IllegalInstruction(addr),
+            libc::SIGBUS => CrashReason::BusError(addr),
+            libc::SIGFPE => CrashReason::FloatingPointError(addr),
+            // we do not register this handler for other signals
+            _ => unreachable!(),
+        }
+    }
+
     #[cfg(unix)]
     extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
         // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
         // sigfault address field.
         let addr: usize = unsafe { (*info).si_addr() as usize };
+        let regs = fault_context_from_ucontext(ctx);
 
         crash_handler(
-            match sig {
-                libc::SIGSEGV => CrashReason::SegmentationFault(addr),
-                libc::SIGILL => CrashReason::IllegalInstruction(addr),
-                libc::SIGBUS => CrashReason::BusError(addr),
-                libc::SIGFPE => CrashReason::FloatingPointError(addr),
-                // we do not register this handler for other signals
-                _ => unreachable!(),
-            },
-            match fault_context_from_ucontext(ctx) {
-                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
+            posix_fault_reason(sig, addr, regs.map_or(0, |r| r.sp)),
+            match regs {
+                Some(r) => TraceSeed::Fault { pc: r.pc, fp: r.fp },
                 None => TraceSeed::None,
             },
         );
@@ -1698,10 +1742,12 @@ mod draft {
 
                 // SAFETY: stack points to a valid static buffer
                 if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
-                    act_.sa_flags |= libc::SA_ONSTACK;
                     // SAFETY: single global; only mutated during signal-handler setup
                     DID_REGISTER_SIGALTSTACK.store(true, Ordering::Relaxed);
                 }
+            }
+            if DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
+                act_.sa_flags |= libc::SA_ONSTACK;
             }
         }
 

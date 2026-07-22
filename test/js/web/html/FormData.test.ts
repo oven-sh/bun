@@ -339,6 +339,56 @@ describe("FormData", () => {
     }
   });
 
+  // A NUL byte inside a name/filename is just a byte: it must not be treated
+  // as a terminator (short inline-string storage used to scan for the first 0).
+  describe("multipart name/filename containing NUL bytes", () => {
+    const parse = (disps: string[]) =>
+      new Response(
+        disps.map((d, i) => `--XX\r\nContent-Disposition: form-data; ${d}\r\n\r\nV${i}\r\n`).join("") + "--XX--\r\n",
+        { headers: { "content-type": "multipart/form-data; boundary=XX" } },
+      ).formData();
+
+    it("preserves an embedded NUL in short (<=8 byte) and long names", async () => {
+      expect([...(await parse([`name="ab\0cd"`])).entries()]).toEqual([["ab\0cd", "V0"]]);
+      expect([...(await parse([`name="abcdefg\0"`])).entries()]).toEqual([["abcdefg\0", "V0"]]);
+      expect([...(await parse([`name="q\0nine789"`])).entries()]).toEqual([["q\0nine789", "V0"]]);
+    });
+
+    it("keeps an entry whose name starts with a NUL byte", async () => {
+      expect([...(await parse([`name="\0gone"`, `name="after"`])).entries()]).toEqual([
+        ["\0gone", "V0"],
+        ["after", "V1"],
+      ]);
+    });
+
+    it("keeps short names distinct when they differ only after a NUL", async () => {
+      const fd = await parse([`name="a\0admin"`, `name="a\0other"`]);
+      expect([...fd.entries()]).toEqual([
+        ["a\0admin", "V0"],
+        ["a\0other", "V1"],
+      ]);
+    });
+
+    it("preserves an embedded NUL in a short filename", async () => {
+      const fd = await parse([`name="f"; filename="a\0b.txt"`]);
+      const file = fd.get("f") as File;
+      expect(file).toBeInstanceOf(File);
+      expect(file.name).toBe("a\0b.txt");
+      expect(await file.text()).toBe("V0");
+    });
+
+    it("round-trips NUL-bearing names through its own serializer", async () => {
+      const src = new FormData();
+      src.append("x\0y", "1");
+      src.append("\0lead", "2");
+      const parsed = await new Response(src).formData();
+      expect([...parsed.entries()]).toEqual([
+        ["x\0y", "1"],
+        ["\0lead", "2"],
+      ]);
+    });
+  });
+
   test("FormData.from (URLSearchParams)", () => {
     expect(
       // @ts-expect-error

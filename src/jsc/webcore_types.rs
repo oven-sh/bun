@@ -890,8 +890,8 @@ pub mod store {
         /// `ref()`ed and `pin()`ed so its contents stay attached for the
         /// store's lifetime; the store's `Drop` releases both via
         /// [`array_buffer::pinned_store_allocator`]. Returns `None` when the
-        /// backing buffer is resizable/growable or otherwise unsuitable for
-        /// borrowing.
+        /// backing buffer is resizable/growable, a `SharedArrayBuffer`, or
+        /// otherwise unsuitable for borrowing.
         pub fn init_pinned_array_buffer(buffer: &crate::ArrayBuffer) -> Option<StoreRef> {
             debug_assert!(!buffer.ptr.is_null());
             let allocator = crate::array_buffer::pinned_store_allocator::retain(buffer.value)?;

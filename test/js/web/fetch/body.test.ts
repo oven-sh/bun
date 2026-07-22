@@ -787,6 +787,16 @@ describe("constructing a Response from a large ArrayBuffer borrows the storage",
     expect((await res.bytes())[0]).toBe(0x61);
   });
 
+  test("Response snapshots SharedArrayBuffer bodies (mutate-before-consume not visible)", async () => {
+    const sab = new SharedArrayBuffer(N);
+    const view = new Uint8Array(sab).fill(0x61);
+    const res = new Response(view);
+    view.fill(0x62);
+    const out = await res.bytes();
+    expect(out.byteLength).toBe(N);
+    expect(out[0]).toBe(0x61);
+  });
+
   describe("Response", () => {
     const fn = (body: BodyInit) => new Response(body);
 

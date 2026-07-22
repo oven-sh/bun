@@ -3188,15 +3188,16 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 // Retain `v`'s backing JSC::ArrayBuffer natively (ref() + pin()) and return
 // it, so a Blob `Store::Bytes` can borrow its storage without touching the JS
 // cell on release. Returns null for resizable/growable buffers (a shrink
-// would invalidate the borrowed (ptr, len)) or when `v` has no ArrayBuffer
-// impl. Must be called on the JS thread that owns `v`.
+// would invalidate the borrowed (ptr, len)), SharedArrayBuffers (other agents
+// may write the same storage concurrently, and Bytes::slice() yields &[u8]),
+// or when `v` has no ArrayBuffer impl. Must be called on the JS thread that
+// owns `v`.
 CPP_DECL JSC::ArrayBuffer* Bun__ArrayBuffer__retainPinnedStore(JSC::EncodedJSValue v)
 {
     auto* buf = arrayBufferImpl(JSC::JSValue::decode(v));
-    if (!buf || buf->isResizableOrGrowableShared())
+    if (!buf || buf->isResizableOrGrowableShared() || buf->isShared())
         return nullptr;
-    if (!buf->isShared())
-        buf->pin();
+    buf->pin();
     buf->ref();
     return buf;
 }
@@ -3205,8 +3206,7 @@ CPP_DECL JSC::ArrayBuffer* Bun__ArrayBuffer__retainPinnedStore(JSC::EncodedJSVal
 // during the GC sweep that collects the holder.
 CPP_DECL void Bun__ArrayBuffer__releasePinnedStore(JSC::ArrayBuffer* buf)
 {
-    if (!buf->isShared())
-        buf->unpin();
+    buf->unpin();
     buf->deref();
 }
 

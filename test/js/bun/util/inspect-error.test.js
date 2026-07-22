@@ -199,6 +199,7 @@ describe("AggregateError", () => {
     expect(out).toContain("error: m1");
     expect(out).toContain("RangeError: m2");
     expect(out.indexOf(header)).toBeLessThan(out.indexOf("error: m1"));
+    expect(out.indexOf("error: m1")).toBeLessThan(out.indexOf("RangeError: m2"));
     expect(exitCode).toBe(wantExit);
   });
 
@@ -212,8 +213,10 @@ describe("AggregateError", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const out = stdout + stderr;
     expect(out).toContain("AggregateError");
-    expect(out).toContain("r1");
-    expect(out).toContain("r2");
+    expect(out).toContain("error: r1");
+    expect(out).toContain("error: r2");
+    expect(out.indexOf("AggregateError")).toBeLessThan(out.indexOf("error: r1"));
+    expect(out.indexOf("error: r1")).toBeLessThan(out.indexOf("error: r2"));
     expect(exitCode).toBe(1);
   });
 });

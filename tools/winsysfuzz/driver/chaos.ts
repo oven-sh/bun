@@ -110,7 +110,12 @@ for (let i = 0; i < MASK_PROGRAMS.length; i++) {
   for (const r of t?.recs ?? []) if (!r.entryOnly) masked.add(`${r.sys}:${r.key}`);
 }
 const allCoords = [...coordMap.entries()];
-const coords = allCoords.filter(([id]) => !masked.has(id)).map(([, c]) => c);
+// Also exclude completion-dequeue calls (NtRemoveIoCompletion[Ex]) made
+// from another module's private worker loop ('o:' key): faulting a system
+// DLL's own dequeue thread sabotages system code, not bun - such findings
+// are never bun-attributable.
+const privateDequeue = (c: Coord) => c.key.startsWith("o:") && c.sysName.startsWith("NtRemoveIoCompletion");
+const coords = allCoords.filter(([id, c]) => !masked.has(id) && !privateDequeue(c)).map(([, c]) => c);
 console.log(
   `  ${coordMap.size} injectable coordinate(s), ${coords.length} after startup mask, ` +
     `${baseTrace.recCount} records`,

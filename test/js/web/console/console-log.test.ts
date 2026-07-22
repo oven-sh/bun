@@ -150,3 +150,28 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+// https://github.com/oven-sh/bun/issues/18324
+it.concurrent("console.log identifies generator and async generator objects", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+function* syncGen() { yield 1; }
+async function* asyncGen() { yield 1; }
+console.log(syncGen());
+console.log(asyncGen());
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("Generator {}\nAsyncGenerator {}\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

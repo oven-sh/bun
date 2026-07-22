@@ -290,6 +290,14 @@ impl ASTMemoryAllocator {
         // directly into it across many modules with no intervening `reset()`).
         self.arena_dirty = true;
         let arena: *const Arena = self.arena_raw();
+        debug_assert!(
+            expr::data::Store::memory_allocator() == stmt::data::Store::memory_allocator()
+        );
+        if !self.ast_pushed {
+            // Capture the outer allocator only on the first (un-popped) push so
+            // a re-arming `push()` doesn't clobber the saved outer value.
+            self.previous = expr::data::Store::memory_allocator();
+        }
         stmt::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
         expr::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
         let spill = self.arena().heap_ptr();

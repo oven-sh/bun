@@ -377,6 +377,7 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_url",
+ "bun_uws",
  "bun_watcher",
  "bun_wyhash",
  "bytemuck",

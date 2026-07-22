@@ -1513,3 +1513,178 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+describe("Bun.build concurrency", () => {
+  // All `Bun.build()` calls share one bundle thread. Before the fix, that
+  // thread processed builds strictly one at a time and parked inside the
+  // in-flight build waiting on its outstanding plugin promises, so:
+  //   (A) an `onLoad`/`onResolve` that awaited a nested `Bun.build()` self-
+  //       deadlocked: the inner build sat in the bundle thread's queue, the
+  //       outer never got its plugin result;
+  //   (B) once wedged, every later `Bun.build()` in the process hung too.
+  // These tests spawn a subprocess so a regression is contained instead of
+  // wedging the rest of this file.
+  const bounded = /* ts */ `
+    const DEADLOCK = Symbol("deadlock");
+    // 30s is far above a normal Bun.build of a two-line file, including
+    // under debug+ASAN; on a regressed build the inner Bun.build never
+    // resolves at all.
+    async function bounded<T>(p: Promise<T>): Promise<T> {
+      let timer: Timer;
+      const race = await Promise.race([
+        p,
+        new Promise(r => { timer = setTimeout(() => r(DEADLOCK), 30_000); }),
+      ]);
+      clearTimeout(timer!);
+      if (race === DEADLOCK) throw new Error("Bun.build never resolved");
+      return race as T;
+    }
+  `;
+
+  test.concurrent("nested Bun.build inside an onLoad plugin does not deadlock", async () => {
+    using dir = tempDir("bun-build-nested-onload", {
+      "entry.ts": `import x from "virt:worker"; console.log(x);`,
+      "worker.ts": `export default "worker-code";`,
+      "run.ts": /* ts */ `
+        import { join } from "node:path";
+        ${bounded}
+        const here = import.meta.dir;
+
+        const outer = Bun.build({
+          entrypoints: [join(here, "entry.ts")],
+          plugins: [{
+            name: "sub-bundle",
+            setup(b) {
+              b.onResolve({ filter: /^virt:worker$/ }, () => ({
+                path: join(here, "worker.ts"),
+                namespace: "sub",
+              }));
+              b.onLoad({ filter: /.*/, namespace: "sub" }, async (args) => {
+                const inner = await bounded(Bun.build({ entrypoints: [args.path] }));
+                if (!inner.success) throw new AggregateError(inner.logs, "inner build failed");
+                const text = await inner.outputs[0].text();
+                return { contents: "export default " + JSON.stringify(text), loader: "js" };
+              });
+            },
+          }],
+        });
+
+        const result = await bounded(outer);
+        if (!result.success) throw new AggregateError(result.logs, "outer build failed");
+        const bundled = await result.outputs[0].text();
+        if (!bundled.includes("worker-code")) throw new Error("missing inner output: " + bundled);
+        console.log("outer done");
+
+        // Process must not be permanently wedged: an independent build afterwards still works.
+        const later = await bounded(Bun.build({ entrypoints: [join(here, "worker.ts")] }));
+        if (!later.success) throw new AggregateError(later.logs, "later build failed");
+        console.log("later done");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("outer done\nlater done\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("nested Bun.build inside an onResolve plugin does not deadlock", async () => {
+    using dir = tempDir("bun-build-nested-onresolve", {
+      "entry.ts": `import x from "virt:worker"; console.log(x);`,
+      "worker.ts": `export default "worker-code";`,
+      "run.ts": /* ts */ `
+        import { join } from "node:path";
+        ${bounded}
+        const here = import.meta.dir;
+
+        const outer = Bun.build({
+          entrypoints: [join(here, "entry.ts")],
+          plugins: [{
+            name: "sub-bundle",
+            setup(b) {
+              b.onResolve({ filter: /^virt:worker$/ }, async () => {
+                const inner = await bounded(Bun.build({ entrypoints: [join(here, "worker.ts")] }));
+                if (!inner.success) throw new AggregateError(inner.logs, "inner build failed");
+                return { path: join(here, "worker.ts"), namespace: "file" };
+              });
+            },
+          }],
+        });
+
+        const result = await bounded(outer);
+        if (!result.success) throw new AggregateError(result.logs, "outer build failed");
+        console.log("outer done");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("outer done\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("independent Bun.build is not blocked behind another build's slow onLoad", async () => {
+    using dir = tempDir("bun-build-independent-concurrent", {
+      "entry.ts": `import x from "slow:mod"; console.log(x);`,
+      "fast.ts": `export default "fast";`,
+      "run.ts": /* ts */ `
+        import { join } from "node:path";
+        ${bounded}
+        const here = import.meta.dir;
+        const gate = Promise.withResolvers<void>();
+
+        const slow = Bun.build({
+          entrypoints: [join(here, "entry.ts")],
+          plugins: [{
+            name: "slow",
+            setup(b) {
+              b.onResolve({ filter: /^slow:mod$/ }, () => ({ path: "slow", namespace: "slow" }));
+              b.onLoad({ filter: /.*/, namespace: "slow" }, async () => {
+                await gate.promise;
+                return { contents: "export default 1", loader: "js" };
+              });
+            },
+          }],
+        });
+
+        // This build has no plugins and must complete while "slow"'s onLoad is
+        // still pending. If it can't, it would sit behind "slow" forever and
+        // "gate" would never open.
+        const fast = await bounded(Bun.build({ entrypoints: [join(here, "fast.ts")] }));
+        if (!fast.success) throw new AggregateError(fast.logs, "fast build failed");
+        console.log("fast done");
+
+        gate.resolve();
+        const slowResult = await bounded(slow);
+        if (!slowResult.success) throw new AggregateError(slowResult.logs, "slow build failed");
+        console.log("slow done");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("fast done\nslow done\n");
+    expect(exitCode).toBe(0);
+  });
+});

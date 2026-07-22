@@ -2026,6 +2026,16 @@ pub mod bv2_impl {
             // `is_done` only touches by-value fields.
             unsafe {
                 bun_event_loop::AnyEventLoop::tick_raw(any_loop, self_ptr.cast(), |ctx| {
+                    // Run any other `Bun.build` that was enqueued while this one
+                    // was parked waiting on a plugin callback. Without this a
+                    // nested `Bun.build` awaited from inside a plugin's
+                    // `onLoad`/`onResolve` deadlocks: the singleton bundle
+                    // thread is here, not on its `waker`, so the queued build
+                    // never starts and the plugin promise never resolves.
+                    // `drain_pending` is a no-op off the bundle thread (CLI
+                    // build path). Nested builds recurse through here on a
+                    // fresh `BundleV2`, so no state overlaps `*ctx`.
+                    singleton::drain_pending();
                     (*ctx.cast::<BundleV2<'static>>()).is_done()
                 });
             }

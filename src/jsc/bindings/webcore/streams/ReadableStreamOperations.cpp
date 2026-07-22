@@ -41,7 +41,7 @@ using WebCore::JSStreamsRuntime;
 
 // Every switch over ControllerKind is TOTAL; these two are the only casts of the erased
 // stream->m_controller slot in this file.
-static JSReadableStreamDefaultController* defaultControllerOf(JSReadableStream* stream)
+JSReadableStreamDefaultController* defaultControllerOf(JSReadableStream* stream)
 {
     switch (stream->m_controllerKind) {
     case ControllerKind::Default:
@@ -56,7 +56,7 @@ static JSReadableStreamDefaultController* defaultControllerOf(JSReadableStream* 
     return nullptr;
 }
 
-static JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream)
+JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream)
 {
     switch (stream->m_controllerKind) {
     case ControllerKind::Byte:
@@ -74,14 +74,14 @@ static JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream
 // Null-safe tee-branch controller recovery: Bun's native-sink pumps clear a consumed
 // stream's controller slot in their finally step, so a tee reaction queued before that
 // teardown can see a branch with no controller. A torn-down branch is terminal; skip it.
-static JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
+JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
 {
     if (branch->m_controllerKind != ControllerKind::Default)
         return nullptr;
     return uncheckedDowncast<JSReadableStreamDefaultController>(branch->m_controller.get());
 }
 
-static JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
+JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
 {
     if (branch->m_controllerKind != ControllerKind::Byte)
         return nullptr;
@@ -100,7 +100,7 @@ static JSReadableStreamReaderBase* teeReader(JSStreamTeeState* teeState)
 
 // [reaction-convention] deferral: runs handler(value, context) as its own microtask,
 // carrying the current async context, without allocating a promise.
-static void queueReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
+void queueReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
 {
     JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
     if (asyncContext.isEmpty())

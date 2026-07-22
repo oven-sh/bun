@@ -39,19 +39,6 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSStreamsRuntime;
 
-// The only cast of the erased stream->m_controller slot in this file; every switch is TOTAL.
-static WebCore::JSReadableStreamDefaultController* defaultControllerOf(JSReadableStream* stream)
-{
-    ASSERT(stream->m_controllerKind == ControllerKind::Default);
-    return uncheckedDowncast<WebCore::JSReadableStreamDefaultController>(stream->m_controller.get());
-}
-
-static WebCore::JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream)
-{
-    ASSERT(stream->m_controllerKind == ControllerKind::Byte);
-    return uncheckedDowncast<WebCore::JSReadableByteStreamController>(stream->m_controller.get());
-}
-
 // Detaches [[readRequests]] before dispatch ("set to an empty list, then iterate"): once the
 // requests leave the visited deque the MarkedArgumentBuffer is their only root.
 static void detachReadRequests(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, MarkedArgumentBuffer& out)

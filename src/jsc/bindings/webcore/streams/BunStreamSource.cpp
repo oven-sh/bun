@@ -308,19 +308,6 @@ static inline JSBoundFunction* createBoundHandler(JSGlobalObject* globalObject, 
     return createStreamsBoundHandler(globalObject, target, context);
 }
 
-// object.<name>(...args) with a real [[Get]], as the replaced builtins did.
-static JSValue invokeMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& name, const MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue method = object->get(globalObject, name);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!method.isCallable()) [[unlikely]] {
-        throwTypeError(globalObject, scope, makeString(name.string(), " is not a function"_s));
-        return {};
-    }
-    RELEASE_AND_RETURN(scope, call(globalObject, method, getCallData(method), object, args));
-}
-
 // The native-handle cancel protocol shared by nativeSourceCancel / cancelPendingNativeSource.
 static void invokeNativeHandleCancel(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* handle, JSValue reason)
 {
@@ -336,6 +323,7 @@ static void invokeNativeHandleCancel(JSC::VM& vm, JSGlobalObject* globalObject, 
     scope.release();
     invokeMethod(vm, globalObject, handle, builtinNames(vm).cancelPublicName(), cancelArgs);
 }
+
 
 static JSValue wrapWithAsyncContext(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue callable)
 {

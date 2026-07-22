@@ -39,14 +39,6 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSStreamsRuntime;
 
-// The only cast of the erased stream->m_controller slot in this file: a BYOB reader can
-// only be attached to a byte-controlled stream (SetUpReadableStreamBYOBReader enforces it).
-static WebCore::JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream)
-{
-    ASSERT(stream->m_controllerKind == ControllerKind::Byte);
-    return uncheckedDowncast<WebCore::JSReadableByteStreamController>(stream->m_controller.get());
-}
-
 // Detaches [[readIntoRequests]] before dispatch ("set to an empty list, then iterate"): once
 // the requests leave the visited deque the MarkedArgumentBuffer is their only root.
 static void detachReadIntoRequests(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamBYOBReader* reader, MarkedArgumentBuffer& out)

@@ -30,28 +30,6 @@ namespace WebStreams {
 
 using namespace JSC;
 
-// WebIDL "invoke a callback function" with a Promise<T> return type: an abrupt completion is
-// converted into a rejected promise (a completion-record conversion), never a synchronous throw.
-static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue result;
-    JSC::JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = JSC::getCallData(method);
-        ASSERT(callData.type != JSC::CallData::Type::None);
-        result = JSC::call(globalObject, method, callData, thisValue, args);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (result.isEmpty())
-        return nullptr;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
-}
-
 // As invokePromiseReturningMethod, but returns nullptr for a synchronous non-thenable completion
 // and returns a vanilla JSPromise unwrapped (isThenFastAndNonObservable); the caller queues the
 // upon-fulfillment handler directly when the result is nullptr or already Fulfilled.

@@ -142,6 +142,8 @@ bool canCopyDataBlockBytes(JSC::ArrayBuffer& toBuffer, size_t toIndex, JSC::Arra
 UnderlyingSinkDict convertUnderlyingSinkDict(JSC::JSGlobalObject*, JSC::JSValue underlyingSink); // userJS: yes — WebStreamsMisc.cpp
 TransformerDict convertTransformerDict(JSC::JSGlobalObject*, JSC::JSValue transformer); // userJS: yes — WebStreamsMisc.cpp
 QueuingStrategyDict convertQueuingStrategyDict(JSC::JSGlobalObject*, JSC::JSValue strategy); // userJS: yes — WebStreamsMisc.cpp
+// `QueuingStrategyInit init` — `highWaterMark` is a required `unrestricted double`.
+double convertQueuingStrategyInit(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue init); // userJS: yes — WebStreamsMisc.cpp
 
 // Promise helpers (thin, named after the spec phrases).
 // "a promise resolved with v" — resolving with ANY OBJECT (not only a user thenable) performs
@@ -154,6 +156,11 @@ JSC::JSPromise* promiseFulfilledWith(JSC::JSGlobalObject*, JSC::JSValue); // use
 JSC::JSBoundFunction* createStreamsBoundHandler(JSC::JSGlobalObject*, JSC::JSFunction* target, JSC::JSCell* context);
 // obj.name(...args); returns the EMPTY value when `name` is not callable. userJS: yes — WebStreamsMisc.cpp
 JSC::JSValue invokeOptionalMethod(JSC::JSGlobalObject*, JSC::JSObject*, const JSC::Identifier& name, const JSC::MarkedArgumentBuffer&);
+// obj.name(...args); TypeError if `name` is not callable. userJS: yes — WebStreamsMisc.cpp
+JSC::JSValue invokeMethod(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject*, const JSC::Identifier&, const JSC::MarkedArgumentBuffer&);
+// WebIDL callback invoke returning Promise<undefined>: an abrupt completion becomes a rejected
+// promise. Returns nullptr on VM termination. userJS: yes — WebStreamsMisc.cpp
+JSC::JSPromise* invokePromiseReturningMethod(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer&);
 // error.code === code, swallowing any lookup exception. userJS: yes — WebStreamsMisc.cpp
 bool errorCodeIs(JSC::JSGlobalObject*, JSC::JSValue error, WTF::ASCIILiteral code);
 JSC::JSPromise* promiseResolvedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
@@ -194,6 +201,15 @@ JSC::JSValue takeAbruptCompletion(JSC::JSGlobalObject*, JSC::TopExceptionScope&)
 
 // ReadableStreamOperations.cpp — stream-level RS ops, reader set-up, controller set-up,
 // tee, from-iterable.
+
+// Checked downcasts for the erased `stream->m_controller` slot.
+JSReadableStreamDefaultController* defaultControllerOf(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
+JSReadableByteStreamController* byteControllerOf(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
+// Null-safe tee-branch controller recovery (torn-down branch returns nullptr).
+JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
+JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
+// [reaction-convention] microtask deferral without allocating a promise.
+void queueReactionJob(JSC::VM&, JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — ReadableStreamOperations.cpp
 
 // Internal creation.
 // `startResult` = the value "the start algorithm returned" (a pre-existing pending promise
@@ -419,6 +435,8 @@ void writableStreamDefaultControllerWrite(JSC::JSGlobalObject*, JSWritableStream
 
 // TransformStreamOperations.cpp
 
+// Null-safe: returns nullptr when the readable's controller was torn down.
+JSReadableStreamDefaultController* transformReadableController(JSTransformStream*); // userJS: no — TransformStreamOperations.cpp
 // The internal-creation parallel of createReadableStream.
 JSTransformStream* createTransformStream(JSC::JSGlobalObject*, TransformerKind, JSC::JSCell* algorithmContext, double writableHighWaterMark = 1, JSC::JSObject* writableSizeAlgorithm = nullptr, double readableHighWaterMark = 0, JSC::JSObject* readableSizeAlgorithm = nullptr); // userJS: yes — TransformStreamOperations.cpp
 void initializeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSPromise* startPromise, double writableHighWaterMark, JSC::JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSC::JSObject* readableSizeAlgorithm); // userJS: yes — TransformStreamOperations.cpp

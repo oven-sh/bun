@@ -555,9 +555,18 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
   // arrive on the IOCP. "Failed AND completed later" is a world the kernel
   // never produces (double-processing the request follows), so a lie there
   // manufactures unreal bugs. Drop the post-fault; keep the truth.
-  if (fault_ == Fault::Post && (ULONG)real == 0x103) {
+  // ...and whenever the operation is OVERLAPPED (a non-null ApcContext):
+  // its completion is posted to the IOCP even when the call succeeds
+  // synchronously, so lying "failed" would have the request processed
+  // twice - accounting the kernel makes impossible.
+  bool overlapped = false;
+  int8_t apc = kHooks[sys_].apcIndex;
+  if (apc >= 0 && apc < argc_ && args_[apc] != 0) overlapped = true;
+  if (fault_ == Fault::Post && ((ULONG)real == 0x103 || overlapped)) {
     fault_ = Fault::None;
-    LogNote("# post-fault dropped: real return was STATUS_PENDING (completion is coming)\n");
+    LogNote((ULONG)real == 0x103
+                ? "# post-fault dropped: real return was STATUS_PENDING (completion is coming)\n"
+                : "# post-fault dropped: overlapped op posts a completion (would double-process)\n");
   }
   if (live_) {
     const char* tag = "";

@@ -145,6 +145,7 @@ H.push("  int8_t ioctlIndex;  // arg index of an IoControlCode/FsControlCode, -1
 H.push("  int8_t handleIndex; // arg index of the primary in-HANDLE (File/Socket/Key), -1 if none");
 H.push("  int8_t lengthIndex; // arg index of a ULONG Length (bytes requested), -1 if none");
 H.push("  int8_t hOutIndex;   // arg index of the PHANDLE created by an open/create, -1 if none");
+H.push("  int8_t apcIndex;    // arg index of the ApcContext (OVERLAPPED*), -1 if none: non-null => completion posted");
 H.push("};");
 H.push("");
 H.push("extern HookEntry kHooks[SYS__COUNT];");
@@ -208,10 +209,14 @@ for (const s of syscalls) {
   );
   const length = s.args.findIndex(a => a.type === "ULONG" && a.name === "Length");
   const hOut = s.args.findIndex(a => a.type === "PHANDLE" && a.dir === "out");
+  // The overlapped completion context: non-null means a completion WILL be
+  // posted (even on synchronous success), so a lying post-fault would
+  // create the impossible "failed AND completed" world - dropped at runtime.
+  const apc = s.args.findIndex(a => a.name === "ApcContext");
   C.push(
     `  {${JSON.stringify(s.name)}, (void**)&Real_${s.name}, (void*)&Hook_${s.name}, ${s.args.length}, ` +
       `${s.ret === "NTSTATUS" ? "true" : "false"}, ${s.name}_types, ${s.name}_names, ${s.name}_dirs, ` +
-      `${JSON.stringify(s.category)}, ${iosb}, ${oa}, ${ioctl}, ${handle}, ${length}, ${hOut}},`,
+      `${JSON.stringify(s.category)}, ${iosb}, ${oa}, ${ioctl}, ${handle}, ${length}, ${hOut}, ${apc}},`,
   );
 }
 C.push("};");

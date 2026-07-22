@@ -117,6 +117,46 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
     expect(proc.exitCode).toBe(0);
   });
 
+  // A poll-layer error on a listening socket (Windows AFD ioctl returning
+  // INSUFFICIENT_RESOURCES, surfaced as uv_poll_cb(status < 0)) used to be
+  // dropped by the POLL_TYPE_SEMI_SOCKET listen branch: libuv zeroes
+  // handle->events before the callback, so without an explicit uv_poll_start
+  // the listener stays alive but never fires again. The listen_poll fault
+  // reproduces that state on every backend by stopping the listen poll at
+  // the top of the dispatch; the fix re-arms it.
+  test("listen poll error: listener re-arms and keeps accepting", async () => {
+    const { proc, port } = await spawnServer(/* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
+        fetch: () => new Response("ok") });
+      // One-shot: next readable dispatch on the listening socket is delivered
+      // as a poll error with the poll left stopped.
+      fault.set({ syscall: "listen_poll", action: "errno", errno: "ENOMEM", repeat: 1 });
+      console.log(s.port);
+      process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
+    `);
+    try {
+      // First request triggers the fault (the listen poll's readable dispatch
+      // runs into it). The pending connection is still in the kernel accept
+      // queue, so accept() still succeeds on this dispatch.
+      const first = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await first.text()).toBe("ok");
+      // Second and third requests prove the listen poll was re-armed: without
+      // the fix it was de-registered and no further readable event fires, so
+      // these connections would sit in the backlog forever.
+      const [second, third] = await Promise.all([
+        fetch(`http://127.0.0.1:${port}/`).then(r => r.text()),
+        fetch(`http://127.0.0.1:${port}/`).then(r => r.text()),
+      ]);
+      expect({ second, third }).toEqual({ second: "ok", third: "ok" });
+    } finally {
+      proc.kill("SIGTERM");
+      await proc.exited;
+    }
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(0);
+  });
+
   test("client abort under server-side 1-byte sends: every response reaches a terminal state", async () => {
     const { proc, port } = await spawnServer(/* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");

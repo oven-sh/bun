@@ -2612,7 +2612,14 @@ impl BlobExt for Blob {
         // SAFETY: `raw_bytes` is valid for reads for the duration of this call
         // (either a leaked Box for `Temporary` or a store-backed view otherwise).
         let raw_slice: &[u8] = unsafe { &*raw_bytes };
-        let (bom, buf) = strings::BOM::detect_and_split(raw_slice);
+        // File API `text()` is "UTF-8 decode" (strip only EF BB BF). The UTF-16LE
+        // BOM sniff is a Bun.file/S3 convenience (documented in docs/runtime/s3.mdx)
+        // and must not leak into standard Blob/Response(blob).text().
+        let (bom, buf) = if self.is_bun_file() || self.is_s3() {
+            strings::BOM::detect_and_split(raw_slice)
+        } else {
+            (None, strings::without_utf8_bom(raw_slice))
+        };
 
         if buf.is_empty() {
             // If all it contained was the bom, we need to free the bytes
@@ -2850,7 +2857,13 @@ impl BlobExt for Blob {
     ) -> JsResult<JSValue> {
         // SAFETY: `raw_bytes` is valid for reads for the duration of this call
         // (either a leaked Box for `Temporary` or a store-backed view otherwise).
-        let (bom, buf) = strings::BOM::detect_and_split(unsafe { &*raw_bytes });
+        let raw_slice: &[u8] = unsafe { &*raw_bytes };
+        // Same gate as `to_string_with_bytes`: only Bun.file/S3 sniff a UTF-16LE BOM.
+        let (bom, buf) = if self.is_bun_file() || self.is_s3() {
+            strings::BOM::detect_and_split(raw_slice)
+        } else {
+            (None, strings::without_utf8_bom(raw_slice))
+        };
         if buf.is_empty() {
             if LIFETIME == Lifetime::Temporary {
                 // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.

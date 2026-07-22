@@ -523,32 +523,35 @@ test("Blob constructor copies typed array parts before later parts run user code
   expect(exitCode).toBe(0);
 });
 
-test("Blob.slice at an odd byte offset decodes UTF-16LE (BOM) content with text() and json()", async () => {
-  // A blob sliced at an odd start keeps a view into the original store at an odd
-  // byte offset. When the bytes at that offset begin with a UTF-16LE BOM (FF FE),
-  // text()/json() must decode the remaining (odd-aligned) bytes as UTF-16 instead
-  // of aborting. Run in a subprocess so a process abort surfaces as a nonzero exit
-  // code rather than killing the test runner.
+test("Bun.file().slice at an odd byte offset decodes UTF-16LE (BOM) content with text() and json()", async () => {
+  // Bun.file().text()/.json() sniff a leading UTF-16LE BOM (FF FE) as a
+  // convenience (standard Blob does not). A file sliced at an odd start keeps a
+  // view into the store at an odd byte offset; the UTF-16 decode of those
+  // odd-aligned bytes must not abort on alignment. Run in a subprocess so a
+  // process abort surfaces as a nonzero exit code.
+  using dir = tempDir("bunfile-utf16le-odd-slice", {});
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
+        import { writeFileSync } from "node:fs";
         // 0x41 prefix byte, then UTF-16LE BOM (FF FE) followed by "hi" / "42".
-        // slice(1) makes the decoded view start at an odd offset into the backing store.
-        const textBytes = new Uint8Array([0x41, 0xff, 0xfe, 0x68, 0x00, 0x69, 0x00]);
-        const oddText = await new Blob([textBytes]).slice(1).text();
+        // slice(1) makes the decoded view start at an odd offset into the file.
+        writeFileSync("t.bin", new Uint8Array([0x41, 0xff, 0xfe, 0x68, 0x00, 0x69, 0x00]));
+        const oddText = await Bun.file("t.bin").slice(1).text();
 
-        const jsonBytes = new Uint8Array([0x41, 0xff, 0xfe, 0x34, 0x00, 0x32, 0x00]);
-        const oddJson = await new Blob([jsonBytes]).slice(1).json();
+        writeFileSync("j.bin", new Uint8Array([0x41, 0xff, 0xfe, 0x34, 0x00, 0x32, 0x00]));
+        const oddJson = await Bun.file("j.bin").slice(1).json();
 
-        // The aligned (offset 0) UTF-16LE BOM case keeps working too.
-        const alignedText = await new Blob([new Uint8Array([0xff, 0xfe, 0x68, 0x00, 0x69, 0x00])]).text();
+        writeFileSync("a.bin", new Uint8Array([0xff, 0xfe, 0x68, 0x00, 0x69, 0x00]));
+        const alignedText = await Bun.file("a.bin").text();
 
         console.log(JSON.stringify({ oddText, oddJson, alignedText }));
       `,
     ],
     env: bunEnv,
+    cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -797,6 +797,28 @@ describe("constructing a Response from a large ArrayBuffer borrows the storage",
     expect(out[0]).toBe(0x61);
   });
 
+  test("HTMLRewriter.transform(Response) snapshots the borrowed body before parsing", async () => {
+    // lol-html invokes user handlers mid-chunk; a handler must not be able to
+    // mutate the bytes the parser is still iterating.
+    const buf = new Uint8Array(N).fill(0x61);
+    buf.set(new TextEncoder().encode("<p>x</p><p>x</p>"), 0);
+    let hits = 0;
+    const out = await new HTMLRewriter()
+      .on("p", {
+        element() {
+          hits++;
+          buf.fill(0);
+        },
+      })
+      .transform(new Response(buf))
+      .bytes();
+    // Both <p> elements were parsed from the snapshot; the handler's mutation
+    // of the source buffer did not affect the second one.
+    expect(hits).toBe(2);
+    expect(out.byteLength).toBe(N);
+    expect(out[N - 1]).toBe(0x61);
+  });
+
   test("text() on a clone re-scans the borrow after the source is mutated", async () => {
     // r1 and r2 share the same borrowed Store; r1.text() must not cache an
     // ASCII verdict on the shared Store that r2.text() would trust after

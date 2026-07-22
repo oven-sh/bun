@@ -1251,9 +1251,29 @@ impl Value {
         }
     }
 
+    /// Move the `Value::Blob` payload into an `AnyBlob`, snapshotting a
+    /// borrowed JS ArrayBuffer into owned storage so the pin cannot escape
+    /// the Body. Consumers that may re-enter user JS while holding
+    /// `.slice()` (HTMLRewriter, `ValueBufferer`, outbound fetch) go through
+    /// this; `RequestContext`'s send path uses [`use_as_any_blob_for_render`]
+    /// to keep the borrow.
+    #[inline]
+    fn take_blob_snapshot_if_borrowed(b: &mut Blob) -> AnyBlob {
+        let b = core::mem::take(b);
+        if b.store().is_some_and(|s| s.bytes_borrow_js_array_buffer()) {
+            let owned = InternalBlob {
+                bytes: b.shared_view().to_vec(),
+                was_string: false,
+            };
+            b.detach();
+            return AnyBlob::InternalBlob(owned);
+        }
+        AnyBlob::Blob(b)
+    }
+
     pub fn try_use_as_any_blob(&mut self) -> Option<AnyBlob> {
         let any_blob: AnyBlob = match self {
-            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
+            Value::Blob(b) => Self::take_blob_snapshot_if_borrowed(b),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => {
                 if wtf_impl(str).can_use_as_utf8() {
@@ -1284,7 +1304,7 @@ impl Value {
         // emptied/residual variant (no-op for taken Blob/InternalBlob, releases
         // the +1 for the UTF-8-converted WTFStringImpl arm, deinit for Locked).
         let any_blob: AnyBlob = match self {
-            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
+            Value::Blob(b) => Self::take_blob_snapshot_if_borrowed(b),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => 'brk: {
                 let str = *str;
@@ -1318,7 +1338,7 @@ impl Value {
         let was_null = matches!(self, Value::Null);
         // see `use_as_any_blob` — match by `&mut` to avoid E0509.
         let any_blob: AnyBlob = match self {
-            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
+            Value::Blob(b) => Self::take_blob_snapshot_if_borrowed(b),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(s) => {
                 let s = *s;
@@ -1333,6 +1353,29 @@ impl Value {
             _ => AnyBlob::Blob(Blob::default()),
         };
 
+        *self = if was_null { Value::Null } else { Value::Used };
+        any_blob
+    }
+
+    /// `use_as_any_blob_allow_non_utf8_string` without the borrowed-store
+    /// snapshot: the `Bun.serve` send path (`RequestContext::do_render_with_
+    /// body`) is the sole caller, since it never re-enters user JS while the
+    /// `AnyBlob.slice()` is live and its lifetime is single-thread-only.
+    pub fn use_as_any_blob_for_render(&mut self) -> AnyBlob {
+        let was_null = matches!(self, Value::Null);
+        let any_blob: AnyBlob = match self {
+            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
+            Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
+            Value::WTFStringImpl(s) => {
+                let s = *s;
+                let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
+                AnyBlob::WTFStringImpl(s)
+            }
+            Value::Locked(l) => l
+                .to_any_blob_allow_promise()
+                .unwrap_or(AnyBlob::Blob(Blob::default())),
+            _ => AnyBlob::Blob(Blob::default()),
+        };
         *self = if was_null { Value::Null } else { Value::Used };
         any_blob
     }

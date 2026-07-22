@@ -196,20 +196,20 @@ static void promoteSideEffectingAccessorToEnumerable(VM& vm, JSGlobalObject* glo
 JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* object = JSValue::decode(thisValue).getObject();
     if (!object)
         return false;
 
     JSValue decodedValue = JSValue::decode(value);
-    if (decodedValue.isString()) {
-        auto timeZoneName = decodedValue.toWTFString(globalObject);
-        applyTZFromString(globalObject, timeZoneName);
-    }
+    WTF::String timeZoneName = decodedValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    applyTZFromString(globalObject, timeZoneName);
 
     auto* clientData = WebCore::clientData(vm);
     auto* builtinNames = &clientData->builtinNames();
     auto privateName = builtinNames->dataPrivateName();
-    object->putDirect(vm, privateName, JSValue::decode(value), 0);
+    object->putDirect(vm, privateName, decodedValue, 0);
     promoteSideEffectingAccessorToEnumerable(vm, globalObject, object, propertyName);
     return true;
 }
@@ -457,7 +457,7 @@ private:
     }
 };
 
-const JSC::ClassInfo JSSharedEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSharedEnvMap) };
+const JSC::ClassInfo JSSharedEnvMap::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSharedEnvMap) };
 
 bool JSSharedEnvMap::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
@@ -831,7 +831,7 @@ public:
         bool result = Base::deleteProperty(cell, globalObject, propertyName, slot);
         RETURN_IF_EXCEPTION(scope, result);
         auto* uid = propertyName.uid();
-        if (propertyName.isSymbol() || !uid)
+        if (!result || propertyName.isSymbol() || !uid)
             return result;
         reinstallSideEffectingEnvAccessor(vm, globalObject, asObject(cell), String(uid));
         return result;
@@ -849,7 +849,9 @@ private:
     }
 };
 
-const JSC::ClassInfo JSProcessEnv::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnv) };
+// "Object"_s so Bun.inspect / console.log don't prefix process.env as
+// "ProcessEnv { ... }" (matches NapiPrototype::s_info for the same reason).
+const JSC::ClassInfo JSProcessEnv::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnv) };
 
 bool isProcessEnvClassInfo(const JSC::ClassInfo* info)
 {

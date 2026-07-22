@@ -111,6 +111,7 @@ export function runOnEndCallbacks(
   promise: Promise<Bun.BuildOutput>,
   buildResult: Bun.BuildOutput,
   buildRejection: AggregateError | undefined,
+  throwOnError: boolean,
 ): Promise<void> | void {
   const callbacks = this.onEndCallbacks;
   if (!callbacks) return;
@@ -140,7 +141,18 @@ export function runOnEndCallbacks(
         }
       },
       e => {
-        $rejectPromise(promise, e);
+        if (throwOnError) {
+          $rejectPromise(promise, e);
+        } else {
+          (buildResult as any).success = false;
+          $arrayPush((buildResult as any).logs, {
+            name: "BuildMessage",
+            level: "error",
+            message: e != null && typeof (e as any).message === "string" ? (e as any).message : String(e),
+            position: null,
+          });
+          $resolvePromise(promise, buildResult);
+        }
       },
     );
   }

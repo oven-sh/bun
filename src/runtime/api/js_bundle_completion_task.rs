@@ -183,8 +183,15 @@ impl JSBundleCompletionTask {
         promise: &JSPromise,
         build_result: JSValue,
         rejection: jsc::JsResult<JSValue>,
+        throw_on_error: bool,
     ) -> jsc::JsResult<bool> {
-        let value = plugin.run_on_end_callbacks(global_this, promise, build_result, rejection)?;
+        let value = plugin.run_on_end_callbacks(
+            global_this,
+            promise,
+            build_result,
+            rejection,
+            throw_on_error,
+        )?;
         Ok(value != JSValue::UNDEFINED)
     }
 
@@ -236,8 +243,14 @@ impl JSBundleCompletionTask {
             };
             // Checked `is_some` above; accessor encapsulates the deref.
             let plugin = self.plugins_mut().unwrap();
-            match Self::run_on_end_callbacks(global_this, plugin, promise, build_result, rejection)
-            {
+            match Self::run_on_end_callbacks(
+                global_this,
+                plugin,
+                promise,
+                build_result,
+                rejection,
+                throw_on_error,
+            ) {
                 Ok(b) => b,
                 Err(e) => return promise.reject(global_this, Err(e)),
             }
@@ -695,6 +708,7 @@ impl JSBundleCompletionTask {
                     );
                 }
 
+                let throw_on_error = this.config.throw_on_error;
                 let did_handle_callbacks = if let Some(plugin) = this.plugins_mut() {
                     match Self::run_on_end_callbacks(
                         global_this,
@@ -702,6 +716,7 @@ impl JSBundleCompletionTask {
                         promise,
                         build_output,
                         Ok(JSValue::UNDEFINED),
+                        throw_on_error,
                     ) {
                         Ok(b) => b,
                         Err(e) => return Ok(promise.reject(global_this, Err(e))?),

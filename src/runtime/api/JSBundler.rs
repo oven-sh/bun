@@ -439,6 +439,7 @@ pub mod js_bundler {
             global_this: &JSGlobalObject,
             config: JSValue,
             plugins: &mut Option<*mut Plugin>,
+            plugin_error: &mut Option<JSValue>,
         ) -> JsResult<Config> {
             // Config implements Drop, so functional-record-update from Default::default()
             // is rejected by rustc (E0509). Construct default then mutate instead.
@@ -477,6 +478,13 @@ pub mod js_bundler {
                     did_set_target = true;
                 }
                 drop(slice);
+            }
+
+            // Read `throw` before running plugin setup so setup/onStart errors can
+            // honor it (when `throw: false` those become `{success:false, logs}`
+            // instead of escaping Bun.build synchronously).
+            if let Some(flag) = config.get_boolean_strict(global_this, "throw")? {
+                this.throw_on_error = flag;
             }
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
@@ -529,14 +537,25 @@ pub mod js_bundler {
 
                     let is_last = i == (length as usize).saturating_sub(1);
                     // SAFETY: bun_plugins is a valid pointer created/stored above
-                    let mut plugin_result = unsafe {
+                    let setup_result = unsafe {
                         (*bun_plugins).add_plugin(
                             function,
                             config,
                             onstart_promise_array,
                             is_last,
                             false,
-                        )?
+                        )
+                    };
+                    let mut plugin_result = match setup_result {
+                        Ok(v) => v,
+                        Err(JsError::Terminated) => return Err(JsError::Terminated),
+                        Err(e) => {
+                            if this.throw_on_error {
+                                return Err(e);
+                            }
+                            *plugin_error = Some(global_this.take_exception(e));
+                            break;
+                        }
                     };
 
                     if !plugin_result.is_empty_or_undefined_or_null() {
@@ -552,20 +571,37 @@ pub mod js_bundler {
                                     plugin_result = val;
                                 }
                                 jsc::PromiseResult::Rejected(err) => {
-                                    return Err(global_this.throw_value(err));
+                                    if this.throw_on_error {
+                                        return Err(global_this.throw_value(err));
+                                    }
+                                    *plugin_error = Some(err);
+                                    break;
                                 }
                             }
                         }
                     }
 
                     if let Some(err) = plugin_result.to_error() {
-                        return Err(global_this.throw_value(err));
+                        if this.throw_on_error {
+                            return Err(global_this.throw_value(err));
+                        }
+                        *plugin_error = Some(err);
+                        break;
                     } else if global_this.has_exception() {
-                        return Err(JsError::Thrown);
+                        if this.throw_on_error {
+                            return Err(JsError::Thrown);
+                        }
+                        *plugin_error = Some(global_this.take_exception(JsError::Thrown));
+                        break;
                     }
 
                     onstart_promise_array = plugin_result;
                     i += 1;
+                }
+
+                if plugin_error.is_some() {
+                    // scopeguard destroys the partially-initialised plugins on drop.
+                    return Ok(this);
                 }
             }
 
@@ -1115,10 +1151,6 @@ pub mod js_bundler {
                 });
             }
 
-            if let Some(flag) = config.get_boolean_strict(global_this, "throw")? {
-                this.throw_on_error = flag;
-            }
-
             // Parse metafile option: boolean | string | { json?: string, markdown?: string }
             if let Some(metafile_value) =
                 config.get_own(global_this, &BunString::static_str("metafile"))?
@@ -1337,7 +1369,32 @@ pub mod js_bundler {
         }
 
         let mut plugins: Option<*mut Plugin> = None;
-        let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
+        let mut plugin_error: Option<JSValue> = None;
+        let config = Config::from_js(global_this, arguments[0], &mut plugins, &mut plugin_error)?;
+
+        if let Some(err) = plugin_error {
+            debug_assert!(!config.throw_on_error);
+            let msg = bun_ast_jsc::msg_from_js(global_this, Vec::new(), err)?;
+            let mut log = bun_ast::Log::init();
+            log.errors = 1;
+            log.msgs.push(msg);
+            let build_result = JSValue::create_empty_object(global_this, 3);
+            build_result.put(
+                global_this,
+                b"outputs",
+                JSValue::create_empty_array(global_this, 0)?,
+            );
+            build_result.put(global_this, b"success", JSValue::FALSE);
+            build_result.put(
+                global_this,
+                b"logs",
+                bun_ast_jsc::log_to_js_array(&log, global_this)?,
+            );
+            return Ok(jsc::JSPromise::resolved_promise_value(
+                global_this,
+                build_result,
+            ));
+        }
 
         let event_loop = vm.event_loop();
 
@@ -1617,6 +1674,7 @@ pub mod js_bundler {
             build_promise: JSValue,
             build_result: JSValue,
             rejection: JSValue,
+            throw_on_error: JSValue,
         ) -> JSValue;
         // C++ returns the plugin's owning global (never null; plugin holds a
         // strong ref), so the elided lifetime — output borrows `plugin` — is
@@ -1650,6 +1708,7 @@ pub mod js_bundler {
             build_promise: &jsc::JSPromise,
             build_result: JSValue,
             rejection: JsResult<JSValue>,
+            throw_on_error: bool,
         ) -> JsResult<JSValue>;
         /// `this` must be a live handle previously returned by `Plugin::create`;
         /// non-null is checked via `Plugin::opaque_ref` (panics on null).
@@ -1688,6 +1747,7 @@ pub mod js_bundler {
             build_promise: &jsc::JSPromise,
             build_result: JSValue,
             rejection: JsResult<JSValue>,
+            throw_on_error: bool,
         ) -> JsResult<JSValue> {
             jsc::mark_binding();
 
@@ -1708,6 +1768,7 @@ pub mod js_bundler {
                 build_promise.as_value(global_this),
                 build_result,
                 rejection_value,
+                JSValue::from(throw_on_error),
             );
             scope.return_if_exception()?;
             Ok(value)

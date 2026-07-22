@@ -477,11 +477,17 @@ mod _impl {
                                 // first chdir `top_level_dir` points into the
                                 // resolver's DirnameStore, not `top_level_dir_buf`,
                                 // so copy it in before the buffer is re-sliced
-                                // below. Skip the copy when it already aliases the
-                                // buffer, since `copy_from_slice` forbids overlap.
+                                // below.
                                 let len = top_level_dir.len();
-                                if top_level_dir.as_ptr() != fs.top_level_dir_buf.as_ptr() {
-                                    fs.top_level_dir_buf[..len].copy_from_slice(top_level_dir);
+                                // SAFETY: `top_level_dir` is at most
+                                // MAX_PATH_BYTES long and may alias
+                                // `top_level_dir_buf`, so use a memmove.
+                                unsafe {
+                                    core::ptr::copy(
+                                        top_level_dir.as_ptr(),
+                                        fs.top_level_dir_buf.as_mut_ptr(),
+                                        len,
+                                    );
                                 }
                                 len
                             }

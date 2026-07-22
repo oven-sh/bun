@@ -10,6 +10,10 @@ import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 // Without the fix the subprocess hangs forever; bound it so the fail-before run doesn't leave
 // processes behind. With the fix each case finishes in well under a second on a release build.
 const SUBPROCESS_TIMEOUT = isDebug ? 30_000 : 10_000;
+// Per-test timeout must be longer than the subprocess kill so the SIGKILL actually fires; without
+// this the default 5 s test timeout races the 10/30 s spawn timeout and the hung subprocess
+// survives the fail-before run, starving later build steps.
+const TEST_TIMEOUT = SUBPROCESS_TIMEOUT * 2;
 
 async function run(workerBody: string, caller?: string) {
   using dir = tempDir("parentport", {
@@ -63,7 +67,7 @@ test.concurrent("parentPort.close() inside a message handler lets the process ex
       `),
     ["parent: exit 0"],
   );
-});
+}, TEST_TIMEOUT);
 
 test.concurrent("parentPort.close() stops delivery: late postMessage is dropped", async () => {
   check(
@@ -92,7 +96,7 @@ test.concurrent("parentPort.close() stops delivery: late postMessage is dropped"
     ),
     ["worker: got stop", "parent: exit 0"],
   );
-});
+}, TEST_TIMEOUT);
 
 test.concurrent("parentPort.close() emits 'close' and lets other handles drain", async () => {
   // close() returns synchronously, 'close' fires on nextTick, and the worker stays up until
@@ -117,7 +121,7 @@ test.concurrent("parentPort.close() emits 'close' and lets other handles drain",
       `),
     ["worker: after close()", "worker: close", "worker: still alive after close", "parent: exit 0"],
   );
-});
+}, TEST_TIMEOUT);
 
 test.concurrent("parentPort.unref() lets the worker exit while a listener is still installed", async () => {
   check(
@@ -129,7 +133,7 @@ test.concurrent("parentPort.unref() lets the worker exit while a listener is sti
       `),
     ["worker: hasRef false", "parent: exit 0"],
   );
-});
+}, TEST_TIMEOUT);
 
 test.concurrent("parentPort.ref() keeps the worker alive without a listener", async () => {
   // ref() with no listener should hold the event loop open on its own. The setImmediate is
@@ -147,7 +151,7 @@ test.concurrent("parentPort.ref() keeps the worker alive without a listener", as
       `),
     ["worker: hasRef true", "worker: still alive", "parent: exit 0"],
   );
-});
+}, TEST_TIMEOUT);
 
 test.concurrent("parentPort.hasRef() tracks listener/ref/unref/close transitions", async () => {
   check(
@@ -167,7 +171,7 @@ test.concurrent("parentPort.hasRef() tracks listener/ref/unref/close transitions
       `),
     ["[false,true,false,true,true]", "parent: exit 0"],
   );
-});
+}, TEST_TIMEOUT);
 
 test.concurrent("parentPort.onmessage keeps the worker alive and close() releases it", async () => {
   check(
@@ -180,7 +184,7 @@ test.concurrent("parentPort.onmessage keeps the worker alive and close() release
       `),
     ["worker: onmessage go", "parent: exit 0"],
   );
-});
+}, TEST_TIMEOUT);
 
 test.concurrent("removing the last parentPort message listener lets the worker exit", async () => {
   check(
@@ -194,4 +198,4 @@ test.concurrent("removing the last parentPort message listener lets the worker e
       `),
     ["worker: got go", "parent: exit 0"],
   );
-});
+}, TEST_TIMEOUT);

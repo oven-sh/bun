@@ -68,6 +68,11 @@ impl Cmd {
 pub struct SubprocExec {
     pub child: *mut ShellSubprocess,
     pub buffered_closed: BufferedIoClosed,
+    /// Set by [`Cmd::buffered_output_close`] when a `> ${buf}` target could
+    /// not hold the subprocess's full output. Folded into the exit code at
+    /// [`CmdState::Done`] (only when the process itself exited 0) so the
+    /// subprocess's own nonzero exit is never replaced.
+    pub redirect_overflow: bool,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
     /// (`buffered_output_close` / `on_exit`) can hand a [`Yield`] back to the
     /// trampoline. The `Cmd` lives inside `interp.nodes`, so we stash the
@@ -282,8 +287,14 @@ impl Cmd {
                 }
                 CmdState::WaitingWriteErr => return Yield::suspended(),
                 CmdState::Done => {
-                    let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
-                    let parent = interp.as_cmd(this).base.parent;
+                    let me = interp.as_cmd(this);
+                    let exit = match (me.exit_code.unwrap_or(0), &me.exec) {
+                        (0, Exec::Subproc(sub)) if sub.redirect_overflow => {
+                            bun_sys::E::ENOSPC as ExitCode
+                        }
+                        (code, _) => code,
+                    };
+                    let parent = me.base.parent;
                     return interp.child_done(parent, this, exit);
                 }
             }
@@ -570,6 +581,7 @@ impl Cmd {
         interp.as_cmd_mut(this).exec = Exec::Subproc(Box::new(SubprocExec {
             child: core::ptr::null_mut(),
             buffered_closed,
+            redirect_overflow: false,
             interp: core::ptr::null_mut(),
             this_id: this,
         }));
@@ -934,7 +946,13 @@ impl Cmd {
         &mut self,
         kind: OutKind,
         err: Option<bun_sys::SystemError>,
+        overflow: bool,
     ) -> Yield {
+        if overflow {
+            if let Exec::Subproc(sub) = &mut self.exec {
+                sub.redirect_overflow = true;
+            }
+        }
         match kind {
             OutKind::Stdout => self.buffered_output_close_stdout(err),
             OutKind::Stderr => self.buffered_output_close_stderr(err),

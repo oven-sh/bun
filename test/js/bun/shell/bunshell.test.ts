@@ -563,6 +563,15 @@ describe("bunshell", () => {
         exitCode: 0,
       });
     });
+
+    test("subprocess: own nonzero exit wins over overflow", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`${BUN} -e ${'process.stdout.write("hello world"); process.exitCode = 5'} > ${buf}`.quiet();
+      expect({ written: buf.toString("latin1"), exitCode: r.exitCode }).toEqual({
+        written: "hell",
+        exitCode: 5,
+      });
+    });
   });
 
   test("redirect Buffer", async () => {

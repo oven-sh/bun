@@ -1943,7 +1943,7 @@ impl PipeReader {
             // every PipeReader has signalled done. `cmd_mut` resolves through
             // the node arena (see `CmdHandle`).
             let cmd = unsafe { (*proc).cmd_parent.cmd_mut() };
-            let e: Option<SystemError> = {
+            let (e, overflow): (Option<SystemError>, bool) = {
                 // SAFETY: caller contract — `&mut *this` for the field rewrites;
                 // ends at the closing brace, *before* the `cmd` call below.
                 let me = unsafe { &mut *this };
@@ -1967,21 +1967,17 @@ impl PipeReader {
                 // `bun_sys::SystemError` isn't ref-counted nor `Clone`.
                 // Move it out (the only reader of
                 // `state.Err` after this point is `Drop`, which tolerates `None`).
-                if let PipeReaderState::Err(slot) = &mut me.state {
+                let err = if let PipeReaderState::Err(slot) = &mut me.state {
                     slot.take().map(|b| *b)
-                } else if me.buffered_output.overflowed() {
-                    Some(
-                        bun_sys::Error::from_code(bun_sys::E::ENOSPC, bun_sys::Tag::write)
-                            .to_shell_system_error(),
-                    )
                 } else {
                     None
-                }
+                };
+                (err, me.buffered_output.overflowed())
             };
             // No `&`/`&mut PipeReader` is live here; `buffered_output_close`
             // is free to deref the sibling `Arc<PipeReader>` in
             // `Readable::Pipe` for `pipe.slice()` / `close_io`.
-            return cmd.buffered_output_close(out_type, e);
+            return cmd.buffered_output_close(out_type, e, overflow);
         }
         Yield::Suspended
     }

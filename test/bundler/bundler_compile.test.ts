@@ -411,7 +411,7 @@ describe("bundler", () => {
       `,
     },
     outfile: "dist/out",
-    run: { stdout: 'primary got worker argv=[]', file: "dist/out", setCwd: true },
+    run: { stdout: "primary got worker argv=[]", file: "dist/out", setCwd: true },
   });
   itBundled("compile/WorkerRelativePathTSExtensionBytecode", {
     backend: "cli",

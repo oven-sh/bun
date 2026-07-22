@@ -178,7 +178,11 @@ describe("AggregateError", () => {
   const header = ["AggregateError", ["TOP", "AGG", "MESSAGE"].join("-")].join(": ");
 
   test.concurrent.each([
-    ["Bun.inspect", `process.stderr.write(Bun.inspect(new AggregateError([new Error("m1"), new RangeError("m2")], ${mk})))`, 0],
+    [
+      "Bun.inspect",
+      `process.stderr.write(Bun.inspect(new AggregateError([new Error("m1"), new RangeError("m2")], ${mk})))`,
+      0,
+    ],
     ["console.error", `console.error(new AggregateError([new Error("m1"), new RangeError("m2")], ${mk}))`, 0],
     ["uncaught throw", `throw new AggregateError([new Error("m1"), new RangeError("m2")], ${mk})`, 1],
     ["unhandled rejection", `Promise.reject(new AggregateError([new Error("m1"), new RangeError("m2")], ${mk}))`, 1],

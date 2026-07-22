@@ -3216,7 +3216,7 @@ impl TestCommand {
                 // Gated on node:test having been used so a plain bun:test file
                 // that leaks a handle still exits promptly.
                 if buntest.node_test_drain {
-                    while vm.is_event_loop_alive() || buntest.node_test_pending_late > 0 {
+                    while vm.has_pending_event_loop_work() || buntest.node_test_pending_late > 0 {
                         if buntest.wants_wakeup {
                             buntest.wants_wakeup = false;
                             vm.wakeup();

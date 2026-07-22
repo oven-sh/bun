@@ -928,6 +928,10 @@ const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2)
 const wantDrainAndIsPastCollection = $newRustFunction("jest.rs", "jsNodeTestWantDrain", 0);
 const lateBegin = $newRustFunction("jest.rs", "jsNodeTestLateBegin", 0);
 const lateReport = $newRustFunction("jest.rs", "jsNodeTestLateReport", 3);
+// Mark the file that first evaluates this module so a test file whose only
+// registrations arrive from a macrotask still drains. Subsequent files are
+// marked via `fileGeneration()` on their first node:test call.
+wantDrainAndIsPastCollection();
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -1924,8 +1928,9 @@ function addSuite(
     const declaredMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
     if (declaredMode === "skip") {
       lateBegin();
-      lateReport(suiteNode.fullName, undefined, kLateModeSkip);
-      return Promise.resolve(undefined);
+      const run = () => void lateReport(suiteNode.fullName, undefined, kLateModeSkip);
+      lateChain = lateChain.then(run, run);
+      return lateChain.then(() => undefined);
     }
     if (declaredMode === "todo") suiteNode.todoFlag = true;
     suiteNode.isExecutionPhase = true;

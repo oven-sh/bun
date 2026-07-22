@@ -520,7 +520,10 @@ pub mod Jest {
 }
 
 /// Reached only from `node:test`, through `$newRustFunction` rather than the
-/// public `bun:test` module object. Returns 0 outside `bun test`.
+/// public `bun:test` module object. Returns 0 outside `bun test`. Also marks
+/// the active file for the post-Done event-loop drain so the flag is set from
+/// any node:test entry point (`getRootNode()` is on every public-API path), not
+/// only from `addTest`/`addSuite`.
 pub(crate) fn js_file_generation(
     _global: &JSGlobalObject,
     _callframe: &CallFrame,
@@ -529,8 +532,13 @@ pub(crate) fn js_file_generation(
     // registration, and an exclusive `&mut TestRunner` would invalidate the
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
     // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
-    let generation =
-        Jest::runner_ptr().map_or(0, |p| unsafe { (*p.as_ptr()).bun_test_root.file_generation });
+    let generation = Jest::runner_ptr().map_or(0, |p| unsafe {
+        let root = core::ptr::addr_of_mut!((*p.as_ptr()).bun_test_root);
+        if let Some(active) = (*root).active_file.as_ref() {
+            active.get().node_test_drain = true;
+        }
+        (*root).file_generation
+    });
     Ok(JSValue::from(generation))
 }
 
@@ -588,7 +596,7 @@ pub(crate) fn js_node_test_late_report(
     debug_assert!(buntest.node_test_pending_late > 0, "unpaired node:test lateReport");
     buntest.node_test_pending_late = buntest.node_test_pending_late.saturating_sub(1);
 
-    let Some(reporter) = buntest.reporter else {
+    let Some(reporter_ptr) = buntest.reporter else {
         return Ok(JSValue::UNDEFINED);
     };
     let name_str = name_arg.to_bun_string(global)?;
@@ -602,9 +610,28 @@ pub(crate) fn js_node_test_late_report(
     // must not observe a `&mut BunTest` held across it (stacked-borrows).
     buntest.bun_test_root.on_before_print();
 
+    // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
+    // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
+    // every BunTest.
+    let reporter: &mut CommandLineReporter = unsafe { &mut *reporter_ptr.as_ptr() };
+    let dots = reporter.reporters.dots;
+    let only_failures = reporter.reporters.only_failures;
+    let worker_idx = reporter.worker_ipc_file_idx;
+
     let colors = Output::enable_ansi_colors_stderr();
     let mut line: Vec<u8> = Vec::new();
-    if mode == 1 {
+    if dots && !failed && mode == 0 {
+        let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>.<r>");
+        reporter.last_printed_dot.set(true);
+    } else if dots && mode == 1 {
+        let _ = bun_core::write_pretty!(&mut line, colors, "<r><yellow>.<d>");
+        reporter.last_printed_dot.set(true);
+    } else if dots && mode == 2 {
+        let _ = bun_core::write_pretty!(&mut line, colors, "<r><magenta>.<r>");
+        reporter.last_printed_dot.set(true);
+    } else if only_failures && !failed {
+        // suppressed
+    } else if mode == 1 {
         let _ = bun_core::write_pretty!(&mut line, colors, "<r><yellow>(skip)<d> {}<r>\n", name_bytes);
     } else if mode == 2 {
         let _ = bun_core::write_pretty!(&mut line, colors, "<r><magenta>(todo)<r> {}\n", name_bytes);
@@ -613,21 +640,28 @@ pub(crate) fn js_node_test_late_report(
     } else {
         let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>(pass)<r> {}\n", name_bytes);
     }
-    let _ = Output::error_writer().write_all(&line);
+    if let Some(idx) = worker_idx {
+        crate::cli::test::parallel_runner::worker_emit_test_done(idx, &line);
+    } else {
+        let _ = Output::error_writer().write_all(&line);
+    }
 
-    // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
-    // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
-    // every BunTest.
-    let reporter: &mut CommandLineReporter = unsafe { &mut *reporter.as_ptr() };
+    let fill_repeat = !dots && !only_failures;
     if mode == 1 {
         reporter.summary().skip += 1;
-        reporter.skips_to_repeat_buf.extend_from_slice(&line);
+        if fill_repeat {
+            reporter.skips_to_repeat_buf.extend_from_slice(&line);
+        }
     } else if mode == 2 {
         reporter.summary().todo += 1;
-        reporter.todos_to_repeat_buf.extend_from_slice(&line);
+        if fill_repeat {
+            reporter.todos_to_repeat_buf.extend_from_slice(&line);
+        }
     } else if failed {
         reporter.summary().fail += 1;
-        reporter.failures_to_repeat_buf.extend_from_slice(&line);
+        if fill_repeat {
+            reporter.failures_to_repeat_buf.extend_from_slice(&line);
+        }
         global.bun_vm().as_mut().run_error_handler(error_arg, None);
     } else {
         reporter.summary().pass += 1;

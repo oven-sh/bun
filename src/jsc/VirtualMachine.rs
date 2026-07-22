@@ -1041,6 +1041,26 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
+    /// `is_event_loop_alive` without the `unhandled_error_counter == 0` gate:
+    /// whether there is any ref'd handle, queued task, or immediate left to
+    /// run. `is_event_loop_alive` is the `bun run` exit condition (stop once an
+    /// error surfaced); the test runner's per-file node:test drain needs to
+    /// keep spinning on a ref'd timer even when an earlier test already failed.
+    pub fn has_pending_event_loop_work(&self) -> bool {
+        let el = self.event_loop_shared();
+        let active = self
+            .platform_loop_opt()
+            .map(|h| h.is_active())
+            .unwrap_or(false);
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + (el.has_pending_refs() as usize)
+            > 0
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+    }
+
     pub fn wakeup(&mut self) {
         self.event_loop_mut().wakeup();
     }

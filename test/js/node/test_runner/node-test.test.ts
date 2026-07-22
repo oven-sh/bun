@@ -283,6 +283,23 @@ describe("node:test", () => {
     expect(stderr).toContain("2 fail");
     expect(exitCode).toBe(1);
   });
+
+  test("should drain for a late test after a collection-phase test already failed", async () => {
+    const { exitCode, stderr } = await runTests(["30b-late-after-sync-failure.js"]);
+    expect(stderr).toContain("(fail) sync failing");
+    expect(stderr).toContain("(fail) late failing");
+    expect(stderr).toContain("late is red");
+    expect(stderr).toContain("2 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("should drain for a late test when no test was registered synchronously", async () => {
+    const { exitCode, stderr } = await runTests(["30c-late-no-sync-registration.js"]);
+    expect(stderr).toContain("(fail) late only");
+    expect(stderr).toContain("late is red");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

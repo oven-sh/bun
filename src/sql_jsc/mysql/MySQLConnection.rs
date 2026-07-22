@@ -589,7 +589,16 @@ impl MySQLConnection {
             });
             reader.skip(PacketHeader::SIZE as isize);
 
-            // Update sequence id
+            // Command-phase responses restart at seq 1 after each seq-0 command
+            // packet; a mismatch means residual bytes from the previous exchange
+            // would be routed to the next queued query (CR_NET_PACKETS_OUT_OF_ORDER).
+            if self.status == ConnectionState::Connected && header.sequence_id != self.sequence_id {
+                debug!(
+                    "packet out of order: expected seq {}, got {}",
+                    self.sequence_id, header.sequence_id
+                );
+                return Err(AnyMySQLError::PacketsOutOfOrder);
+            }
             self.sequence_id = header.sequence_id.wrapping_add(1);
 
             // Process packet based on connection state
@@ -789,6 +798,8 @@ impl MySQLConnection {
                 self.status_flags = ok.status_flags;
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 self.queue.mark_as_ready_for_query();
+                // Next command is sent at seq 0; its first response must be seq 1.
+                self.sequence_id = 1;
                 self.advance();
             }
 
@@ -986,6 +997,7 @@ impl MySQLConnection {
                     self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                     self.queue.mark_as_ready_for_query();
                     self.queue.mark_current_request_as_finished(request);
+                    self.sequence_id = 1;
                     // R-2: `on_error_packet` is `&self`; route through the
                     // audited `js_connection_ref()` container_of accessor (one
                     // centralised unsafe). `*self` sits inside the parent's
@@ -1123,6 +1135,7 @@ impl MySQLConnection {
             self.queue.mark_as_ready_for_query();
             self.queue.mark_as_prepared();
             statement.reset();
+            self.sequence_id = 1;
             self.advance();
         }
     }
@@ -1254,6 +1267,7 @@ impl MySQLConnection {
                 };
                 self.queue.mark_as_ready_for_query();
                 self.queue.mark_current_request_as_finished(request);
+                self.sequence_id = 1;
 
                 // R-2: `on_error_packet` is `&self`; `js_connection_ref()` is
                 // the audited container_of accessor (one centralised unsafe).
@@ -1306,6 +1320,7 @@ impl MySQLConnection {
         if is_last_result {
             self.queue.mark_as_ready_for_query();
             self.queue.mark_current_request_as_finished(request);
+            self.sequence_id = 1;
         }
 
         // Short-lived borrow via the audited accessor; dropped before the
@@ -1380,6 +1395,7 @@ impl MySQLConnection {
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 self.queue.mark_as_ready_for_query();
                 self.queue.mark_current_request_as_finished(request);
+                self.sequence_id = 1;
 
                 // R-2: `on_error_packet` is `&self`; route through the audited
                 // `js_connection_ref()` container_of accessor. `*self` lives

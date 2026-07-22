@@ -315,6 +315,121 @@ it("rejects a binary lockfile whose package scripts flag byte is out of range", 
   expect(code).toBe(0);
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
 });
+
+// The package list is stored SoA; `dependencies` and `resolutions` are
+// per-package `(off: u32, len: u32)` windows into `buffers.dependencies` /
+// `buffers.resolutions`. Both are memcpy'd from disk and dereferenced
+// unchecked by the yarn printer, `Package.clone` and the hoister, so an `off`
+// past the end of its buffer panicked:
+//   "range start index 4294967280 out of range for slice of length 3"
+// The two windows must also be the same range: consumers derive dependency
+// ids from one and index the other with them.
+for (const [what, column, poke] of [
+  ["dependencies offset is out of range", "dependencies", 0xfffffff0],
+  ["resolutions offset is out of range", "resolutions", 0xfffffff0],
+  ["resolutions window does not match dependencies", "resolutions", 0],
+] as const) {
+  it(`rejects a binary lockfile whose package ${what}`, async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+    // Migrating a package-lock.json with `--lockfile-only` writes bun.lockb
+    // without fetching anything: the resolved URLs (which must live under the
+    // configured registry) are transcribed into the lockfile, never contacted.
+    const resolved = (name: string) => `${registry.registryUrl()}${name}/-/${name}-1.0.0.tgz`;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "corrupt-lockb-slices",
+          version: "1.0.0",
+          dependencies: { depa: "1.0.0", depb: "1.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "package-lock.json"),
+        JSON.stringify({
+          name: "corrupt-lockb-slices",
+          version: "1.0.0",
+          lockfileVersion: 3,
+          requires: true,
+          packages: {
+            "": { name: "corrupt-lockb-slices", version: "1.0.0", dependencies: { depa: "1.0.0", depb: "1.0.0" } },
+            "node_modules/depa": { version: "1.0.0", resolved: resolved("depa"), dependencies: { depb: "1.0.0" } },
+            "node_modules/depb": { version: "1.0.0", resolved: resolved("depb") },
+          },
+        }),
+      ),
+    ]);
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--lockfile-only", "--no-progress"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(stderrForInstall(err)).toContain("Saved lockfile");
+      expect(out).toBeDefined();
+      expect(code).toBe(0);
+    }
+
+    const lockbPath = join(packageDir, "bun.lockb");
+    expect(await exists(lockbPath)).toBe(true);
+
+    // Locate the column (the SoA walk documented in the `meta` test above)
+    // and point the last package's `off` far past the end of its buffer. Only
+    // the start index matters; the end is already clamped.
+    const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+    const fmt = lockb.readUInt32LE(42);
+    const N = Number(lockb.readBigUInt64LE(86));
+    const begin = Number(lockb.readBigUInt64LE(110));
+    const resolutionSize = fmt === 2 ? 64 : 72;
+    const columnStart = begin + N * (8 + 8 + resolutionSize) + (column === "resolutions" ? N * 8 : 0);
+    expect(N).toBe(3);
+    // Sanity: the root package's list is the first two of the three entries,
+    // and the last package's window starts right after them, so overwriting
+    // its `off` with 0 always de-pairs it from its `dependencies` window.
+    expect(lockb.readUInt32LE(columnStart)).toBe(0);
+    expect(lockb.readUInt32LE(columnStart + 4)).toBe(2);
+    expect(lockb.readUInt32LE(columnStart + 2 * 8)).toBe(2);
+    lockb.writeUInt32LE(poke, columnStart + 2 * 8);
+    await write(lockbPath, lockb);
+
+    // `bun bun.lockb` dereferences every package's dependency list to print
+    // the yarn lockfile; it must report a parse error instead of crashing.
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "bun.lockb"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).toContain("error parsing lockfile: InvalidLockfile");
+      expect(out).toBe("");
+      expect(code).toBe(1);
+    }
+
+    // An install must ignore the invalid lockfile and fall back to a fresh
+    // resolve (which then fails: these packages only exist in the lockfile).
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--no-progress"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(stderrForInstall(rawErr)).toContain("Ignoring lockfile");
+      expect(out).toBeDefined();
+      expect(code).not.toBe(0);
+    }
+  });
+}
+
 it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 

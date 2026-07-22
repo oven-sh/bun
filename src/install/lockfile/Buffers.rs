@@ -494,6 +494,12 @@ pub(crate) fn load(
 
     // Legacy tree structure stores package IDs instead of dependency IDs
     if !this.trees.is_empty() && this.trees[0].dependency_id != tree::ROOT_DEP_ID {
+        // The remap scans `resolutions` and marks the dependency ids it claims
+        // in a bitset sized by `dependencies`. The two are parallel buffers,
+        // but nothing has validated that yet at this point.
+        if this.resolutions.len() != this.dependencies.len() {
+            return Err(bun_core::err!("InvalidLockfile"));
+        }
         let mut visited = Bitset::init_empty(this.dependencies.len())?;
         // Iterate by index so
         // `legacy_package_to_dependency_id` can borrow `&self` while we hold

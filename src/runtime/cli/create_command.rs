@@ -219,6 +219,11 @@ impl CreateOptions {
             }
         };
 
+        if diag.reject_unknown(Self::params()) {
+            Output::flush();
+            bun_core::Global::exit(1);
+        }
+
         let mut opts = CreateOptions {
             // clap positionals borrow from process argv; dupe each
             // entry into the process-lifetime CLI arena to obtain

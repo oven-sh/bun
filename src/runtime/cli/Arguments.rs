@@ -481,6 +481,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--react-compiler                 Enable the React Compiler optimizing transform"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
+        // esbuild-compat no-op (bun build bundles by default). Declared so
+        // unknown-flag validation accepts it; empty help hides it from --help.
+        parse_param!("--bundle"),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
         ),
@@ -731,6 +734,36 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         command::tag_print_help(cmd, true);
         Output::flush();
         Global::exit(0);
+    }
+
+    match cmd {
+        CommandTag::BuildCommand | CommandTag::TestCommand => {
+            if diag.reject_unknown(table.converted) {
+                let name = if cmd == CommandTag::BuildCommand {
+                    "build"
+                } else {
+                    "test"
+                };
+                bun_core::pretty_errorln!(
+                    "\nFor a list of options, run <b>bun {} --help<r>",
+                    name
+                );
+                Output::flush();
+                Global::exit(1);
+            }
+        }
+        // run / auto: warn but keep going. Unknown Node/V8 flags are common
+        // here and hard-failing would be a regression; the warning surfaces
+        // typo'd real flags (`--silnt`, `--watc`, …) without breaking scripts.
+        CommandTag::RunCommand | CommandTag::AutoCommand => {
+            diag.warn_unknown(table.converted);
+        }
+        // The `node` shim deliberately accepts every Node/V8 flag Bun has not
+        // declared. Remaining tags reach this function with the generic
+        // BASE_RUNTIME_TRANSPILER table, which does not list their own flags
+        // (`bun upgrade --canary`, `bun repl --print`, …), so validating here
+        // would misfire; those commands validate their own argv.
+        _ => {}
     }
 
     if cmd == CommandTag::AutoCommand {

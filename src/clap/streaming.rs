@@ -152,9 +152,13 @@ where
                     }));
                 }
 
-                // unrecognized command
-                // if flag else arg
+                // Unrecognised `--long` flag: record it in the caller's
+                // Diagnostic so commands can warn or hard-fail after parsing
+                // completes, then keep going so later flags are still seen.
                 if arg_info.kind == ArgKind::Long || arg_info.kind == ArgKind::Short {
+                    if let Some(d) = self.diagnostic.as_deref_mut() {
+                        d.unknown_long.push(name.to_vec());
+                    }
                     if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
                         bun_core::warn!(
                             "unrecognized flag: {}{}\n",

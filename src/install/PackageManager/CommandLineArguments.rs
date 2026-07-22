@@ -1024,6 +1024,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             }
         };
 
+        if diag.reject_unknown(params) {
+            let name: &'static str = subcommand.into();
+            bun_core::pretty_errorln!("\nFor a list of options, run <b>bun {} --help<r>", name);
+            Output::flush();
+            Global::exit(1);
+        }
+
         if args.flag(b"--help") {
             Self::print_help(subcommand);
             Global::exit(0);

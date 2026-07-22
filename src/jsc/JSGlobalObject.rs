@@ -145,6 +145,30 @@ impl JSGlobalObject {
         )
     }
 
+    pub fn gregorian_date_time_to_ms(
+        &self,
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+        second: i32,
+        millisecond: i32,
+    ) -> JsResult<f64> {
+        crate::mark_binding();
+        crate::cpp::Bun__gregorianDateTimeToMS(
+            self,
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+            true,
+        )
+    }
+
     pub fn ms_to_gregorian_date_time_utc(&self, ms: f64) -> GregorianDateTime {
         crate::mark_binding();
         let mut dt = GregorianDateTime::default();
@@ -155,6 +179,28 @@ impl JSGlobalObject {
                 self.as_ptr(),
                 ms,
                 false,
+                &raw mut dt.year,
+                &raw mut dt.month,
+                &raw mut dt.day,
+                &raw mut dt.hour,
+                &raw mut dt.minute,
+                &raw mut dt.second,
+                &raw mut dt.weekday,
+            );
+        }
+        dt
+    }
+
+    pub fn ms_to_gregorian_date_time(&self, ms: f64) -> GregorianDateTime {
+        crate::mark_binding();
+        let mut dt = GregorianDateTime::default();
+        // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
+        // stack locals (`dt` fields) and remain valid for the duration of the call.
+        unsafe {
+            crate::cpp::raw::Bun__msToGregorianDateTime(
+                self.as_ptr(),
+                ms,
+                true,
                 &raw mut dt.year,
                 &raw mut dt.month,
                 &raw mut dt.day,

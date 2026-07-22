@@ -15,7 +15,7 @@ import {
 } from "harness";
 import net from "node:net";
 import { PassThrough } from "node:stream";
-import { createSecureContext, TLSSocket, connect as tlsConnect } from "node:tls";
+import { createSecureContext, connect as tlsConnect, TLSSocket } from "node:tls";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();

@@ -190,6 +190,8 @@ pub mod api {
         pub source_map: Option<SourceMapMode>,
         /// conditions
         pub conditions: Vec<Box<[u8]>>,
+        /// no_default_conditions
+        pub no_default_conditions: bool,
         /// packages
         pub packages: Option<PackagesMode>,
         /// ignore_dce_annotations

@@ -496,6 +496,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--dump-environment-variables"),
         parse_param!("--conditions <STR>...            Pass custom conditions to resolve"),
+        parse_param!("--no-default-conditions          Do not inject default conditions (e.g. 'node', 'browser', 'import', 'require')"),
         parse_param!(
             "--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake."
         ),
@@ -1879,6 +1880,7 @@ fn parse_build_command_options(
     ctx.bundler_options.minify_whitespace = minify_flag || args.flag(b"--minify-whitespace");
     ctx.bundler_options.minify_identifiers = minify_flag || args.flag(b"--minify-identifiers");
     ctx.bundler_options.keep_names = args.flag(b"--keep-names");
+    ctx.bundler_options.no_default_conditions = args.flag(b"--no-default-conditions");
 
     ctx.bundler_options.css_chunking = args.flag(b"--css-chunking");
 

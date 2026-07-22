@@ -2663,9 +2663,9 @@ declare module "bun" {
      * @default "esm"
      */
     format?: /**
-     * ECMAScript Module format
-     */
-    | "esm"
+       * ECMAScript Module format
+       */
+      | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -2735,6 +2735,19 @@ declare module "bun" {
      * https://nodejs.org/api/packages.html#exports
      */
     conditions?: Array<string> | string;
+
+    /**
+     * When `true`, disables Bun's default conditional export conditions.
+     *
+     * By default, Bun injects conditions like "node", "browser", "bun", "import", "require", etc.
+     * based on the build target. When this option is set to `true`, only the conditions you
+     * explicitly provide via the `conditions` option will be used during export resolution.
+     *
+     * Equivalent to `--no-default-conditions` in `bun build`.
+     *
+     * @default false
+     */
+    noDefaultConditions?: boolean;
 
     /**
      * Controls how environment variables are handled during bundling.
@@ -4629,10 +4642,10 @@ declare module "bun" {
   function color(
     input: ColorInput,
     outputFormat?: /**
-     * True color ANSI color string, for use in terminals
-     * @example \x1b[38;2;100;200;200m
-     */
-    | "ansi"
+       * True color ANSI color string, for use in terminals
+       * @example \x1b[38;2;100;200;200m
+       */
+      | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -7070,11 +7083,17 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
+      In,
+      Out,
+      Err
+    > {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
+      In,
+      Out,
+      Err
+    > {
       /**
        * If true, the stdout and stderr pipes don't automatically start reading
        * data. Reading begins only when you access the `stdout` or `stderr`

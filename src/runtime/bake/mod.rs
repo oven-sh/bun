@@ -246,6 +246,7 @@ impl Framework {
             out.options.target.default_conditions(),
             out.options.target.is_server_side(),
             bundler_options.conditions.keys(),
+            false, // don't skip defaults
         )?;
         if renderer == Graph::Server && self.server_components.is_some() {
             out.options.conditions.append_slice(&[b"react-server"])?;

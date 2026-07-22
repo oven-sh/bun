@@ -942,6 +942,35 @@ impl<'a> Parser<'a> {
                         );
                     }
                 }
+
+                // Parse conditions field
+                if let Some(expr) = _bun.get(b"conditions") {
+                    match &expr.data {
+                        ExprData::EString(s) => {
+                            self.ctx.args.conditions = vec![estring_to_owned(s.get(), self.bump)];
+                        }
+                        ExprData::EArray(array) => {
+                            let items = array.items.slice();
+                            let mut conditions: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                            for item in items {
+                                self.expect_string(item)?;
+                                let ExprData::EString(s) = &item.data else {
+                                    unreachable!("expect_string returned Ok for non-EString")
+                                };
+                                conditions.push(estring_to_owned(s.get(), self.bump));
+                            }
+                            self.ctx.args.conditions = conditions;
+                        }
+                        _ => self.add_error(expr.loc, b"Expected string or array")?,
+                    }
+                }
+
+                // Parse noDefaultConditions field
+                if let Some(expr) = _bun.get(b"noDefaultConditions") {
+                    self.expect(&expr, ExprTag::EBoolean)?;
+                    self.ctx.args.no_default_conditions =
+                        expr.as_bool().expect("infallible: type checked");
+                }
             }
         }
 

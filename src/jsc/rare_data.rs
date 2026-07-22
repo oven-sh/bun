@@ -14,7 +14,7 @@ use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
 use bun_paths::MAX_PATH_BYTES;
-use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
+use bun_sys::{self as syscall, Fd, Mode};
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 
 use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
@@ -345,7 +345,6 @@ impl Default for RareData {
 
 /// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
 /// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
-/// The buffer is used via a FixedBufferAllocator as the backing for a stackFallback.
 #[derive(Default)]
 pub struct PathBuf {
     pub small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
@@ -551,11 +550,6 @@ impl RefCountedEnvValue {
     }
 }
 
-// `AWSSignatureCache` moved DOWN to `bun_s3_signing::credentials` (process
-// static). Re-exported for any out-of-tree callers that named the type via
-// `bun_jsc::rare_data::AWSSignatureCache`.
-pub use bun_s3_signing::credentials::AWSSignatureCache;
-
 // ──────────────────────────────────────────────────────────────────────────
 // RareData methods — simple accessors / lazy-init
 // ──────────────────────────────────────────────────────────────────────────
@@ -670,11 +664,6 @@ impl RareData {
             .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
     }
 
-    pub fn file_polls(&mut self, _vm: &mut VirtualMachine) -> &mut FilePollStore {
-        self.file_polls_
-            .get_or_insert_with(|| Box::new(FilePollStore::init()))
-    }
-
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
         // The raw `ENGINE_new()` result is cached without a null check:
         // `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here degrades to
@@ -758,14 +747,6 @@ impl RareData {
         let mut sockets = self.listening_sockets_for_watch_mode.lock();
         if let Some(i) = sockets.iter().position(|s| *s == socket) {
             sockets.swap_remove(i);
-        }
-    }
-
-    pub fn close_all_listen_sockets_for_watch_mode(&self) {
-        for socket in core::mem::take(&mut *self.listening_sockets_for_watch_mode.lock()) {
-            // Prevent TIME_WAIT state so the relaunched process can rebind.
-            syscall::disable_linger(socket);
-            socket.close();
         }
     }
 
@@ -1101,5 +1082,3 @@ impl Drop for RareData {
         });
     }
 }
-
-pub use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;

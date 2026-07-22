@@ -739,7 +739,6 @@ pub const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
 pub const SSL_VERIFY_NONE: c_int = 0x00;
 pub const SSL_VERIFY_PEER: c_int = 0x01;
 pub const SSL_VERIFY_FAIL_IF_NO_PEER_CERT: c_int = 0x02;
-pub const SSL_VERIFY_PEER_IF_NO_OBC: c_int = 0x04;
 
 pub const SSL_RECEIVED_SHUTDOWN: c_int = 2;
 

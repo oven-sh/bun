@@ -11,7 +11,6 @@ use bstr::BStr;
 use bun_bundler::options;
 use bun_clap as clap;
 use bun_clap::parse_param;
-use bun_core::ZStr;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, Global, Output, env_var};
@@ -39,24 +38,6 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
-}
-
-/// Resolve `filename` against `cwd`, open it, read its full contents, close it,
-/// and return the buffer.
-///
-/// Built on `bun_paths::resolve_path` + `bun_sys::File::read_from`, which is
-/// the cross-platform path the rest of the runtime uses.
-pub fn read_file(cwd: &[u8], filename: &[u8]) -> crate::Result<Vec<u8>> {
-    let mut buf = PathBuffer::uninit();
-    let outpath = resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut *buf, &[filename]);
-    let len = outpath.len();
-    buf[len] = 0;
-    // SAFETY: `buf[len] == 0` written above; `buf` outlives the call.
-    let path_z = ZStr::from_buf(&buf[..], len);
-    match bun_sys::File::read_from(bun_sys::Fd::cwd(), path_z) {
-        bun_sys::Result::Ok(bytes) => Ok(bytes),
-        bun_sys::Result::Err(err) => Err(err.into()),
-    }
 }
 
 pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
@@ -327,7 +308,7 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
     ),
     parse_param!(
-        "--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                      Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'"
@@ -552,7 +533,7 @@ pub(crate) const BUILD_PARAMS: &[ParamType] =
 // TODO: update test completions
 pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
-        "--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                     Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000."

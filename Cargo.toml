@@ -345,7 +345,6 @@ rustix = { version = "0.38", default-features = false, features = ["std", "fs", 
 bitflags = "2"
 thiserror = "2"
 smallvec = "1"
-bumpalo = { version = "3", features = ["collections", "boxed"] }
 typed-arena = "2"
 itoa = "1"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.

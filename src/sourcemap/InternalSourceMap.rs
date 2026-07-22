@@ -570,111 +570,6 @@ impl WindowReader {
     }
 }
 
-/// One decoded-window prefix. See `FindCache` for the multi-slot wrapper that
-/// callers actually hold.
-pub(crate) struct FindCacheSlot {
-    data: *const u8,
-    sync_idx: u32,
-    decoded_count: u8,
-    reader: WindowReader,
-    decoded: [State; SYNC_INTERVAL],
-}
-
-impl Default for FindCacheSlot {
-    fn default() -> Self {
-        FindCacheSlot {
-            data: ptr::null(),
-            sync_idx: 0,
-            decoded_count: 0,
-            reader: WindowReader::DANGLING,
-            decoded: [State::default(); SYNC_INTERVAL],
-        }
-    }
-}
-
-// Clone/Copy: bitwise OK — `data` is the blob's identity pointer (borrowed,
-// compared for equality only); see `InternalSourceMap` doc.
-#[derive(Copy, Clone)]
-struct FindCacheKey {
-    data: *const u8,
-    sync_idx: u32,
-}
-
-impl Default for FindCacheKey {
-    fn default() -> Self {
-        FindCacheKey {
-            data: ptr::null(),
-            sync_idx: 0,
-        }
-    }
-}
-
-/// Per-caller decode cache. A single stack trace typically touches a handful
-/// of distinct windows (frames at different depths in the same file, or in
-/// different small files), so a one-slot cache thrashes. This is a small
-/// fully-associative set keyed by `(blob ptr, sync_idx)` with round-robin
-/// eviction; once a window is decoded it stays warm across the whole stack and
-/// across subsequent stacks until evicted. ~21 KB per `SavedSourceMap`.
-pub struct FindCache {
-    /// Parallel key array kept hot and contiguous so the associative scan is a
-    /// single 256-byte sweep; the heavyweight `FindCacheSlot` payloads live in
-    /// a separate array so a miss doesn't drag them through the cache.
-    keys: [FindCacheKey; FindCache::SLOT_COUNT],
-    slots: [FindCacheSlot; FindCache::SLOT_COUNT],
-    next_victim: u8,
-}
-
-impl FindCache {
-    pub const SLOT_COUNT: usize = 16;
-
-    pub fn invalidate(&mut self, data: *const u8) {
-        for (k, s) in self.keys.iter_mut().zip(self.slots.iter_mut()) {
-            if k.data == data {
-                k.data = ptr::null();
-                s.data = ptr::null();
-            }
-        }
-    }
-
-    pub fn invalidate_all(&mut self) {
-        for (k, s) in self.keys.iter_mut().zip(self.slots.iter_mut()) {
-            k.data = ptr::null();
-            s.data = ptr::null();
-        }
-    }
-
-    #[inline]
-    fn slot_for(&mut self, data: *const u8, sync_idx: u32) -> &mut FindCacheSlot {
-        for (i, k) in self.keys.iter().enumerate() {
-            if k.data == data && k.sync_idx == sync_idx {
-                return &mut self.slots[i];
-            }
-        }
-        for (i, k) in self.keys.iter().enumerate() {
-            if k.data.is_null() {
-                self.keys[i] = FindCacheKey { data, sync_idx };
-                return &mut self.slots[i];
-            }
-        }
-        let v = self.next_victim as usize;
-        self.next_victim = ((v + 1) & (Self::SLOT_COUNT - 1)) as u8;
-        self.keys[v] = FindCacheKey { data, sync_idx };
-        &mut self.slots[v]
-    }
-}
-
-impl Default for FindCache {
-    fn default() -> Self {
-        // `[T::default(); SLOT_COUNT]` requires `T: Copy`; FindCacheSlot is
-        // large, so build via `from_fn` instead.
-        FindCache {
-            keys: [FindCacheKey::default(); FindCache::SLOT_COUNT],
-            slots: core::array::from_fn(|_| FindCacheSlot::default()),
-            next_victim: 0,
-        }
-    }
-}
-
 impl InternalSourceMap {
     fn locate_window(self, target_line: i32, target_col: i32) -> Option<u32> {
         let n_sync = self.sync_count();
@@ -701,57 +596,6 @@ impl InternalSourceMap {
         let se = self.sync_entry(sync_idx as usize);
         *state = se.to_state();
         reader.parse(self.stream(), se.byte_offset as usize);
-    }
-
-    pub fn find_with_cache(
-        self,
-        line: Ordinal,
-        column: Ordinal,
-        set: &mut FindCache,
-    ) -> Option<Mapping> {
-        let target_line = line.zero_based();
-        let target_col = column.zero_based();
-
-        let sync_idx = self.locate_window(target_line, target_col)?;
-        let cache = set.slot_for(self.data, sync_idx);
-
-        if cache.data != self.data || cache.sync_idx != sync_idx || cache.decoded_count == 0 {
-            self.seed_window(sync_idx, &mut cache.decoded[0], &mut cache.reader);
-            cache.data = self.data;
-            cache.sync_idx = sync_idx;
-            cache.decoded_count = 1;
-        }
-
-        {
-            let mut decoded_count = cache.decoded_count;
-            let mut state = cache.decoded[(decoded_count - 1) as usize];
-            while !cache.reader.done() && state.less_or_equal(target_line, target_col) {
-                cache.reader.next(&mut state);
-                cache.decoded[decoded_count as usize] = state;
-                decoded_count += 1;
-            }
-            cache.decoded_count = decoded_count;
-        }
-
-        let decoded = &cache.decoded[0..cache.decoded_count as usize];
-        let mut lo: usize = 0;
-        let mut hi: usize = decoded.len();
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            if decoded[mid].less_or_equal(target_line, target_col) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        if lo == 0 {
-            return None;
-        }
-        let best = decoded[lo - 1];
-        if best.generated_line != target_line {
-            return None;
-        }
-        Some(best.to_mapping())
     }
 
     /// Matches the semantics of `Mapping.List.find`: returns the last mapping with
@@ -1292,12 +1136,6 @@ impl Builder {
 #[derive(Debug, Copy, Clone)]
 pub enum FromVlqError {
     InvalidSourceMap,
-}
-
-impl From<FromVlqError> for crate::Error {
-    fn from(_e: FromVlqError) -> Self {
-        crate::Error::InvalidSourceMap
-    }
 }
 
 /// Decode a standard VLQ "mappings" string and re-encode it as an

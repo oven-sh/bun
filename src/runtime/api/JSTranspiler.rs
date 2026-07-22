@@ -76,7 +76,6 @@ pub struct Config {
     pub runtime: Runtime::Features,
     pub tree_shaking: bool,
     pub trim_unused_imports: Option<bool>,
-    pub inlining: bool,
 
     pub dead_code_elimination: bool,
     pub minify_whitespace: bool,
@@ -102,7 +101,6 @@ impl Default for Config {
             },
             tree_shaking: false,
             trim_unused_imports: None,
-            inlining: false,
             dead_code_elimination: true,
             minify_whitespace: false,
             minify_identifiers: false,
@@ -647,8 +645,6 @@ impl Config {
     }
 }
 
-// Legacy alias for backwards compatibility during migration
-
 // Mimalloc gets unstable if we try to move this to a different thread
 // threadlocal var transform_buffer: bun.MutableString = undefined;
 // threadlocal var transform_buffer_loaded: bool = false;
@@ -801,7 +797,6 @@ impl<'a> TransformTask<'a> {
             experimental_decorators: self.tsconfig.is_some_and(|ts| ts.experimental_decorators),
             emit_decorator_metadata: self.tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
             macro_js_ctx: MacroJSCtx::ZERO,
-            file_hash: None,
             file_fd_ptr: None,
             inject_jest_globals: false,
             set_breakpoint_on_first_line: false,
@@ -1294,7 +1289,6 @@ impl JSTranspiler {
                 .tsconfig
                 .as_deref()
                 .is_some_and(|ts| ts.emit_decorator_metadata),
-            file_hash: None,
             file_fd_ptr: None,
             inject_jest_globals: false,
             set_breakpoint_on_first_line: false,

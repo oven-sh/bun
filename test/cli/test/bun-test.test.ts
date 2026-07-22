@@ -1506,6 +1506,30 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    test.concurrent("exits nonzero when called from a describe() body with a later file queued", async () => {
+      using dir = tempDir("bun-test-process-exit-describe", {
+        "a.test.ts": `
+          import { describe } from "bun:test";
+          describe("x", () => { process.exit(0); });
+        `,
+        "b.test.ts": `
+          import { test, expect } from "bun:test";
+          test("would fail", () => { expect(1).toBe(2); });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("process.exit(0) was called during bun test");
+      expect(stderr).toContain("1 test file was never reached");
+      expect(exitCode).toBe(1);
+    });
+
     test.concurrent("reports the requested code in the message", async () => {
       using dir = tempDir("bun-test-process-exit-code", {
         "only.test.ts": `

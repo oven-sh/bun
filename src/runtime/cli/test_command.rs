@@ -2139,6 +2139,7 @@ impl TestCommand {
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 total_test_files: 0,
+                module_load_in_progress: false,
                 summary: Summary::default(),
             },
             last_dot: 0,
@@ -3135,11 +3136,15 @@ impl TestCommand {
 
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
-            // Only count the file once, not once per repeat
+            // Only count the file once, not once per repeat. Bumped before
+            // module load so `on_process_exit_during_tests` sees this file as
+            // started when `process.exit()` is called from top-level.
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
+            reporter.jest.module_load_in_progress = true;
+            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            reporter.jest.module_load_in_progress = false;
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match jsc::JSInternalPromise::opaque_mut(promise).status() {
@@ -3296,27 +3301,19 @@ pub(crate) fn on_process_exit_during_tests(vm: &mut VirtualMachine, requested: u
         return;
     }
 
-    let active_phase = reporter
+    let not_run = reporter
         .jest
-        .bun_test_root
-        .active_file
-        .as_deref()
-        .map(|bt| bt.phase);
-    // `summary.files` is bumped after `load_entry_point_for_test_runner`
-    // returns (`TestCommand::run`), so a file still in its module-load /
-    // Collection phase hasn't been counted yet.
-    let started = reporter.jest.summary.files
-        + u32::from(active_phase == Some(bun_test::Phase::Collection));
-    let total = reporter.jest.total_test_files;
-    let not_run = total.saturating_sub(started);
+        .total_test_files
+        .saturating_sub(reporter.jest.summary.files);
 
-    // `process.exit()` during the last file's module load with no later
-    // files queued is the Node test harness re-spawn pattern
+    // `process.exit()` during the last file's top-level module evaluation
+    // with no later files queued is the Node test harness re-spawn pattern
     // (`test/js/node/test/common/index.js` exec-with-Flags then
     // `process.exit(child.status)`): pass the requested code through
-    // unchanged. Anything else (a test body is executing, or later files
-    // would be skipped) is a silent-green hazard.
-    if not_run == 0 && active_phase == Some(bun_test::Phase::Collection) {
+    // unchanged. `module_load_in_progress` is only set for the synchronous
+    // `load_entry_point_for_test_runner` window; a `describe()` callback
+    // (still `Phase::Collection` but after module load) does not qualify.
+    if not_run == 0 && reporter.jest.module_load_in_progress {
         return;
     }
 

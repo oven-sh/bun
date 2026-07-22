@@ -288,6 +288,113 @@ pub fn scan_imports_and_exports(
             );
         }
 
+        // Decide how to lower `import defer` records.
+        //
+        // A deferred import of an ES module keeps its lazy-evaluation semantics
+        // when bundling: the target is wrapped in a lazy `__esm` closure (its
+        // dependencies follow via step 2), the importer skips the eager `init()`
+        // call (see `should_remove_import_export_stmt`), and every property
+        // access on the namespace prints as `(init_foo(), x)` instead (see
+        // `deferred_import_inits` in the printer options).
+        //
+        // Records that can't preserve those semantics fall back to eager
+        // evaluation: non-ESM targets, subgraphs containing top-level await,
+        // and namespace objects that are captured rather than only accessed by
+        // property. For those PHASE_DEFER is removed before any wrapping
+        // happens and a warning is emitted, so the output matches a regular
+        // eager import.
+        if output_format != Format::InternalBakeDev {
+            let _trace = perf::trace("Bundler.ImportDefer");
+            for source_index_ in &reachable {
+                let id = source_index_.get() as usize;
+
+                if id >= col_ref!(import_records_list).len() || col_ref!(css_asts)[id].is_some() {
+                    continue;
+                }
+
+                let record_count = col_ref!(import_records_list)[id].as_slice().len();
+                for record_index in 0..record_count {
+                    let (record_flags, record_kind, record_source_index, record_range) = {
+                        let record = &col_ref!(import_records_list)[id].as_slice()[record_index];
+                        (record.flags, record.kind, record.source_index, record.range)
+                    };
+
+                    if !record_flags.contains(ImportRecordFlags::PHASE_DEFER)
+                        || record_kind != ImportKind::Stmt
+                        || !record_source_index.is_valid()
+                    {
+                        continue;
+                    }
+
+                    let other_id = record_source_index.get() as usize;
+
+                    // Anything other than a property access on the namespace
+                    // keeps a use of the namespace symbol, which means the
+                    // namespace object itself is captured.
+                    let mut namespace_is_captured = false;
+                    if id < col_ref!(named_imports).len() {
+                        for (item_ref, named_import) in col_ref!(named_imports)[id].iter() {
+                            if named_import.import_record_index as usize == record_index
+                                && named_import.alias_is_star
+                                && (named_import.is_exported
+                                    || this.graph.symbol(*item_ref).use_count_estimate > 0)
+                            {
+                                namespace_is_captured = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // The bounds check must stay first: the rest of the chain
+                    // indexes the per-file columns with `other_id`.
+                    let supports_lazy_evaluation = other_id < col_ref!(exports_kind).len()
+                        && !col_ref!(ast_flags_list)[other_id].contains(AstFlags::HAS_LAZY_EXPORT)
+                        && col_ref!(wrapper_refs)[other_id].is_valid()
+                        && (col_ref!(flags)[other_id].wrap == WrapKind::Esm
+                            || (col_ref!(flags)[other_id].wrap == WrapKind::None
+                                && matches!(
+                                    col_ref!(exports_kind)[other_id],
+                                    ExportsKind::Esm | ExportsKind::EsmWithDynamicFallback
+                                )));
+
+                    let fallback_reason: Option<&str> = if !supports_lazy_evaluation {
+                        Some("it is only supported for ECMAScript modules when bundling")
+                    } else if col_ref!(flags)[other_id].is_async_or_has_async_dependency {
+                        Some("the deferred module or one of its dependencies uses top-level await")
+                    } else if namespace_is_captured {
+                        Some(
+                            "the namespace object is captured (only property accesses can be deferred when bundling)",
+                        )
+                    } else {
+                        None
+                    };
+
+                    if let Some(reason) = fallback_reason {
+                        col!(import_records_list)[id].as_mut_slice()[record_index]
+                            .flags
+                            .remove(ImportRecordFlags::PHASE_DEFER);
+
+                        this.log_disjoint().add_range_warning_fmt(
+                            Some(&col_ref!(input_files)[id]),
+                            record_range,
+                            format_args!(
+                                "This \"import defer\" is evaluated eagerly because {}",
+                                reason
+                            ),
+                        );
+                        continue;
+                    }
+
+                    // Wrap the target in a lazy `__esm` closure so its evaluation
+                    // can be deferred until the first property access on the
+                    // namespace.
+                    if col_ref!(flags)[other_id].wrap == WrapKind::None {
+                        col!(flags)[other_id].wrap = WrapKind::Esm;
+                    }
+                }
+            }
+        }
+
         // Step 2: Propagate dynamic export status for export star statements that
         // are re-exports from a module whose exports are not statically analyzable.
         // In this case the export star must be evaluated at run time instead of at
@@ -472,6 +579,56 @@ pub fn scan_imports_and_exports(
                     &mut col!(wrapper_part_indices)[source_index],
                     source_index_.get(),
                 );
+            }
+        }
+
+        // Wire up `import defer` records that kept their lazy semantics (see the
+        // lowering decision after step 1): map every import item generated from
+        // a property access on the deferred namespace to the target's `__esm`
+        // wrapper so the printer can trigger evaluation on first access.
+        //
+        // Keeping the wrapper alive through tree shaking (and importing it
+        // across chunks when splitting) does not need extra work here: step 6
+        // makes every part that imports a wrapped file depend on that file's
+        // wrapper symbol.
+        if output_format != Format::InternalBakeDev {
+            for source_index_ in &reachable {
+                let id = source_index_.get() as usize;
+
+                if id >= col_ref!(import_records_list).len()
+                    || id >= col_ref!(named_imports).len()
+                    || col_ref!(css_asts)[id].is_some()
+                    || col_ref!(named_imports)[id].count() == 0
+                {
+                    continue;
+                }
+
+                let record_count = col_ref!(import_records_list)[id].as_slice().len();
+                for record_index in 0..record_count {
+                    let (record_flags, record_kind, record_source_index) = {
+                        let record = &col_ref!(import_records_list)[id].as_slice()[record_index];
+                        (record.flags, record.kind, record.source_index)
+                    };
+
+                    if !record_flags.contains(ImportRecordFlags::PHASE_DEFER)
+                        || record_kind != ImportKind::Stmt
+                        || !record_source_index.is_valid()
+                    {
+                        continue;
+                    }
+
+                    let other_id = record_source_index.get() as usize;
+                    let wrapper_ref = col_ref!(wrapper_refs)[other_id];
+                    debug_assert!(col_ref!(flags)[other_id].wrap == WrapKind::Esm);
+
+                    for (item_ref, named_import) in col_ref!(named_imports)[id].iter() {
+                        if named_import.import_record_index as usize == record_index
+                            && !named_import.alias_is_star
+                        {
+                            this.deferred_import_inits.put(*item_ref, wrapper_ref)?;
+                        }
+                    }
+                }
             }
         }
 

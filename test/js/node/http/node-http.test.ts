@@ -3468,10 +3468,8 @@ it("server.close(cb) completes after a raw upgrade once both sockets are destroy
 });
 
 it("upgrade with a body: a mid-body client FIN closes the upgraded socket and lets the process exit", async () => {
-  // Node's UpgradeStream wraps a socket that still has socketOnEnd attached, so
-  // a client FIN before the request body completes closes the connection instead
-  // of staying half-open. Staying half-open stranded the server's pending-request
-  // accounting and the body-read ref, hanging the process.
+  // Like Node's UpgradeStream: a FIN before the request body completes closes
+  // the upgraded socket instead of leaving the connection half-open.
   const fixture = /* js */ `
     const http = require("node:http");
     const net = require("node:net");
@@ -3481,13 +3479,19 @@ it("upgrade with a body: a mid-body client FIN closes the upgraded socket and le
       const server = http.createServer();
       let upgraded;
       const gotUpgrade = new Promise(r => { upgraded = r; });
+      let socketClosed;
+      const gotSocketClose = new Promise(r => { socketClosed = r; });
       const events = [];
       server.on("upgrade", (req, socket, head) => {
         events.push("upgrade");
         req.on("data", () => {});
-        socket.on("end", () => events.push("end"));
-        socket.on("close", () => events.push("close"));
-        upgraded(socket);
+        socket.on("end", () => {
+          events.push("end");
+          socket.write("late", err => events.push("write-cb:" + (err ? err.code : "ok")));
+        });
+        socket.on("error", err => events.push("error:" + err.code));
+        socket.on("close", () => { events.push("close"); socketClosed(); });
+        upgraded();
       });
       server.listen(0, "127.0.0.1");
       await once(server, "listening");
@@ -3495,10 +3499,10 @@ it("upgrade with a body: a mid-body client FIN closes the upgraded socket and le
       const c = net.connect(server.address().port, "127.0.0.1");
       await once(c, "connect");
       c.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: foo\\r\\nConnection: Upgrade\\r\\nContent-Length: 100\\r\\n\\r\\npartial");
-      const upgradeSocket = await gotUpgrade;
+      await gotUpgrade;
       // Half-close the client; the body (100 bytes) is never completed.
       c.end();
-      await once(upgradeSocket, "close");
+      await gotSocketClose;
 
       await new Promise((resolve, reject) => {
         server.close(err => err ? reject(err) : resolve());
@@ -3513,9 +3517,11 @@ it("upgrade with a body: a mid-body client FIN closes the upgraded socket and le
     timeout: 10_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe(JSON.stringify(["upgrade", "end", "close"]));
-  expect(exitCode).toBe(0);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify(["upgrade", "end", "write-cb:ERR_STREAM_WRITE_AFTER_END", "error:ERR_STREAM_WRITE_AFTER_END", "close"]),
+    stderr: expect.not.stringContaining("error"),
+    exitCode: 0,
+  });
 }, 15_000);
 
 it("req.upgrade is true inside the 'connect' listener", async () => {

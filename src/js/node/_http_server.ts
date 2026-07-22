@@ -1673,6 +1673,11 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
       clearTimeout(timer);
       this[kSocketTimeoutTimer] = undefined;
     }
+    const pendingCallback = this.#pendingCallback;
+    if (pendingCallback) {
+      this.#pendingCallback = null;
+      pendingCallback($ERR_STREAM_WRITE_AFTER_END());
+    }
 
     // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
     // that are still in `state.incoming` — i.e. requests whose response has
@@ -2002,6 +2007,13 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
       if (handle) {
         const flushed = handle.write(_chunk, _encoding);
         if (!flushed && handle.ondrain) {
+          // The native socket is already gone (the tunnel's 'end' fires before
+          // the JS Duplex is destroyed): there will be no drain to release the
+          // callback, so fail now like Node's socket.write() does.
+          if (handle.closed) {
+            _callback($ERR_STREAM_WRITE_AFTER_END());
+            return false;
+          }
           // Streaming mode (CONNECT tunnels): wait for the native drain
           // callback before completing the write.
           this.#pendingCallback = _callback;

@@ -357,6 +357,11 @@ pub(crate) fn install_hoisted_packages(
             let pkg_name_hashes = bun_ptr::RawSlice::new(parts.items_name_hash());
             let resolutions = bun_ptr::RawSlice::new(parts.items_resolution());
             let pkg_dependencies = bun_ptr::RawSlice::new(parts.items_dependencies());
+            let root_dependencies = parts
+                .items_dependencies()
+                .first()
+                .copied()
+                .unwrap_or_default();
 
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for
@@ -404,6 +409,7 @@ pub(crate) fn install_hoisted_packages(
                             binaries: bin::PriorityQueue::init(bin::PriorityQueueContext {
                                 dependencies: buf_deps,
                                 string_buf: buf_strings,
+                                root_dependencies,
                             }),
                             pending_installs: Vec::new(),
                             install_count: 0,

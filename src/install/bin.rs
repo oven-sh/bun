@@ -23,6 +23,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::install::{DependencyID, ExternalStringList};
+use crate::lockfile::DependencySlice;
 #[cfg(windows)]
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
@@ -703,6 +704,7 @@ impl<'a> NamesIterator<'a> {
 pub struct PriorityQueueContext {
     pub dependencies: bun_ptr::BackRef<Vec<Dependency>>,
     pub string_buf: bun_ptr::BackRef<Vec<u8>>,
+    pub root_dependencies: DependencySlice,
 }
 
 impl PriorityQueueContext {
@@ -715,9 +717,23 @@ impl PriorityQueueContext {
         // `BackRef<Vec>` (header) on every compare instead of caching a slice.
         let deps = self.dependencies.as_slice();
         let buf = self.string_buf.as_slice();
-        let a_name = deps[a as usize].name.slice(buf);
-        let b_name = deps[b as usize].name.slice(buf);
-        strings::order(a_name, b_name)
+        let a_dep = &deps[a as usize];
+        let b_dep = &deps[b as usize];
+        let a_direct = self.is_direct_root_dependency(a, a_dep);
+        let b_direct = self.is_direct_root_dependency(b, b_dep);
+        b_direct.cmp(&a_direct).then_with(|| {
+            let a_name = a_dep.name.slice(buf);
+            let b_name = b_dep.name.slice(buf);
+            strings::order(a_name, b_name)
+        })
+    }
+
+    fn is_direct_root_dependency(&self, id: DependencyID, dep: &Dependency) -> bool {
+        self.root_dependencies.contains(id)
+            && (dep.behavior.is_prod()
+                || dep.behavior.is_dev()
+                || dep.behavior.is_optional()
+                || dep.behavior.is_workspace())
     }
 }
 
@@ -729,7 +745,7 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 }
 
 // Port of `std.PriorityQueue(DependencyID, PriorityQueueContext, lessThan)`.
-// Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
+// Min-heap keyed by `PriorityQueueContext::less_than` (direct root dependencies first, then string order of dep names).
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
 // `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
@@ -1798,6 +1814,7 @@ impl<'a> Linker<'a> {
                                     ));
                                     return;
                                 }
+
                                 dest_off = abs_dest_dir_end;
                                 self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
                                     .copy_from_slice(entry_name);

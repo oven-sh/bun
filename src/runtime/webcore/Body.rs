@@ -1163,6 +1163,20 @@ impl Value {
                 let new_blob = core::mem::take(b);
                 *self = Value::Used;
                 debug_assert!(!new_blob.is_heap_allocated()); // owned by Body
+                // Snapshot a borrowed JS ArrayBuffer into owned storage so the
+                // returned Blob is immutable and its Store never carries the
+                // non-atomic `JSC::ArrayBuffer` ref/pin off this thread
+                // (e.g. via `URL.createObjectURL` + cross-Worker revoke).
+                if new_blob
+                    .store()
+                    .is_some_and(|s| s.bytes_borrow_js_array_buffer())
+                {
+                    // SAFETY: VirtualMachine::get() returns the live per-thread VM.
+                    let global = VirtualMachine::get().global();
+                    let owned = Blob::init(new_blob.shared_view().to_vec(), global);
+                    new_blob.detach();
+                    return owned;
+                }
                 new_blob
             }
             Value::InternalBlob(ib) => {

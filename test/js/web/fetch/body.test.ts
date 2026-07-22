@@ -784,16 +784,21 @@ describe("constructing a body from a large ArrayBuffer borrows the storage", () 
         });
       }
 
-      test("blob() readers return distinct buffers", async () => {
+      test("blob() snapshots the borrow into an owned Store", async () => {
         const buf = new Uint8Array(N).fill(0x61);
         const blob = await fn(buf).blob();
-        // The body's borrow moved into the returned Blob; materialising it
-        // snapshots into a distinct buffer unaffected by later mutation.
-        const out = new Uint8Array(await blob.arrayBuffer());
+        // `.blob()` copies out of the borrowed ArrayBuffer so the returned
+        // Blob is immutable and its Store cannot carry the pin off-thread.
         buf.fill(0x62);
+        const out = new Uint8Array(await blob.arrayBuffer());
         expect(out.byteLength).toBe(N);
         expect(out[0]).toBe(0x61);
-        expect(await blob.text()).toHaveLength(N);
+        // The borrow was released when `.blob()` snapshotted; `transfer()`
+        // detaches again with the Blob still live.
+        const moved = buf.buffer.transfer();
+        expect(buf.buffer.byteLength).toBe(0);
+        expect(moved.byteLength).toBe(N);
+        expect((await blob.bytes())[0]).toBe(0x61);
       });
 
       test("transfer() copies while the body holds the borrow, detaches after", async () => {

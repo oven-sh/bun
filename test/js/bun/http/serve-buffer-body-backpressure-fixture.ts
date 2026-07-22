@@ -11,7 +11,6 @@ const server = Bun.serve({
   idleTimeout: 0,
   routes: {
     "/static": new Response(buf),
-    "/rss": () => new Response(String(process.memoryUsage.rss())),
   },
   fetch() {
     return new Response(buf);

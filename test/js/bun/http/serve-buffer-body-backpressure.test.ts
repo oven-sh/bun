@@ -21,15 +21,21 @@ async function spawnServer() {
     stderr: "inherit",
     stdin: "ignore",
     ipc(message) {
-      if (typeof message?.rss === "number") rssWaiters.shift()?.(message.rss);
+      if (typeof message?.rss === "number") rssWaiters.shift()?.resolve(message.rss);
     },
   });
-  const rssWaiters: ((n: number) => void)[] = [];
-  const rss = () =>
-    new Promise<number>(r => {
-      rssWaiters.push(r);
-      proc.send("rss");
-    });
+  const rssWaiters: PromiseWithResolvers<number>[] = [];
+  const exitErr = proc.exited.then(code => new Error(`server fixture exited (${code})`));
+  exitErr.then(err => {
+    reject(err);
+    for (const w of rssWaiters.splice(0)) w.reject(err);
+  });
+  const rss = () => {
+    const w = Promise.withResolvers<number>();
+    rssWaiters.push(w);
+    proc.send("rss");
+    return w.promise;
+  };
   (async () => {
     let acc = "";
     for await (const chunk of proc.stdout) {
@@ -40,11 +46,11 @@ async function spawnServer() {
     reject(new Error("server fixture exited without printing a port: " + acc));
   })();
   const port = await promise;
-  return { proc, port, rss };
+  return { proc, port, rss, exitErr };
 }
 
 async function measure(pathname: string) {
-  const { proc, port, rss } = await spawnServer();
+  const { proc, port, rss, exitErr } = await spawnServer();
   try {
     // Let the allocator settle after the startup burst.
     await rss();
@@ -61,9 +67,14 @@ async function measure(pathname: string) {
         s.pause();
         if (++connected === clients) allUp.resolve();
       });
-      s.on("error", () => {});
+      s.on("error", err => allUp.reject(err));
     }
-    await allUp.promise;
+    await Promise.race([
+      allUp.promise,
+      exitErr.then(err => {
+        throw err;
+      }),
+    ]);
 
     // Poll until the server has responded to every request (pending body
     // bytes are held on the server side) and RSS has stabilised.

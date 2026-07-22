@@ -37,7 +37,15 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     return Err(JsError::OutOfMemory);
                 }
                 Err(_) => {
-                    if let Some(first_msg) = log.msgs.first() {
+                    // `parse_jsonc` emits duplicate-key *warnings* before the fatal
+                    // error; pick the first error-kind entry so the thrown message
+                    // names the actual failure.
+                    let first_msg = log
+                        .msgs
+                        .iter()
+                        .find(|m| m.kind == bun_ast::Kind::Err)
+                        .or(log.msgs.first());
+                    if let Some(first_msg) = first_msg {
                         return Err(global.throw_value(global.create_syntax_error_instance(
                             format_args!(
                                 "JSONC Parse error: {}",

@@ -140,6 +140,17 @@ test("Bun.JSONC.parse throws a SyntaxError on invalid input", () => {
   }
 });
 
+test("Bun.JSONC.parse SyntaxError names the actual error, not a preceding warning", () => {
+  let thrown: unknown;
+  try {
+    Bun.JSONC.parse('{"a":1,"a":2,');
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown).toBeInstanceOf(SyntaxError);
+  expect((thrown as Error).message).not.toContain("Duplicate key");
+});
+
 test("Bun.JSONC.parse handles empty object", () => {
   const result = Bun.JSONC.parse("{}");
   expect(result).toEqual({});

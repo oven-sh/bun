@@ -7,16 +7,18 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 // 512 KiB recv_buf, 16 KiB send_buf, and two 16 KiB cork buffers.
 // On POSIX cleanMe is true (no hint) and the existing free path works, so
 // this test targets Windows only.
-test.skipIf(!isWindows)("worker thread exit frees the uWS loop wrapper on Windows", async () => {
-  // mimalloc reclaims abandoned thread heaps, so the leak grows slower than
-  // 560 KiB/worker in practice; a long warm-up followed by a long measured
-  // run gives a clear monotone-growth vs plateau separation.
-  const threshold = isASAN || isDebug ? 25 : 15;
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test.skipIf(!isWindows)(
+  "worker thread exit frees the uWS loop wrapper on Windows",
+  async () => {
+    // mimalloc reclaims abandoned thread heaps, so the leak grows slower than
+    // 560 KiB/worker in practice; a long warm-up followed by a long measured
+    // run gives a clear monotone-growth vs plateau separation.
+    const threshold = isASAN || isDebug ? 25 : 15;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const url = "data:text/javascript," + encodeURIComponent("self.postMessage(0)");
 
         async function cycle() {
@@ -41,15 +43,17 @@ test.skipIf(!isWindows)("worker thread exit frees the uWS loop wrapper on Window
           process.exit(1);
         }
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toContain("delta=");
-  expect(exitCode).toBe(0);
-}, 120_000);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("delta=");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

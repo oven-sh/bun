@@ -139,26 +139,6 @@ impl JSObject {
         Ok(())
     }
 
-    #[inline]
-    pub fn put_all_from_struct<T: JSValueFields>(
-        &self,
-        global: &JSGlobalObject,
-        properties: &T,
-    ) -> JsResult<()> {
-        // Types hand-implement `JSValueFields`. Each field must already be a
-        // JSValue — there is NO `fromAny` encoding here (unlike `create`).
-        // Hence a separate trait from `PojoFields` that yields raw JSValues
-        // without conversion.
-        properties.put_fields(|name, value| self.put(global, name, value))
-    }
-
-    /// When the GC sees a JSValue referenced in the stack, it knows not to free it.
-    /// This mimics the implementation in JavaScriptCore's C++.
-    #[inline]
-    pub fn ensure_still_alive(&self) {
-        core::hint::black_box(std::ptr::from_ref::<Self>(self));
-    }
-
     /// # Safety
     /// `owner` must be a cell-tagged `JSValue` (its payload is a live
     /// `JSCell*`) that remains valid for the duration of the call.
@@ -342,15 +322,4 @@ pub trait PojoFields {
         global: &JSGlobalObject,
         put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
     ) -> JsResult<()>;
-}
-
-/// Compile-time field enumeration for structs whose fields are **already**
-/// `JSValue` (each field is passed
-/// straight to `put()` with no `fromAny` encoding).
-///
-/// Separate from [`PojoFields`] because that trait encodes; this one does not.
-pub trait JSValueFields {
-    /// Invoke `put(field_name, self.<field>)` once per struct field. Fields are
-    /// `JSValue` and forwarded as-is.
-    fn put_fields(&self, put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>) -> JsResult<()>;
 }

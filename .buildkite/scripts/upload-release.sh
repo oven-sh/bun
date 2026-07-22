@@ -61,17 +61,40 @@ function run_command() {
   { set +x; } 2>/dev/null
 }
 
+# Probe with `sudo -n` first: agents that lack passwordless sudo would otherwise
+# block on a password prompt until the job times out.
 function maybe_sudo() {
   if [ "$(id -u)" -eq 0 ]; then
     run_command "$@"
-  elif command -v sudo &> /dev/null; then
-    run_command sudo "$@"
+  elif command -v sudo &> /dev/null && sudo -n true &> /dev/null; then
+    run_command sudo -n "$@"
   else
     run_command "$@"
   fi
 }
 
+# Tools this script installs go to a writable directory on PATH instead of
+# /usr/local/bin, which needs root on most agents.
+function ensure_tools_bin() {
+  if [ -n "$TOOLS_BIN" ]; then
+    return
+  fi
+  TOOLS_DIR="${HOME:-}/.cache/bun-release-tools"
+  if [ -z "$HOME" ] || ! mkdir -p "$TOOLS_DIR/bin" 2> /dev/null; then
+    TOOLS_DIR="$(mktemp -d)"
+    mkdir -p "$TOOLS_DIR/bin"
+  fi
+  TOOLS_BIN="$TOOLS_DIR/bin"
+  export PATH="$TOOLS_BIN:$PATH"
+}
+
 function package_manager_install() {
+  if [ "$(id -u)" -ne 0 ] && ! { command -v sudo &> /dev/null && sudo -n true &> /dev/null; }; then
+    echo "error: Need root to install packages: $*"
+    echo ""
+    echo "hint: Pre-install them in the agent image, or grant the agent passwordless sudo"
+    exit 1
+  fi
   if command -v dnf &> /dev/null; then
     maybe_sudo dnf install -y "$@"
   elif command -v yum &> /dev/null; then
@@ -108,7 +131,8 @@ function install_gh_linux() {
   dir="$(mktemp -d)"
   run_command curl -fsSL "https://github.com/cli/cli/releases/download/v${version}/gh_${version}_linux_${arch}.tar.gz" -o "$dir/gh.tar.gz"
   run_command tar -xzf "$dir/gh.tar.gz" -C "$dir" --strip-components=1
-  maybe_sudo install -m 0755 "$dir/bin/gh" /usr/local/bin/gh
+  ensure_tools_bin
+  run_command install -m 0755 "$dir/bin/gh" "$TOOLS_BIN/gh"
   rm -rf "$dir"
 }
 
@@ -118,13 +142,15 @@ function install_aws_linux() {
   dir="$(mktemp -d)"
   run_command curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "$dir/awscliv2.zip"
   run_command unzip -q "$dir/awscliv2.zip" -d "$dir"
-  maybe_sudo "$dir/aws/install" --update
+  ensure_tools_bin
+  run_command "$dir/aws/install" --update -i "$TOOLS_DIR/aws-cli" -b "$TOOLS_BIN"
   rm -rf "$dir"
 }
 
 function install_sentry_cli_linux() {
   # The installer drops a single static binary into INSTALL_DIR.
-  maybe_sudo bash -c "curl -fsSL https://sentry.io/get-cli/ | INSTALL_DIR=/usr/local/bin sh"
+  ensure_tools_bin
+  run_command bash -c "curl -fsSL https://sentry.io/get-cli/ | INSTALL_DIR='$TOOLS_BIN' sh"
 }
 
 function assert_command() {
@@ -296,14 +322,10 @@ function create_release() {
     bun-linux-aarch64-profile.zip
     bun-linux-x64.zip
     bun-linux-x64-profile.zip
-    bun-linux-x64-baseline.zip
-    bun-linux-x64-baseline-profile.zip
     bun-linux-aarch64-musl.zip
     bun-linux-aarch64-musl-profile.zip
     bun-linux-x64-musl.zip
     bun-linux-x64-musl-profile.zip
-    bun-linux-x64-musl-baseline.zip
-    bun-linux-x64-musl-baseline-profile.zip
     bun-linux-aarch64-android.zip
     bun-linux-aarch64-android-profile.zip
     bun-linux-x64-android.zip
@@ -314,15 +336,48 @@ function create_release() {
     bun-freebsd-x64-profile.zip
     bun-windows-x64.zip
     bun-windows-x64-profile.zip
-    bun-windows-x64-baseline.zip
-    bun-windows-x64-baseline-profile.zip
     bun-windows-aarch64.zip
     bun-windows-aarch64-profile.zip
   )
 
-  function upload_artifact() {
+  # x64 ships one nehalem binary under the plain name. Re-zip it under the
+  # historical `-baseline` name (inner dir renamed) so older `bun upgrade`
+  # clients that still request `-baseline` extract correctly.
+  function alias_baseline_artifact() {
     local artifact="$1"
-    download_buildkite_artifact "$artifact"
+    case "$artifact" in
+      bun-darwin-x64.zip)              echo "bun-darwin-x64-baseline.zip" ;;
+      bun-darwin-x64-profile.zip)      echo "bun-darwin-x64-baseline-profile.zip" ;;
+      bun-linux-x64.zip)               echo "bun-linux-x64-baseline.zip" ;;
+      bun-linux-x64-profile.zip)       echo "bun-linux-x64-baseline-profile.zip" ;;
+      bun-linux-x64-musl.zip)          echo "bun-linux-x64-musl-baseline.zip" ;;
+      bun-linux-x64-musl-profile.zip)  echo "bun-linux-x64-musl-baseline-profile.zip" ;;
+      bun-windows-x64.zip)             echo "bun-windows-x64-baseline.zip" ;;
+      bun-windows-x64-profile.zip)     echo "bun-windows-x64-baseline-profile.zip" ;;
+      *)                               echo "" ;;
+    esac
+  }
+
+  command -v unzip &> /dev/null || package_manager_install unzip
+  command -v zip &> /dev/null || package_manager_install zip
+
+  # Repack `$src_zip` (inner dir = basename of $src_zip) as `$dst_zip` with the
+  # inner dir renamed to match `$dst_zip`'s basename. Works in a fresh mktemp
+  # dir so a caller-CWD change can't collide with the extracted names.
+  function rezip_as() {
+    local src_zip="$1" dst_zip="$2"
+    local src_dir="${src_zip%.zip}" dst_dir="${dst_zip%.zip}"
+    local abs_src="$PWD/$src_zip" abs_dst="$PWD/$dst_zip"
+    local work; work="$(mktemp -d)"
+    run_command unzip -q -d "$work" "$abs_src"
+    run_command mv "$work/$src_dir" "$work/$dst_dir"
+    run_command rm -f "$abs_dst"
+    (cd "$work" && run_command zip -rq "$abs_dst" "$dst_dir")
+    run_command rm -rf "$work"
+  }
+
+  function upload_one() {
+    local artifact="$1"
     if [ "$tag" == "canary" ]; then
       upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$artifact" &
     else
@@ -331,6 +386,17 @@ function create_release() {
     upload_s3_file "releases/$tag" "$artifact" &
     upload_github_asset "$tag" "$artifact" &
     wait
+  }
+
+  function upload_artifact() {
+    local artifact="$1"
+    download_buildkite_artifact "$artifact"
+    upload_one "$artifact"
+    local alias="$(alias_baseline_artifact "$artifact")"
+    if [ -n "$alias" ]; then
+      rezip_as "$artifact" "$alias"
+      upload_one "$alias"
+    fi
   }
 
   for artifact in "${artifacts[@]}"; do

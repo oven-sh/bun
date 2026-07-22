@@ -158,7 +158,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               // Not clear how to test for that.
             }
           },
-          10 * 1000,
+          // CI runs tests under bun-profile (~700 MB on linux with ThinLTO
+          // DWARF); --compile copies+reads+rewrites the whole thing to /tmp,
+          // which on debian/ubuntu is disk-backed gp3.
+          30 * 1000,
         );
       }
 

@@ -34,13 +34,6 @@ impl Strong {
         Impl::set(self.handle, global, new_value);
     }
 
-    /// Swap a new value for the strong reference.
-    pub fn swap(&mut self, global: &JSGlobalObject, new_value: JSValue) -> JSValue {
-        let result = Impl::get(self.handle);
-        self.set(global, new_value);
-        result
-    }
-
     /// Adopt an `Impl` handle allocated externally (e.g. by C++ bindgen glue),
     /// taking ownership. The handle will be destroyed on `Drop`.
     ///
@@ -238,5 +231,3 @@ unsafe extern "C" {
     safe fn Bun__StrongRef__set(this: &Impl, global: &JSGlobalObject, value: JSValue);
     safe fn Bun__StrongRef__clear(this: &Impl);
 }
-
-pub use crate::deprecated_strong as deprecated;

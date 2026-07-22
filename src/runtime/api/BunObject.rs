@@ -70,23 +70,6 @@ pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     }
 }
 
-/// `Bun.getPublicPath` — wrapper over [`get_public_path_with_asset_prefix`]
-/// using the VM's top-level dir, no asset prefix, and loose path platform.
-pub(crate) fn get_public_path<W: core::fmt::Write>(
-    to: &[u8],
-    origin: &bun_url::URL,
-    writer: &mut W,
-) {
-    get_public_path_with_asset_prefix(
-        to,
-        VirtualMachine::get().top_level_dir(),
-        origin,
-        b"",
-        writer,
-        bun_paths::Platform::Loose,
-    )
-}
-
 use std::io::Write as _;
 
 use bun_core::Output;
@@ -1568,8 +1551,6 @@ pub(crate) fn index_of_line<'s>(
 
     Ok(scope.number_from_int32(-1))
 }
-
-pub use crate::crypto as crypto_mod;
 
 #[bun_jsc::host_fn(scoped)]
 pub(crate) fn nanoseconds<'s>(scope: &mut Scope<'s>, _: &CallFrame) -> JsResult<Local<'s>> {

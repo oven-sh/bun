@@ -71,7 +71,6 @@ unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
     fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
-    fn napi_internal_get_version(env: *mut NapiEnv) -> u32;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
@@ -125,12 +124,6 @@ impl NapiEnv {
     pub fn check_gc(&self) {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { napi_internal_check_gc(self.as_mut_ptr()) };
-    }
-
-    /// Return the Node-API version number declared by the module we are running code from
-    pub fn get_version(&self) -> u32 {
-        // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { napi_internal_get_version(self.as_mut_ptr()) }
     }
 
     pub fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
@@ -205,12 +198,6 @@ unsafe extern "C" {
 pub enum EscapeError {
     #[error("escape called twice")]
     EscapeCalledTwice,
-}
-
-impl From<EscapeError> for crate::Error {
-    fn from(_: EscapeError) -> Self {
-        crate::Error::EscapeCalledTwice
-    }
 }
 
 impl NapiHandleScope {
@@ -2466,7 +2453,6 @@ pub struct ThreadSafeFunction {
     pub dispatch_state: AtomicU8, // DispatchState
     pub blocking_condvar: Condvar,
     pub closing: AtomicU8, // ClosingState
-    pub aborted: AtomicBool,
     /// Written under `lock` by `env_teardown` on the JS thread. Every path
     /// that would reach `event_loop` from another thread reads it under the
     /// same lock, so teardown cannot land between the check and the enqueue.
@@ -3034,7 +3020,6 @@ impl ThreadSafeFunction {
                 if mode == napi_threadsafe_function_release_mode::abort {
                     self.closing
                         .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                    self.aborted.store(true, Ordering::SeqCst);
                     if self.queue.max_queue_size > 0 {
                         // Wake all producers blocked in enqueue()'s bounded
                         // queue wait so they observe is_closing and release.
@@ -3132,7 +3117,6 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
         dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
         blocking_condvar: Condvar::default(),
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
-        aborted: AtomicBool::new(true),
         env_dead: AtomicBool::new(false),
         env_teardown_done: AtomicBool::new(false),
     });

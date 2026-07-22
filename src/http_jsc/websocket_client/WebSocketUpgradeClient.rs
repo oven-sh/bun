@@ -1835,7 +1835,9 @@ impl<'a> Headers8Bit<'a> {
 
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
         self.slices
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| (pair[0].slice(), pair[1].slice()))
     }
 

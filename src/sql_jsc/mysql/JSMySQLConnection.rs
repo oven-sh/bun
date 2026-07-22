@@ -1100,5 +1100,3 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as ResultMode;
 /// `my_sql_connection`). Surface the alias here so `super::js_mysql_connection::
 /// MySQLConnection` resolves to this type, not the protocol-layer struct.
 pub use JSMySQLConnection as MySQLConnection;
-
-pub type Writer = my_sql_connection::Writer;

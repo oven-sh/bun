@@ -300,21 +300,6 @@ impl ArrayBuffer {
 
     pub const NAME: &'static str = "Bun__ArrayBuffer";
 
-    #[inline]
-    pub fn stream(self) -> ArrayBufferStream<'static> {
-        // Lifetime: the stream is over self.slice() (raw ptr-backed); the
-        // caller must keep the backing JSValue alive for the stream's lifetime.
-        // Spec routes through `slice()` which yields `&.{}` for detached buffers; mirror
-        // that here to avoid passing a null ptr to `from_raw_parts_mut` (UB even at len 0).
-        if self.is_detached() {
-            return std::io::Cursor::new(&mut [][..]);
-        }
-        // SAFETY: ptr is non-null (checked above), FFI-backed; caller must keep backing JSValue alive.
-        let slice =
-            unsafe { core::slice::from_raw_parts_mut::<'static, u8>(self.ptr, self.byte_len) };
-        std::io::Cursor::new(slice)
-    }
-
     // Via `#![feature(adt_const_params)]`: `JSType` derives `ConstParamTy`, so
     // `KIND` is a true const-generic and the `match` const-folds (the
     // unreachable arm becomes a post-mono `panic!`).
@@ -332,23 +317,6 @@ impl ArrayBuffer {
                 Bun__createArrayBufferForCopy(global, bytes.as_ptr().cast(), bytes.len())
             }),
             _ => panic!("ArrayBuffer::create: KIND not implemented"),
-        }
-    }
-
-    pub fn create_empty<const KIND: JSType>(global: &JSGlobalObject) -> JsResult<JSValue> {
-        crate::mark_binding!();
-        match KIND {
-            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); null ptr
-            // with len 0 is the documented empty case.
-            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__createUint8ArrayForCopy(global, ptr::null(), 0, false)
-            }),
-            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); null ptr
-            // with len 0 is the documented empty case.
-            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__createArrayBufferForCopy(global, ptr::null(), 0)
-            }),
-            _ => panic!("ArrayBuffer::create_empty: KIND not implemented"),
         }
     }
 
@@ -391,12 +359,6 @@ impl ArrayBuffer {
 
     pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> ArrayBuffer {
         value.as_array_buffer(ctx).unwrap()
-    }
-
-    pub fn to_js_from_default_allocator(global: &JSGlobalObject, bytes: &mut [u8]) -> JSValue {
-        // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is a
-        // mimalloc-backed buffer whose ownership transfers to JSC.
-        unsafe { JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len()) }
     }
 
     pub fn from_default_allocator(
@@ -630,30 +592,6 @@ impl ArrayBuffer {
         self.byte_slice_mut()
     }
 
-    /// Debug-asserts 2-byte alignment
-    /// before handing out a naturally-aligned `&mut [u16]`. Callers that cannot
-    /// guarantee alignment must use [`as_u16_unaligned`] instead.
-    #[inline]
-    pub fn as_u16(&mut self) -> &mut [u16] {
-        bun_core::Unaligned::slice_align_cast_mut(self.as_u16_unaligned())
-    }
-
-    /// Returns a slice of
-    /// [`Unaligned<u16>`](bun_core::Unaligned) — Rust forbids forming
-    /// `&[u16]` over a possibly-odd address, so the align(1) wrapper carries
-    /// the "load via `read_unaligned`" obligation to the caller.
-    #[inline]
-    pub fn as_u16_unaligned(&mut self) -> &mut [bun_core::Unaligned<u16>] {
-        if self.is_detached() {
-            return &mut [];
-        }
-        let len = self.byte_len / core::mem::size_of::<u16>();
-        // SAFETY: ptr non-null (checked above); `Unaligned<u16>` has size 2 and
-        // align 1, so any `*mut u8` is a valid `*mut Unaligned<u16>`. `&mut self`
-        // enforces exclusive access to this view for the borrow's lifetime.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u16>>(), len) }
-    }
-
     /// See [`as_u16`]; 4-byte variant.
     #[inline]
     pub fn as_u32(&mut self) -> &mut [u32] {
@@ -765,26 +703,6 @@ bun_core::comptime_string_map! {
 }
 
 impl BinaryType {
-    pub fn to_js_type(self) -> JSType {
-        match self {
-            BinaryType::ArrayBuffer => JSType::ArrayBuffer,
-            BinaryType::Buffer => JSType::Uint8Array,
-            // BinaryType::DataView => JSType::DataView,
-            BinaryType::Float32Array => JSType::Float32Array,
-            BinaryType::Float16Array => JSType::Float16Array,
-            BinaryType::Float64Array => JSType::Float64Array,
-            BinaryType::Int16Array => JSType::Int16Array,
-            BinaryType::Int32Array => JSType::Int32Array,
-            BinaryType::Int8Array => JSType::Int8Array,
-            BinaryType::Uint16Array => JSType::Uint16Array,
-            BinaryType::Uint32Array => JSType::Uint32Array,
-            BinaryType::Uint8Array => JSType::Uint8Array,
-            BinaryType::Uint8ClampedArray => JSType::Uint8ClampedArray,
-            BinaryType::BigInt64Array => JSType::BigInt64Array,
-            BinaryType::BigUint64Array => JSType::BigUint64Array,
-        }
-    }
-
     pub fn to_typed_array_type(self) -> TypedArrayType {
         match self {
             BinaryType::Buffer => TypedArrayType::TypeNone,
@@ -802,10 +720,6 @@ impl BinaryType {
             BinaryType::BigInt64Array => TypedArrayType::TypeBigInt64,
             BinaryType::BigUint64Array => TypedArrayType::TypeBigUint64,
         }
-    }
-
-    pub fn from_string(input: &[u8]) -> Option<BinaryType> {
-        BINARY_TYPE_MAP.get(input).copied()
     }
 
     pub fn from_js_value(global: &JSGlobalObject, input: JSValue) -> JsResult<Option<BinaryType>> {
@@ -896,17 +810,7 @@ pub struct MarkedArrayBuffer {
     pub pinned: bool,
 }
 
-// Hoisted to module scope (inherent associated type aliases are unstable).
-pub(crate) type ArrayBufferStream<'a> = std::io::Cursor<&'a mut [u8]>;
-
 impl MarkedArrayBuffer {
-    #[inline]
-    pub fn stream(&mut self) -> ArrayBufferStream<'_> {
-        // See the ArrayBuffer::stream lifetime note: caller must keep the
-        // backing JSValue alive for the stream's lifetime.
-        std::io::Cursor::new(self.buffer.byte_slice_mut())
-    }
-
     pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
@@ -970,11 +874,6 @@ impl MarkedArrayBuffer {
     #[inline]
     pub fn slice(&self) -> &[u8] {
         self.buffer.byte_slice()
-    }
-
-    #[inline]
-    pub fn slice_mut(&mut self) -> &mut [u8] {
-        self.buffer.byte_slice_mut()
     }
 
     /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an
@@ -1342,8 +1241,6 @@ bun_opaque::opaque_ffi! {
     /// Corresponds to `JSC::ArrayBuffer`.
     pub struct JSCArrayBuffer;
 }
-
-pub type JSCArrayBufferRef = bun_ptr::ExternalShared<JSCArrayBuffer>;
 
 // SAFETY: `JSC__ArrayBuffer__ref`/`deref` operate on JSC's internal
 // `RefCounted<ArrayBuffer>` count; the pointee remains alive while count > 0.

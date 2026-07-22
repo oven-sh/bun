@@ -127,8 +127,6 @@ pub struct Context<'a> {
 pub struct Stats {
     pub unpacked_size: usize,
     pub total_files: usize,
-    pub ignored_files: usize,
-    pub ignored_directories: usize,
     pub packed_size: usize,
     pub bundled_deps: usize,
 }
@@ -310,49 +308,6 @@ impl PackCommand {
             }
         }
         Ok(())
-    }
-
-    pub fn exec(ctx: Command::Context<'_>) -> crate::Result<()> {
-        let cli =
-            bun_install::package_manager::command_line_arguments::CommandLineArguments::parse(
-                bun_install::Subcommand::Pack,
-            )?;
-
-        let silent = cli.silent;
-        let (manager, original_cwd) =
-            match PackageManager::init(&mut *ctx, cli, bun_install::Subcommand::Pack) {
-                Ok(v) => v,
-                Err(err) => {
-                    if !silent {
-                        if err == bun_install::Error::MissingPackageJSON {
-                            let mut cwd_buf = PathBuffer::uninit();
-                            match bun_sys::getcwd_z(&mut cwd_buf) {
-                                Ok(cwd) => {
-                                    Output::err_generic(
-                                        "failed to find project package.json from: \"{}\"",
-                                        format_args!("{}", bstr::BStr::new(cwd.as_bytes())),
-                                    );
-                                }
-                                Err(_) => {
-                                    Output::err_generic(
-                                        "failed to find project package.json",
-                                        format_args!(""),
-                                    );
-                                }
-                            }
-                        } else {
-                            Output::err_generic(
-                                "failed to initialize bun install: {}",
-                                format_args!("{}", err.name()),
-                            );
-                        }
-                    }
-                    Global::crash();
-                }
-            };
-        drop(original_cwd);
-
-        Self::exec_with_manager(ctx, manager)
     }
 }
 

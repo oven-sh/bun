@@ -1,8 +1,6 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log,
-};
+use crate::shell::interpreter::{EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::cmd::Cmd;
@@ -47,7 +45,7 @@ impl Async {
             .set(interp.async_commands_executing.get() + 1);
         let evtloop = interp.event_loop;
         let id = interp.alloc_node(Node::Async(Async {
-            base: Base::new(StateKind::Async, parent, shell),
+            base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             state: AsyncState::Idle,

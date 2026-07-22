@@ -32,7 +32,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, Local, LogJsc,
     Scope,
 };
-use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
 use bun_http_types::URLPath;
@@ -43,7 +43,6 @@ use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
 use crate::webcore::{Request, Response};
-use bun_bundler as Transpiler;
 
 // Note: `FrameworkFileSystemRouter` is declared in this file's
 // `filesystem_router.classes.ts`, so codegen looks for the backing struct here
@@ -710,15 +709,6 @@ impl FileSystemRouter {
         scope.string(&bun_core::String::static_("nextjs"))
     }
 
-    #[bun_jsc::host_fn(getter, scoped)]
-    pub fn get_asset_prefix<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        if let Some(ref asset_prefix) = this.asset_prefix {
-            return Ok(scope.local(zs_to_js(asset_prefix.leak(), scope.unscoped_global())));
-        }
-
-        Ok(scope.null())
-    }
-
     // Codegen's `host_fn_finalize` calls this via `|b| FileSystemRouter::finalize(b)`
     // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
     // false positive on that contract.
@@ -903,11 +893,6 @@ impl MatchedRoute {
     }
 
     #[bun_jsc::host_fn(getter, scoped)]
-    pub fn get_route<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        Ok(scope.local(zs_to_js(this.route().name, scope.unscoped_global())))
-    }
-
-    #[bun_jsc::host_fn(getter, scoped)]
     pub fn get_kind<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         Ok(scope.local(zs_to_js(
             kind_enum::classify(this.route().name),
@@ -962,35 +947,6 @@ impl MatchedRoute {
         let value = JSObject::create_with_initializer(&mut creator, ctx, count);
 
         Ok(value)
-    }
-
-    pub fn get_script_src_string(
-        origin: &URL,
-        // `bun_object::get_public_path` takes `core::fmt::Write`.
-        writer: &mut impl core::fmt::Write,
-        file_path: &[u8],
-        client_framework_enabled: bool,
-    ) {
-        let mut entry_point_tempbuf = PathBuffer::uninit();
-        // We don't store the framework config including the client parts in the server
-        // instead, we just store a boolean saying whether we should generate this whenever the script is requested
-        // this is kind of bad. we should consider instead a way to inline the contents of the script.
-        if client_framework_enabled {
-            // `bun_paths::fs::PathName<'_>` is the lifetime-generic mirror of
-            // `bun_paths::fs::PathName<'static>`; `generate_entry_point_path` only copies
-            // `dir`/`base`/`ext` into `entry_point_tempbuf`, so a borrowed view suffices.
-            let path_name = bun_paths::fs::PathName::init(file_path);
-            bun_object::get_public_path(
-                Transpiler::entry_points::ClientEntryPoint::generate_entry_point_path(
-                    &mut entry_point_tempbuf,
-                    &path_name,
-                ),
-                origin,
-                writer,
-            );
-        } else {
-            bun_object::get_public_path(file_path, origin, writer);
-        }
     }
 
     #[bun_jsc::host_fn(getter, scoped)]

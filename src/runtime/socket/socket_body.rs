@@ -2038,6 +2038,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
+        // An earlier callback in this dispatch may have left a termination
+        // pending — on_open's error branch closes the socket from
+        // mark_inactive(), landing here. Entering JS trips assertNoException().
+        if handlers.global_object.has_exception() {
+            drop(cleanup);
+            return Ok(());
+        }
+
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         let scope = handlers.enter();

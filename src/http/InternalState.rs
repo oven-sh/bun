@@ -383,15 +383,6 @@ impl<'a> InternalState<'a> {
         Ok(())
     }
 
-    pub fn decompress(
-        &mut self,
-        buffer: &MutableString,
-        body_out_str: &mut MutableString,
-        is_final_chunk: bool,
-    ) -> Result<(), Error> {
-        self.decompress_bytes(buffer.list.as_slice(), body_out_str, is_final_chunk)
-    }
-
     // `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under
     // Stacked Borrows (decompress_bytes mutates `self.compressed_body`; the uncompressed
     // path materialises `&mut *body_out_str`), callers `mem::take` the body buffer's `list`

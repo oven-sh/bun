@@ -330,7 +330,7 @@ impl StringOrURL {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Bun__fetch / nodeHttpClient entry points
+// Bun__fetch entry point
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
@@ -338,17 +338,6 @@ impl StringOrURL {
 pub(crate) fn bun_fetch<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
     let ctx = scope.unscoped_global();
     let v = reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))?;
-    Ok(scope.local(v))
-}
-
-/// Internal entry point for Node.js HTTP client - allows body on GET/HEAD/OPTIONS
-#[bun_jsc::host_fn(scoped)]
-pub(crate) fn node_http_client<'s>(
-    scope: &mut Scope<'s>,
-    callframe: &CallFrame,
-) -> JsResult<Local<'s>> {
-    let ctx = scope.unscoped_global();
-    let v = reject_on_exception(ctx, fetch_impl::<true>(ctx, callframe))?;
     Ok(scope.local(v))
 }
 

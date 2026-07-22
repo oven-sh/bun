@@ -85,13 +85,6 @@ impl BlobOrStringOrBuffer {
         }
     }
 
-    pub fn protect(&self) {
-        match self {
-            Self::StringOrBuffer(sob) => sob.protect(),
-            _ => {}
-        }
-    }
-
     pub fn byte_length(&self) -> usize {
         self.slice().len()
     }
@@ -404,13 +397,6 @@ impl StringOrBuffer {
         }
     }
 
-    /// Consuming `to_thread_safe()` — see [`PathLike::into_thread_safe`].
-    #[inline]
-    pub fn into_thread_safe(mut self) -> bun_jsc::ThreadSafe<Self> {
-        self.to_thread_safe();
-        bun_jsc::ThreadSafe::adopt(self)
-    }
-
     pub fn from_js_to_owned_slice(
         global_object: &JSGlobalObject,
         value: JSValue,
@@ -445,15 +431,6 @@ impl StringOrBuffer {
                 }
                 Ok(buffer.to_node_buffer(ctx))
             }
-        }
-    }
-
-    /// Mirrors `to_thread_safe` but only
-    /// protects the JS-side buffer value (no string conversion).
-    #[inline]
-    pub fn protect(&self) {
-        if let Self::Buffer(buffer) = self {
-            buffer.buffer.value.protect();
         }
     }
 
@@ -699,21 +676,6 @@ impl StringOrBuffer {
         }
     }
 
-    pub fn from_js_with_encoding_value(
-        global: &JSGlobalObject,
-        value: JSValue,
-        encoding_value: JSValue,
-    ) -> JsResult<Option<StringOrBuffer>> {
-        let encoding: Encoding = 'brk: {
-            if !encoding_value.is_cell() {
-                break 'brk Encoding::Utf8;
-            }
-            break 'brk Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8);
-        };
-
-        Self::from_js_with_encoding(global, value, encoding)
-    }
-
     pub fn from_js_with_encoding_value_allow_string_object(
         global: &JSGlobalObject,
         value: JSValue,
@@ -817,11 +779,16 @@ impl From<bun_core::NodeEncoding> for Encoding {
     }
 }
 
-impl Encoding {
-    pub fn is_binary_to_text(self) -> bool {
-        matches!(self, Self::Hex | Self::Base64 | Self::Base64url)
-    }
+pub fn js_assert_encoding_valid(
+    global: &JSGlobalObject,
+    call_frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let value = call_frame.argument(0);
+    let _ = Encoding::assert(value, global, Encoding::Utf8)?;
+    Ok(JSValue::UNDEFINED)
+}
 
+impl Encoding {
     /// Caller must verify the value is a string
     pub fn from(slice: &[u8]) -> Option<Encoding> {
         ENCODING_MAP.get_ascii_case_insensitive(slice).copied()
@@ -885,19 +852,6 @@ impl Encoding {
                 ),
             )
             .throw()
-    }
-
-    /// Thin assertion wrapper over `encode_with_max_size`; currently has no
-    /// callers (CryptoHasher.rs uses `encode_with_max_size` directly).
-    #[inline]
-    pub fn encode_with_size(
-        self,
-        global_object: &JSGlobalObject,
-        size: usize,
-        input: &[u8],
-    ) -> JsResult<JSValue> {
-        debug_assert_eq!(input.len(), size);
-        self.encode_with_max_size(global_object, size, input)
     }
 
     /// `max_size` is a runtime arg (see `encode_with_size`); callers pass
@@ -965,36 +919,6 @@ unsafe extern "C" {
         global_object: &JSGlobalObject,
         encoding: Encoding,
     ) -> JSValue;
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
-/// This is used on the windows implementation of realpath, which is in javascript
-
-pub fn js_assert_encoding_valid(
-    global: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let value = call_frame.argument(0);
-    let _ = Encoding::assert(value, global, Encoding::Utf8)?;
-    Ok(JSValue::UNDEFINED)
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
-pub enum PathOrBuffer {
-    Path(bun_core::RawSlice<u8>),
-    Buffer(Buffer),
-}
-
-impl PathOrBuffer {
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Self::Path(p) => p.slice(),
-            Self::Buffer(_) => unreachable!("Zig accessed .path unconditionally"),
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1466,22 +1390,6 @@ impl PathLikeExt for PathLike {
 pub struct Valid;
 
 impl Valid {
-    pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
-        match zig_str.slice().len() {
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            0..MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .with_path(zig_str.slice())
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
-        }
-    }
-
     pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
         match len {
             // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
@@ -1495,10 +1403,6 @@ impl Valid {
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
-    }
-
-    pub fn path_string(zig_str: &ZigString, ctx: &JSGlobalObject) -> JsResult<()> {
-        Self::path_string_length(zig_str.len, ctx)
     }
 
     pub fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {

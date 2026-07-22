@@ -122,13 +122,8 @@ pub struct TestRunner<'a> {
     /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
     /// `test_command.rs` where this is populated.
     pub concurrent_test_glob: Option<&'a [&'a [u8]]>,
-    pub last_file: u64,
     pub bail: u32,
     pub max_concurrency: u32,
-
-    pub drainer: jsc::AnyTask::AnyTask,
-
-    pub has_pending_tests: bool,
 
     pub snapshots: Snapshots<'a>,
 
@@ -256,7 +251,6 @@ impl<'a> TestRunner<'a> {
         self.files
             .append(File {
                 source: bun_ast::Source::init_empty_file(file_path),
-                ..Default::default()
             })
             .expect("unreachable");
         *entry.value_ptr = file_id;
@@ -292,16 +286,6 @@ pub struct GetOrPutFileResult {
 
 pub struct File {
     pub source: bun_ast::Source,
-    pub log: bun_ast::Log,
-}
-
-impl Default for File {
-    fn default() -> Self {
-        Self {
-            source: bun_ast::Source::init_empty_file(b""),
-            log: bun_ast::Log::init_comptime(),
-        }
-    }
 }
 
 pub(crate) type FileList = MultiArrayList<File>;
@@ -310,7 +294,6 @@ pub(crate) type FileId = u32;
 bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
         source: bun_ast::Source,
-        log: bun_ast::Log,
     }
 }
 // u32 keys hash as identity in bun_collections.

@@ -202,8 +202,8 @@ pub fn parse_env<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local
     p.load_from_string::<true, false>(str.slice())?;
     drop(p);
 
-    let obj = JSValue::create_empty_object(global, map.count());
-    for (k, v) in map.iter() {
+    let obj = JSValue::create_empty_object(global, map.map.count());
+    for (k, v) in map.map.iter() {
         obj.put(
             global,
             ZigString::init_utf8(k),

@@ -18,13 +18,6 @@ pub mod token {
 /// "^1 ^2"
 /// ----|-----
 /// That is two Query
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Op {
-    None,
-    And,
-    Or,
-}
-
 #[derive(Default)]
 pub struct Query {
     pub range: Range,
@@ -434,20 +427,6 @@ impl<'a> fmt::Display for GroupFormatter<'a> {
 impl Group {
     pub fn fmt<'b>(&'b self, buf: &'b [u8]) -> GroupFormatter<'b> {
         GroupFormatter { group: self, buf }
-    }
-
-    pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> fmt::Result {
-        let temp = {
-            use std::io::Write as _;
-            let mut v: Vec<u8> = Vec::new();
-            // SAFETY: `input` points into the parse source buffer which the
-            // caller must keep alive for the lifetime of this Group (see the
-            // `input` field doc).
-            let input = unsafe { &*self.input };
-            let _ = write!(&mut v, "{}", self.fmt(input));
-            v
-        };
-        bun_core::fmt::encode_json_string(writer, &temp)
     }
 
     // `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
@@ -945,10 +924,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             let parse_result = Version::parse(sliced.sub(&input[i..]));
             let version = parse_result.version.min();
             if version.tag.has_build() {
-                list.flags.set_value(Flags::BUILD, true);
+                list.flags.set(Flags::BUILD);
             }
             if version.tag.has_pre() {
-                list.flags.set_value(Flags::PRE, true);
+                list.flags.set(Flags::PRE);
             }
 
             token.wildcard = parse_result.wildcard;
@@ -997,10 +976,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
                 let mut second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {
-                    list.flags.set_value(Flags::BUILD, true);
+                    list.flags.set(Flags::BUILD);
                 }
                 if second_version.tag.has_pre() {
-                    list.flags.set_value(Flags::PRE, true);
+                    list.flags.set(Flags::PRE);
                 }
                 let range: Range = match second_parsed.wildcard {
                     Wildcard::Major => {

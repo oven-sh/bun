@@ -25,7 +25,7 @@ pub mod linear_fifo;
 
 pub mod bit_set;
 pub mod pool;
-pub use pool::{ObjectPool, ObjectPoolTrait, ObjectPoolType, PoolGuard};
+pub use pool::{ObjectPool, ObjectPoolType, PoolGuard};
 #[path = "StaticHashMap.rs"]
 pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
@@ -34,7 +34,7 @@ pub use bounded_array::BoundedArray;
 pub use hive_array::{
     Fallback as HiveArrayFallback, HiveArray, HiveBox, HiveRef, HiveRefHandle, HiveSlot,
 };
-pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
+pub use linear_fifo::LinearFifo;
 pub use multi_array_list::MultiArrayList;
 #[doc(hidden)]
 pub use paste::paste as __mal_paste;
@@ -44,15 +44,9 @@ pub use bit_set::{
     AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
 };
 
-// Re-export for back-compat (`bun_jsc::host_fn`, `multi_array_list` import
-// from here); canonical impl lives in `bun_core::strings`.
-pub use bun_core::strings::{const_bytes_eq, const_str_eq};
-
-/// Namespace alias for the bit-set types.
-pub mod dynamic_bit_set {
-    pub use super::bit_set::DynamicBitSet;
-    pub use super::bit_set::DynamicBitSetList as List;
-}
+// `multi_array_list` imports from here; canonical impl lives in
+// `bun_core::strings`.
+pub use bun_core::strings::const_str_eq;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `PriorityQueue` — min-heap backed by a `Vec<T>`; the comparator context is
@@ -83,13 +77,6 @@ impl<T, C> PriorityQueue<T, C> {
     #[inline]
     pub fn count(&self) -> usize {
         self.items.len()
-    }
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
-    pub fn deinit(&mut self) {
-        self.items.clear();
     }
 }
 impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
@@ -154,11 +141,10 @@ pub use identity_context::{
 
 pub mod array_hash_map;
 pub use array_hash_map::{
-    ArrayHashMap, ArrayHashMapExt, AutoContext, CaseInsensitiveAsciiPrehashed,
-    CaseInsensitiveAsciiStringArrayHashMap, CaseInsensitiveAsciiStringContext, Entry,
-    GetOrPutResult, MapEntry, OccupiedEntry, StringArrayHashMap, StringHashMap,
-    StringHashMapContext, StringHashMapInner, StringHashMapKey, StringHashMapUnownedKey, StringSet,
-    VacantEntry, string_hash_map,
+    ArrayHashMap, ArrayHashMapExt, AutoContext, CaseInsensitiveAsciiStringArrayHashMap,
+    CaseInsensitiveAsciiStringContext, Entry, GetOrPutResult, MapEntry, OccupiedEntry,
+    StringArrayHashMap, StringHashMap, StringHashMapContext, StringHashMapInner, StringHashMapKey,
+    StringHashMapUnownedKey, StringSet, VacantEntry, string_hash_map,
 };
 /// Downstream crates name hashbrown's iterator/entry types in struct fields
 /// (e.g. `bun_resolver::DirEntryDirIter`). `StringHashMap` `Deref`s to a
@@ -368,10 +354,6 @@ impl<T, const N: usize> SmallList<T, N> {
     pub fn last(&self) -> Option<&T> {
         self.0.last()
     }
-    #[inline]
-    pub fn last_mut(&mut self) -> Option<&mut T> {
-        self.0.last_mut()
-    }
 
     // ── mutation ───────────────────────────────────────────────────────────
     #[cfg_attr(bun_asan, inline(never))]
@@ -397,14 +379,6 @@ impl<T, const N: usize> SmallList<T, N> {
         // remain admissible.
         self.0.extend(items.iter().cloned())
     }
-    #[cfg_attr(bun_asan, inline(never))]
-    #[cfg_attr(not(bun_asan), inline)]
-    pub fn append_slice_assume_capacity(&mut self, items: &[T])
-    where
-        T: Clone,
-    {
-        self.0.extend(items.iter().cloned())
-    }
     #[inline]
     pub fn insert(&mut self, index: u32, item: T) {
         self.0.insert(index as usize, item)
@@ -416,13 +390,6 @@ impl<T, const N: usize> SmallList<T, N> {
     {
         // SmallVec v1 `insert_from_slice` requires `T: Copy`; emulate with
         // `insert_many` (shifts the tail once, then writes the cloned items).
-        self.0.insert_many(index as usize, items.iter().cloned())
-    }
-    #[inline]
-    pub fn insert_slice_assume_capacity(&mut self, index: u32, items: &[T])
-    where
-        T: Clone,
-    {
         self.0.insert_many(index as usize, items.iter().cloned())
     }
     #[inline]
@@ -470,17 +437,6 @@ impl<T, const N: usize> SmallList<T, N> {
     #[inline]
     pub fn to_owned_slice(self) -> Box<[T]> {
         self.0.into_vec().into_boxed_slice()
-    }
-    #[inline]
-    pub fn into_vec(self) -> Vec<T> {
-        self.0.into_vec()
-    }
-    #[inline]
-    pub fn shallow_clone(&self) -> Self
-    where
-        T: Copy,
-    {
-        Self(self.0.clone())
     }
 
     // ── iteration helpers ───────────────────────────────────────────────────

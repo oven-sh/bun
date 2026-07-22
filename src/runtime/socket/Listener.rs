@@ -136,10 +136,6 @@ pub enum UnixOrHost {
     Fd(Fd),
 }
 
-impl UnixOrHost {
-    // Note: deinit() deleted — Box<[u8]> fields auto-drop.
-}
-
 impl Listener {
     #[bun_jsc::host_fn(method, scoped)]
     pub fn reload<'s>(
@@ -913,11 +909,6 @@ impl Listener {
         // connection / protos / the handlers `Rc`: dropped by heap::take below
         // SAFETY: reclaim the Box allocated in listen()
         drop(unsafe { bun_core::heap::take(this) });
-    }
-
-    #[bun_jsc::host_fn(getter, scoped)]
-    pub fn get_connections_count<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        Ok(scope.number(this.handlers.active_connections.get() as f64))
     }
 
     #[bun_jsc::host_fn(getter, scoped)]

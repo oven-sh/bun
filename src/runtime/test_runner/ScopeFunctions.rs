@@ -1012,7 +1012,7 @@ impl fmt::Display for ScopeFunctions {
             SelfConcurrent::Inherit => {}
         }
         if self.cfg.self_mode != SelfMode::Normal {
-            write!(f, ".{}", scope_mode_str(self.cfg.self_mode))?;
+            write!(f, ".{}", self.cfg.self_mode.tag_name())?;
         }
         if self.cfg.self_only {
             write!(f, ".only")?;
@@ -1101,15 +1101,3 @@ pub(crate) fn create_bound(
 use crate::test_runner::bun_test::{ConcurrentMode as SelfConcurrent, ScopeMode as SelfMode};
 // `TestReporterKind` in the spec is `bun_jsc::debugger::TestType` (Test/Describe).
 use bun_jsc::debugger::TestType as TestReporterKind;
-
-/// Local stringifier for `ScopeMode` — sibling `bun_test.rs` does not derive
-/// `IntoStaticStr` on it, so we can't use `<&'static str>::from`.
-fn scope_mode_str(m: SelfMode) -> &'static str {
-    match m {
-        SelfMode::Normal => "normal",
-        SelfMode::Skip => "skip",
-        SelfMode::Todo => "todo",
-        SelfMode::Failing => "failing",
-        SelfMode::FilteredOut => "filtered_out",
-    }
-}

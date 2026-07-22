@@ -118,7 +118,6 @@ pub mod js_bundler {
     pub struct Config {
         pub target: Target,
         pub entry_points: StringSet,
-        pub hot: bool,
         pub react_fast_refresh: bool,
         pub react_compiler: bun_ast::runtime::ReactCompilerMode,
         pub react_compiler_parse_test_pragmas: bool,
@@ -128,7 +127,6 @@ pub mod js_bundler {
         pub dir: OwnedString,
         pub outdir: OwnedString,
         pub rootdir: OwnedString,
-        pub serve: Serve,
         pub jsx: api::Jsx,
         pub force_node_env: options::ForceNodeEnv,
         pub code_splitting: bool,
@@ -155,7 +153,6 @@ pub mod js_bundler {
         pub css_chunking: bool,
         pub drop: StringSet,
         pub features: StringSet,
-        pub has_any_on_before_parse: bool,
         pub throw_on_error: bool,
         pub env_behavior: api::DotEnvBehavior,
         pub env_prefix: OwnedString,
@@ -177,7 +174,6 @@ pub mod js_bundler {
             Self {
                 target: Target::Browser,
                 entry_points: StringSet::default(),
-                hot: false,
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
@@ -187,7 +183,6 @@ pub mod js_bundler {
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
-                serve: Serve::default(),
                 jsx: api::Jsx {
                     factory: Box::default(),
                     fragment: Box::default(),
@@ -219,7 +214,6 @@ pub mod js_bundler {
                 css_chunking: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
-                has_any_on_before_parse: false,
                 throw_on_error: true,
                 env_behavior: api::DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
@@ -1319,12 +1313,6 @@ pub mod js_bundler {
         pub keep_names: bool,
     }
 
-    #[derive(Default)]
-    pub struct Serve {
-        pub handler_path: OwnedString,
-        pub prefix: OwnedString,
-    }
-
     fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
         if arguments.is_empty() || !arguments[0].is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1941,11 +1929,6 @@ impl BuildArtifact {
     ) -> JsResult<Local<'s>> {
         let v = this.blob.get_slice(scope.unscoped_global(), callframe)?;
         Ok(scope.local(v))
-    }
-
-    #[bun_jsc::host_fn(getter, scoped)]
-    pub fn get_type<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        Ok(scope.local(BlobExt::get_type(&this.blob, scope.unscoped_global())))
     }
 
     /// `callframe.this()` is a `JSBuildArtifact`, not a `JSBlob`, so the

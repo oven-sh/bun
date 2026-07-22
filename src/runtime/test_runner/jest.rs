@@ -588,6 +588,65 @@ pub(crate) fn js_node_test_mark_result(
     Ok(JSValue::UNDEFINED)
 }
 
+/// Reached only from `node:test` when `t.test()` is called after its parent
+/// finished: Node fails the late subtest with `parentAlreadyFinished` and exits
+/// non-zero. bun:test has no entry for it, so book the failure here directly.
+pub(crate) fn js_node_test_report_late_failure(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [name, error] = callframe.arguments_as_array::<2>();
+    let name_slice = name.to_slice(global)?;
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let (rep, worker_idx) = {
+        // SAFETY: single-threaded JS VM; short-lived borrow for the
+        // reporter read and the on_before_print dot-break.
+        let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+        let Some(rep) = buntest.reporter else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        buntest.bun_test_root.on_before_print();
+        // SAFETY: same reporter write-provenance invariant as below.
+        (rep, unsafe { (*rep.as_ptr()).worker_ipc_file_idx })
+    };
+    let mut line = Vec::<u8>::new();
+    crate::cli::test_command::write_test_status_line(super::execution::Result::Fail, &mut line);
+    let _ = writeln!(&mut line, " {}", bstr::BStr::new(name_slice.slice()));
+    if let Some(idx) = worker_idx {
+        crate::cli::test::parallel_runner::worker_emit_test_done(idx, &line);
+    } else {
+        let _ = Output::error_writer().write_all(&line);
+        Output::flush();
+    }
+    if !error.is_empty_or_undefined_or_null() {
+        global.bun_vm().as_mut().run_error_handler(error, None);
+        Output::flush();
+    }
+    // No JUnit entry: `maybe_print_junit_line` needs a bun:test sequence/entry
+    // that a late subtest doesn't have (same as `unhandled_errors_between_tests`).
+    // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
+    // `&mut`; single-threaded test runner, sole writer for this update.
+    let reporter: &mut CommandLineReporter = unsafe { &mut *rep.as_ptr() };
+    if !reporter.reporters.dots && !reporter.reporters.only_failures {
+        reporter.failures_to_repeat_buf.extend_from_slice(&line);
+    }
+    reporter.summary().fail += 1;
+    if reporter.summary().fail == reporter.jest.bail {
+        reporter.print_summary();
+        bun_core::pretty_error!(
+            "\nBailed out after {} failure{}<r>\n",
+            reporter.jest.bail,
+            if reporter.jest.bail == 1 { "" } else { "s" }
+        );
+        Output::flush();
+        reporter.write_junit_report_if_needed();
+        bun_core::Global::exit(1);
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 pub mod on_unhandled_rejection {
     use super::*;
 

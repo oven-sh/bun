@@ -922,6 +922,9 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
+// Books a late subtest's parentAlreadyFinished failure into the reporter so the
+// run prints it and exits 1. bun:test has no entry to fail for a late subtest.
+const reportLateFailure = $newRustFunction("jest.rs", "jsNodeTestReportLateFailure", 2);
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -1629,6 +1632,56 @@ function recordSuiteFailure(suite: TestNode, err: unknown) {
   suite.firstSubtestError ??= err ?? makeTestFailure("suite failed");
 }
 
+function runLateSubtest(
+  parent: TestNode,
+  name: string,
+  options: TestOptions,
+  fn: TestFn,
+  mode: "skip" | "todo" | undefined,
+  isSuite: boolean,
+): Promise<undefined> {
+  // isExecutionPhase=true keeps isRunning() true without `started`, so a nested
+  // t.test() inside the body goes to scheduleSubtest instead of recursing here.
+  const child = new TestNode(name, parent, options, isSuite, true);
+  if (mode === "todo" || options.todo) child.todoFlag = true;
+  if (mode === "skip" || options.skip) child.skipped = true;
+  const failure = makeTestFailure("test could not be started because its parent finished");
+  (failure as { failureType?: string }).failureType = "parentAlreadyFinished";
+  child.error = failure;
+  // Node still counts a late skip/todo as skip/todo (exit 0); only a plain late
+  // subtest flips the run to failing.
+  if (!child.todoFlag && !child.skipped) {
+    reportLateFailure(child.fullName, failure);
+  }
+  // Node replaces a {skip:true} body with a noop, so a late skip's body never
+  // runs; a late todo's body does (Node runs todo bodies).
+  if (child.skipped) return Promise.resolve(undefined);
+  // Node runs the body and awaits it; its outcome is discarded in favour of the
+  // parentAlreadyFinished failure above, and the returned promise resolves. A
+  // no-op done keeps a `(t, done)` body from throwing on `done()`.
+  const ctx = isSuite ? child.getSuiteCtx() : child.getCtx();
+  let body: unknown;
+  try {
+    body = runWithNode(child, () =>
+      fn.length === 2 ? fn.$call(undefined, ctx, kDefaultFunction) : fn.$call(undefined, ctx),
+    );
+  } catch {}
+  // Mirror executeTestNode: drain nested subtests the body scheduled, then
+  // reset mocks so a late body's t.mock.method() does not leak into later
+  // tests (Node's postRun() does both).
+  const settle = () => {
+    child.finished = true;
+    try {
+      child.mockTracker?.reset();
+    } catch {}
+    return undefined;
+  };
+  return Promise.resolve(body)
+    .catch(kDefaultFunction)
+    .then(() => drainSubtestChain(child))
+    .then(settle, settle);
+}
+
 // Awaits a node's subtest chain, including links appended while waiting.
 async function drainSubtestChain(node: TestNode) {
   let chain;
@@ -1754,9 +1807,10 @@ function addTest(
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined) {
     if (runningNode.finished) {
-      // t.test() escaped its parent: Node fails the late subtest but resolves
-      // the promise; don't fall through to bun:test's internal-phase throw.
-      return Promise.resolve(undefined);
+      // t.test() escaped its parent: Node runs the body, fails the late subtest
+      // with parentAlreadyFinished (resolving the returned promise), and reports
+      // it at the root so the run exits 1.
+      return runLateSubtest(runningNode, name, options, fn, mode, false);
     }
     if (runningNode.isRunning()) {
       // Subtest of a running test (or of an inline suite created inside one).
@@ -1821,7 +1875,7 @@ function addSuite(
 
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined && runningNode.finished) {
-    return Promise.resolve(undefined);
+    return runLateSubtest(runningNode, name, options, fn, mode, true);
   }
   if (runningNode !== undefined && runningNode.isRunning()) {
     const suite = new TestNode(name, runningNode, options, true, true);

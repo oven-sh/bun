@@ -864,10 +864,18 @@ end:
 }
 
 static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
-  /* Always continue; the user inspects via us_socket_verify_error after
-   * on_handshake. See SSL_verify_cb docs — returning 1 lets us defer the
-   * decision to JS without aborting mid-handshake. */
-  return 1;
+  /* Clients and non-rejectUnauthorized servers defer the decision to JS so
+   * authorized / authorizationError stay inspectable after the handshake. */
+  if (preverify_ok) return 1;
+  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  if (!ssl || !SSL_is_server(ssl) ||
+      !(SSL_get_verify_mode(ssl) & SSL_VERIFY_FAIL_IF_NO_PEER_CERT)) {
+    return 1;
+  }
+  /* requestCert + rejectUnauthorized must fail inside the handshake so the
+   * peer receives a fatal alert instead of a clean post-handshake close.
+   * SSL_get_verify_result keeps the X509 reason for tlsClientError. */
+  return 0;
 }
 
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
@@ -1491,14 +1499,43 @@ static int ssl_dispatch_parked_reason(struct us_socket_t *s) {
   return 1;
 }
 
+static void ssl_discard_parked_reason(struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data =
+      (struct loop_ssl_data *) s->group->loop->data.ssl_data;
+  if (loop_ssl_data && loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
+    loop_ssl_data->ssl_last_fatal_error[0] = 0;
+    loop_ssl_data->ssl_last_fatal_error_owner = NULL;
+  }
+}
+
 static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   s->ssl_handshake_state = HANDSHAKE_COMPLETED;
-  /* A fatal SSL protocol error (wrong version number, bad record, ...) was
-   * recorded just before this failure: report it instead of the X509 verify
-   * result so Node's tlsClientError / client error carries the OpenSSL
-   * reason string. */
-  if (!success && ssl_dispatch_parked_reason(s)) {
-    return;
+  if (!success) {
+    /* Server cert-reject failures report SSL_get_verify_result directly. Gate
+     * on a presented peer cert so pre-verify failures (plain HTTP, no cert,
+     * bad record) keep their parked reason instead of INVALID_CALL. */
+    if (s_ssl(s) && SSL_is_server(s_ssl(s)) &&
+        (SSL_get_verify_mode(s_ssl(s)) & SSL_VERIFY_FAIL_IF_NO_PEER_CERT)) {
+      X509 *peer_cert = SSL_get_peer_certificate(s_ssl(s));
+      if (peer_cert) {
+        X509_free(peer_cert);
+        long x509_err = SSL_get_verify_result(s_ssl(s));
+        if (x509_err != X509_V_OK) {
+          ssl_discard_parked_reason(s);
+          struct us_bun_verify_error_t verify_error = {
+              .error = x509_err,
+              .code = us_X509_error_code(x509_err),
+              .reason = X509_verify_cert_error_string(x509_err)};
+          us_dispatch_handshake(s, 0, verify_error);
+          return;
+        }
+      }
+    }
+    /* Fatal protocol errors (wrong version number, bad record, ...) parked
+     * above carry the OpenSSL reason string for tlsClientError. */
+    if (ssl_dispatch_parked_reason(s)) {
+      return;
+    }
   }
   struct us_bun_verify_error_t verify_error = us_internal_ssl_verify_error(s);
   us_dispatch_handshake(s, success, verify_error);

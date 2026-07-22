@@ -2143,6 +2143,10 @@ Reo=
 -----END CERTIFICATE-----`;
 
   const UNTRUSTED_MESSAGE = "unable to verify the first certificate";
+  // Under requestCert + rejectUnauthorized the server aborts the handshake at
+  // the first X509 failure so the peer gets a fatal alert, so that is the
+  // reason reported here (vs the follow-on UNTRUSTED_MESSAGE seen otherwise).
+  const REJECTED_CLIENT_CERT_MESSAGE = "unable to get local issuer certificate";
 
   // https://github.com/oven-sh/bun/issues/33846
   describe.concurrent("Bun.connect (server certificate)", () => {
@@ -2789,10 +2793,10 @@ Reo=
     it("closes a connection whose client certificate is not trusted", async () => {
       using t = await acceptFrom({ ca: CA_CRT, requestCert: true }, { key: ROGUE_KEY, cert: ROGUE_CRT });
       expect(await t.handshake.promise).toEqual({
-        successArg: true,
+        successArg: false,
         authorizedGetter: false,
-        callbackError: UNTRUSTED_MESSAGE,
-        getterError: UNTRUSTED_MESSAGE,
+        callbackError: REJECTED_CLIENT_CERT_MESSAGE,
+        getterError: REJECTED_CLIENT_CERT_MESSAGE,
         writeResult: -1,
       });
       await t.serverClosed.promise;
@@ -2901,7 +2905,11 @@ Reo=
         },
       });
       void client;
-      expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, writeResult: -1 });
+      expect(await handshake.promise).toEqual({
+        authorized: false,
+        error: REJECTED_CLIENT_CERT_MESSAGE,
+        writeResult: -1,
+      });
       await serverClosed.promise;
       expect(serverReceived).toEqual([]);
       await clientClosed.promise;
@@ -2970,7 +2978,11 @@ Reo=
           },
         },
       });
-      expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, writeResult: -1 });
+      expect(await handshake.promise).toEqual({
+        authorized: false,
+        error: REJECTED_CLIENT_CERT_MESSAGE,
+        writeResult: -1,
+      });
       await serverClosed.promise;
       expect(serverReceived).toEqual([]);
       await clientClosed.promise;

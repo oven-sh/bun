@@ -138,7 +138,6 @@ export const FAULTS: Record<string, Fault[]> = {
   NtOpenSection: [F("C0000034"), F("C0000022")],
   NtOpenSemaphore: [F("C0000034")],
   NtCreateMutant: [F("C0000035"), F("C0000022")],
-  NtSetEvent: [F("C0000008")],
   // ALPC: bun reaches the DNS/console services over RPC; the transport
   // failing = "service unreachable" (C0000037 PORT_DISCONNECTED). These are
   // issued from inside rpcrt4, so they ride the ALPC_OK allowlist below.
@@ -172,6 +171,12 @@ export const NEVER_FAULT = new Set([
   // deadlocks and lost wakeups that no environment produces
   "NtWaitForSingleObject", "NtWaitForMultipleObjects", "NtWaitForAlertByThreadId",
   "NtAlertThreadByThreadId", "NtDelayExecution", "NtYieldExecution", "NtTestAlert",
+  // signaling primitives - the WAKE half of wait/wake: failing SetEvent /
+  // ReleaseSemaphore / etc. on a VALID handle fabricates a lost wakeup no
+  // environment produces (they fail only on bad handles) - a guaranteed
+  // fake hang, exactly like faulting the wait itself
+  "NtSetEvent", "NtResetEvent", "NtPulseEvent", "NtClearEvent", "NtReleaseSemaphore",
+  "NtReleaseMutant", "NtSetTimer", "NtSetTimerEx", "NtCancelTimer", "NtSetIoCompletion",
   "NtWaitForWorkViaWorkerFactory", "NtReleaseWorkerFactoryWorker", "NtSignalAndWaitForSingleObject",
   // control-flow / loader / callbacks
   "NtContinue", "NtCallbackReturn", "NtRaiseException", "NtRaiseHardError",

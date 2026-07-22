@@ -150,6 +150,11 @@ function drawSchedule(): string[] {
   while (rules.size < n && guard++ < n * 8) {
     const c = pickCoord();
     const f = pick(FAULTS[c.sysName]);
+    // A post-lie (op SUCCEEDED, we report failure) on a call issued from
+    // inside another module ('o:' key) fabricates an impossible world - a
+    // completed operation does not retroactively report failure inside
+    // system machinery. Never draw it (the sweeper drops the same class).
+    if (f.mode === "post" && c.key.startsWith("o:")) continue;
     // hit biased deep: sqrt of a uniform skews toward the late end
     const hit = Math.min(c.hits, 1 + Math.floor(Math.sqrt(rnd()) * c.hits));
     rules.add(`${c.sysName} ${c.key} ${hit} ${f.mode} ${f.status}`);

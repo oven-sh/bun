@@ -1687,56 +1687,67 @@ function Socket(options?) {
       this[kOnreadBuffer] = onreadBuffer;
     }
     // onStreamRead calls the user callback bare - a throw is an uncaught
-    // exception, not a socket 'error'.
+    // exception, not a socket 'error'. Node bounds each kernel read to the
+    // onread buffer's size, so each slice is a separate onStreamRead call and
+    // a swallowed uncaughtException loses no bytes; bun slices one larger
+    // native read in this loop, so the catch is per-slice.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L179
     this[kOnreadDeliver] = function deliver(buffer) {
-      try {
-        let offset = 0;
-        const total = buffer.length;
-        while (offset < total) {
-          const dest = self[kOnreadBuffer];
-          if (dest === true) {
-            const ret = onreadCallback(total - offset, true);
+      let offset = 0;
+      const total = buffer.length;
+      while (offset < total) {
+        const dest = self[kOnreadBuffer];
+        if (dest === true) {
+          let ret;
+          try {
+            ret = onreadCallback(total - offset, true);
             if (onreadBufferIsFn) {
               const next = onreadBuffer();
               if (isUint8Array(next)) self[kOnreadBuffer] = next;
             }
-            if (self.destroyed) return;
-            if (ret === false || self.isPaused()) {
-              self[kOnreadTail] = kOnreadEmptyTail;
-              self._handle?.pause?.();
-            }
-            return;
+          } catch (e) {
+            // The native data dispatch would otherwise route a throw to the
+            // socket error handler; hand it to the uncaught-exception path
+            // synchronously the way node's bare call does.
+            reportError(e);
           }
-          if (dest.length === 0) {
-            const err = new Error("read ENOBUFS") as Error & { code?: string; errno?: number; syscall?: string };
-            err.code = "ENOBUFS";
-            err.errno = UV_ENOBUFS;
-            err.syscall = "read";
-            self.destroy(err);
-            return;
+          if (self.destroyed) return;
+          if (ret === false || self.isPaused()) {
+            self[kOnreadTail] = kOnreadEmptyTail;
+            self._handle?.pause?.();
           }
-          const n = MathMin(dest.length, total - offset);
-          dest.set(buffer.subarray(offset, offset + n));
-          offset += n;
-          const ret = onreadCallback(n, dest);
+          return;
+        }
+        if (dest.length === 0) {
+          const err = new Error("read ENOBUFS") as Error & { code?: string; errno?: number; syscall?: string };
+          err.code = "ENOBUFS";
+          err.errno = UV_ENOBUFS;
+          err.syscall = "read";
+          self.destroy(err);
+          return;
+        }
+        const n = MathMin(dest.length, total - offset);
+        dest.set(buffer.subarray(offset, offset + n));
+        offset += n;
+        let ret;
+        try {
+          ret = onreadCallback(n, dest);
           if (onreadBufferIsFn) {
             const next = onreadBuffer();
             if (isUint8Array(next)) self[kOnreadBuffer] = next;
           }
-          if (self.destroyed) return;
-          if (ret === false || self.isPaused()) {
-            const rest = buffer.subarray(offset);
-            self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
-            self._handle?.pause?.();
-            return;
-          }
+        } catch (e) {
+          // Same as above: report then fall through so the next slice is
+          // delivered, matching node's per-onStreamRead behavior.
+          reportError(e);
         }
-      } catch (e) {
-        // The native data dispatch would otherwise route a throw to the
-        // socket error handler; hand it to the uncaught-exception path
-        // synchronously the way node's bare call does.
-        reportError(e);
+        if (self.destroyed) return;
+        if (ret === false || self.isPaused()) {
+          const rest = buffer.subarray(offset);
+          self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
+          self._handle?.pause?.();
+          return;
+        }
       }
     };
     // when the onread option is specified we use a different handlers object

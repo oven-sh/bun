@@ -688,14 +688,12 @@ it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async ()
 // hash-index rebuild per timer, so a GC sweep of n id-accessed timers was
 // O(n^2). 20k such timers froze the loop for ~2-3 s on release, tens of
 // seconds at 30k+. Node: ~5 ms for 200k. With swap_remove() the sweep is O(n).
-it(
-  "GC of many id-accessed timers is not quadratic",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+it("GC of many id-accessed timers is not quadratic", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
           const N = 20000;
           for (let i = 0; i < N; i++) {
             const t = setTimeout(() => {}, 3_600_000);
@@ -707,26 +705,24 @@ it(
           const ms = performance.now() - t0;
           process.stdout.write(JSON.stringify({ ms: Math.round(ms) }));
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const filteredStderr = stderr
-      .split("\n")
-      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-    expect(filteredStderr).toBe("");
-    const { ms } = JSON.parse(stdout);
-    // Before: ~2100-3400 ms release, far more on debug+ASAN (quadratic in N).
-    // After: <10 ms release, ~100-170 ms debug+ASAN (linear). 1500 ms splits
-    // the two with ~9x headroom over the fixed debug+ASAN number.
-    expect(ms).toBeLessThan(1500);
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
+  const { ms } = JSON.parse(stdout);
+  // Before: ~2100-3400 ms release, far more on debug+ASAN (quadratic in N).
+  // After: <10 ms release, ~100-170 ms debug+ASAN (linear). 1500 ms splits
+  // the two with ~9x headroom over the fixed debug+ASAN number.
+  expect(ms).toBeLessThan(1500);
+  expect(exitCode).toBe(0);
+}, 30_000);
 
 it("timer heap clock is monotonic, not wall-clock", () => {
   // The clock that schedules setTimeout/setInterval deadlines must be monotonic

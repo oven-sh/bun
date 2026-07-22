@@ -199,7 +199,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
         JSValue value = options->get(lexicalGlobalObject, name);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        newOptions->putDirect(vm, name, value, 0);
+        newOptions->putDirectMayBeIndex(lexicalGlobalObject, name, value);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 

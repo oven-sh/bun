@@ -222,3 +222,12 @@ test("user options are forwarded through custom inspect", () => {
     "BroadcastChannel { name:\n   'hello',\n  active:\n   true }",
   );
 });
+
+test("custom inspect handles options with numeric keys", () => {
+  const bc = new BroadcastChannel("hello");
+  bc.unref();
+  const inspectCustom = bc[Symbol.for("nodejs.util.inspect.custom")];
+  const opts = { 0: "a", 1: "b", depth: 2 };
+  expect(inspectCustom.call(bc, 2, opts, util.inspect)).toBe("BroadcastChannel { name: 'hello', active: true }");
+  bc.close();
+});

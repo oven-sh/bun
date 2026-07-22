@@ -10,7 +10,7 @@
 // as many different bugs as fast as possible.
 //
 //   bun driver/wide.ts --bun <bun.exe> --root C:\bun\test\js [--root ...]
-//     [--timeout 45] [--jobs 8] [--rules 3] [--passes N] [--seed S]
+//     [--timeout 45] [--jobs 8] [--rules 30] [--passes N] [--seed S]
 //     [--work C:\wsfwide] [--queue C:\wsfqueue]
 
 import { appendFileSync, readdirSync, rmSync, statSync } from "node:fs";
@@ -33,7 +33,9 @@ if (!bun || !roots.length) {
 }
 const timeoutMs = 1000 * +(flag("--timeout", "45") as string);
 const jobs = Math.max(1, +(flag("--jobs", "8") as string));
-const nRules = Math.max(1, +(flag("--rules", "3") as string));
+// A broad schedule: many callsites per file so whichever paths the file
+// exercises are covered (see drawSchedule). Default breadth, not depth.
+const nRules = Math.max(1, +(flag("--rules", "30") as string));
 const passes = +(flag("--passes", "0") as string) || Infinity;
 const workRoot = join(flag("--work", "C:\\wsfwide") as string, stamp);
 const queueDir = flag("--queue", "C:\\wsfqueue") as string;
@@ -192,14 +194,24 @@ const pickSite = (): Site => {
 // "<syscall> <key> <hit> <mode> <status>": a specific program callsite at a
 // LOW hit index - the test's first/second call through that path, however
 // much startup traffic preceded it, and equally reachable in a spawned
-// child. A callsite key never drifts, so a hit replays.
+// child. A callsite key never drifts, so a hit replays. Drawn as a BROAD
+// schedule (many distinct callsites per file, no repeats): a specific
+// callsite only fires when the file exercises that path, and a random 3 of
+// ~150 mostly missed (74% no-fire) - coverage across many callsites at once
+// means a file firing on whichever paths it actually touches, while the
+// per-file cost stays one run.
 function drawSchedule(): string[] {
   const rules = new Set<string>();
+  const used = new Set<string>(); // one rule per callsite
   let guard = 0;
-  while (rules.size < nRules && guard++ < nRules * 6) {
+  const want = Math.min(nRules, sites.length);
+  while (used.size < want && guard++ < want * 8) {
     const site = pickSite();
+    const id = `${site.sysName} ${site.key}`;
+    if (used.has(id)) continue;
     const faults = faultsFor(site.sysName);
     if (!faults) continue;
+    used.add(id);
     const f = pick(faults);
     const r = rnd();
     const hit = r < 0.55 ? 1 : r < 0.85 ? 2 : 3;

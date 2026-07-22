@@ -835,9 +835,9 @@ public:
         if (!Super::isCorked()) {
             LoopData *loopData = Super::getLoopData();
             /* Captured before handler(): an upgrade inside the handler moves
-             * the socket to the WebSocket group, after which
-             * getSocketContextDataS(this) no longer points at HttpContextData. */
-            HttpContextData<SSL> *httpContextData = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this);
+             * the socket to the WebSocket group (in-place) or marks the old
+             * allocation closed (reallocated). */
+            us_socket_group_t *httpGroup = us_socket_group((us_socket_t *) this);
             Super::cork();
             handler();
 
@@ -849,12 +849,15 @@ public:
              * The upgrade case is handled by HttpContext's uncork or the drain
              * loop. */
             if (loopData->findCorkSlot(this) == LoopData::INVALID_CORK_SLOT) {
-                /* (b) and (c) only happen while onData is parsing; (a) from an
-                 * async handler completing outside onData lands here via
-                 * internalEnd()'s uncork with a connection-close mark nothing
-                 * else acts on (onData's post-parse close check is not on the
-                 * stack). */
-                if (!httpContextData->flags.isParsingHttp) {
+                /* (a) from an async handler completing outside this socket's
+                 * onData (which corks it, so that socket takes the else branch
+                 * below) lands here via internalEnd()'s uncork with a
+                 * connection-close mark nothing else acts on. For (b) the ext
+                 * is still HttpResponseData and PENDING is still set; for (c)
+                 * the group changed (in-place adopt) or this allocation was
+                 * marked closed (reallocated adopt). */
+                if (!us_socket_is_closed((us_socket_t *) this)
+                    && us_socket_group((us_socket_t *) this) == httpGroup) {
                     HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
                     if (httpResponseData->shouldCloseConnection()
                         && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0

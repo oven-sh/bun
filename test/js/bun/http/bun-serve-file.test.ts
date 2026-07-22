@@ -1239,12 +1239,14 @@ server.stop(true);
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const result = JSON.parse(stdout.trim());
-  expect(result.firstLine).toBe("HTTP/1.1 200 OK");
-  expect(result.body).toBe(true);
+  const result = JSON.parse(stdout.trim() || "{}");
+  expect({ firstLine: result.firstLine, body: result.body, stderr, exitCode }).toEqual({
+    firstLine: "HTTP/1.1 200 OK",
+    body: true,
+    stderr: "",
+    exitCode: 0,
+  });
   // At least one full response. POSIX serves both (sync file read); Windows
   // serves the first and closes.
   expect(result.responses).toBeGreaterThanOrEqual(1);
-  expect(exitCode).toBe(0);
 });

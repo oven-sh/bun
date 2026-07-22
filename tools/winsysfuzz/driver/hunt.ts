@@ -130,10 +130,13 @@ for (const s of scenarios) {
       const v = /^## \[([a-z-]+)\]/.exec(part)?.[1] ?? "unknown";
       const sys = /^## \[[a-z-]+\] \S+ - (\w+)/.exec(part)?.[1] ?? "?";
       const where = /\*\*where the fault fired\*\*: `([^`(]+?)(\+0x[0-9a-f]+)? /.exec(part)?.[1] ?? "?";
+      // A crash's own signature is the sharpest dedupe key across targets
+      // ("Segmentation fault at address 0x24" is one bug in five test files).
+      const csig = /\*\*crash signature\*\*: `([^`]+)`/.exec(part)?.[1];
       cards.push({
         scenario: s.name,
         verdict: v,
-        sig: `${sys} @ ${where.trim()}`,
+        sig: csig ? `crash: ${csig}` : `${sys} @ ${where.trim()}`,
         card: [`### ${s.name}`, part.trim().replace(/^## /, "**").replace(/\n/, "**\n")],
       });
     }

@@ -146,6 +146,11 @@ if (base.outcome !== "exit") {
   console.error("baseline did not exit cleanly; refusing to sweep a hanging baseline");
   process.exit(1);
 }
+// "slow" is relative to what the program normally takes: an absolute
+// floor for fast programs, else 2x baseline (a 29s test suite is not slow at
+// 30s). And a baseline that already exits non-zero weakens error-exit as an
+// oracle - say so in the report rather than silently pretending otherwise.
+const slowMs = Math.max(8000, base.ms * 2);
 const baseTrace = await readTraceDir(base.dir);
 if (!baseTrace) {
   console.error("no baseline trace produced");
@@ -240,6 +245,7 @@ interface Result {
   fired: number;
   ms: number;
   stdoutDiffers: boolean;
+  crashSig: import("./lib").CrashSig | null;
 }
 const results: Result[] = [];
 let next = 0;
@@ -284,19 +290,26 @@ async function worker(w: number) {
       const tr = await readTraceDir(rr.dir, { faultsOnly: true });
       fired = tr ? tr.recs.filter(r => r.fault).length : 0;
       if (rr.outcome === "hang") outcome = "HANG";
-      else if (rr.crash) outcome = job.expect === "abort-expected" ? "expected-abort" : "CRASH";
-      else if (fired === 0) outcome = "no-fire";
-      else if (rr.ms >= 8000) outcome = "slow";
+      else if (rr.crash) {
+        // A crash. Sort out what is NOT a bun bug before reporting: an
+        // allocator-failure abort is by design, and a fault whose every
+        // backtrace frame is a system DLL means we sabotaged system code
+        // from inside its own machinery (mswsock's private threads etc.).
+        if (job.expect === "abort-expected") outcome = "expected-abort";
+        else if (rr.crashSig?.boundary === "system-module") outcome = "system-crash";
+        else outcome = "CRASH";
+      } else if (fired === 0) outcome = "no-fire";
+      else if (rr.ms >= slowMs) outcome = "slow";
       else if (rr.exitCode !== base.exitCode) outcome = "error-exit";
       else if (rr.stdout !== base.stdout) outcome = "diverged";
       else outcome = "clean";
     } catch (err) {
       outcome = "driver-error";
-      rr = { outcome: "exit", exitCode: null, ms: 0, stdout: "", stderr: String(err), logPath: null, dir, crash: false };
+      rr = { outcome: "exit", exitCode: null, ms: 0, stdout: "", stderr: String(err), logPath: null, dir, crash: false, crashSig: null };
       console.log(`  !! driver-error on job ${job.id}: ${String(err).slice(0, 120)}`);
     }
 
-    const res: Result = { job, outcome, exitCode: rr.exitCode, fired, ms: rr.ms, stdoutDiffers: rr.stdout !== base.stdout };
+    const res: Result = { job, outcome, exitCode: rr.exitCode, fired, ms: rr.ms, stdoutDiffers: rr.stdout !== base.stdout, crashSig: rr.crashSig ?? null };
     results.push(res);
     liveWriter.write(
       JSON.stringify({
@@ -336,7 +349,8 @@ const rank: Record<string, number> = {
   diverged: 5,
   "no-fire": 6,
   clean: 7,
-  "driver-error": 8,
+  "system-crash": 8, // fault crashed a system DLL's own machinery: not a bun bug
+  "driver-error": 9,
 };
 results.sort((a, b) => rank[a.outcome] - rank[b.outcome]);
 const counts = new Map<string, number>();
@@ -440,7 +454,12 @@ if (findings.length) {
   md.push("");
   md.push(`- program: \`${progArgs.join(" ")}\``);
   md.push(`- ${results.length} runs; outcomes: ${[...counts.entries()].map(([k, v]) => `${k}=${v}`).join(" ")}`);
-  md.push(`- baseline exit=${base.exitCode} in ${base.ms}ms; watchdog ${timeoutMs / 1000}s (verify at ${(2 * timeoutMs) / 1000}s)`);
+  md.push(`- baseline exit=${base.exitCode} in ${base.ms}ms; watchdog ${timeoutMs / 1000}s (verify at ${(2 * timeoutMs) / 1000}s); slow threshold ${slowMs}ms`);
+  if (base.exitCode !== 0)
+    md.push(
+      "- **weakened oracle**: the baseline already exits non-zero (pre-existing failures), so `error-exit` " +
+        "vs baseline is muted here - trust CRASH/HANG cards, discount error-exit tallies",
+    );
   // Load-health during the sweep, measured by the interleaved no-fault
   // controls. A degraded control means the box was saturated at some point:
   // HANGs are then suspect and every 'load-dependent' verdict doubly so.
@@ -469,6 +488,15 @@ if (findings.length) {
     md.push(`- **where the fault fired**: \`${ownerFrame(f.job.coord)}\` [${coordModule(f.job.coord)}]`);
     if (!f.job.coord.key.startsWith("b:"))
       md.push(`- **immediate caller** (key ${f.job.coord.key}): \`${keyName(baseTrace!, f.job.coord.key)}\``);
+    if (f.crashSig) {
+      md.push(`- **crash signature**: \`${f.crashSig.signature}\` (${f.crashSig.kind}, boundary: ${f.crashSig.boundary})`);
+      if (f.crashSig.frames.length) {
+        md.push("- **its own backtrace** (as printed by the crashing process):");
+        md.push("```");
+        for (const fr of f.crashSig.frames.slice(0, 10)) md.push(fr);
+        md.push("```");
+      }
+    }
     // The scraped nearest frame can be an unrelated stack leftover (a
     // mimalloc/CRT frame in front of a threadpool call), so show the
     // distinct candidate frames too rather than betting on one.

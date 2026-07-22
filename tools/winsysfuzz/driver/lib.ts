@@ -47,6 +47,67 @@ export const STATUS: Record<string, string> = {
 };
 export const statusName = (h: string) => STATUS[h.toLowerCase()] ?? h;
 
+// --- crash detection by output signature -------------------------------------
+// bun installs its own crash handler: a segfault/panic/assertion prints a
+// report and exits with an ordinary code, so an exit-code oracle NEVER sees
+// bun crash. And under `bun test`, a crashing CHILD bun surfaces only as the
+// parent's failed test. So a crash is detected by what the process WROTE.
+// Ordered most- to least-specific; the first match names the crash.
+const CRASH_SIGNATURES: { re: RegExp; kind: string }[] = [
+  { re: /panic\([^)]*\): (Segmentation fault at address 0x[0-9a-fA-F]+)/, kind: "segfault" },
+  { re: /panic\([^)]*\): (Illegal instruction at address 0x[0-9a-fA-F]+)/, kind: "illegal-instruction" },
+  { re: /panic\([^)]*\): ([^\n]{0,120})/, kind: "panic" },
+  { re: /(ASSERTION FAILED: [^\n]{0,120})/, kind: "jsc-assert" },
+  { re: /(Assertion failed: [^\n]{0,140})/, kind: "c-assert" },
+  { re: /(mimalloc: assertion failed[^\n]{0,120})/, kind: "mimalloc-assert" },
+  { re: /(panic: [^\n]{0,120})/, kind: "rust-panic" },
+  { re: /(RangeError: Out of memory[^\n]{0,80})/, kind: "oom" },
+  { re: /(oh no: Bun has crashed[^\n]{0,80})/, kind: "crash-banner" },
+];
+export interface CrashSig {
+  kind: string;
+  signature: string; // stable dedupe key: the matched line, addresses folded
+  detail: string; // the raw matched text
+  // Whose code faulted, from the report's own backtrace addresses. bun's
+  // handler catches ANY in-process fault - even one on a system DLL's
+  // private thread - so a signature alone doesn't blame bun. On x64 the
+  // exe maps at 0x7FF6/0x7FF7... while system DLLs sit at 0x7FFC-0x7FFE...:
+  // 'bun' = some frame in the exe (bun's code involved), 'system-module' =
+  // every frame is a DLL (we sabotaged system code from inside), 'unknown'.
+  boundary: "bun" | "system-module" | "unknown";
+  frames: string[]; // the printed backtrace lines, for the card
+}
+export function detectCrash(stdout: string, stderr: string): CrashSig | null {
+  const text = stderr + "\n" + stdout;
+  for (const { re, kind } of CRASH_SIGNATURES) {
+    const m = re.exec(text);
+    if (m) {
+      const detail = m[1].trim();
+      // Fold volatile addresses/counts so identical crashes dedupe:
+      // "Segmentation fault at address 0x24" keeps the low offset (a
+      // struct-field null deref reads identically), thread ids and
+      // pointer-sized addresses fold.
+      const signature = detail
+        .replace(/0x[0-9a-fA-F]{9,}/g, "0xPTR")
+        .replace(/\bthread \d+\b/g, "thread N")
+        .replace(/\b\d{5,}\b/g, "N");
+      // The handler's backtrace: lines like "???:?:?: 0x7ffc... in ??? (???)"
+      // or "<file>:<line>:<col>: 0x7ff6... in <symbol> (bun-debug.exe)".
+      const frames = [...text.matchAll(/(?:^|\n)([^\n]*0x7[Ff][0-9A-Fa-f]{10,}[^\n]*)/g)]
+        .map(x => x[1].trim())
+        .slice(0, 24);
+      let boundary: CrashSig["boundary"] = "unknown";
+      if (frames.length) {
+        const inExe = frames.some(f => /0x7[Ff][Ff][0-9AaBb]/.test(f) || /bun(-debug)?\.exe/i.test(f));
+        const inDll = frames.some(f => /0x7[Ff][Ff][C-Fc-f]/.test(f));
+        boundary = inExe ? "bun" : inDll ? "system-module" : "unknown";
+      }
+      return { kind, signature, detail, boundary, frames };
+    }
+  }
+  return null;
+}
+
 // --- trace records -----------------------------------------------------------
 
 export interface Rec {
@@ -235,6 +296,7 @@ export interface RunResult {
   logPath: string | null;
   dir: string; // the run directory (holds parent + child traces)
   crash: boolean; // NTSTATUS-style exit
+  crashSig: CrashSig | null; // crash detected by output signature (bun's handler masks exit codes)
 }
 
 // The toolkit NEVER deletes: no rm, no unlink, anywhere. Runs never reuse a
@@ -348,6 +410,7 @@ export interface ReplayResult {
   faultRec: Rec | null;
   hangStacks: string | null;
   crashDump: string | null;
+  crashSig: CrashSig | null; // crash by output signature
   stdout: string;
   stderr: string;
   dir: string;
@@ -401,7 +464,12 @@ export async function replayCoordinate(opts: {
   clearTimeout(timer);
   const ms = Math.round(performance.now() - t0);
   const exitCode = timedOut ? null : proc.exitCode;
-  const crash = exitCode !== null && (exitCode >= 0x80000000 || exitCode < 0);
+  const stdout = await Bun.file(outFile).text().catch(() => "");
+  const stderr = await Bun.file(errFile).text().catch(() => "");
+  // Crash = an NTSTATUS-style exit OR a crash the output confesses to
+  // (bun's handler / a spawned bun child mask the exit code otherwise).
+  const crashSig = timedOut ? null : detectCrash(stdout, stderr);
+  const crash = (exitCode !== null && (exitCode >= 0x80000000 || exitCode < 0)) || crashSig !== null;
   const trace = await readTraceDir(opts.dir, { faultsOnly: true });
   const fired = trace ? trace.recs.filter(r => r.fault) : [];
   let outcome: ReplayResult["outcome"] = "clean";
@@ -421,8 +489,9 @@ export async function replayCoordinate(opts: {
     faultRec: fired[0] ?? null,
     hangStacks,
     crashDump,
-    stdout: await Bun.file(outFile).text().catch(() => ""),
-    stderr: await Bun.file(errFile).text().catch(() => ""),
+    crashSig,
+    stdout,
+    stderr,
     dir: opts.dir,
   };
 }
@@ -519,6 +588,11 @@ export async function runOnce(o: RunOpts): Promise<RunResult> {
 
   const logPath = newestLog(o.workDir);
   const code = timedOut ? null : proc.exitCode;
+  // Two crash oracles: an NTSTATUS-style exit code (>=0x80000000 unsigned
+  // or negative signed, depending on plumbing), OR a crash confessed in the
+  // output - bun's own handler and crashing spawned bun children hide from
+  // exit codes but not from what they print.
+  const crashSig = timedOut ? null : detectCrash(stdout, stderr);
   return {
     outcome: timedOut ? "hang" : "exit",
     exitCode: code,
@@ -527,9 +601,8 @@ export async function runOnce(o: RunOpts): Promise<RunResult> {
     stderr,
     logPath,
     dir: o.workDir,
-    // An NTSTATUS exit (0xC000....) reads as >=0x80000000 unsigned or as a
-    // negative signed 32-bit value depending on the plumbing.
-    crash: code !== null && (code >= 0x80000000 || code < 0),
+    crash: (code !== null && (code >= 0x80000000 || code < 0)) || crashSig !== null,
+    crashSig,
   };
 }
 

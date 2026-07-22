@@ -55,7 +55,10 @@ static size_t findEvalCallerIndex(Frames& frames, size_t frameIndex, JSC::CodeBl
                 sawEvalCodeFrame = true;
             continue;
         }
-        return sawEvalCodeFrame ? j : n;
+        if (sawEvalCodeFrame)
+            return j;
+        // Foreign-provider frame before the EvalCode frame: the eval-defined
+        // function called out through script-defined code. Keep looking.
     }
     return n;
 }

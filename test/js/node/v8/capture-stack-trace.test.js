@@ -1194,3 +1194,41 @@ test("CallSite eval metadata for eval / new Function frames matches Node.js", as
   expect(out.fn.origin).toMatch(/^eval at <anonymous> \(F\)$/);
   expect(exitCode).toBe(0);
 });
+
+test("Bun.inspect/native printer shows <anonymous> for eval frames, not the caller file", async () => {
+  // populateStackFrameMetadata (ZigException.cpp) is a sibling consumer of
+  // Zig::sourceURL that was still stamping eval-body positions on the caller's
+  // file:// URL, so the Rust-side source-map remapper would look up nonsense
+  // coordinates. With a .cjs file (no transpile remap), the top frame's
+  // attribution is directly observable in Bun.inspect(err).
+  const src =
+    "const body = ['','','','function work(){ throw new Error(\"boom\") }','work()'].join('\\n');\n" +
+    "try { eval(body); } catch(e) { process.stdout.write(Bun.inspect(e)); }\n";
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const workLine = stdout.split("\n").find(l => l.includes("at work "));
+  expect(workLine).toBeDefined();
+  expect(workLine).not.toContain("file://");
+  expect(workLine).toMatch(/at work \(<anonymous>:4:\d+\)/);
+  expect(exitCode).toBe(0);
+});
+
+test("eval origin caller line/col is recovered when an eval-defined function calls through script code", async () => {
+  const src =
+    "function helper(cb) { cb(); }\n" +
+    "function outer() {\n" +
+    "  eval('helper(function inner(){ throw new Error(\"x\") })');\n" +
+    "}\n" +
+    "try { outer(); } catch (e) {\n" +
+    "  const first = e.stack.split('\\n').find(l => l.includes('inner'));\n" +
+    "  console.log(first.split(__filename).join('F').trim());\n" +
+    "}\n";
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toMatch(/^at inner \(eval at outer \(F:3:\d+\), <anonymous>:1:\d+\)$/);
+  expect(exitCode).toBe(0);
+});

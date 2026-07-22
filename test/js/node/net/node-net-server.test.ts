@@ -2,6 +2,8 @@ import { realpathSync } from "fs";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
+import { createServer as createHttpServer } from "node:http";
+import { Server as TLSServer } from "node:tls";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -567,5 +569,82 @@ describe("net.createServer events", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("net.Server[Symbol.asyncDispose]", () => {
+  async function listen(server: Server, port: number): Promise<void> {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    server.once("error", reject);
+    server.listen(port, resolve);
+    try {
+      await promise;
+    } finally {
+      server.removeListener("error", reject);
+    }
+  }
+
+  function settle(promise: Promise<unknown>): Promise<unknown> {
+    return promise.then(
+      () => null,
+      (error: unknown) => error,
+    );
+  }
+
+  it("resolves when the server never listened", async () => {
+    const server = new Server();
+    expect(server.listening).toBe(false);
+    expect(await settle(server[Symbol.asyncDispose]())).toBeNull();
+  });
+
+  it("resolves when the server is already closed", async () => {
+    const server = new Server();
+    await listen(server, 0);
+
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    server.close(err => (err ? reject(err) : resolve()));
+    await promise;
+
+    expect(server.listening).toBe(false);
+    expect(await settle(server[Symbol.asyncDispose]())).toBeNull();
+  });
+
+  it("closes a listening server", async () => {
+    const server = new Server();
+    await listen(server, 0);
+    const closed = once(server, "close");
+
+    expect(await settle(server[Symbol.asyncDispose]())).toBeNull();
+    await closed;
+    expect(server.listening).toBe(false);
+    expect(server.address()).toBeNull();
+  });
+
+  it("does not replace a failed listen() with ERR_SERVER_NOT_RUNNING under `await using`", async () => {
+    await using blocker = createServer();
+    await listen(blocker, 0);
+    const { port } = blocker.address() as AddressInfo;
+
+    async function takeTheBusyPort() {
+      await using server = createServer();
+      await listen(server, port);
+    }
+
+    const error = await settle(takeTheBusyPort());
+    expect(error).not.toBeInstanceOf(SuppressedError);
+    expect(error).toMatchObject({ code: "EADDRINUSE" });
+  });
+
+  it("tls.Server inherits the guard", async () => {
+    const server = new TLSServer();
+    expect(server.listening).toBe(false);
+    expect(await settle(server[Symbol.asyncDispose]())).toBeNull();
+  });
+
+  // node only guards on net.Server; its http.Server dispose still rejects for a server that
+  // never listened. https://github.com/nodejs/node/blob/b59def5e8113/lib/_http_server.js#L677
+  it("http.Server still rejects with ERR_SERVER_NOT_RUNNING, like node", async () => {
+    const error = await settle(createHttpServer()[Symbol.asyncDispose]());
+    expect(error).toMatchObject({ code: "ERR_SERVER_NOT_RUNNING" });
   });
 });

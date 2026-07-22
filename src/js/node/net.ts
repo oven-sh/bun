@@ -3316,6 +3316,13 @@ Server.prototype.close = function close(callback) {
 };
 
 Server.prototype[Symbol.asyncDispose] = function () {
+  // Disposing a server that never listened is a no-op, so `await using` cannot replace the
+  // error that kept listen() from succeeding with ERR_SERVER_NOT_RUNNING.
+  // https://github.com/nodejs/node/blob/b59def5e8113/lib/net.js#L2636
+  if (!this._handle) {
+    return Promise.$resolve();
+  }
+
   const { resolve, reject, promise } = Promise.withResolvers();
   this.close(function (err, ...args) {
     if (err) reject(err);

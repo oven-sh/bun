@@ -125,6 +125,9 @@ pub struct PostgresSQLConnection {
     // so `vm_mut()`'s `&mut *as_ptr()` is sound.
     pub vm: BackRef<VirtualMachine>,
     pub statements: JsCell<PreparedStatementsMap>,
+    /// Next free index into the wrapper's `m_cachedStructures` JSArray; written
+    /// via `putDirectIndex` so prototype index setters are never consulted.
+    cached_structures_len: Cell<u32>,
     pub prepared_statement_id: Cell<u64>,
     pub pending_activity_count: AtomicU32,
     // Self-wrapper back-ref (the JS object that owns this payload). Stored as a
@@ -1172,6 +1175,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let max_lifetime = arguments[13].to_int32();
     let use_unnamed_prepared_statements = arguments[14].as_boolean();
 
+    let cached_structures = JSValue::create_empty_array(global_object, 0)?;
+
     // Ownership transferred into `ptr`; disarm the errdefer and recover the
     // moved `secure`/`tls_config` for the struct literal below.
     let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(errdefer_guard);
@@ -1198,6 +1203,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             // canonical `VirtualMachine::as_mut()` accessor.
             vm: BackRef::new_mut(vm),
             statements: JsCell::new(PreparedStatementsMap::default()),
+            cached_structures_len: Cell::new(0),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
@@ -1290,6 +1296,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
+    js::cached_structures_set_cached(js_value, global_object, cached_structures);
     bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }
@@ -2372,6 +2379,32 @@ impl PostgresSQLConnection {
         js::queries_get_cached(js_value).unwrap_or(JSValue::UNDEFINED)
     }
 
+    /// Write a freshly-built result-row `Structure` into this wrapper's
+    /// `m_cachedStructures` array so GC traces it via `visitChildren` instead
+    /// of via a per-statement `Strong` handle. Each statement gets one stable
+    /// `slot` (so a column-shape change overwrites rather than grows). Returns
+    /// the slot written on success; on failure the caller keeps the Strong.
+    /// Uses `putDirectIndex` (own-slot write) so an index setter on
+    /// `Array.prototype` cannot observe or intercept the value.
+    fn add_cached_structure(
+        &self,
+        this_value: JSValue,
+        structure: JSValue,
+        slot: Option<u32>,
+    ) -> Option<u32> {
+        debug_assert!(!this_value.is_empty());
+        let array = js::cached_structures_get_cached(this_value)?;
+        let i = slot.unwrap_or_else(|| self.cached_structures_len.get());
+        if array.put_index(self.global(), i, structure).is_err() {
+            self.global().clear_exception_except_termination();
+            return None;
+        }
+        if slot.is_none() {
+            self.cached_structures_len.set(i + 1);
+        }
+        Some(i)
+    }
+
     // `message_type` is a runtime arg; the match
     // below still monomorphizes per-Context and the branch is trivially predictable.
     // `reader` is taken by-value as a `NewReaderWrap<&mut Context>`
@@ -2402,9 +2435,8 @@ impl PostgresSQLConnection {
                     .statement_mut()
                     .ok_or(AnyPostgresError::ExpectedStatement)?;
                 let mut structure: JSValue = JSValue::UNDEFINED;
-                // reshaped for borrowck — `statement.structure()` borrows
-                // `&mut *statement` and returns `&CachedStructure`; capture it as a
-                // `ParentRef` (lifetime-erased `&T`) so `&statement.fields` below
+                // Hold `&statement.cached_structure` as a `ParentRef`
+                // (lifetime-erased `&T`) so the later `&statement.fields` borrow
                 // does not conflict, and `as_deref` for `to_js` at the call site.
                 // `*statement` outlives this arm (held via `request.statement`'s
                 // intrusive ref), satisfying the `ParentRef` liveness invariant.
@@ -2414,7 +2446,28 @@ impl PostgresSQLConnection {
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
                         let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
-                        let cs = statement.structure(owner, self.global());
+                        let new_structure = statement.structure(owner, self.global());
+                        // Only hand off to the connection's traced array when
+                        // this statement lives in `self.statements` (named
+                        // prepared). Per-query statements keep their Strong.
+                        if let Some(new_structure) = new_structure
+                            && !request_flags.simple
+                            && !self
+                                .flags
+                                .get()
+                                .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS)
+                            && !owner.is_empty()
+                            && let Some(slot) = self.add_cached_structure(
+                                owner,
+                                new_structure,
+                                statement.cached_structure.connection_slot,
+                            )
+                        {
+                            statement
+                                .cached_structure
+                                .mark_traced_from_connection(new_structure, slot);
+                        }
+                        let cs = &statement.cached_structure;
                         structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                         cached_structure = Some(ParentRef::new(cs));
                     }
@@ -2637,7 +2690,7 @@ impl PostgresSQLConnection {
                 // the correct structure instead of reusing a stale cached one.
                 // Vec<FieldDescription> drop runs each field's Drop.
                 statement.fields = description.fields.into_vec();
-                statement.cached_structure = Default::default();
+                statement.cached_structure.reset();
                 statement.needs_duplicate_check = true;
                 statement.fields_flags = Default::default();
             }

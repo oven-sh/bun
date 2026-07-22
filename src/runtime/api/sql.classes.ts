@@ -57,7 +57,7 @@ for (const type of types) {
           this: true,
         },
       },
-      values: ["onconnect", "onclose", "queries"],
+      values: ["onconnect", "onclose", "queries", "cachedStructures"],
     }),
   );
 

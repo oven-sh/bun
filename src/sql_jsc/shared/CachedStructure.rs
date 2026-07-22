@@ -5,30 +5,52 @@ use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
 pub struct CachedStructure {
-    pub structure: StrongOptional, // Strong.Optional = .empty
+    /// GC root for per-query statements (simple / unnamed). Released when the
+    /// owning statement is dropped.
+    strong: StrongOptional,
+    /// Raw `JSC::Structure*` for connection-cached statements. Not a GC root:
+    /// kept alive by the Connection wrapper's `m_cachedStructures` array
+    /// (visited in `visitChildren`). At most one of `strong` / `traced` is set.
+    traced: JSValue,
+    /// Index into the Connection wrapper's `m_cachedStructures` array once
+    /// assigned. Preserved across [`reset`] so a statement whose column shape
+    /// changes mid-lifetime overwrites its slot instead of growing the array.
+    pub connection_slot: Option<u32>,
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     pub fields: Option<Box<[ExternColumnIdentifier]>>,
 }
 
 impl CachedStructure {
     pub fn has(&self) -> bool {
-        self.structure.has() || self.fields.is_some()
+        self.strong.has() || !self.traced.is_empty() || self.fields.is_some()
     }
 
     pub fn js_value(&self) -> Option<JSValue> {
-        self.structure.get()
+        self.strong.get().or_else(|| {
+            if self.traced.is_empty() {
+                None
+            } else {
+                Some(self.traced)
+            }
+        })
     }
 
-    pub fn set(
-        &mut self,
-        global_object: &JSGlobalObject,
-        value: Option<JSValue>,
-        fields: Option<Box<[ExternColumnIdentifier]>>,
-    ) {
-        if let Some(v) = value {
-            self.structure.set(global_object, v);
-        }
-        self.fields = fields;
+    /// Called once the Connection has written this structure into its
+    /// `m_cachedStructures` array at `slot`: release the per-statement Strong
+    /// and keep only the raw value, so connection-cached statements do not each
+    /// hold a GC-root handle.
+    pub fn mark_traced_from_connection(&mut self, structure: JSValue, slot: u32) {
+        self.traced = structure;
+        self.connection_slot = Some(slot);
+        self.strong.deinit();
+    }
+
+    /// Clear the cached structure so the next row rebuilds it, preserving
+    /// `connection_slot` so a connection-cached statement reuses its array slot.
+    pub fn reset(&mut self) {
+        self.strong.deinit();
+        self.traced = JSValue::ZERO;
+        self.fields = None;
     }
 
     /// Populate this `CachedStructure` from a column-identifier sequence —
@@ -109,29 +131,27 @@ impl CachedStructure {
             unsafe { heap_ids.set_len(non_duplicated_count) };
             // Ownership transfer of heap `ids` to CachedStructure, which
             // becomes responsible for freeing the alloc'd slice.
-            self.set(global_object, None, Some(heap_ids.into_boxed_slice()));
+            self.fields = Some(heap_ids.into_boxed_slice());
         } else {
             // Every element in `ids[..]` was `.write()`n above; C++ reads them as
             // `ExternColumnIdentifier` by raw pointer, so pass the buffer through
             // without materialising a typed slice (avoids an unsafe assume-init cast).
-            self.set(
-                global_object,
-                // SAFETY: every `ids[..len]` slot was initialized in the loop
-                // above; the stack buffer outlives the FFI call.
-                Some(unsafe {
-                    JSObject::create_structure(
-                        global_object,
-                        owner,
-                        ids.len() as u32,
-                        ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
-                    )
-                }),
-                None,
-            );
+            // SAFETY: every `ids[..len]` slot was initialized in the loop
+            // above; the stack buffer outlives the FFI call.
+            let structure = unsafe {
+                JSObject::create_structure(
+                    global_object,
+                    owner,
+                    ids.len() as u32,
+                    ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
+                )
+            };
+            self.strong.set(global_object, structure);
         }
     }
 }
 
 // No explicit `impl Drop` is needed: the GC-strong structure handle is freed
-// by `impl Drop for StrongOptional`, and the field array (including each
-// element's owned name) is freed by `Drop` on `Box<[ExternColumnIdentifier]>`.
+// by `impl Drop for StrongOptional`, `traced` is a raw `JSValue` (GC-traced
+// via the owning Connection wrapper, not here), and the field array is freed
+// by `Drop` on `Box<[ExternColumnIdentifier]>`.

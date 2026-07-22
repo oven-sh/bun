@@ -398,13 +398,16 @@ impl PipeReader {
 
         #[cfg(windows)]
         {
-            // WindowsBufferedReader.onError() never closes the source, and
-            // WindowsBufferedReader.deinit() nulls this.source before calling
-            // closeImpl so it never actually closes either. Close it here on
-            // the error path so the uv.Pipe handle doesn't leak.
-            if matches!(this_ref.state, State::Err(_))
-                && this_ref.reader.source.is_some()
-                && !this_ref.reader.source.as_ref().unwrap().is_closed()
+            // WindowsBufferedReader.on_error() never closes the source, so a
+            // reader can reach deinit with a live uv.Pipe. The Err-only close
+            // that used to be here missed the non-error teardown paths
+            // (`Readable::finalize` on a never-started pipe, a sibling pipe
+            // left Pending after the other errored); close unconditionally.
+            if this_ref
+                .reader
+                .source
+                .as_ref()
+                .is_some_and(|s| !s.is_closed())
             {
                 this_ref.reader.close_impl::<false>();
             }

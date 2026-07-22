@@ -210,3 +210,62 @@ console.log(JSON.stringify({ injected }));
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 }, 60_000);
+
+// On Windows, PipeReader::deinit closed the uv.Pipe source only when
+// state == Err (the onReaderError leak fix). A PipeReader can also reach
+// deinit with state == Pending and a live source: the Readable::finalize
+// path for a pipe that was never drained, e.g. the sibling of a pipe that
+// errored or one left unstarted after a spawn-time throw. Debug builds
+// caught this as an assertion failure in deinit; release builds relied on
+// WindowsBufferedReader::drop to close the handle after the assert site.
+//
+// The finalizeStdioPipeReader hook drives that teardown directly so the
+// invariant can be checked without depending on GC/finalize ordering.
+test("PipeReader is freed when torn down while still pending (Windows uv.Pipe close)", async () => {
+  using dir = tempDir("spawn-pipe-pending-teardown", {
+    "fixture.js": `
+const { subprocessInternals } = require("bun:internal-for-testing");
+
+const sleeper = process.platform === "win32"
+  ? ["ping", "-n", "120", "127.0.0.1"]
+  : ["sleep", "120"];
+
+let finalized = 0;
+for (let i = 0; i < 3; i++) {
+  const proc = Bun.spawn({
+    cmd: sleeper,
+    stdin: "ignore",
+    stdout: "pipe", // PipeReader - never access proc.stdout from JS
+    stderr: "ignore",
+  });
+
+  // Tear the stdout PipeReader down while it is still Pending with a live
+  // uv.Pipe source. Pre-fix on Windows debug, this trips the
+  // "source.is_none() || source.is_closed()" assertion in PipeReader::deinit.
+  if (subprocessInternals.finalizeStdioPipeReader(proc, "stdout")) finalized++;
+
+  proc.kill();
+  await proc.exited;
+}
+Bun.gc(true);
+console.log(JSON.stringify({ finalized }));
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: isWindows ? 25_000 : 15_000,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const stderrLines = stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
+  expect(stderrLines).toEqual([]);
+  expect(stdout.trim()).toBe(JSON.stringify({ finalized: 3 }));
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});

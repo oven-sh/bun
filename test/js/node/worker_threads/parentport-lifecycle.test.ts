@@ -132,8 +132,9 @@ test.concurrent("parentPort.unref() lets the worker exit while a listener is sti
 });
 
 test.concurrent("parentPort.ref() keeps the worker alive without a listener", async () => {
-  // ref() with no listener should hold the event loop open on its own; we flip it back with
-  // unref() from a queued task so the test isn't timing-dependent.
+  // ref() with no listener should hold the event loop open on its own. The setImmediate is
+  // unref'd so parentPort.ref() is the only thing keeping the loop alive: if ref() didn't
+  // actually take a loop ref, the worker would exit before the callback runs.
   check(
     await run(/* js */ `
         import { parentPort } from "node:worker_threads";
@@ -142,7 +143,7 @@ test.concurrent("parentPort.ref() keeps the worker alive without a listener", as
         setImmediate(() => {
           console.log("worker: still alive");
           parentPort.unref();
-        });
+        }).unref();
       `),
     ["worker: hasRef true", "worker: still alive", "parent: exit 0"],
   );

@@ -1003,8 +1003,11 @@ function fakeParentPort() {
       process.nextTick(() => {
         self.dispatchEvent(new Event("close"));
       });
-      listeners.message.length = 0;
-      listeners.messageerror.length = 0;
+      // Don't truncate listeners.message / listeners.messageerror: dispatch()'s per-entry
+      // liveness check aliases those arrays, so clearing them here would skip every
+      // not-yet-reached handler when close() is called mid-dispatch. Node's MessagePort.close()
+      // doesn't touch the listener list; closed=true + dropForwarder already make the arrays
+      // unreachable for future events.
       onmessageEntry.message = null;
       onmessageEntry.messageerror = null;
       dropForwarder("message");

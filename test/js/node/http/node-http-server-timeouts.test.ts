@@ -206,6 +206,20 @@ describe("node:http server timeout enforcement", () => {
         codes: ["ERR_HTTP_REQUEST_TIMEOUT", "ERR_HTTP_REQUEST_TIMEOUT", "ERR_HTTP_REQUEST_TIMEOUT"],
         fires: [1, 1, 1],
       });
+
+      // The reported bit clears at message completion: finish the first
+      // request, read its response, then stall a second request on the same
+      // keep-alive connection and expect a fresh timeout for it.
+      let response = "";
+      first.on("data", d => (response += d.toString("latin1")));
+      first.write("\r\n");
+      while (!response.includes("\r\n\r\nok")) await once(first, "data");
+      first.write("GET / HTTP/1.1\r\nHost: a\r\n");
+      await once(server, "clientError");
+      expect({ codes, fires: [...fires.values()] }).toEqual({
+        codes: Array(4).fill("ERR_HTTP_REQUEST_TIMEOUT"),
+        fires: [2, 1, 1],
+      });
     } finally {
       for (const c of clients) c.destroy();
       server.closeAllConnections();

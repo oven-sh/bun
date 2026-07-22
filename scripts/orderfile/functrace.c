@@ -417,12 +417,15 @@ static int read_starts(const char *path)
                             : mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (w == MAP_FAILED) return -1;
+    size_t bytes = (size_t)st.st_size;
     uint64_t n = w[2];
-    if (w[0] != STARTS_MAGIC || w[1] != FILE_VERSION || n == 0 || n > ((uint64_t)st.st_size / 8) - STARTS_HEADER_WORDS)
+    starts = (w[0] == STARTS_MAGIC && w[1] == FILE_VERSION && n > 0 && n <= bytes / 8 - STARTS_HEADER_WORDS)
+                 ? calloc((size_t)n, sizeof *starts)
+                 : NULL;
+    if (!starts) {
+        munmap((void *)w, bytes);
         return -1;
-
-    starts = calloc((size_t)n, sizeof *starts);
-    if (!starts) return -1;
+    }
     for (size_t i = 0; i < (size_t)n; i++) {
         uintptr_t a = slide + (uintptr_t)w[STARTS_HEADER_WORDS + i];
         // Drop anything that doesn't land in our own text: the generator may have
@@ -431,7 +434,7 @@ static int read_starts(const char *path)
         if (region_of(a) < 0 || a % sizeof(insn_t) != 0) continue;
         starts[start_count++] = a;
     }
-    munmap((void *)w, (size_t)st.st_size);
+    munmap((void *)w, bytes);
     if (!start_count) return -1;
 
     qsort(starts, start_count, sizeof *starts, cmp_uintptr);

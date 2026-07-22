@@ -324,13 +324,16 @@ describe.skipIf(!canTrace)("function tracer", () => {
     ]);
 
     // Write the starts file the generator would: magic, version, count, then
-    // nm's text-symbol addresses.
-    await using nm = Bun.spawn({ cmd: ["nm", "--defined-only", fixture], env: bunEnv, stdout: "pipe" });
+    // nm's text-symbol addresses. Bare nm, no GNU-only flags — the regex is
+    // the defined-text-symbol filter.
+    await using nm = Bun.spawn({ cmd: ["nm", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [nmOut, nmErr, nmExit] = await Promise.all([nm.stdout.text(), nm.stderr.text(), nm.exited]);
     const addresses: bigint[] = [];
-    for (const line of (await nm.stdout.text()).split("\n")) {
+    for (const line of nmOut.split("\n")) {
       const m = /^([0-9a-f]+) [tT] \S+$/.exec(line);
       if (m) addresses.push(BigInt(`0x${m[1]}`));
     }
+    expect({ nmErr, nmExit }).toEqual({ nmErr: "", nmExit: 0 });
     expect(addresses.length).toBeGreaterThan(33);
     const words = new BigUint64Array(3 + addresses.length);
     words.set([0x4e55425354525453n, 1n, BigInt(addresses.length)], 0);

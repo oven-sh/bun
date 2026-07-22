@@ -1715,6 +1715,34 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.global_exit();
 }
 
+/// `--watch` restart is an `execve` (POSIX) / child respawn (Windows). When the
+/// entrypoint file is transiently absent at the moment of restart — editors
+/// that save by delete-then-write, `git checkout`, build output not yet
+/// written — `RunCommand::exec` lands in its failure tail before the file
+/// watcher is ever installed. Instead of exiting, park and poll for the file to
+/// (re)appear, then call `reload_process()` so the next restart runs the full
+/// resolver again. The VM does not exist yet so there are no signal handlers
+/// installed; Ctrl+C terminates the poll loop normally.
+#[cold]
+#[inline(never)]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
+fn wait_for_entrypoint_and_reload(target_name: &[u8]) -> ! {
+    pretty_errorln!(
+        "<r><d>Waiting for \"<b>{}<r><d>\" before restarting...<r>",
+        bstr::BStr::new(target_name),
+    );
+    Output::flush();
+    loop {
+        if sys::exists(target_name) {
+            bun_core::reload_process(false, false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 /// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.
 #[cold]
 #[inline(never)]
@@ -2755,14 +2783,14 @@ impl RunCommand {
                 );
             } else {
                 let default_loader = Self::default_loader_for(target_name);
-                if default_loader
+                let looks_like_file = default_loader
                     .map(Loader::is_javascript_like_or_json)
                     .unwrap_or(false)
                     || (!target_name.is_empty()
                         && (target_name[0] == b'.'
                             || target_name[0] == b'/'
-                            || paths::is_absolute(target_name)))
-                {
+                            || paths::is_absolute(target_name)));
+                if looks_like_file {
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>Module not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
@@ -2777,6 +2805,11 @@ impl RunCommand {
                         "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
+                }
+                if ctx.debug.hot_reload == cli::command::HotReload::Watch
+                    && (looks_like_file || !paths::extension(target_name).is_empty())
+                {
+                    wait_for_entrypoint_and_reload(target_name);
                 }
             }
             Global::exit(1);

@@ -1030,7 +1030,9 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
         const H3_MESSAGE_ERROR: u64 = 0x10e;
         let has_status = pairs
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .find(|kv| kv[0] == b":status")
             .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
         // A :status in a request is malformed: node's nghttp3 resets the

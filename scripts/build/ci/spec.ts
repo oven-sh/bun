@@ -649,8 +649,12 @@ const windowsCommonComponents = [
   "pdb-addr2line",
   "intel-sde",
   "buildkite-agent",
-  "prefetch",
+  // defender-removal precedes prefetch: prefetch's clone/install subprocess
+  // churn has been leaving the parent unable to launch the next child on
+  // some hosts; the removal only takes effect on reboot, so it is safe (and
+  // correct) to schedule it before the cache warm-up.
   "defender-removal",
+  "prefetch",
 ] as const;
 
 // ---------------------------------------------------------------------------

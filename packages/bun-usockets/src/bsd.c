@@ -1134,7 +1134,18 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     int* error
 ) {
 
+#if _WIN32
+    //  Windows SO_REUSEADDR lets any process steal an in-use TCP port (libuv #1360),
+    //  so drop it for TCP (bsd_create_udp_socket keeps it). SO_REUSEPORT does not
+    //  exist: DISALLOW callers see ENOTSUP, others fall back to SO_EXCLUSIVEADDRUSE.
+    options &= ~LIBUS_LISTEN_REUSE_ADDR;
+    if ((options & LIBUS_LISTEN_REUSE_PORT) && !(options & LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE)) {
+        options = (options & ~LIBUS_LISTEN_REUSE_PORT) | LIBUS_LISTEN_EXCLUSIVE_PORT;
+    }
+#endif
+
     if (bsd_set_reuse(listenFd, options) != 0) {
+        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 

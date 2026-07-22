@@ -471,7 +471,11 @@ impl SocketConfig {
         let mut flags: i32 = if self.exclusive {
             uws::LIBUS_LISTEN_EXCLUSIVE_PORT
         } else if self.reuse_port {
-            uws::LIBUS_LISTEN_REUSE_PORT | uws::LIBUS_LISTEN_REUSE_ADDR
+            // libuv's UV_TCP_REUSEPORT fails on platforms without SO_REUSEPORT
+            // load balancing (notably Windows); do the same so net.Server reports it.
+            uws::LIBUS_LISTEN_REUSE_PORT
+                | uws::LIBUS_LISTEN_REUSE_ADDR
+                | uws::LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE
         } else {
             uws::LIBUS_LISTEN_DEFAULT
         };

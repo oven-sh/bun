@@ -464,28 +464,34 @@ fn edit_distance(a: &[u8], b: &[u8], limit: usize) -> usize {
     prev[a.len()]
 }
 
-/// Pick the declared long flag name (primary or alias) closest to `name`.
-/// Only returns a suggestion when the edit distance is at most
-/// `max(1, name.len() / 3)` so wildly unrelated flags aren't offered.
+/// Pick the candidate closest to `name` by edit distance. Only returns a
+/// suggestion when the distance is at most `max(1, name.len() / 3)` so wildly
+/// unrelated flags aren't offered.
 #[cold]
-pub fn closest_long_name<Id>(params: &[Param<Id>], name: &[u8]) -> Option<&'static [u8]> {
+pub fn closest_name<'a>(
+    name: &[u8],
+    candidates: impl IntoIterator<Item = &'a [u8]>,
+) -> Option<&'a [u8]> {
     let limit = core::cmp::max(1, name.len() / 3);
-    let mut best: Option<(&'static [u8], usize)> = None;
-    let mut consider = |cand: &'static [u8]| {
+    let mut best: Option<(&'a [u8], usize)> = None;
+    for cand in candidates {
         let d = edit_distance(name, cand, limit);
         if d <= limit && best.is_none_or(|(_, bd)| d < bd) {
             best = Some((cand, d));
         }
-    };
-    for p in params {
-        if let Some(l) = p.names.long {
-            consider(l);
-        }
-        for alias in p.names.long_aliases {
-            consider(alias);
-        }
     }
     best.map(|(s, _)| s)
+}
+
+/// [`closest_name`] over a param table's long names and aliases.
+#[cold]
+pub fn closest_long_name<Id>(params: &[Param<Id>], name: &[u8]) -> Option<&'static [u8]> {
+    closest_name(
+        name,
+        params
+            .iter()
+            .flat_map(|p| p.names.long.into_iter().chain(p.names.long_aliases.iter().copied())),
+    )
 }
 
 #[derive(Clone, Copy)]

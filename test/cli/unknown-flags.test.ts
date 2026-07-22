@@ -115,6 +115,15 @@ describe("unknown CLI flags", () => {
       expect(combined).toContain("bun test --help");
       expect(exitCode).toBe(1);
     });
+
+    test.concurrent("build accepts esbuild-compat --bundle without a diagnostic", async () => {
+      using dir = tempDir("unknown-flag-bundle", {
+        "in.ts": "export const x = 1;\n",
+      });
+      const { stderr, exitCode } = await run(["build", "in.ts", "--bundle"], String(dir));
+      expect(stderr).not.toContain("unknown option");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("upgrade: reject", () => {
@@ -131,6 +140,17 @@ describe("unknown CLI flags", () => {
       });
       expect(combined).toContain("unknown option '--dry-run'");
       expect(combined).toContain("bun upgrade --help");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("upgrade --cannary suggests --canary and exits 1", async () => {
+      using dir = tempDir("unknown-flag-upgrade-typo", {});
+      const { combined, exitCode } = await run(["upgrade", "--cannary"], String(dir), {
+        HTTPS_PROXY: "http://127.0.0.1:0/",
+        HTTP_PROXY: "http://127.0.0.1:0/",
+      });
+      expect(combined).toContain("unknown option '--cannary'");
+      expect(combined).toContain("Did you mean '--canary'");
       expect(exitCode).toBe(1);
     });
   });
@@ -175,6 +195,21 @@ describe("unknown CLI flags", () => {
       const { stdout, stderr, exitCode } = await run(["run", "script.js", "--user-flag"], String(dir));
       expect(stderr).not.toContain("unknown option");
       expect(JSON.parse(stdout.trim())).toEqual(["--user-flag"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // argv0 == node: Bun acts as a drop-in Node replacement and must accept
+    // Node/V8 flags it has not declared, so unknown flags stay silent here.
+    test.concurrent("node shim stays silent on unknown flags", async () => {
+      using dir = tempDir("unknown-flag-node-shim", {
+        "script.js": "console.log('RAN')\n",
+      });
+      const { stdout, stderr, exitCode } = await run(
+        ["--bun", "node", "--totally-fake-flag", "script.js"],
+        String(dir),
+      );
+      expect(stderr).not.toContain("unknown option");
+      expect(stdout).toContain("RAN");
       expect(exitCode).toBe(0);
     });
   });

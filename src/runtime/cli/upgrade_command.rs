@@ -531,9 +531,17 @@ impl UpgradeCommand {
             }
             for arg in args.iter().skip(2) {
                 if !Self::KNOWN_FLAGS.iter().any(|k| *k == arg) {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r><d>:<r> unknown option <b>'{}'<r>\n\nFor a list of options, run <b>bun upgrade --help<r>",
+                    bun_core::pretty_error!(
+                        "<r><red>error<r><d>:<r> unknown option <b>'{}'<r>",
                         bstr::BStr::new(arg),
+                    );
+                    if let Some(s) =
+                        bun_clap::closest_name(arg, Self::KNOWN_FLAGS.iter().copied())
+                    {
+                        bun_core::pretty_error!(". Did you mean <cyan>'{}'<r>?", bstr::BStr::new(s));
+                    }
+                    bun_core::pretty_errorln!(
+                        "\n\nFor a list of options, run <b>bun upgrade --help<r>"
                     );
                     Global::exit(1);
                 }

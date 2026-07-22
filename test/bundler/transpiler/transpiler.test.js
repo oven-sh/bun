@@ -5311,3 +5311,58 @@ describe("multi-line comment scanning", () => {
     expectParseError(`/*${pad600}🦊`, message);
   });
 });
+
+describe("Bun.Transpiler reactFastRefresh", () => {
+  const reactComponent = `
+import { useState } from "react";
+export function App() {
+  const [n, setN] = useState(0);
+  return <h1>{n}</h1>;
+}
+`;
+
+  it("is not applied by default", () => {
+    const out = new Bun.Transpiler({ loader: "tsx" }).transformSync(reactComponent);
+    expect(out).not.toContain("$RefreshReg$");
+    expect(out).not.toContain("$RefreshSig$");
+  });
+
+  it("injects $RefreshReg$/$RefreshSig$ for tsx when enabled", () => {
+    const out = new Bun.Transpiler({ loader: "tsx", reactFastRefresh: true }).transformSync(reactComponent);
+    expect(out).toContain("$RefreshReg$");
+    expect(out).toContain("$RefreshSig$");
+  });
+
+  it("injects for jsx when enabled", () => {
+    const out = new Bun.Transpiler({ loader: "jsx", reactFastRefresh: true }).transformSync(reactComponent);
+    expect(out).toContain("$RefreshReg$");
+  });
+
+  it("also works on the async transform()", async () => {
+    const out = await new Bun.Transpiler({ loader: "tsx", reactFastRefresh: true }).transform(reactComponent);
+    expect(out).toContain("$RefreshReg$");
+  });
+
+  it("respects a per-call loader override on transformSync", () => {
+    // Same source and transpiler; only the per-call loader differs, isolating the JSX-loader gate.
+    // `Foo` is componentish, so it registers under the tsx default but must not under a ts override.
+    const src = `export function Foo() { return 42; }\n`;
+    const t = new Bun.Transpiler({ loader: "tsx", reactFastRefresh: true });
+    expect(t.transformSync(src)).toContain("$RefreshReg$");
+    expect(t.transformSync(src, "ts")).not.toContain("$RefreshReg$");
+  });
+
+  it("is a no-op on non-JSX loaders even when enabled", () => {
+    // `Foo` would register under a JSX loader (see the per-call override test), so asserting it
+    // does not register here actually exercises the `loader.is_jsx()` gate rather than the name.
+    const out = new Bun.Transpiler({ loader: "ts", reactFastRefresh: true }).transformSync(
+      `export function Foo() { return 42; }\n`,
+    );
+    expect(out).not.toContain("$RefreshReg$");
+  });
+
+  it("does not inject for JSX files without components", () => {
+    const out = new Bun.Transpiler({ loader: "tsx", reactFastRefresh: true }).transformSync(`export const x = 42;\n`);
+    expect(out).not.toContain("$RefreshReg$");
+  });
+});

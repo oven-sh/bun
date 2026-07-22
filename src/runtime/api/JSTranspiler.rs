@@ -387,6 +387,10 @@ impl Config {
             self.runtime.auto_import_jsx = flag;
         }
 
+        if let Some(flag) = object.get_boolean_loose(global, "reactFastRefresh")? {
+            self.runtime.react_fast_refresh = flag;
+        }
+
         if let Some(flag) = object.get_boolean_loose(global, "allowBunRuntime")? {
             self.runtime.allow_runtime = flag;
         }
@@ -1087,7 +1091,7 @@ impl JSTranspiler {
         transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;
         transpiler.options.inlining = config.runtime.inlining;
         transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
-        transpiler.options.react_fast_refresh = false;
+        transpiler.options.react_fast_refresh = config.runtime.react_fast_refresh;
         transpiler.options.repl_mode = config.repl_mode;
 
         Ok(bun_core::heap::into_raw(this))

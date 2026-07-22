@@ -311,6 +311,20 @@ impl Binding {
         }
     }
 
+    /// Drops an fd from the `trackUnmanagedFds` worker-exit sweep set.
+    /// Called by `fs.promises.open` so FileHandle-managed fds are excluded,
+    /// matching Node where only raw `fs.open`/`fs.openSync` fds are tracked.
+    pub fn untrack_fd(
+        _this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if let Some(fd) = <bun_sys::Fd as bun_sys_jsc::FdJsc>::from_js(frame.argument(0)) {
+            global.bun_vm().as_mut().remove_unmanaged_fd(fd);
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
     /// `callSync(.unwatchFile)` — `Arguments == void`.
     pub fn unwatch_file(
         this: &Self,

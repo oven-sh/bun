@@ -303,6 +303,10 @@ pub struct VirtualMachine {
     pub gc_controller: crate::GarbageCollectionController,
     // BACKREF — WebWorker owns the VM. Real type: `*const bun_runtime::webcore::WebWorker`.
     pub worker: Option<*const c_void>,
+    /// node:worker_threads `trackUnmanagedFds`: fds from `fs.open`/`fs.openSync`
+    /// that this worker must close on exit. `None` = not tracking (main thread,
+    /// or worker created with `trackUnmanagedFds: false`).
+    pub unmanaged_fds: Option<Vec<bun_sys::Fd>>,
     pub ipc: Option<IPCInstanceUnion>,
     pub hot_reload_counter: u32,
 
@@ -2086,6 +2090,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
+            addr_of_mut!((*vm).unmanaged_fds).write(None);
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
@@ -4578,6 +4583,27 @@ impl VirtualMachine {
 
         self.auto_tick();
         Ok(self.pending_internal_promise.unwrap())
+    }
+
+    /// Records an `fs.open`/`fs.openSync` fd for auto-close at worker exit
+    /// (node:worker_threads `trackUnmanagedFds`). No-op unless this VM is a
+    /// worker with tracking enabled.
+    #[inline]
+    pub fn add_unmanaged_fd(&mut self, fd: bun_sys::Fd) {
+        if let Some(set) = self.unmanaged_fds.as_mut() {
+            set.push(fd);
+        }
+    }
+
+    /// Drops an fd from `trackUnmanagedFds` bookkeeping when user code closes
+    /// it. No-op if not tracking or `fd` was never tracked.
+    #[inline]
+    pub fn remove_unmanaged_fd(&mut self, fd: bun_sys::Fd) {
+        if let Some(set) = self.unmanaged_fds.as_mut() {
+            if let Some(i) = set.iter().position(|&f| f == fd) {
+                set.swap_remove(i);
+            }
+        }
     }
 
     /// Tracks a listening socket so watch-mode reloads can close it.

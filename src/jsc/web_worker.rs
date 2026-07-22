@@ -97,6 +97,9 @@ pub struct WebWorker {
     mini: bool,
     eval_mode: bool,
     store_fd: bool,
+    /// node:worker_threads `trackUnmanagedFds` (default true): auto-close fds
+    /// from `fs.open`/`fs.openSync` still open at worker exit.
+    track_unmanaged_fds: bool,
     /// Borrowed from C++ `WorkerOptions` (kept alive by the owning `Worker`).
     argv_ptr: *const WTFStringImpl,
     argv_len: usize,
@@ -484,6 +487,7 @@ impl WebWorker {
         mini: bool,
         default_unref: bool,
         eval_mode: bool,
+        track_unmanaged_fds: bool,
         argv_ptr: *const WTFStringImpl,
         argv_len: usize,
         inherit_exec_argv: bool,
@@ -551,6 +555,7 @@ impl WebWorker {
             mini,
             eval_mode,
             store_fd,
+            track_unmanaged_fds,
             argv_ptr,
             argv_len,
             exec_argv_ptr,
@@ -960,6 +965,9 @@ impl WebWorker {
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
+            if self.track_unmanaged_fds {
+                vm_ref.unmanaged_fds = Some(Vec::new());
+            }
         }
 
         // Publish `vm` now (rather than at the end of startVM) so that:
@@ -1259,6 +1267,14 @@ impl WebWorker {
             vm.jsc_vm().clear_has_termination_request();
             vm.is_shutting_down = true;
             vm.on_exit();
+            // trackUnmanagedFds: close any fs.open/openSync fd the worker never
+            // closed. After on_exit() so user 'exit' handlers may still close
+            // their own fds first.
+            if let Some(fds) = vm.unmanaged_fds.take() {
+                for fd in fds {
+                    let _ = bun_sys::FdExt::close_allowing_standard_io(fd, None);
+                }
+            }
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(vm);
                 // Drain `TimeoutObject`s from this worker's timer heap before

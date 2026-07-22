@@ -95,6 +95,90 @@ describe("seq", async () => {
 
   TestBuilder.command`seq 4 7 ba`.exitCode(1).stdout("").stderr("seq: invalid argument\n").runAsTest("invalid arg 3");
 
+  TestBuilder.command`seq 0x10 0x10`.exitCode(0).stdout("16\n").stderr("").runAsTest("hex arg");
+
+  TestBuilder.command`seq 0X10 0X10`.exitCode(0).stdout("16\n").stderr("").runAsTest("hex arg uppercase prefix");
+
+  TestBuilder.command`seq 0x1p4 0x1p4`.exitCode(0).stdout("16\n").stderr("").runAsTest("hex float with p exponent");
+
+  TestBuilder.command`seq 0x1.8p1 0x1.8p1`.exitCode(0).stdout("3\n").stderr("").runAsTest("hex float with fraction");
+
+  TestBuilder.command`seq -0x3 0x2 0x3`
+    .exitCode(0)
+    .stdout("-3\n-1\n1\n3\n")
+    .stderr("")
+    .runAsTest("hex in start/increment/end with sign");
+
+  TestBuilder.command`seq 1_0 1_0`.exitCode(0).stdout("10\n").stderr("").runAsTest("underscore digit separator");
+
+  TestBuilder.command`seq 0x1_0 0x1_0`
+    .exitCode(0)
+    .stdout("16\n")
+    .stderr("")
+    .runAsTest("underscore digit separator in hex");
+
+  TestBuilder.command`seq 0x0p1024 0x0p1024`
+    .exitCode(0)
+    .stdout("0\n")
+    .stderr("")
+    .runAsTest("hex zero with out-of-range exponent");
+
+  TestBuilder.command`seq 0x0p9999999999 0x0p9999999999`
+    .exitCode(0)
+    .stdout("0\n")
+    .stderr("")
+    .runAsTest("hex zero with exponent past i32 range");
+
+  TestBuilder.command`seq 0x1p-9999999999 0x1p-9999999999`
+    .exitCode(0)
+    .stdout("0\n")
+    .stderr("")
+    .runAsTest("hex with huge negative exponent underflows to zero");
+
+  TestBuilder.command`seq 0x`.exitCode(1).stdout("").stderr("seq: invalid argument\n").runAsTest("bare 0x is invalid");
+
+  TestBuilder.command`seq 0xg`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("non-hex digit after 0x is invalid");
+
+  TestBuilder.command`seq 0x0p`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("hex p with no exponent is invalid");
+
+  TestBuilder.command`seq 0x0pZ`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("non-digit hex exponent is invalid");
+
+  TestBuilder.command`seq _1`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("leading underscore is invalid");
+
+  TestBuilder.command`seq 1_`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("trailing underscore is invalid");
+
+  TestBuilder.command`seq 1__0`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("consecutive underscores are invalid");
+
+  TestBuilder.command`seq 0x_10`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("underscore after hex prefix is invalid");
+
   TestBuilder.command`seq 4 0 7`.exitCode(1).stdout("").stderr("seq: zero increment\n").runAsTest("zero increment");
 
   TestBuilder.command`seq 4 -2 7`

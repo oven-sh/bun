@@ -12,8 +12,10 @@
 // powershellScript(), whose required `describe` makes the exception
 // visible in the code and the log.
 
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { RunOptions, RunResult } from "./runtime.ts";
-import { invalidateChildPath, log, mode, run, runOutput, verify } from "./runtime.ts";
+import { invalidateChildPath, log, mode, run, runOutput, scratchDir, verify } from "./runtime.ts";
 
 // ---------------------------------------------------------------------------
 // PowerShell plumbing
@@ -35,9 +37,21 @@ export function psq(value: string): string {
  * Fragments that legitimately tolerate errors set their own preference or
  * -ErrorAction per statement.
  */
-function ps(script: string, options: RunOptions = {}): Promise<RunResult> {
-  const strict = `$ErrorActionPreference = 'Stop'\n${script}`;
-  return run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", strict], options);
+let psScriptCounter = 0;
+
+async function ps(script: string, options: RunOptions = {}): Promise<RunResult> {
+  const strict = `$ErrorActionPreference = 'Stop'\r\n${script}\r\n`;
+  // Run the script from a file, not on the command line. Windows inspects
+  // a new process's command line before creating it, and a script whose
+  // TEXT it flags (the Defender-feature removal) is refused at CreateProcess
+  // (EPERM) before it can even start. A -File path carries no script text.
+  // It is also how a many-line script is meant to run; the echoed log
+  // still shows the full script.
+  log(`script text (${strict.split(/\r?\n/).length} line(s)) -> temp .ps1:`);
+  for (const line of script.split(/\r?\n/)) log(`    | ${line}`);
+  const file = join(scratchDir, `step-${++psScriptCounter}.ps1`);
+  if (!mode.dryRun) writeFileSync(file, strict);
+  return run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file], options);
 }
 
 /**
@@ -49,7 +63,11 @@ function ps(script: string, options: RunOptions = {}): Promise<RunResult> {
  * appended `exit 0` pins the exit code so only stdout carries meaning.
  */
 function psProbe(script: string): Promise<string> {
-  return runOutput(["powershell", "-NoProfile", "-Command", `${script}\nexit 0`]);
+  // Same launch mechanism as ps(): a file, not the command line. The
+  // trailing `exit 0` pins the exit code so only stdout carries meaning.
+  const file = join(scratchDir, `probe-${++psScriptCounter}.ps1`);
+  if (!mode.dryRun) writeFileSync(file, `${script}\r\nexit 0\r\n`);
+  return runOutput(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file]);
 }
 
 // ---------------------------------------------------------------------------

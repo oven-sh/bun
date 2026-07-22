@@ -39,7 +39,18 @@ if (!bun || !schedule || progIdx < 0) {
 const progArgs: string[] = [];
 for (let i = progIdx + 1; i < argv.length && !argv[i].startsWith("--"); i++) progArgs.push(argv[i]);
 const times = Math.max(1, +(flag("--times", "3") as string));
-const timeoutMs = 1000 * +(flag("--timeout", "30") as string);
+// A fixed replay timeout manufactures fake HANGs on slow test files (a
+// 50s file "hung" 3/3 at a 30s ceiling). Unless --timeout is given, run
+// one unfaulted control of the program first and set the ceiling from it -
+// the same relative-to-baseline notion of slow the sweeper uses.
+let timeoutMs = 1000 * +(flag("--timeout", "0") as string);
+if (!timeoutMs) {
+  const ctlDir = join(flag("--out", "C:\\wsfrepro") as string, "control");
+  const ctl = await runOnce({ bun: bun!, args: progArgs, workDir: ctlDir, timeoutMs: 300_000 }).catch(() => null);
+  const base = ctl?.outcome === "exit" ? ctl.ms : 30_000;
+  timeoutMs = Math.max(30_000, Math.round(base * 3));
+  console.log(`  control run: ${ctl?.outcome ?? "n/a"} in ${ctl?.ms ?? "?"}ms -> replay timeout ${timeoutMs}ms`);
+}
 // --stress K [--rounds R]: the load re-verify for a load-dependent finding.
 // Each round runs K faulted replays CONCURRENTLY plus one no-fault CONTROL
 // of the same program. Faulted lanes bad while the control finishes clean

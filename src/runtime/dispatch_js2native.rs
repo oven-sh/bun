@@ -97,4 +97,9 @@ pub use css::test_with_options as css_jsc_css_internals_test_with_options;
 // `bun_jsc`) rather than inventing a JSC edge into the collections crate.
 pub use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
 
+// Adversarial-input probe for the Windows `.node` static-merge; lives in
+// `bun_runtime` for the same reason as the LinearFifo probe above
+// (`bun_exe_format` has no JSC edge).
+pub use crate::pe_testing::link_addon as exe_format_pe_testing_ap_is_link_addon;
+
 // ported from: generated_js2native.rs

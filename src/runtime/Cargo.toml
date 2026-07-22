@@ -86,6 +86,7 @@ bun_simdutf_sys.workspace = true
 bun_sourcemap.workspace = true
 bun_sourcemap_jsc.workspace = true
 bun_standalone_graph.workspace = true
+bun_exe_format.workspace = true
 bun_bunfig.workspace = true
 bun_sys.workspace = true
 bun_sys_jsc.workspace = true

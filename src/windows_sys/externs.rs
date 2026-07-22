@@ -739,6 +739,28 @@ pub mod kernel32 {
             lpOverlapped: *mut c_void,
         ) -> BOOL;
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
+        pub fn GetModuleHandleW(lpModuleName: LPCWSTR) -> HMODULE;
+        pub fn VirtualProtect(
+            lpAddress: LPVOID,
+            dwSize: usize,
+            flNewProtect: DWORD,
+            lpflOldProtect: *mut DWORD,
+        ) -> BOOL;
+        pub fn FlushInstructionCache(
+            hProcess: HANDLE,
+            lpBaseAddress: LPCVOID,
+            dwSize: usize,
+        ) -> BOOL;
+        /// `RtlAddFunctionTable` (`winnt.h`) — kernel32 forwards to ntdll.
+        /// `FunctionTable` points at `EntryCount` native RUNTIME_FUNCTION
+        /// entries (12 bytes on x64, 8 on ARM64); declared as a raw
+        /// pointer so one declaration serves both layouts. Returns BOOLEAN
+        /// (u8), not BOOL.
+        pub fn RtlAddFunctionTable(
+            FunctionTable: *const c_void,
+            EntryCount: DWORD,
+            BaseAddress: u64,
+        ) -> BOOLEAN;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;

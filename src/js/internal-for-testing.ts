@@ -134,6 +134,23 @@ export const memfd_create: (size: number) => number = $newRustFunction(
   1,
 );
 
+// Feed a (possibly hostile) addon PE through PEFile::add_linked_addon
+// (src/exe_format/pe.rs) against a host PE image. Used by the adversarial-input tests so they
+// can run on every platform without a Windows bun.exe template. Returns
+// one of { skipped: true } / { error: string } / { skipped: false,
+// output: Buffer, metadata: Buffer, rvaBase: number }.
+export const peLinkAddon: (
+  host: Uint8Array,
+  addon: Uint8Array,
+  name: string,
+) => {
+  skipped?: boolean;
+  error?: string;
+  output?: Buffer;
+  metadata?: Buffer;
+  rvaBase?: number;
+} = $newRustFunction("exe_format/pe.rs", "TestingAPIs.linkAddon", 3);
+
 export const createStatsForIno: (ino: bigint, big: boolean) => any = $newRustFunction(
   "Stat.rs",
   "createStatsForIno",

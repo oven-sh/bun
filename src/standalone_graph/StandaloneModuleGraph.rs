@@ -1064,11 +1064,91 @@ impl CompileResult {
     }
 }
 
+/// For each napi `.node` in `output_files` that is a valid PE image,
+/// merge its sections into `pe_file` via `PEFile::add_linked_addon` and
+/// then append a `.bunL` section carrying the runtime metadata.
+///
+/// Any addon that cannot be merged safely (static TLS, malformed
+/// headers, not a PE at all) is silently skipped; its raw bytes remain
+/// in the `.bun` module graph so `process.dlopen` can fall back to the
+/// extract-to-tempfile path. This keeps `--compile` behaviourally
+/// identical whether or not the merge succeeds.
+fn link_native_addons_for_windows(
+    pe_file: &mut bun_pe::PEFile,
+    output_files: &[OutputFile],
+    module_prefix: &[u8],
+) -> Result<(), bun_pe::Error> {
+    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK::get() == Some(true)
+    {
+        return Ok(());
+    }
+
+    let mut addons: Vec<bun_pe::LinkedAddon> = Vec::new();
+    let mut idx: u32 = 0;
+    for of in output_files {
+        if of.loader != Loader::Napi {
+            continue;
+        }
+        let options::OutputValue::Buffer { bytes: contents } = &of.value else {
+            continue;
+        };
+        if !of.output_kind.is_file_in_standalone_mode() {
+            continue;
+        }
+        if !bun_pe::is_pe(contents) {
+            continue;
+        }
+
+        // Must match `to_bytes` exactly so the runtime lookup key
+        // (the `B:/~BUN/...` virtual path passed to `process.dlopen`)
+        // lines up with `LinkedAddon.name`. `to_bytes` normalises
+        // `dest_path` to `/` on a Windows host (the template printer
+        // emits native `\` when `--asset-naming` contains a directory
+        // component); runtime `lookup()` only normalises the incoming
+        // path, never the stored key, so a `\` key here would silently
+        // miss and send the addon down the tempfile fallback.
+        let dest_path = bun_core::strings::remove_leading_dot_slash(&of.dest_path);
+        let mut vpath = Vec::with_capacity(module_prefix.len() + dest_path.len());
+        vpath.extend_from_slice(module_prefix);
+        vpath.extend_from_slice(dest_path);
+        #[cfg(windows)]
+        path::resolve_path::platform_to_posix_in_place::<u8>(&mut vpath[module_prefix.len()..]);
+
+        let linked = match pe_file.add_linked_addon(contents, idx, &vpath) {
+            // Running out of header slots for more sections is not a
+            // build failure — the remaining addons just use the
+            // tempfile fallback at runtime.
+            Err(bun_pe::Error::InsufficientHeaderSpace) => break,
+            Err(e) => return Err(e),
+            Ok(None) => continue,
+            Ok(Some(linked)) => linked,
+        };
+        addons.push(linked);
+        idx += 1;
+    }
+
+    if addons.is_empty() {
+        return Ok(());
+    }
+
+    let blob = bun_pe::serialize_linked_addons(&addons);
+    match pe_file.add_linked_addon_section(&blob) {
+        // Same reasoning as above: without `.bunL` the runtime has
+        // nothing to look up and every addon takes the tempfile
+        // fallback, which is fine. Without `.bun` the build is
+        // useless, so leave the last slot for it.
+        Err(bun_pe::Error::InsufficientHeaderSpace) => Ok(()),
+        other => other,
+    }
+}
+
 pub(crate) fn inject(
     bytes: &[u8],
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
+    output_files: &[OutputFile],
+    module_prefix: &[u8],
 ) -> Fd {
     let _ = inject_options;
     let mut buf = PathBuffer::uninit();
@@ -1348,6 +1428,36 @@ pub(crate) fn inject(
                     return Fd::INVALID;
                 }
             };
+
+            // The Authenticode signature sits in an overlay past the
+            // last section. Appending addon sections there first would
+            // overwrite it and then make add_bun_section's later strip
+            // trip SecurityDirInsideImage, so strip up-front.
+            // (add_bun_section below strips again, which is a no-op on
+            // an already-unsigned image.)
+            if let Err(e) = pe_file.strip_authenticode(bun_pe::StripOpts {
+                require_overlay: true,
+                recompute_checksum: false,
+            }) {
+                bun_core::pretty_errorln!("Error stripping PE signature: {}", e);
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
+            }
+
+            // Statically merge embedded .node addons so the compiled
+            // exe can `process.dlopen` them without writing a temp
+            // file and calling `LoadLibraryExW`. Must happen before
+            // `add_bun_section` so the section order is
+            // [.bnN ...][.bunL][.bun] and the checksum is computed
+            // over the final image.
+            if let Err(e) =
+                link_native_addons_for_windows(&mut pe_file, output_files, module_prefix)
+            {
+                bun_core::pretty_errorln!("Error linking native addon into PE file: {}", e);
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
+            }
+
             // Always strip authenticode when adding .bun section for --compile
             if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::StripMode::StripAlways) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
@@ -1775,7 +1885,14 @@ pub fn to_executable(
         bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
     };
 
-    let fd = inject(&bytes, &self_exe, windows_options, target);
+    let fd = inject(
+        &bytes,
+        &self_exe,
+        windows_options,
+        target,
+        output_files,
+        module_prefix,
+    );
     // Note: a scopeguard closure capturing `fd` by value would not observe
     // later reassignments; capturing by `&mut` conflicts with later uses. Explicit
     // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below

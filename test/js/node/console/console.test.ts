@@ -156,15 +156,24 @@ describe("global console honors util.inspect.defaultOptions", () => {
         bunExe(),
         "--console-depth=5",
         "-e",
-        `require("util").inspect.defaultOptions.maxArrayLength = 5;` +
-          `console.log({ a: { b: { c: { d: { e: 1 } } } } });`,
+        `const util = require("util");` +
+          `util.inspect.defaultOptions.maxArrayLength = 5;` +
+          `console.log({ a: { b: { c: { d: { e: 1 } } } } });` +
+          `process.stdout.write(JSON.stringify({` +
+          `  defaultDepth: util.inspect.defaultOptions.depth,` +
+          `  inspected: util.inspect({ a: { b: { c: { d: 1 } } } }),` +
+          `}));`,
       ],
       env: { ...bunEnv, NO_COLOR: "1" },
       stderr: "pipe",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const lastLine = stdout.trimEnd().split("\n").pop()!;
     expect(stdout).toContain("e: 1");
-    expect(stdout).not.toContain("[Object]");
+    expect(JSON.parse(lastLine)).toEqual({
+      defaultDepth: 2,
+      inspected: "{ a: { b: { c: [Object] } } }",
+    });
     expect(exitCode).toBe(0);
   });
 

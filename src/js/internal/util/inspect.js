@@ -362,7 +362,7 @@ const ERROR_STACK_OVERFLOW_MSG = "Maximum call stack size exceeded.";
 // be added or removed, `getUserOptions` must also be updated accordingly.
 const inspectDefaultOptions = ObjectSeal({
   showHidden: false,
-  depth: $newRustFunction("node_util_binding.rs", "getConsoleDepth", 0)() ?? 2,
+  depth: 2,
   colors: false,
   customInspect: true,
   showProxy: false,
@@ -733,17 +733,23 @@ inspect.custom = customInspectSymbol;
 // The global console's native formatter ignores `inspectDefaultOptions`; on the
 // first mutation, hand it JS formatters so its output matches Node.js.
 let defaultOptionsOverridden = false;
+let defaultOptionsDepthSet = false;
+const cliConsoleDepth = $newRustFunction("node_util_binding.rs", "getConsoleDepth", 0)();
 const setDefaultInspectOptionsOverridden = $newRustFunction(
   "node_util_binding.rs",
   "setDefaultInspectOptionsOverridden",
   2,
 );
-function onDefaultOptionsChanged() {
+function consoleInspectOptions(colors) {
+  return cliConsoleDepth !== undefined && !defaultOptionsDepthSet ? { colors, depth: cliConsoleDepth } : { colors };
+}
+function onDefaultOptionsChanged(key) {
+  if (key === "depth") defaultOptionsDepthSet = true;
   if (defaultOptionsOverridden) return;
   defaultOptionsOverridden = true;
   setDefaultInspectOptionsOverridden(
-    (colors, ...args) => formatWithOptionsInternal({ colors }, args),
-    (colors, value, options) => inspect(value, { customInspect: false, colors, ...options }),
+    (colors, ...args) => formatWithOptionsInternal(consoleInspectOptions(colors), args),
+    (colors, value, options) => inspect(value, { customInspect: false, ...consoleInspectOptions(colors), ...options }),
   );
 }
 const inspectDefaultOptionsProxy = new Proxy(inspectDefaultOptions, {
@@ -753,12 +759,12 @@ const inspectDefaultOptionsProxy = new Proxy(inspectDefaultOptions, {
       return ReflectSet(target, key, value, receiver);
     }
     const ok = ReflectSet(target, key, value);
-    if (ok) onDefaultOptionsChanged();
+    if (ok) onDefaultOptionsChanged(key);
     return ok;
   },
   defineProperty(target, key, desc) {
     const ok = ReflectDefineProperty(target, key, desc);
-    if (ok) onDefaultOptionsChanged();
+    if (ok) onDefaultOptionsChanged(key);
     return ok;
   },
 });

@@ -2,7 +2,17 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isMacOS,
+  isMacOSVersionAtLeast,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { tmpdir } from "os";
 import path from "path";
 

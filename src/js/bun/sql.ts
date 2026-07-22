@@ -757,8 +757,9 @@ const SQL: typeof Bun.SQL = function SQL(
       if ($isArray(transaction_result)) {
         transaction_result = await Promise.all(transaction_result);
       }
-      if (state.storedError) {
-        throw state.storedError;
+      const storedError = state.storedError;
+      if (storedError) {
+        throw storedError;
       }
       // at this point we dont need to rollback anymore
       needs_rollback = false;

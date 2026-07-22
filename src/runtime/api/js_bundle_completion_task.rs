@@ -25,7 +25,6 @@ use bun_core::env::OperatingSystem;
 use bun_io::KeepAlive;
 use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::WorkPool;
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
@@ -59,19 +58,20 @@ pub struct JSBundleCompletionTask {
     // `unsafe impl Send` below for the thread-affinity constraint this imposes.
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
-    // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
-    // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
-    pub jsc_event_loop: BackRef<EventLoop>,
     /// Stable identifier for the originating `ScriptExecutionContext`. The
-    /// bundle thread posts completions via this id (under the C++ contexts-map
-    /// lock) instead of dereferencing `jsc_event_loop`, which dangles once a
-    /// worker owning the build is terminated mid-bundle.
+    /// bundle thread reaches the JS event loop via this id (under the C++
+    /// contexts-map lock), so it never holds a pointer into a worker VM that
+    /// can be freed mid-bundle.
     pub context_id: ScriptExecutionContextIdentifier,
     pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
+    /// Task-owned env loader + map cloned from the VM at creation time, so the
+    /// bundle thread never dereferences worker-lifetime memory. Freed in
+    /// `deinit` (loader first; it borrows `env_map`).
     pub env: *mut bun_dotenv::Loader<'static>,
+    env_map: *mut bun_dotenv::Map,
     pub log: bun_ast::Log,
     pub cancelled: bool,
 
@@ -102,6 +102,16 @@ impl JSBundleCompletionTask {
             // last-ref drop is the only place that releases it.
             Plugin::destroy(plugin.as_ptr());
         }
+        // `env`/`env_map` are null only when `complete_on_bundle_thread`'s
+        // dead-owner branch already freed them.
+        if !boxed.env.is_null() {
+            // SAFETY: `heap::into_raw`'d in `create_and_schedule_completion_task`;
+            // sole owner. Loader borrows `env_map`, so drop it first.
+            unsafe {
+                drop(bun_core::heap::take(boxed.env));
+                drop(bun_core::heap::take(boxed.env_map));
+            }
+        }
         // Owned fields (`config`, `log`, `result`, `promise`) drop with the Box.
     }
 }
@@ -121,22 +131,27 @@ pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,
-    event_loop: *mut EventLoop,
 ) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
-    let env = global_this.bun_vm().transpiler.env;
+    // Snapshot the env map now, on the JS thread, so the bundle thread never
+    // dereferences worker-owned memory (a worker terminated mid-bundle frees
+    // its VM's loader). `Loader::init` only populates `map`; the bundle-thread
+    // consumers read the map only (`NODE_PATH`, proxy, reject-unauthorized).
+    let env_map =
+        bun_core::heap::into_raw(Box::new(global_this.bun_vm().env_loader().map.clone_with_allocator()?));
+    // SAFETY: `env_map` is a fresh heap allocation owned by this task; the
+    // `'static` borrow is the lifetime erasure for the task-lifetime map.
+    let env = bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init(unsafe { &mut *env_map })));
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
-        // `event_loop` is the live JS-thread loop (caller derives it from
-        // `vm.event_loop()`); never null once `Bun.build` is reachable.
-        jsc_event_loop: BackRef::from(core::ptr::NonNull::new(event_loop).expect("event_loop")),
         context_id: global_this.script_execution_context_identifier(),
         task: AnyTask::default(),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
         poll_ref: KeepAlive::init(),
         env,
+        env_map,
         log: bun_ast::Log::init(),
         cancelled: false,
         html_build_task: None,
@@ -386,8 +401,8 @@ impl JSBundleCompletionTask {
             flags |= StandaloneFlags::DISABLE_AUTOLOAD_PACKAGE_JSON;
         }
 
-        // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
-        // construction; valid for the lifetime of the VirtualMachine.
+        // SAFETY: `self.env` is the task-owned loader heap-allocated at
+        // construction; valid until `deinit`.
         let env = unsafe { &mut *self.env.cast::<bun_dotenv::Loader>() };
 
         let result = match to_executable(
@@ -997,20 +1012,29 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
-        // Post by stable context id so a worker terminated mid-bundle cannot
-        // leave `jsc_event_loop` dangling under us: `post_concurrent_task`
-        // serializes with `markTerminating()` on the C++ contexts-map lock and
-        // only dereferences the target VM while that lock is held.
+        // Post by stable context id: `post_concurrent_task` serializes with
+        // `markTerminating()` on the C++ contexts-map lock and only
+        // dereferences the target VM while that lock is held.
         let task = jsc::ConcurrentTask::create(self.task.task());
         if !self.context_id.post_concurrent_task(task) {
             // Target context is gone or terminating. `on_complete_anytask`
-            // will never run; reclaim the heap `ConcurrentTaskItem`. The
-            // `JSBundleCompletionTask` itself is deliberately leaked: its
-            // `deinit` touches JS-thread-owned state (`JSPromiseStrong`,
-            // `Plugin::destroy`, `KeepAlive`) that is already freed.
+            // will never run; reclaim the `ConcurrentTaskItem` and the large
+            // task-owned payloads here. The box itself (and its JSC handle
+            // `promise` / C++ `plugins`, which point into the dead VM) cannot
+            // be released off the JS thread; that residual is bounded.
             // SAFETY: `post_concurrent_task` returned false so ownership was
             // not transferred; `task` was `ConcurrentTask::create`-allocated.
             drop(unsafe { bun_core::heap::take(task.as_ptr()) });
+            self.result = BundleV2Result::Pending;
+            self.log = bun_ast::Log::init();
+            let env = core::mem::replace(&mut self.env, ptr::null_mut());
+            let env_map = core::mem::replace(&mut self.env_map, ptr::null_mut());
+            // SAFETY: both are the non-null `heap::into_raw`'d allocations
+            // from `create_and_schedule_completion_task`; sole owner.
+            unsafe {
+                drop(bun_core::heap::take(env));
+                drop(bun_core::heap::take(env_map));
+            }
         }
     }
     fn set_result(&mut self, result: BundleV2Result) {
@@ -1077,9 +1101,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        // SAFETY: `self.env` is the per-VM dotenv loader stashed at
-        // construction; cast erases `'_` (bun_dotenv::Loader is invariant on
-        // its arena lifetime, but `Transpiler::init` only stores the pointer).
+        // `self.env` is the task-owned loader heap-allocated at construction.
         let env = self.env.cast::<bun_dotenv::Loader<'static>>();
         let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);

@@ -58,9 +58,8 @@ pub struct BundleThread<C: Node> {
 /// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
 pub trait CompletionStruct: Node + Send + 'static {
     /// Whether the JS context that scheduled this build is still alive. When
-    /// `false`, the bundle thread must not run `generate_in_new_thread`: the
-    /// task borrows worker-owned resources (env loader, event loop) that may
-    /// already be freed. Defaults to `true` so non-worker callers stay no-op.
+    /// `false` the bundle thread skips the build, since
+    /// `complete_on_bundle_thread` would discard the result anyway.
     fn is_owner_alive(&self) -> bool {
         true
     }
@@ -81,9 +80,8 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// `FileMap` layout stays in T6.
     fn file_map(&mut self) -> Option<NonNull<FileMap>>;
     /// Returns a §Dispatch handle (erased owner + `&'static` vtable) the impl
-    /// provides, so the bundler can read `result == .err` /
-    /// `jsc_event_loop.enqueueTaskConcurrent` without naming the concrete
-    /// struct.
+    /// provides, so the bundler can read `result == .err` / post plugin tasks
+    /// to the JS event loop without naming the concrete struct.
     fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
 
     /// `Transpiler<'a>` has borrow-carrying fields (`arena: &'a Arena`,
@@ -229,11 +227,10 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // until complete_on_bundle_thread() signals completion.
                 let completion = unsafe { &mut *completion };
                 if !completion.is_owner_alive() {
-                    // The worker that scheduled this build has begun shutdown.
-                    // `create_and_configure_transpiler` would dereference
-                    // worker-owned state (env loader) that is already freed.
+                    // The worker that scheduled this build has begun shutdown;
+                    // skip the build since its result would be dropped anyway.
                     // `complete_on_bundle_thread` observes the same dead
-                    // context and drops the post.
+                    // context and discards the post.
                     completion.complete_on_bundle_thread();
                     has_bundled = true;
                     continue;

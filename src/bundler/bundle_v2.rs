@@ -1501,7 +1501,7 @@ pub mod bv2_impl {
         ) {
             debug_assert!(self.plugins.is_some());
             if let Some(completion) = self.completion {
-                // From Bun.build — `completion.jsc_event_loop.enqueueTaskConcurrent(task)`.
+                // From Bun.build — post to the originating context's JS loop.
                 completion.enqueue_task_concurrent(task);
                 return;
             }

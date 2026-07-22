@@ -1558,15 +1558,23 @@ test(
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(String(dir), "run.ts"), join(String(dir), "entry.ts")],
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        // Pre-existing bounded worker-termination leaks on main (per-worker
+        // node:fs Binding, WebWorker box) would abort the subprocess under
+        // CI's detect_leaks=1. This test covers the UAF -> crash; the unfixed
+        // bug aborts with a heap-use-after-free report regardless.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("use-after-free");
-    expect(stderr).not.toContain("Segmentation fault");
-    expect(stdout.trim()).toBe("OK " + rounds);
-    expect(exitCode).toBe(0);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "OK " + rounds,
+      stderr: "",
+      exitCode: 0,
+    });
   },
   isDebug || isASAN ? 120_000 : 45_000,
 );

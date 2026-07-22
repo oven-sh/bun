@@ -147,6 +147,7 @@ pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_ta
 /// same lock before any dealloc). `task` is a heap `ConcurrentTaskItem` the
 /// caller has already allocated.
 // HOST_EXPORT(Bun__EventLoop__enqueueConcurrentTask, c)
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn event_loop_enqueue_concurrent_task(
     global: &JSGlobalObject,
     task: *mut crate::event_loop::ConcurrentTaskItem,

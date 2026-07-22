@@ -350,7 +350,12 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     ["chunked", {}, RESIZABLE_CHUNK_SIZE.toString(16).length + 4, "Connection: close\\r\\n"],
     // Two pipelined keep-alive requests in one write: the second request must
     // take the queued pipelined branch (HTTP_RESPONSE_PENDING left intact).
-    ["pipelined keep-alive", { "Content-Length": String(RESIZABLE_CHUNK_SIZE) }, 0, "\\r\\nGET / HTTP/1.1\\r\\nHost: x\\r\\n"],
+    [
+      "pipelined keep-alive",
+      { "Content-Length": String(RESIZABLE_CHUNK_SIZE) },
+      0,
+      "\\r\\nGET / HTTP/1.1\\r\\nHost: x\\r\\n",
+    ],
   ] as const)(
     "req.socket.end() without res.end() delivers the full pinned body (%s)",
     (_name, extraHeaders, framingOverhead, trailer) => {

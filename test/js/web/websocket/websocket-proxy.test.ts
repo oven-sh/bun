@@ -22,6 +22,8 @@ const isDockerEnabled = harness.isDockerEnabled;
 // too, so an ambient NO_PROXY=localhost,127.0.0.1,... would bypass the proxy and
 // break those assertions. The NO_PROXY test block further down spawns subprocesses
 // with an explicit env, so clearing the runner's value here doesn't affect it.
+const prevNoProxy = process.env.NO_PROXY;
+const prevNoProxyLower = process.env.no_proxy;
 process.env.NO_PROXY = "";
 process.env.no_proxy = "";
 
@@ -96,6 +98,8 @@ afterAll(() => {
   authProxy?.close();
   wsServer?.stop(true);
   wssServer?.stop(true);
+  if (prevNoProxy !== undefined) process.env.NO_PROXY = prevNoProxy;
+  if (prevNoProxyLower !== undefined) process.env.no_proxy = prevNoProxyLower;
 });
 
 describe("WebSocket proxy API", () => {

@@ -258,6 +258,21 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should run the callback when the name arg is undefined/null/number/boolean/Symbol", async () => {
+    // Node's createSubtest only reinterprets a positional when its declared
+    // slot's type matches, so a non-string name still lets options/fn flow
+    // through. Bun previously replaced fn with a noop and registered a
+    // body-less always-passing <anonymous> test.
+    const { exitCode, stderr } = await runTests(["25-non-string-name.js"]);
+    expect(stderr).toContain("11 pass");
+    // The internal default function's inferred name must not leak as a test name.
+    expect(stderr).not.toContain("kDefaultFunction");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

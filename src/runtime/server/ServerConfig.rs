@@ -771,7 +771,7 @@ impl ServerConfig {
         }
 
         // "development" impacts other settings like bake.
-        if let Some(dev) = arg.get(global, "development")? {
+        if let Some(dev) = arg.get(global, "development")?.filter(|v| !v.is_null()) {
             if dev.is_object() {
                 if let Some(hmr) = dev.get_boolean_strict(global, "hmr")? {
                     args.development = if !hmr {
@@ -798,7 +798,7 @@ impl ServerConfig {
                 } else {
                     DevelopmentOption::Production
                 };
-            } else if !dev.is_null() {
+            } else {
                 return Err(global.throw_invalid_property_type(
                     "development",
                     "boolean or object",

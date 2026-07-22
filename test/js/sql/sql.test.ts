@@ -133,9 +133,44 @@ if (isDockerEnabled()) {
         const [{ x }] = await sql`select CAST(${value} as NUMERIC(30,20)) as x`;
         expect(x).toBe(value);
       }
-      // zero specifically
+      // zero specifically — a numeric with an explicit scale must preserve
+      // trailing zeros even for the value 0 (regression: #29772).
       const [{ x }] = await sql`select CAST(${"0.00000000000000000000"} as NUMERIC(30,20)) as x`;
-      expect(x).toBe("0");
+      expect(x).toBe("0.00000000000000000000");
+    });
+
+    test("numeric zero preserves scale on prepared/binary path (#29772)", async () => {
+      await using sql = postgres(options);
+      const table = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql.unsafe(`CREATE TEMPORARY TABLE ${table} (v numeric(10, 4) NOT NULL)`);
+      await sql.unsafe(`INSERT INTO ${table} VALUES (0), (1), (1.5), (10)`);
+
+      // Unprepared (text protocol) path — always correct server-side.
+      const unprepared = await sql.unsafe(`SELECT v FROM ${table} ORDER BY v`);
+      expect(unprepared.map((r: any) => r.v)).toEqual(["0.0000", "1.0000", "1.5000", "10.0000"]);
+
+      // Prepared (binary protocol) path — must match.
+      const prepared = await sql.unsafe(`SELECT v FROM ${table} ORDER BY v LIMIT $1`, [10]);
+      expect(prepared.map((r: any) => r.v)).toEqual(["0.0000", "1.0000", "1.5000", "10.0000"]);
+
+      // numeric with no typmod (dscale = 0) — zero has no trailing fractional
+      // digits and should remain "0" on both paths.
+      const table2 = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql.unsafe(`CREATE TEMPORARY TABLE ${table2} (v numeric NOT NULL)`);
+      await sql.unsafe(`INSERT INTO ${table2} VALUES (0)`);
+      expect((await sql.unsafe(`SELECT v FROM ${table2}`))[0].v).toBe("0");
+      expect((await sql.unsafe(`SELECT v FROM ${table2} LIMIT $1`, [1]))[0].v).toBe("0");
+
+      // numeric(p, 0) — explicit zero scale, same result on both paths.
+      const table3 = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql.unsafe(`CREATE TEMPORARY TABLE ${table3} (v numeric(10, 0) NOT NULL)`);
+      await sql.unsafe(`INSERT INTO ${table3} VALUES (0)`);
+      expect((await sql.unsafe(`SELECT v FROM ${table3}`))[0].v).toBe("0");
+      expect((await sql.unsafe(`SELECT v FROM ${table3} LIMIT $1`, [1]))[0].v).toBe("0");
+
+      // Negative zero-adjacent values still format correctly on the prepared path.
+      const negRows = await sql.unsafe(`SELECT CAST($1 AS numeric(10,2)) AS v`, ["-0.50"]);
+      expect(negRows[0].v).toBe("-0.50");
     });
 
     describe("Array helpers", () => {
@@ -11498,7 +11533,7 @@ CREATE TABLE ${table_name} (
           { area: "D", price: "NaN" },
         ];
         const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
-        expect(results[0].price).toEqual("0");
+        expect(results[0].price).toEqual("0.0000"); // 0.00001 collapses to 0 but keeps scale 4
         expect(results[1].price).toEqual("0.0001");
         expect(results[2].price).toEqual("0.0010");
         expect(results[3].price).toEqual("0.0100");
@@ -11527,7 +11562,7 @@ CREATE TABLE ${table_name} (
         expect(results[23].price).toEqual("999999.9999");
 
         // negative numbers
-        expect(results[24].price).toEqual("0");
+        expect(results[24].price).toEqual("0.0000"); // -0.00001 collapses to 0 but keeps scale 4
         expect(results[25].price).toEqual("-0.0001");
         expect(results[26].price).toEqual("-0.0010");
         expect(results[27].price).toEqual("-0.0100");
@@ -11602,7 +11637,7 @@ CREATE TABLE ${table_name} (
         ];
         const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
         results.forEach(row => {
-          expect(row.price).toBe("0");
+          expect(row.price).toBe("0.0000"); // NUMERIC(10,4) zero keeps its scale on the binary path
         });
       });
 

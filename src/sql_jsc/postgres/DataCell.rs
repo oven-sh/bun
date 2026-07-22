@@ -1025,7 +1025,19 @@ fn parse_binary_numeric<'a>(
     }
 
     if ndigits == 0 {
-        return Ok(PGNummericString::Static(b"0"));
+        // Zero has no digit groups, but dscale still applies: numeric(10, 4)
+        // zero must render as "0.0000" on the binary (prepared) path to match
+        // the text (unprepared) path and libpq/node-postgres.
+        if dscale <= 0 {
+            return Ok(PGNummericString::Static(b"0"));
+        }
+        result.push(b'0');
+        result.push(b'.');
+        result.resize(
+            result.len() + usize::try_from(dscale).expect("int cast"),
+            b'0',
+        );
+        return Ok(PGNummericString::Dynamic(result.as_slice()));
     }
 
     // Add negative sign if needed

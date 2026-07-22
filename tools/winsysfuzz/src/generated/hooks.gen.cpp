@@ -1251,6 +1251,19 @@ static ULONG_PTR NTAPI Hook_NtNotifyChangeDirectoryFile(ULONG_PTR a0, ULONG_PTR 
   return ctx.Exit(r);
 }
 
+// [File] NTSTATUS NtNotifyChangeDirectoryFileEx(10 args)
+static const char* const NtNotifyChangeDirectoryFileEx_types[] = {"HANDLE", "HANDLE", "PIO_APC_ROUTINE", "PVOID", "PIO_STATUS_BLOCK", "PVOID", "ULONG", "ULONG", "BOOLEAN", "DIRECTORY_NOTIFY_INFORMATION_CLASS"};
+static const char* const NtNotifyChangeDirectoryFileEx_names[] = {"FileHandle", "Event", "ApcRoutine", "ApcContext", "IoStatusBlock", "Buffer", "Length", "CompletionFilter", "WatchTree", "DirectoryNotifyInformationClass"};
+static const uint8_t NtNotifyChangeDirectoryFileEx_dirs[] = {0, 128, 128, 128, 1, 1, 0, 0, 0, 128};
+static ULONG_PTR (NTAPI *Real_NtNotifyChangeDirectoryFileEx)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
+static ULONG_PTR NTAPI Hook_NtNotifyChangeDirectoryFileEx(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
+  ULONG_PTR args[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9};
+  CallCtx ctx(SYS_NtNotifyChangeDirectoryFileEx, (uintptr_t)_ReturnAddress(), args, 10);
+  if (ctx.PreFault()) return ctx.Ret();
+  ULONG_PTR r = Real_NtNotifyChangeDirectoryFileEx(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], a10, a11, a12, a13, a14, a15, a16, a17);
+  return ctx.Exit(r);
+}
+
 // [File] NTSTATUS NtOpenFile(6 args)
 static const char* const NtOpenFile_types[] = {"PHANDLE", "FILE_ACCESS_MASK", "POBJECT_ATTRIBUTES", "PIO_STATUS_BLOCK", "ULONG", "ULONG"};
 static const char* const NtOpenFile_names[] = {"FileHandle", "DesiredAccess", "ObjectAttributes", "IoStatusBlock", "ShareAccess", "OpenOptions"};
@@ -7067,6 +7080,7 @@ HookEntry kHooks[SYS__COUNT] = {
   {"NtFsControlFile", (void**)&Real_NtFsControlFile, (void*)&Hook_NtFsControlFile, 10, true, NtFsControlFile_types, NtFsControlFile_names, NtFsControlFile_dirs, "File", 4, -1, 5, 0, -1, -1, -1, 8},
   {"NtLockFile", (void**)&Real_NtLockFile, (void*)&Hook_NtLockFile, 10, true, NtLockFile_types, NtLockFile_names, NtLockFile_dirs, "File", 4, -1, -1, 0, -1, -1, 3, -1},
   {"NtNotifyChangeDirectoryFile", (void**)&Real_NtNotifyChangeDirectoryFile, (void*)&Hook_NtNotifyChangeDirectoryFile, 9, true, NtNotifyChangeDirectoryFile_types, NtNotifyChangeDirectoryFile_names, NtNotifyChangeDirectoryFile_dirs, "File", 4, -1, -1, -1, -1, -1, 3, 5},
+  {"NtNotifyChangeDirectoryFileEx", (void**)&Real_NtNotifyChangeDirectoryFileEx, (void*)&Hook_NtNotifyChangeDirectoryFileEx, 10, true, NtNotifyChangeDirectoryFileEx_types, NtNotifyChangeDirectoryFileEx_names, NtNotifyChangeDirectoryFileEx_dirs, "File", 4, -1, -1, 0, 6, -1, 3, 5},
   {"NtOpenFile", (void**)&Real_NtOpenFile, (void*)&Hook_NtOpenFile, 6, true, NtOpenFile_types, NtOpenFile_names, NtOpenFile_dirs, "File", 3, 2, -1, -1, -1, 0, -1, -1},
   {"NtOpenIoCompletion", (void**)&Real_NtOpenIoCompletion, (void*)&Hook_NtOpenIoCompletion, 3, true, NtOpenIoCompletion_types, NtOpenIoCompletion_names, NtOpenIoCompletion_dirs, "File", -1, 2, -1, -1, -1, 0, -1, -1},
   {"NtQueryAttributesFile", (void**)&Real_NtQueryAttributesFile, (void*)&Hook_NtQueryAttributesFile, 2, true, NtQueryAttributesFile_types, NtQueryAttributesFile_names, NtQueryAttributesFile_dirs, "File", -1, 0, -1, -1, -1, -1, -1, -1},

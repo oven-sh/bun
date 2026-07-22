@@ -101,6 +101,7 @@ enum SysId : uint32_t {
   SYS_NtFsControlFile,
   SYS_NtLockFile,
   SYS_NtNotifyChangeDirectoryFile,
+  SYS_NtNotifyChangeDirectoryFileEx,
   SYS_NtOpenFile,
   SYS_NtOpenIoCompletion,
   SYS_NtQueryAttributesFile,

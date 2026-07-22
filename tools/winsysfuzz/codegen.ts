@@ -68,7 +68,10 @@ function parse(text: string): Syscall[] {
       continue;
     }
     if (line === "NTAPI") continue;
-    const m = /^(Nt[A-Za-z0-9_]+)\(\s*$/.exec(line);
+    // Tolerate a stray CR / whitespace between the name and "(" (the cfg
+    // has at least one mixed line ending: "NtNotifyChangeDirectoryFileEx\r(")
+    // - a silent regex miss here drops the syscall from EVERY generated table.
+    const m = /^(Nt[A-Za-z0-9_]+)[\s\r]*\(\s*$/.exec(line);
     if (!m) continue;
     const name = m[1];
     const args: Arg[] = [];

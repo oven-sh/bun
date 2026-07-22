@@ -188,6 +188,18 @@ void us_internal_async_wakeup(struct us_internal_async *a);
 size_t us_internal_accept_poll_event(struct us_poll_t *p);
 int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
+/* Re-register this poll for its current us_poll_events(). Idempotent when the
+ * poll is already registered. Needed on the libuv backend after a status<0
+ * poll_cb delivery, which zeroes handle->events; on epoll/kqueue the
+ * registration survives an error event so this is a MOD/EV_ADD no-op. */
+void us_internal_poll_restart(struct us_poll_t *p, struct us_loop_t *loop);
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+/* Fault-injection only: put the poll into the same state libuv's
+ * uv__fast_poll_process_poll_req !REQ_SUCCESS branch leaves it in (watching
+ * nothing, handle still live) so the error-recovery path can be exercised on
+ * every backend. */
+void us_internal_poll_simulate_error_stop(struct us_poll_t *p, struct us_loop_t *loop);
+#endif
 
 /* SSL loop data */
 void us_internal_init_loop_ssl_data(us_loop_r loop);

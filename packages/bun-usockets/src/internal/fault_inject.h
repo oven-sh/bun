@@ -43,6 +43,12 @@ enum us_fault_syscall {
      * us_internal_init_loop_ssl_data. Only US_FAULT_ERRNO applies — there is
      * no byte count to clamp and no zero return to fake. */
     US_FAULT_SSL_LOOP_BUFFER,
+    /* Not a syscall: the event-loop poll delivery for a listening socket.
+     * Simulates libuv's uv_poll_cb(status < 0) path — the AFD poll ioctl
+     * failing (e.g. INSUFFICIENT_RESOURCES) — which zeroes handle->events so
+     * the listen poll stops firing until re-armed. Only US_FAULT_ERRNO
+     * applies; the errno value is not surfaced. */
+    US_FAULT_LISTEN_POLL,
     US_FAULT_COUNT
 };
 

@@ -407,6 +407,10 @@ pub mod fault_inject {
     /// Not a syscall: the per-loop TLS plaintext buffer allocation in
     /// `us_internal_init_loop_ssl_data`.
     pub const SSL_LOOP_BUFFER: c_int = 10;
+    /// Not a syscall: the event-loop poll delivery for a listening socket.
+    /// Simulates libuv's `uv_poll_cb(status < 0)` path, which leaves the
+    /// poll handle watching nothing until re-armed.
+    pub const LISTEN_POLL: c_int = 11;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;

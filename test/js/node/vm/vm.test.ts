@@ -88,6 +88,87 @@ describe("vm", () => {
     });
   });
 
+  describe("Object.preventExtensions(globalThis)", () => {
+    // https://github.com/oven-sh/bun/issues/33075
+    // The error is thrown inside the vm realm, so assert on `.name` rather than
+    // a cross-realm `instanceof TypeError`.
+    test.each(["Object.freeze", "Object.seal", "Object.preventExtensions"])(
+      "%s(globalThis) throws a TypeError in a contextified context",
+      op => {
+        const context = createContext();
+        let caught: unknown;
+        try {
+          runInContext(`${op}(globalThis);`, context);
+        } catch (e) {
+          caught = e;
+        }
+        expect((caught as Error)?.name).toBe("TypeError");
+      },
+    );
+
+    test("a rejected freeze leaves the contextified global usable", () => {
+      const context = createContext();
+      let caught: unknown;
+      try {
+        runInContext("Object.freeze(globalThis);", context);
+      } catch (e) {
+        caught = e;
+      }
+      expect((caught as Error)?.name).toBe("TypeError");
+      // The freeze was rejected, so the context's global stays extensible.
+      expect(runInContext("globalThis.__x = 1; typeof globalThis.__x;", context)).toBe("number");
+    });
+
+    test("a DONT_CONTEXTIFY global can still be frozen, matching Node", () => {
+      const context = createContext(constants.DONT_CONTEXTIFY);
+      expect(() => runInContext("Object.freeze(globalThis);", context)).not.toThrow();
+    });
+
+    test("runInNewContext throws for a contextified global", () => {
+      let caught: unknown;
+      try {
+        runInNewContext("Object.freeze(globalThis);", {});
+      } catch (e) {
+        caught = e;
+      }
+      expect((caught as Error)?.name).toBe("TypeError");
+    });
+
+    test("runInNewContext with DONT_CONTEXTIFY can still be frozen, matching Node", () => {
+      expect(() => runInNewContext("Object.freeze(globalThis);", constants.DONT_CONTEXTIFY)).not.toThrow();
+    });
+
+    // contextCodeGeneration must still gate eval in a reused DONT_CONTEXTIFY context.
+    test.each([constants.DONT_CONTEXTIFY, {}])(
+      "runInNewContext honors contextCodeGeneration.strings for context %#",
+      ctx => {
+        let caught: unknown;
+        try {
+          runInNewContext('eval("1+1")', ctx, { contextCodeGeneration: { strings: false } });
+        } catch (e) {
+          caught = e;
+        }
+        expect((caught as Error)?.name).toBe("EvalError");
+      },
+    );
+
+    // Invalid contextCodeGeneration must report the user-facing option name, not the
+    // internal `codeGeneration` alias runInNewContext maps it to.
+    test.each([
+      [null, "options.contextCodeGeneration"],
+      [{ strings: "x" }, "options.contextCodeGeneration.strings"],
+    ])("runInNewContext reports %p under the user-facing option name", (contextCodeGeneration, expected) => {
+      let caught: any;
+      try {
+        runInNewContext("1", {}, { contextCodeGeneration });
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(caught?.message).toContain(expected);
+    });
+  });
+
   describe("compileFunction()", () => {
     test("options properties can be undefined", () => {
       const result = compileFunction("return 1 + 1;", [], {

@@ -104,6 +104,24 @@ function runInThisContext(code, options) {
   return new Script(code, options).runInThisContext(options);
 }
 
+// runInNewContext names code generation via `contextCodeGeneration`, while
+// createContext reads `codeGeneration`; validate under the user-facing name
+// then alias so the reused context honors it with Node's error messages.
+function getContextOptions(options) {
+  if (options == null || typeof options !== "object" || options.contextCodeGeneration === undefined) {
+    return options;
+  }
+  const codeGeneration = options.contextCodeGeneration;
+  validateObject(codeGeneration, "options.contextCodeGeneration");
+  if (codeGeneration.strings !== undefined) {
+    validateBoolean(codeGeneration.strings, "options.contextCodeGeneration.strings");
+  }
+  if (codeGeneration.wasm !== undefined) {
+    validateBoolean(codeGeneration.wasm, "options.contextCodeGeneration.wasm");
+  }
+  return { __proto__: null, ...options, codeGeneration };
+}
+
 function runInNewContext(code, context, options) {
   if (context !== undefined && (typeof context !== "object" || context === null)) {
     validateContext(context);
@@ -111,7 +129,7 @@ function runInNewContext(code, context, options) {
   if (typeof options === "string") {
     options = { filename: options };
   }
-  context = createContext(context, options);
+  context = createContext(context, getContextOptions(options));
   return createScript(code, options).runInNewContext(context, options);
 }
 

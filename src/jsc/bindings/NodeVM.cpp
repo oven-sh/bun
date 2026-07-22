@@ -1336,6 +1336,17 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
 }
 
+bool NodeVMGlobalObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
+{
+    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(object);
+    // A contextified context's global proxy can never be made non-extensible in
+    // V8, so Object.freeze/seal/preventExtensions(globalThis) must fail. A
+    // not-contextified (DONT_CONTEXTIFY) context has a real, freezable global.
+    if (thisObject->isNotContextified())
+        return Base::preventExtensions(object, globalObject);
+    return false;
+}
+
 DEFINE_VISIT_CHILDREN(NodeVMGlobalObject);
 
 template<typename Visitor>

@@ -1849,11 +1849,11 @@ mod _async_tasks {
                     .r#ref
                     .unref(event_loop_handle_to_ctx(this_ref.evtloop));
                 super::PENDING_ASYNC_REQUESTS.with(|c| {
-                // The create/destroy pairing is 1:1; a silent absorb here would
-                // make getActiveResourcesInfo() under-report forever.
-                debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
-                c.set(c.get().saturating_sub(1));
-            });
+                    // The create/destroy pairing is 1:1; a silent absorb here would
+                    // make getActiveResourcesInfo() under-report forever.
+                    debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
+                    c.set(c.get().saturating_sub(1));
+                });
             }
             // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by

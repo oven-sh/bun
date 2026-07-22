@@ -69,6 +69,48 @@ for (let n = 1; n <= times; n++) {
   console.log(`  run${n}: ${r.outcome} exit=${r.exitCode} fired=${r.fired} ${r.ms}ms`);
 }
 
+// --- minimize: greedy delta over the schedule's rules ----------------------
+// A wide-pass hit carries a broad schedule (dozens of rules); the finding
+// almost always hinges on one or two of them. --minimize drops rules one at
+// a time and keeps any smaller schedule that still reproduces the finding
+// class (a HANG or a CRASH - the same "bad" the sweeper verifies against),
+// then prints the surviving minimal schedule and re-verifies it 3x.
+const minimize = argv.includes("--minimize");
+let minimalSchedule = "";
+if (minimize) {
+  if (!runs.some(r => r.outcome === "hang" || r.crash)) {
+    console.log(`\nminimize: initial rounds did not reproduce a hang/crash - nothing to minimize`);
+  } else {
+    let cur = schedule
+      .split(/\s*;\s*/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    console.log(`\nminimize: ${cur.length} rule(s) - dropping while it still reproduces...`);
+    const reproduces = async (rules: string[], tag: string) => {
+      const r = await replayCoordinate({
+        bun,
+        args: progArgs,
+        schedule: rules.join(" ; "),
+        dir: join(outDir, `min-${tag}`),
+        timeoutMs,
+      });
+      const bad = r.outcome === "hang" || !!r.crash;
+      console.log(`    [${tag}] ${rules.length} rule(s): ${bad ? "REPRODUCES" : "clean"} (${r.outcome === "hang" ? "HANG" : r.crash ? "CRASH" : `exit=${r.exitCode}`})`);
+      return bad;
+    };
+    for (let i = 0; i < cur.length && cur.length > 1; ) {
+      const trial = cur.filter((_, k) => k !== i);
+      if (await reproduces(trial, `drop${i}`)) cur = trial;
+      else i++;
+    }
+    minimalSchedule = cur.join(" ; ");
+    console.log(`\nminimal schedule (${cur.length} rule(s)):\n  ${minimalSchedule}`);
+    let ok = 0;
+    for (let v = 1; v <= 3; v++) if (await reproduces(cur, `verify${v}`)) ok++;
+    console.log(`minimal reproduces ${ok}/3`);
+  }
+}
+
 // --- stress: concurrent replays with a control lane -------------------------
 interface StressRound {
   r: number;

@@ -132,7 +132,10 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // Debug-build-only: a debug bun reads certain assets live from the
       // source tree (release embeds them). "Failed to load '<src path>'" is
       // an asset the user's binary never reads from disk - not user-facing.
-      if (/Failed to load '[^']*[\\/]src[\\/][^']*'/.test(detail)) k = "debug-only";
+      // "Failed to load '<path>'": the debug build reads its bundled runtime
+      // JS / internal modules live from the source and build trees (release
+      // embeds them) - any such asset-load failure cannot exist for a user.
+      if (/Failed to load '[^']*[\\/](src|build|codegen)[\\/][^']*'/.test(detail)) k = "debug-only";
       // Rust cfg(debug_assertions) panics with a release fallback: the debug
       // build panics on a fallible OS lookup where release returns a
       // sentinel (user_unique_id: "GetUserNameW failed" -> return 0). The

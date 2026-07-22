@@ -42,7 +42,7 @@ let S: any;
 
 function build() {
   if (S) return S;
-  const dir = tempDir("ffi-int-coercion", { "echo.c": echoC });
+  using dir = tempDir("ffi-int-coercion", { "echo.c": echoC });
   const out = join(String(dir), "libecho.so");
   const res = Bun.spawnSync({
     cmd: ["cc", "-shared", "-fPIC", "-o", out, join(String(dir), "echo.c")],

@@ -269,8 +269,13 @@ describe.skipIf(!canTrace)("pty runner", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // A terminal echoes back what it was typed and turns \n into \r\n, so the
-    // probe's own line is the last one.
-    const lines = stdout.replaceAll("\r", "").trim().split("\n");
+    // probe's own line is the last one. macOS also echoes the end-of-input ^D
+    // as the two characters ^D followed by two backspaces (ECHOCTL); strip
+    // control characters so that doesn't ride on the front of the line.
+    const lines = stdout
+      .replace(/[\x00-\x1f]+/g, "\n")
+      .trim()
+      .split("\n");
     return { line: lines.at(-1), stderr, exitCode };
   }
 

@@ -1,7 +1,7 @@
 // Shared driver library: trace parsing, RVA symbolization, module
 // classification, and a watchdogged runner around wsfrun.exe.
 
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, statfsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export const here = dirname(import.meta.path);
@@ -370,6 +370,43 @@ export function ensureDir(dir: string) {
   mkdirSync(dir, { recursive: true });
 }
 
+// --- disk headroom watchdog ----------------------------------------------
+// The wide pass writes ~1GB/min of live traces + per-run temp; a full disk
+// killed both engines AND wedged sshd (session spawn fails at 0 bytes
+// free), so no amount of headroom is a fix - only refusing to launch
+// below a floor is. Every launch path awaits this: below MIN_FREE_GB it
+// blocks, logs once, and re-checks until space returns (the engines'
+// own pruning between targets frees it), instead of writing the box to
+// death.
+const MIN_FREE_GB = +(process.env.WSF_MIN_FREE_GB ?? "20");
+export function freeGB(dir: string): number {
+  try {
+    // statfs on the drive holding the work dir
+    const st = statfsSync(dir);
+    return (st.bavail * st.bsize) / 2 ** 30;
+  } catch {
+    return Infinity; // cannot measure: never block
+  }
+}
+let headroomWarned = false;
+export async function awaitHeadroom(workDir: string): Promise<void> {
+  for (;;) {
+    const free = freeGB(workDir);
+    if (free >= MIN_FREE_GB) {
+      if (headroomWarned) {
+        console.log(`  [headroom] ${free.toFixed(1)}GB free - resuming launches`);
+        headroomWarned = false;
+      }
+      return;
+    }
+    if (!headroomWarned) {
+      console.log(`  [headroom] ${free.toFixed(1)}GB free < ${MIN_FREE_GB}GB floor - pausing new launches until space returns`);
+      headroomWarned = true;
+    }
+    await Bun.sleep(30_000);
+  }
+}
+
 // Per-invocation timestamp used to build never-reused output roots.
 export const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 
@@ -530,6 +567,7 @@ export async function replayCoordinate(opts: {
   // Private TEMP inside the run dir: test files create temp dirs and a
   // killed/crashed run never cleans up - under the run dir that litter is
   // reaped by the run's own retention instead of accumulating in %TEMP%.
+  await awaitHeadroom(opts.dir);
   const runTmp = join(opts.dir, "tmp");
   ensureDir(runTmp);
   const env: Record<string, string> = {
@@ -655,6 +693,7 @@ export async function captureCrash(cmdline: string[], env: Record<string, string
 
 export async function runOnce(o: RunOpts): Promise<RunResult> {
   ensureDir(o.workDir);
+  await awaitHeadroom(o.workDir);
   const runTmp = join(o.workDir, "tmp");
   ensureDir(runTmp);
   const env: Record<string, string> = {

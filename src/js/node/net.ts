@@ -3316,6 +3316,10 @@ Server.prototype.close = function close(callback) {
 };
 
 Server.prototype[Symbol.asyncDispose] = function () {
+  // Node resolves immediately when the server is not listening (lib/net.js
+  // SymbolAsyncDispose); without the guard a second dispose rejects with
+  // ERR_SERVER_NOT_RUNNING and re-emits 'close'.
+  if (!this._handle) return Promise.$resolve();
   const { resolve, reject, promise } = Promise.withResolvers();
   this.close(function (err, ...args) {
     if (err) reject(err);

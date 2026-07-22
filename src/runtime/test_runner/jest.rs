@@ -563,7 +563,7 @@ pub(crate) fn js_node_test_late_begin(
     if let Some(buntest_strong) = bun_test::clone_active_strong() {
         // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
         let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
-        buntest.node_test_pending_late = buntest.node_test_pending_late.saturating_add(1);
+        buntest.node_test_pending_late += 1;
         buntest.wants_wakeup = true;
     }
     Ok(JSValue::UNDEFINED)
@@ -582,6 +582,10 @@ pub(crate) fn js_node_test_late_report(
     };
     // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
     let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    // Paired with js_node_test_late_begin; the debug_assert surfaces an unpaired
+    // call in debug builds. Release saturates rather than wrapping so an
+    // imbalance cannot leave the drain loop spinning on u32::MAX.
+    debug_assert!(buntest.node_test_pending_late > 0, "unpaired node:test lateReport");
     buntest.node_test_pending_late = buntest.node_test_pending_late.saturating_sub(1);
 
     let Some(reporter) = buntest.reporter else {

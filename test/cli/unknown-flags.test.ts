@@ -91,7 +91,6 @@ describe("unknown CLI flags", () => {
       expect(combined).toContain("unknown option '--totally-fake-flag'");
       expect(exitCode).toBe(1);
     });
-
   });
 
   describe("build / test: reject", () => {

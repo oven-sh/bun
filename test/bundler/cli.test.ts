@@ -250,15 +250,7 @@ console.log(utils());`,
       }).exited;
       // bun build ./index.ts --outdir ./dist --target node
       const { stderr, exited } = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          join(testDir, "index.ts"),
-          "--outdir",
-          join(testDir, "dist"),
-          "--target",
-          "node",
-        ],
+        cmd: [bunExe(), "build", join(testDir, "index.ts"), "--outdir", join(testDir, "dist"), "--target", "node"],
         env: bunEnv,
         stderr: "pipe",
         stdout: "pipe",

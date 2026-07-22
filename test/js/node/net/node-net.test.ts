@@ -1009,11 +1009,8 @@ describe("Socket fd adoption", () => {
 
 describe("paused socket whose peer sends RST", () => {
   // Regression: on Linux, epoll forwarded the raw EPOLLERR bit (8) as a libus
-  // close code, which the JS error path read as errno 8 and surfaced as a
-  // bogus `Error: read ENOEXEC` when the socket was not actively reading.
-  // kqueue already normalized the flag to 0/1. Linux-only: epoll delivers
-  // EPOLLERR on a paused fd; on IOCP/kqueue a paused socket never observes
-  // the RST, so 'close' cannot fire.
+  // close code which surfaced as a bogus `read ENOEXEC`. Linux-only: epoll
+  // delivers EPOLLERR on a paused fd; IOCP/kqueue never observe the RST.
   it.skipIf(!isLinux)("does not surface a bogus errno error", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     const errors: NodeJS.ErrnoException[] = [];
@@ -1134,11 +1131,8 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   }
 });
 
-// net.Socket readableFlowing must start null (Node semantics): bytes arriving
-// before a 'data' listener is attached buffer in the Readable instead of being
-// discarded, and pause() inside 'connection' is honored. Runs in a subprocess
-// because the flowing-state behavior is what the test observes; any in-process
-// 'readable' listener would itself flip flowing and mask the bug.
+// Runs in a subprocess: any in-process 'readable' listener would itself flip
+// readableFlowing and mask the bug the test observes.
 it("net.Socket readableFlowing starts null and buffers bytes arriving before a 'data' listener", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "socket-initial-flowing-fixture.js")],

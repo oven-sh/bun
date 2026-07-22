@@ -45,7 +45,6 @@ describe("TLSSocket.isSessionReused", () => {
       // For a fresh connection without session resumption, isSessionReused should be false
       expect(socket.isSessionReused()).toBe(false);
 
-      socket.resume();
       socket.end();
       await new Promise<void>(resolve => socket.on("close", resolve));
     } finally {
@@ -88,7 +87,6 @@ describe("TLSSocket.isSessionReused", () => {
       const session = socket1.getSession();
       expect(session).toBeInstanceOf(Buffer);
 
-      socket1.resume();
       socket1.end();
       await new Promise<void>(resolve => socket1.on("close", resolve));
 
@@ -112,7 +110,6 @@ describe("TLSSocket.isSessionReused", () => {
       const isReused = socket2.isSessionReused();
       expect(typeof isReused).toBe("boolean");
 
-      socket2.resume();
       socket2.end();
       await new Promise<void>(resolve => socket2.on("close", resolve));
     } finally {

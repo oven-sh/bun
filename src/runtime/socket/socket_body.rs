@@ -419,15 +419,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.flags.set(v);
     }
 
-    /// libuv's loop-alive check is `active_handles || active_reqs`: a stream
-    /// handle counts as active only while reading, and a pending uv_write is a
-    /// separate request. Mirror that here so a socket that has received FIN or
-    /// been paused, with no queued write, does not hold the event loop — and a
-    /// queued write after either still does. Called at every read/write state
-    /// transition (pause/resume, on_end, buffered write, drain).
+    /// libuv's loop-alive is `active_handles || active_reqs`: a stream handle is
+    /// active only while reading, a pending uv_write is a separate request. Mirror
+    /// that so FIN'd/paused sockets with no queued write don't hold the event loop.
     pub fn recompute_poll_ref(&self) {
         if !self.ref_pollref_on_connect.get() {
             // user called socket.unref(); never re-ref on their behalf
+            return;
+        }
+        // A TLS engine over a JS stream has no fd-backed I/O of its own; its
+        // poll_ref is intentionally never Active (see js_upgrade_duplex_to_tls).
+        if matches!(
+            self.socket.get().socket,
+            uws::InternalSocket::UpgradedDuplex(_)
+        ) {
             return;
         }
         let flags = self.flags.get();
@@ -1341,6 +1346,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        // READ_EOF and IS_PAUSED are per-connection: a stale READ_EOF would make
+        // connect_finish's recompute_poll_ref leave the reconnect unref'd, and a
+        // stale IS_PAUSED would make on_open pause the fresh stream.
+        self.update_flags(|f| f.remove(Flags::READ_EOF | Flags::IS_PAUSED));
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             if let Some(h) = self.handlers_opt() {

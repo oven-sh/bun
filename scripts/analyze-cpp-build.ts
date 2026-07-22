@@ -71,7 +71,10 @@ const buildDir = resolve(repo, flag("dir") || "build/time-trace");
   const buildFromRepo = relative(repo, buildDir);
   const insideRepo = !(buildFromRepo.startsWith(`..${sep}`) || isAbsolute(buildFromRepo));
   if (containsRepo || (insideRepo && !buildFromRepo.startsWith(`build${sep}`))) {
-    console.error(`refusing --dir ${JSON.stringify(buildDir)}: the clean step would rm -rf a repo path outside build/`);
+    console.error(
+      `refusing --dir ${JSON.stringify(buildDir)}: the clean step runs rm -rf on it, ` +
+        `so an in-repo --dir must be a subdirectory of build/ (e.g. build/time-trace)`,
+    );
     process.exit(1);
   }
 }

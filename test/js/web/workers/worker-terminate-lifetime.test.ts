@@ -122,6 +122,32 @@ test(
 );
 
 // Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
+// The per-VM `node:fs` native binding (a Box<Binding> created once by
+// internal/fs/binding.ts) is anchored only by the GC wrapper's m_ctx slot,
+// which lives in the JSC heap (bmalloc). LSan does not scan bmalloc pages as
+// roots, so without __lsan_ignore_object it reports the main-thread singleton
+// as a 4104-byte leak once Rust's allocator internals push Bun::generateModule
+// past malloc_context_size. Covered by the dns.lookup test below too, but this
+// is the minimal repro and runs in a fraction of the time.
+test.skipIf(!isASAN)(
+  "main-thread node:fs binding is not a false-positive LSan leak",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `require("node:fs");`],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
 // (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
 // ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-
 // state callbacks, which then dereferenced the freed JSGlobalObject and the

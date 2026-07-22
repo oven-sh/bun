@@ -2813,6 +2813,7 @@ pub mod asan {
         safe fn __asan_describe_address(ptr: *const c_void);
         safe fn __lsan_register_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
+        safe fn __lsan_ignore_object(ptr: *const c_void);
     }
 
     #[inline]
@@ -2857,6 +2858,18 @@ pub mod asan {
         __lsan_unregister_root_region(ptr, size);
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
+    }
+    /// Tell LSAN this heap allocation is intentionally process-lifetime and
+    /// must not be reported as a leak. Use only for per-VM singletons whose
+    /// sole anchor lives inside the JSC heap (bmalloc/libpas pages are not
+    /// scanned as roots, so LSAN cannot see the pointer). Freeing the object
+    /// later is fine; the ignore is per-allocation, not per-address.
+    #[inline]
+    pub fn ignore_object<T>(ptr: *const T) {
+        #[cfg(bun_asan)]
+        __lsan_ignore_object(ptr.cast());
+        #[cfg(not(bun_asan))]
+        let _ = ptr;
     }
 }
 

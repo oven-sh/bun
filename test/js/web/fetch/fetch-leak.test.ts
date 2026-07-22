@@ -817,3 +817,88 @@ test(
   },
   isASAN ? 30_000 : 5_000,
 );
+
+// https://github.com/oven-sh/bun/issues/32659
+test("aborting an in-flight streaming fetch() discards the buffered body and errors the reader", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const CHUNK = new Uint8Array(256 * 1024);
+        let sent = 0;
+        let serverAbort;
+        using server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch(req) {
+            serverAbort = new Promise(r => req.signal.addEventListener("abort", () => r()));
+            return new Response(
+              new ReadableStream({ pull(c) { c.enqueue(CHUNK); sent++; } }),
+            );
+          },
+        });
+        const ac = new AbortController();
+        const res = await fetch(server.url, { signal: ac.signal });
+        const reader = res.body.getReader();
+        await reader.read();
+        // Wait for the server's pull to stop advancing: the transport and
+        // the client's response buffer are full, so the abort lands on a
+        // body with buffered-but-unread bytes.
+        for (let last = sent; ; last = sent) {
+          await Bun.sleep(5);
+          if (sent === last && sent > 2) break;
+        }
+        ac.abort();
+        // Once the server observes the abort the client socket is closed,
+        // so the client-side error callback has run.
+        await serverAbort;
+        for (let i = 0; i < 5; i++) await Bun.sleep(1);
+        let drained = 0, result;
+        try {
+          for (;;) {
+            const r = await reader.read();
+            if (r.done) { result = { done: true }; break; }
+            drained += r.value.length;
+          }
+        } catch (e) { result = { error: e.name }; }
+        console.log(JSON.stringify({ drained, result }));
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { drained, result } = JSON.parse(stdout.trim());
+  // Before the fix the reader drained the retained native buffer then saw
+  // { done: true }; now the buffer is released and the stored error is
+  // surfaced to the next pull.
+  expect(result).toEqual({ error: "AbortError" });
+  // Only what was already in the JS-side stream queue remains readable.
+  expect(drained).toBeLessThan(2 * 1024 * 1024);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32659
+test("aborting in-flight streaming fetch() responses does not retain the buffered body off-heap", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fetch-abort-stream-leak-fixture.ts")],
+    env: {
+      ...bunEnv,
+      ITERATIONS: "60",
+      MAX_GROWTH_MB: isASAN || isDebug ? "55" : "30",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("held=60");
+  expect(stderr).not.toContain("LEAK");
+  expect(exitCode).toBe(0);
+});

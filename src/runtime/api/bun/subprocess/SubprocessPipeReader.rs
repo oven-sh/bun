@@ -399,10 +399,10 @@ impl PipeReader {
         #[cfg(windows)]
         {
             // WindowsBufferedReader.on_error() never closes the source, so a
-            // reader can reach deinit with a live uv.Pipe. The Err-only close
-            // that used to be here missed the non-error teardown paths
-            // (`Readable::finalize` on a never-started pipe, a sibling pipe
-            // left Pending after the other errored); close unconditionally.
+            // reader can reach deinit with a live uv.Pipe. Non-error teardown
+            // paths (`Readable::finalize` on a never-started pipe, a sibling
+            // pipe left Pending after the other errored) also arrive here with
+            // a live source; close unconditionally.
             if this_ref
                 .reader
                 .source

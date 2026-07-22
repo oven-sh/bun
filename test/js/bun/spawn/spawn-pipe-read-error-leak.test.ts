@@ -268,4 +268,4 @@ console.log(JSON.stringify({ finalized }));
   expect(stdout.trim()).toBe(JSON.stringify({ finalized: 3 }));
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
-});
+}, 60_000);

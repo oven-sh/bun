@@ -46,7 +46,6 @@ test("req.socket.end() with a large response buffered still closes when a pipeli
   expect(handlerCalls).toBeLessThanOrEqual(2);
 });
 
-
 // res.socket.end() half-closes the connection; the server must still release the
 // socket (drain the unconsumed body on epoll, or take kqueue's EVFILT_WRITE
 // EV_EOF from its own SHUT_WR) so server.close() resolves. On macOS that early

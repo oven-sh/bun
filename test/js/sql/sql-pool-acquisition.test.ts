@@ -70,10 +70,12 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 0.5 });
     using _reserved = await sql.reserve();
 
-    const err = await sql.begin(async tx => tx`select 1`).then(
-      () => null,
-      e => e,
-    );
+    const err = await sql
+      .begin(async tx => tx`select 1`)
+      .then(
+        () => null,
+        e => e,
+      );
     expect(err?.code).toBe("ERR_POSTGRES_CONNECTION_TIMEOUT");
   });
 });

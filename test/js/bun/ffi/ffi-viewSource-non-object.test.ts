@@ -39,6 +39,43 @@ describe("FFI viewSource", () => {
     expect((err as TypeError).message).toContain("Expected an object");
   });
 
+  // print_callback swallowed a pending exception from the descriptor's getters
+  // and returned a non-empty "Out of memory" error instance instead, tripping
+  // "host fn return/exception state mismatch". The getter's error must propagate.
+  test.each(["args", "threadsafe", "returns", "ptr"])(
+    "propagates a throwing %s getter in the callback descriptor",
+    prop => {
+      const message = `boom from ${prop} getter`;
+      const err = thrown(() =>
+        viewSource(
+          {
+            get [prop]() {
+              throw new Error(message);
+            },
+          },
+          true,
+        ),
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toBe(message);
+    },
+  );
+
+  // Sibling path through generate_symbols (the non-callback form of viewSource).
+  test("propagates a throwing getter in a symbol descriptor", () => {
+    const err = thrown(() =>
+      viewSource({
+        sym: {
+          get args() {
+            throw new Error("boom from symbol args getter");
+          },
+        },
+      }),
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("boom from symbol args getter");
+  });
+
   test("returns the generated source for a valid descriptor", () => {
     const src = viewSource({ foo: { args: ["i32"], returns: "i32" } });
     expect(src).toBeArray();
@@ -68,6 +105,22 @@ describe("FFI JSCallback", () => {
     const err = thrown(() => new JSCallback(() => {}, { args: ["bogus_type" as any], returns: "void" }));
     expect(err).toBeInstanceOf(TypeError);
     expect((err as TypeError).message).toContain("bogus_type");
+  });
+
+  // FFI::callback had the same bug as print_callback: a descriptor getter that
+  // throws left the exception pending while callback() returned an error value.
+  test.each(["args", "threadsafe", "returns", "ptr"])("propagates a throwing %s getter in the descriptor", prop => {
+    const message = `boom from ${prop} getter`;
+    const err = thrown(
+      () =>
+        new JSCallback(() => {}, {
+          get [prop]() {
+            throw new Error(message);
+          },
+        }),
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe(message);
   });
 
   test("constructs with a valid descriptor", () => {

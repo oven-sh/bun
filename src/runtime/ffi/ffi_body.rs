@@ -1275,11 +1275,7 @@ impl FFI {
         let mut function = Function::default();
         let func = &mut function;
 
-        if let Some(val) = generate_symbol_for_function(global_this, interface, func)
-            .unwrap_or_else(|_| {
-                Some(ZigString::init(b"Out of memory").to_error_instance(global_this))
-            })
-        {
+        if let Some(val) = generate_symbol_for_function(global_this, interface, func)? {
             return Ok(val);
         }
 
@@ -1338,18 +1334,16 @@ impl FFI {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn print_callback(global: &JSGlobalObject, object: JSValue) -> JSValue {
+    pub fn print_callback(global: &JSGlobalObject, object: JSValue) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         if object.is_empty_or_undefined_or_null() || !object.is_object() {
-            return global.to_invalid_arguments(format_args!("Expected an object"));
+            return Ok(global.to_invalid_arguments(format_args!("Expected an object")));
         }
 
         let mut function = Function::default();
-        if let Some(val) = generate_symbol_for_function(global, object, &mut function)
-            .unwrap_or_else(|_| Some(ZigString::init(b"Out of memory").to_error_instance(global)))
-        {
-            return val;
+        if let Some(val) = generate_symbol_for_function(global, object, &mut function)? {
+            return Ok(val);
         }
 
         let mut arraylist: Vec<u8> = Vec::new();
@@ -1360,9 +1354,9 @@ impl FFI {
             .print_callback_source_code(None, None, &mut arraylist)
             .is_err()
         {
-            return ZigString::init(b"Error while printing code").to_error_instance(global);
+            return Ok(ZigString::init(b"Error while printing code").to_error_instance(global));
         }
-        jsc::bun_string_jsc::create_utf8_for_js(global, &arraylist).unwrap_or(JSValue::ZERO)
+        jsc::bun_string_jsc::create_utf8_for_js(global, &arraylist)
     }
 
     pub fn print(
@@ -1372,7 +1366,7 @@ impl FFI {
     ) -> JsResult<JSValue> {
         if let Some(is_callback) = is_callback_val {
             if is_callback.to_boolean() {
-                return Ok(Self::print_callback(global, object));
+                return Self::print_callback(global, object);
             }
         }
 
@@ -1386,9 +1380,7 @@ impl FFI {
         let mut symbols = StringArrayHashMap::<Function>::default();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object` keeps it alive.
         let obj = unsafe { &*obj };
-        if let Some(val) =
-            generate_symbols(global, &mut symbols, obj).unwrap_or(Some(JSValue::ZERO))
-        {
+        if let Some(val) = generate_symbols(global, &mut symbols, obj)? {
             // an error while validating symbols
             // keys/arg_types freed by Drop
             return Ok(val);

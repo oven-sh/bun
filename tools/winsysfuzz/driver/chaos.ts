@@ -220,7 +220,10 @@ for (const f of ["triaged.jsonl", "queue.jsonl"]) {
         knownKeys.add(e.dedupeKey);
         // Seed the primary-coordinate key too, so an already-triaged hang
         // absorbs its multi-rule variants immediately.
-        if (e.dedupeKey.startsWith("chaos ")) knownKeys.add(e.dedupeKey.split(" + ")[0]);
+        if (e.dedupeKey.startsWith("chaos ")) {
+          const site = e.dedupeKey.replace(/^chaos (HANG|stalled) /, "chaos ").split(" + ")[0];
+          knownKeys.add(site);
+        }
       }
     } catch {}
   }
@@ -314,7 +317,9 @@ async function worker(w: number) {
     // surviving minimization) mint different full keys but are the same
     // bug: also dedupe on the PRIMARY coordinate - the first minimized
     // rule's site - so a reported one-rule hang absorbs its multi-rule twins.
-    const primaryKey = crash ? "" : `chaos ${outcome} @ ${where.split(" + ")[0]}`;
+    // Outcome-agnostic: HANG and stalled variants of one primary site are
+    // the same bug ("chaos hang-class @ <site>"), so both collapse together.
+    const primaryKey = crash ? "" : `chaos @ ${where.split(" + ")[0]}`;
     if (knownKeys.has(dedupeKey) || (primaryKey && knownKeys.has(primaryKey))) {
       console.log(`   [${n}] finding matches known ${dedupeKey.slice(0, 50)} - not re-queued`);
       continue;

@@ -3697,6 +3697,33 @@ err:
 #endif
 }
 
+size_t Process::heapUsedBytes(JSC::VM& vm)
+{
+    auto& objectSpace = vm.heap.objectSpace();
+
+    // A full collection's beginMarking() stales every block's mark bits, and the mutator runs
+    // through the concurrent part of marking, so a walk there sums a nearly empty heap. Eden
+    // leaves the marks alone, so only full marking has to fall back on the last snapshot.
+    if (objectSpace.isMarking() && vm.heap.collectionScope() == JSC::CollectionScope::Full) {
+        // With nothing cached, a torn walk still beats claiming an empty heap. Don't latch it:
+        // the version only moves at endMarking(), so it would be served for the whole cycle.
+        if (m_heapUsedVersion == JSC::MarkedSpace::nullVersion)
+            return objectSpace.size();
+        return m_heapUsedBytes;
+    }
+
+    // MarkedSpace::size() costs a walk of the whole heap but, outside of full marking, only
+    // changes when a collection does. Recompute it once per collection, keyed on the
+    // version endMarking() publishes.
+    JSC::HeapVersion version = objectSpace.newlyAllocatedVersion();
+    if (m_heapUsedVersion != version) {
+        m_heapUsedVersion = version;
+        m_heapUsedBytes = objectSpace.size();
+    }
+
+    return m_heapUsedBytes;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3723,12 +3750,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     //    arrayBuffers: 9386
     // }
 
-    result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
+    // heapTotal/heapUsed describe the JS object heap only, so both come from the marked space,
+    // leaving the off-heap bytes owned by JS cells to external/arrayBuffers below. The snapshot
+    // heapUsedBytes() falls back on can predate a sweep, so clamp it to the capacity it ships with.
+    size_t heapTotal = vm.heap.objectSpace().capacity();
+    size_t heapUsed = std::min(process->heapUsedBytes(vm), heapTotal);
 
-    // heap.size() loops through every cell...
-    // TODO: add a binding for heap.sizeAfterLastCollection()
-    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
+    result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(heapTotal));
+    result->putDirectOffset(vm, 2, JSC::jsNumber(heapUsed));
 
     result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 

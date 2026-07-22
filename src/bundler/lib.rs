@@ -185,7 +185,7 @@ pub mod linker_context {
     pub mod output_file_list_builder;
 
     #[path = "StaticRouteVisitor.rs"]
-    pub mod static_route_visitor;
+    pub(crate) mod static_route_visitor;
 
     // ── Re-exports so `crate::linker_context::{debug, LinkerContext, …}`
     //    resolves at every submodule call-site.

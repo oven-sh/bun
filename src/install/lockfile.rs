@@ -127,7 +127,7 @@ pub(crate) const ZERO_HASH: MetaHash = [0u8; 32];
 pub type Stream = bun_io::FixedBufferStream<Vec<u8>>;
 
 /// Duck-typed surface that `Buffers::write_array`/`save` and
-/// `Package::Serializer::save` expect of their `stream` parameter. Expressed
+/// `package::serializer::save` expect of their `stream` parameter. Expressed
 /// as a trait to stay generic over the borrowck-reshaped `StreamType` in
 /// `bun.lockb.rs` (which collapses stream + writer into one `&mut`).
 pub trait PositionalStream {

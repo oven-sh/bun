@@ -2937,7 +2937,7 @@ pub type List<SemverIntType> = MultiArrayList<Package<SemverIntType>>;
 
 // ─── Serializer ──────────────────────────────────────────────────────────────
 
-pub mod serializer {
+pub(crate) mod serializer {
     use super::*;
 
     /// Number of columns in the on-disk package table.
@@ -3272,4 +3272,3 @@ pub mod serializer {
     }
 }
 
-pub use serializer as Serializer;

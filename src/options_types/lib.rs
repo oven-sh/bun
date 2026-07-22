@@ -46,10 +46,6 @@ pub mod standalone_path {
     #[cfg(windows)]
     pub(crate) const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 
-    #[cfg(windows)]
-    pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =
-        const_format::concatcp!(BASE_PUBLIC_PATH, "root/");
-
     #[inline]
     fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
         str_.starts_with(BASE_PATH.as_bytes())

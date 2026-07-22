@@ -10,7 +10,7 @@ use bun_core::env_var;
 use crate::import_record;
 use crate::{Index, LinkerContext, UseDirective};
 
-pub struct StaticRouteVisitor<'a> {
+pub(crate) struct StaticRouteVisitor<'a> {
     pub(crate) c: &'a LinkerContext<'a>,
     pub(crate) cache: ArrayHashMap</* Index::Int */ u32, bool>,
     pub(crate) visited: AutoBitSet,

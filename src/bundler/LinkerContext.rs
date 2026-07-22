@@ -120,8 +120,6 @@ pub(crate) use crate::linker_context::scan_imports_and_exports::scan_imports_and
 
 pub(crate) use crate::linker_context::compute_chunks::compute_chunks;
 pub use crate::linker_context::metafile_builder as MetafileBuilder;
-pub use crate::linker_context::output_file_list_builder as OutputFileListBuilder;
-pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
 // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub(crate) use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;

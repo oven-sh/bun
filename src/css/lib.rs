@@ -135,8 +135,8 @@ pub use generics::{CssEql, DeepClone};
 // re-exported above from `css_parser`; the *derive* of the same name lives in
 // the proc-macro crate.
 pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
-// Serializer + dtoa helpers live in the parser hub but are referenced as
-// `css::serializer` / `css::f32_length_with_5_digits` from value modules.
+// dtoa helpers live in the parser hub but are referenced as
+// `css::f32_length_with_5_digits` from value modules.
 pub use css_parser::{dtoa_short, f32_length_with_5_digits};
 pub(crate) use css_parser::{enum_property_util, nth, parse_utility, to_css};
 

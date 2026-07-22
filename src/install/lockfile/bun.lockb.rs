@@ -25,7 +25,7 @@ use bun_semver::{self as semver, String as SemverString};
 
 // Serialized padding bytes must be deterministic; the per-field
 // save path zeroes padding explicitly (see the note in `save` and the
-// `assert_no_uninitialized_padding` invariant in `Package::Serializer`).
+// `assert_no_uninitialized_padding` invariant in `package::serializer`).
 
 const HEADER_BYTES: &[u8] = b"#!/usr/bin/env bun\nbun-lockfile-format-v0\n";
 

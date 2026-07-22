@@ -16,7 +16,7 @@
 
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
-import { DELAY_MS, F, FAULTS, type Fault, type Mode } from "./faults";
+import { ALPC_OK, DELAY_MS, F, FAULTS, type Fault, type Mode } from "./faults";
 import {
   classifySym,
   digestStacks,
@@ -485,7 +485,7 @@ async function queueFinding(r: Result, v: Verify) {
   // ...a pre-failure on an o: key fails system plumbing mid-operation, and
   // a delay there is that module's own loop scheduling - bun only ever sees
   // the API boundary. All o:-keyed fault modes drop as one class.
-  if (r.job.coord.key.startsWith("o:")) return;
+  if (r.job.coord.key.startsWith("o:") && !ALPC_OK.has(r.job.coord.sysName)) return;
   // A stall whose fault sits INSIDE ntdll ('n:' key = loader/heap-internal
   // machinery, mostly hit-1 startup) is a system-side slowdown, not bun's
   // code path - repeatedly triaged not-bun on slow test targets.

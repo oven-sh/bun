@@ -27,6 +27,13 @@ export const F = (status: string, mode: Mode = "pre", expect: Fault["expect"] = 
 // dequeue vs. other threads, a widened race window. A HANG from a delay is
 // a real timing bug; classed 'judgment' since the human decides plausibility.
 export const DELAY_MS = "250";
+// The o:-key exclusion (no faults inside another module's own machinery)
+// has one deliberate exception: ALPC calls are only ever issued from inside
+// rpcrt4, and their failure models a genuinely reachable state - the RPC
+// service (DNS client, console host) being unreachable - which bun sees as
+// an API-level error. These specific syscalls may carry a 'pre' fault even
+// at an o: key. Nothing else does.
+export const ALPC_OK = new Set(["NtAlpcConnectPort", "NtAlpcSendWaitReceivePort"]);
 export const FAULTS: Record<string, Fault[]> = {
   NtCreateFile: [F("C0000034"), F("C0000022"), F("C0000043")],
   NtOpenFile: [F("C0000034"), F("C0000022")],
@@ -105,8 +112,38 @@ export const FAULTS: Record<string, Fault[]> = {
   // completion).
   NtRemoveIoCompletionEx: [F("C0000185", "post", "judgment"), F(DELAY_MS, "delay", "judgment")],
   NtAssociateWaitCompletionPacket: [F("C000009A")],
-  NtQueryValueKey: [F("C0000034")],
-  NtOpenKeyEx: [F("C0000034")],
+  // --- Windows-native surfaces beyond plain I/O ------------------------------
+  // Registry: 80000005 BUFFER_OVERFLOW = value larger than the first-call
+  // buffer (the size-then-fetch trap: truncated or mis-sized reads).
+  NtQueryValueKey: [F("C0000034"), F("80000005"), F("C0000023")],
+  NtQueryKey: [F("80000005")],
+  NtEnumerateValueKey: [F("80000005"), F("8000001A")],
+  NtOpenKeyEx: [F("C0000034"), F("C0000022")],
+  // System / object information: C0000004 INFO_LENGTH_MISMATCH is the
+  // canonical grow-the-buffer retry contract (uptime/loadavg/cpu-info,
+  // handle enumeration) - mishandled it truncates or loops forever.
+  NtQuerySystemInformation: [F("C0000004"), F("C0000001")],
+  NtQuerySystemInformationEx: [F("C0000004")],
+  NtQueryObject: [F("C0000004"), F("80000005")],
+  NtQueryInformationProcess: [F("C0000004"), F("C0000022")],
+  NtQueryInformationThread: [F("C0000004")],
+  // Tokens: a restricted/filtered token is a real deployment (services,
+  // AppContainer, low-integrity) - ACCESS_DENIED on token opens/queries.
+  NtOpenProcessToken: [F("C0000022")],
+  NtOpenThreadToken: [F("C0000022"), F("C000007C")],
+  NtQueryInformationToken: [F("C0000023"), F("C0000022")],
+  // NT objects mid-run: named events/sections/mutants can be gone or
+  // access-controlled (another instance won the race, sandbox denies).
+  NtOpenEvent: [F("C0000034"), F("C0000022")],
+  NtOpenSection: [F("C0000034"), F("C0000022")],
+  NtOpenSemaphore: [F("C0000034")],
+  NtCreateMutant: [F("C0000035"), F("C0000022")],
+  NtSetEvent: [F("C0000008")],
+  // ALPC: bun reaches the DNS/console services over RPC; the transport
+  // failing = "service unreachable" (C0000037 PORT_DISCONNECTED). These are
+  // issued from inside rpcrt4, so they ride the ALPC_OK allowlist below.
+  NtAlpcConnectPort: [F("C0000037")],
+  NtAlpcSendWaitReceivePort: [F("C0000037"), F(DELAY_MS, "delay", "judgment")],
   // (NtClose post-fault removed: "close succeeded but reported failure" is a
   // near non-event for real code - top slow-generator, zero findings.)
   NtDuplicateObject: [F("C000009A")],

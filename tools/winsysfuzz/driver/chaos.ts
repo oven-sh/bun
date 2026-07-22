@@ -15,7 +15,7 @@
 
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { FAULTS } from "./faults";
+import { ALPC_OK, FAULTS } from "./faults";
 import {
   detectCrash,
   digestStacks,
@@ -117,7 +117,7 @@ const allCoords = [...coordMap.entries()];
 // are excluded from the drawable pool entirely (not merely refused at draw
 // time), so the fault surface is exactly the boundary bun crosses and the
 // picker never comes up empty retrying on them. The sweeper drops the same.
-const otherModule = (c: Coord) => c.key.startsWith("o:");
+const otherModule = (c: Coord) => c.key.startsWith("o:") && !ALPC_OK.has(c.sysName);
 const coords = allCoords.filter(([id, c]) => !masked.has(id) && !otherModule(c)).map(([, c]) => c);
 console.log(
   `  ${coordMap.size} injectable coordinate(s), ${coords.length} after startup mask, ` +

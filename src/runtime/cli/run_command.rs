@@ -1723,6 +1723,13 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
 /// (re)appear, then call `reload_process()` so the next restart runs the full
 /// resolver again. The VM does not exist yet so there are no signal handlers
 /// installed; Ctrl+C terminates the poll loop normally.
+///
+/// `target_name` is the raw CLI positional, not the resolved path the previous
+/// process was running, so the probe mirrors the resolver's own candidate set
+/// (literal path → `+ext` → `index.ext`) enough to see `./entry` → `entry.ts`
+/// and `.` → `./index.ts` reappear. Anything more exotic (package.json `main`,
+/// tsconfig paths) just keeps sleeping, which is the pre-existing behaviour
+/// less the exit.
 #[cold]
 #[inline(never)]
 #[cfg_attr(
@@ -1735,11 +1742,50 @@ fn wait_for_entrypoint_and_reload(target_name: &[u8]) -> ! {
         bstr::BStr::new(target_name),
     );
     Output::flush();
+
+    let mut buf = paths::path_buffer_pool::get();
+    let has_extension = !paths::extension(target_name).is_empty();
+
+    let is_file = |buf: &mut PathBuffer, parts: &[&[u8]]| -> bool {
+        let mut len = 0usize;
+        for p in parts {
+            if len + p.len() >= buf.0.len() {
+                return false;
+            }
+            buf.0[len..len + p.len()].copy_from_slice(p);
+            len += p.len();
+        }
+        buf.0[len] = 0;
+        // SAFETY: NUL-terminated at `len` above.
+        let z = ZStr::from_buf(&buf.0[..], len);
+        matches!(
+            sys::exists_at_type(Fd::cwd(), z),
+            Ok(sys::ExistsAtType::File)
+        )
+    };
+
     loop {
-        if sys::exists(target_name) {
+        // Sleep first so a misclassification below is rate-limited, not a hot
+        // execve spin.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let found = 'probe: {
+            if is_file(&mut buf, &[target_name]) {
+                break 'probe true;
+            }
+            for ext in bun_bundler::options::bundle_options_defaults::EXTENSION_ORDER {
+                if !has_extension && is_file(&mut buf, &[target_name, ext]) {
+                    break 'probe true;
+                }
+                if is_file(&mut buf, &[target_name, paths::SEP_STR.as_bytes(), b"index", ext]) {
+                    break 'probe true;
+                }
+            }
+            false
+        };
+        if found {
             bun_core::reload_process(false, false);
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 

@@ -381,7 +381,7 @@ class Client extends Dispatcher {
 
   request(options, callback) {
     if (options != null && typeof options === "object" && !(options instanceof URL)) {
-      options = { origin: this.#origin, ...options };
+      options = { ...options, origin: this.#origin };
     }
     return super.request(options, callback);
   }

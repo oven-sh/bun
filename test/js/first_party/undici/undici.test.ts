@@ -508,6 +508,10 @@ describe("undici ProxyAgent / dispatcher", () => {
     });
     expect(await r3.body!.json()).toEqual({ path: "/agent-url" });
 
+    // Client is bound to its constructor origin; options.origin must not redirect it.
+    const r4 = await client.request({ origin: "http://127.0.0.1:1", path: "/bound", method: "GET" } as any);
+    expect(await r4.body!.json()).toEqual({ path: "/bound" });
+
     await expect(new Agent().close()).resolves.toBeUndefined();
     await expect(client.close()).resolves.toBeUndefined();
     await expect(pool.destroy()).resolves.toBeUndefined();

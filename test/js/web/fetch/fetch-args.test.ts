@@ -216,6 +216,18 @@ describe("does not send a request when", () => {
     expect(requestCount).toBe(prevCount);
   });
 
+  test("proxy: '' and unix is not a conflict", async () => {
+    // proxy: "" means "explicit direct", not "some proxy", so the unix/proxy
+    // conflict check must let it through. The request itself fails (no server
+    // at the socket) but with a connection error, not the conflict TypeError.
+    const err = await fetch(url, { proxy: "", unix: "/tmp/bun-fetch-args-empty-proxy.sock" }).then(
+      () => null,
+      e => e,
+    );
+    expect(err).not.toBeNull();
+    expect(String(err?.message)).not.toContain("cannot use a proxy with a unix socket");
+  });
+
   test("Invalid ca in tls", async () => {
     const prevCount = requestCount;
     expect(async () => await fetch(url, { tls: { ca: 123 } })).toThrow();

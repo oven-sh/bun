@@ -1189,7 +1189,66 @@ function pathToFileURL(filepath: string, options?: { windows?: boolean } | null)
   return createFileURL(resolved, windows);
 }
 
-function fileURLToPath(url: string | URL) {
+// Ports of node's getPathFromURLWin32/getPathFromURLPosix
+// (lib/internal/url.js), used when the `windows` option is explicit; the
+// host-platform path stays on the native fast path below.
+function getPathFromURLWin32(url: URL): string {
+  const hostname = url.hostname;
+  let pathname = url.pathname;
+  for (let n = 0; n < pathname.length; n++) {
+    if (pathname[n] === "%") {
+      const third = (pathname.codePointAt(n + 2)! | 0x20) as number;
+      if ((pathname[n + 1] === "2" && third === 102) || (pathname[n + 1] === "5" && third === 99)) {
+        throw $ERR_INVALID_FILE_URL_PATH("File URL path must not include encoded \\ or / characters");
+      }
+    }
+  }
+  pathname = pathname.replace(/\//g, "\\");
+  pathname = decodeURIComponent(pathname);
+  if (hostname !== "") {
+    // UNC path: \\hostname\path
+    return `\\\\${domainToUnicode(hostname)}${pathname}`;
+  }
+  const letter = (pathname.codePointAt(1)! | 0x20) as number;
+  const sep = pathname[2];
+  if (letter < 0x61 /* a */ || letter > 0x7a /* z */ || sep !== ":") {
+    throw $ERR_INVALID_FILE_URL_PATH("File URL path must be absolute");
+  }
+  return pathname.slice(1);
+}
+
+function getPathFromURLPosix(url: URL): string {
+  if (url.hostname !== "") {
+    throw $ERR_INVALID_FILE_URL_HOST(`File URL host must be "localhost" or empty on ${process.platform}`);
+  }
+  const pathname = url.pathname;
+  for (let n = 0; n < pathname.length; n++) {
+    if (pathname[n] === "%") {
+      const third = (pathname.codePointAt(n + 2)! | 0x20) as number;
+      if (pathname[n + 1] === "2" && third === 102) {
+        throw $ERR_INVALID_FILE_URL_PATH("File URL path must not include encoded / characters");
+      }
+    }
+  }
+  return decodeURIComponent(pathname);
+}
+
+function fileURLToPath(url: string | URL, options?: { windows?: boolean }) {
+  const windows = options?.windows;
+  if (windows !== undefined && windows !== null) {
+    let parsed: URL;
+    if (typeof url === "string") {
+      parsed = new URL(url);
+    } else if (url instanceof URL) {
+      parsed = url;
+    } else {
+      throw $ERR_INVALID_ARG_TYPE("path", ["string", "URL"], url);
+    }
+    if (parsed.protocol !== "file:") {
+      throw $ERR_INVALID_URL_SCHEME("file");
+    }
+    return windows ? getPathFromURLWin32(parsed) : getPathFromURLPosix(parsed);
+  }
   try {
     return Bun.fileURLToPath(url as any);
   } catch (err: any) {

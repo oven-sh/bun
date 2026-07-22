@@ -1,11 +1,22 @@
 /* prettier-ignore */
 'use strict';
 
+const ErrorPrototypeToString = Error.prototype.toString;
+const ArrayPrototypeSlice = Array.prototype.slice;
+
 var AssertionError;
 function loadAssertionError() {
   if (AssertionError === undefined) {
     AssertionError = require("internal/assert/assertion_error");
   }
+}
+
+var format;
+function lazyFormat(...args) {
+  if (format === undefined) {
+    format = require("internal/util/inspect").format;
+  }
+  return format(...args);
 }
 
 // const {
@@ -242,30 +253,71 @@ function getErrMessage(_message: string, _value: unknown, _fn: Function): string
   //   }
 }
 
-export function innerOk(fn, argLen, value, message) {
-  if (!value) {
-    let generatedMessage = false;
+// `obj.message` is always an array (the caller's trailing ...message rest
+// parameter). See Node's lib/internal/assert/utils.js innerFail.
+export function innerFail(obj) {
+  const message = obj.message;
+  if (message.length === 0) {
+    obj.message = undefined;
+  } else if (typeof message[0] === "string") {
+    obj.message = message.length > 1 ? lazyFormat(...message) : message[0];
+  } else if (Error.isError(message[0])) {
+    if (message.length > 1) {
+      throw $ERR_AMBIGUOUS_ARGUMENT(
+        "message",
+        `The error message was passed as error object "${ErrorPrototypeToString.$call(message[0])}" has trailing arguments that would be ignored.`,
+      );
+    }
+    throw message[0];
+  } else if (typeof message[0] === "function") {
+    if (message.length > 1) {
+      throw $ERR_AMBIGUOUS_ARGUMENT(
+        "message",
+        `The error message with function "${message[0].name || "anonymous"}" has trailing arguments that would be ignored.`,
+      );
+    }
+    try {
+      const result = message[0](obj.actual, obj.expected);
+      obj.message = typeof result === "string" ? result : undefined;
+    } catch {
+      obj.message = undefined;
+    }
+  } else {
+    throw $ERR_INVALID_ARG_TYPE("message", ["string", "function"], message[0]);
+  }
 
-    if (argLen === 0) {
+  if (AssertionError === undefined) loadAssertionError();
+  const err = new AssertionError(obj);
+  const { generatedMessage } = obj;
+  if (generatedMessage !== undefined) {
+    err.generatedMessage = generatedMessage;
+  }
+  throw err;
+}
+
+export function innerOk(fn, ...args) {
+  if (!args[0]) {
+    let generatedMessage = false;
+    let messageArgs;
+
+    if (args.length === 0) {
       generatedMessage = true;
-      message = "No value argument passed to `assert.ok()`";
-    } else if (message == null) {
+      messageArgs = ["No value argument passed to `assert.ok()`"];
+    } else if (args.length === 1 || args[1] == null) {
       generatedMessage = true;
-      message = getErrMessage(message, value, fn);
-      // TODO: message
-    } else if (Error.isError(message)) {
-      throw message;
+      const errMsg = getErrMessage(args[1], args[0], fn);
+      messageArgs = errMsg === undefined ? [] : [errMsg];
+    } else {
+      messageArgs = ArrayPrototypeSlice.$call(args, 1);
     }
 
-    if (AssertionError === undefined) loadAssertionError();
-    const err = new AssertionError({
-      actual: value,
+    innerFail({
+      actual: args[0],
       expected: true,
-      message,
+      message: messageArgs,
       operator: "==",
       stackStartFn: fn,
+      generatedMessage,
     });
-    err.generatedMessage = generatedMessage;
-    throw err;
   }
 }

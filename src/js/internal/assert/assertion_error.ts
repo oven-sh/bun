@@ -261,6 +261,7 @@ class AssertionError extends Error {
   actual;
   expected;
   operator;
+  diff;
 
   constructor(options) {
     validateObject(options, "options");
@@ -271,6 +272,7 @@ class AssertionError extends Error {
       details,
       // Compatibility with older versions.
       stackStartFunction,
+      diff = "simple",
     } = options;
     let { actual, expected } = options;
 
@@ -409,6 +411,7 @@ class AssertionError extends Error {
     this.stack; // eslint-disable-line no-unused-expressions
     // Reset the name.
     this.name = "AssertionError";
+    this.diff = diff;
   }
 
   toString() {

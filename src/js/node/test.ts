@@ -626,7 +626,7 @@ const assert = {
 
 // Delete deprecated methods on assert (required to pass node's tests)
 delete assert.AssertionError;
-delete assert.CallTracker;
+delete assert.Assert;
 delete assert.strict;
 
 function buildContextAssert(node: TestNode, ctx: TestContext) {
@@ -648,10 +648,8 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
     result[name] = wrapper;
   };
   for (const key of Object.keys(nodeAssert)) {
-    // CallTracker is also excluded: bun's node:assert still ships it (Node 26
-    // does not), and copying it would trigger its deprecation accessor.
     // `ok` is installed below, outside the generic wrapper.
-    if (key === "AssertionError" || key === "strict" || key === "CallTracker" || key === "ok") continue;
+    if (key === "AssertionError" || key === "strict" || key === "Assert" || key === "ok") continue;
     const value = nodeAssert[key];
     if (!$isCallable(value)) continue;
     add(key, value);
@@ -666,7 +664,7 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
   if (customAssertions.ok === undefined) {
     result.ok = function ok(...args: unknown[]) {
       plan?.count();
-      innerOk(ok, args.length, ...args);
+      innerOk(ok, ...args);
     };
   }
   return result;

@@ -171,9 +171,21 @@ describe("deciding whether a build generates its own order file", () => {
   });
 });
 
-describe("order file generator", () => {
-  const supported = process.platform === "linux" || (process.platform === "darwin" && process.arch === "arm64");
+const compiler = process.env.CC || Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+const darwin = process.platform === "darwin";
+const supported = process.platform === "linux" || (darwin && process.arch === "arm64");
+/** The injected-library variable the tracer rides in on. */
+const preloadVar = darwin ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD";
+const shared = darwin ? ["-dynamiclib", "-fPIC"] : ["-shared", "-fPIC"];
 
+async function compile(args: string[]) {
+  await using proc = Bun.spawn({ cmd: [compiler!, "-O1", ...args], env: bunEnv, stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+}
+
+describe("order file generator", () => {
   it.skipIf(!supported)("refuses a build directory with no binary to trace", () => {
     expect(() => generateOrderFile({ buildDir: "/tmp/definitely-not-a-build-dir" })).toThrow(/not found/);
   });
@@ -227,27 +239,18 @@ describe.skipIf(process.platform !== "linux" || !nodeExe())("interactive workloa
   });
 });
 
-const compiler = process.env.CC || Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
-
-async function compile(args: string[]) {
-  await using proc = Bun.spawn({ cmd: [compiler!, "-O1", ...args], env: bunEnv, stderr: "pipe" });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
-}
-
 /**
  * One of the traced workloads runs on a pseudo-terminal, because bun's stdio,
  * tty and readline code take a path there that a pipe never reaches, and an
  * order file that missed it would leave all of that scattered. `ptyrun.c` is
  * what provides the terminal.
  */
-describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
+describe.skipIf(!supported || !compiler)("pty runner", () => {
   /** Reports what the process sees on its stdio, plus the one line it was typed. */
   const probe = [
     `process.stdin.once("data", data => {`,
     `  const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY);`,
-    `  const fields = [tty, process.stdout.columns ?? 0, process.env.LD_PRELOAD ?? "none", data.toString().trim()];`,
+    `  const fields = [tty, process.stdout.columns ?? 0, process.env.${preloadVar} ?? "none", data.toString().trim()];`,
     `  process.stdout.write(fields.join(" ") + "\\n");`,
     `  process.stdin.pause();`,
     `});`,
@@ -271,13 +274,13 @@ describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
   it.concurrent("runs the child on a terminal, and hands it the preload it was given", async () => {
     using dir = tempDir("ptyrun", { "empty.c": "int ptyrun_nothing;\n" });
     const ptyrun = join(String(dir), "ptyrun");
-    // Somewhere for LD_PRELOAD to point that is real but does nothing. In a
+    // Somewhere for the preload to point that is real but does nothing. In a
     // trace this is the function tracer, which has to load into the traced
     // binary and not into ptyrun.
-    const preload = join(String(dir), "empty.so");
+    const preload = join(String(dir), darwin ? "empty.dylib" : "empty.so");
     await Promise.all([
-      compile(["-o", ptyrun, join(import.meta.dir, "../../../../scripts/orderfile/ptyrun.c"), "-lutil"]),
-      compile(["-shared", "-fPIC", "-o", preload, join(String(dir), "empty.c")]),
+      compile(["-o", ptyrun, join(import.meta.dir, "../../../../scripts/orderfile/ptyrun.c"), ...(darwin ? [] : ["-lutil"])]), // prettier-ignore
+      compile([...shared, "-o", preload, join(String(dir), "empty.c")]),
     ]);
 
     const [pty, pipe] = await Promise.all([
@@ -301,18 +304,18 @@ describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
  * truncated the trace file would wipe the entries recorded so far. Those are
  * the earliest ones, which is to say the hottest.
  */
-describe.skipIf(process.platform !== "linux" || !compiler)("function tracer", () => {
+describe.skipIf(!supported || !compiler)("function tracer", () => {
   it.concurrent("records exact entries, and keeps them across an exec'd child", async () => {
     using dir = tempDir("functrace", { "child.c": "int main(void) { return 0; }\n" });
     const root = String(dir);
-    const tracer = join(root, "functrace.so");
+    const tracer = join(root, darwin ? "functrace.dylib" : "functrace.so");
     const fixture = join(root, "fixture");
     const child = join(root, "child");
     const starts = join(root, "starts.bin");
     const trace = join(root, "trace.bin");
 
     await Promise.all([
-      compile(["-shared", "-fPIC", "-o", tracer, join(import.meta.dir, "../../../../scripts/orderfile/functrace.c"), "-ldl", "-lpthread"]), // prettier-ignore
+      compile([...shared, "-o", tracer, join(import.meta.dir, "../../../../scripts/orderfile/functrace.c"), ...(darwin ? [] : ["-ldl", "-lpthread"])]), // prettier-ignore
       compile(["-o", fixture, join(import.meta.dir, "functrace-fixture.c")]),
       compile(["-o", child, join(root, "child.c")]),
     ]);
@@ -332,10 +335,10 @@ describe.skipIf(process.platform !== "linux" || !compiler)("function tracer", ()
     await Bun.write(starts, new Uint8Array(words.buffer));
 
     // The fixture calls 32 functions, execs `child` (dynamically linked, so it
-    // inherits LD_PRELOAD), then calls one more.
+    // inherits the preload), then calls one more.
     await using proc = Bun.spawn({
       cmd: [fixture, child],
-      env: { ...bunEnv, LD_PRELOAD: tracer, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: trace },
+      env: { ...bunEnv, [preloadVar]: tracer, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: trace },
       stdout: "pipe",
       stderr: "pipe",
     });

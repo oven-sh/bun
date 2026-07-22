@@ -844,8 +844,9 @@ test("aborting an in-flight streaming fetch() discards the buffered body and err
         await reader.read();
         // Wait for the server's pull to stop advancing: the transport and
         // the client's response buffer are full, so the abort lands on a
-        // body with buffered-but-unread bytes.
-        for (let last = sent; ; last = sent) {
+        // body with buffered-but-unread bytes. Bounded so a backpressure
+        // regression fails the assertions instead of hanging here.
+        for (let last = sent, p = 0; p < 200; last = sent, p++) {
           await Bun.sleep(5);
           if (sent === last && sent > 2) break;
         }

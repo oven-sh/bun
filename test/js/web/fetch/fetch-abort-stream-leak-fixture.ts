@@ -37,9 +37,10 @@ for (let n = 0; n < ITER; n++) {
   await reader.read();
   // Wait until the server-side stream stops making forward progress, which
   // means the transport and the client's response buffer are full, so the
-  // abort lands on a body with buffered-but-unread bytes.
+  // abort lands on a body with buffered-but-unread bytes. Bounded so a
+  // backpressure regression fails the assertions instead of hanging here.
   let last = sent;
-  for (;;) {
+  for (let p = 0; p < 200; p++) {
     await Bun.sleep(5);
     if (sent === last && sent > 2) break;
     last = sent;

@@ -495,7 +495,7 @@ fn exit_early_if_self_exe_truncated_cold() {
     let _ = core::fmt::Write::write_fmt(
         &mut msg,
         format_args!(
-            "error: This executable is incomplete: {} bytes on disk, but its load segments require at least {} bytes.\n\nThe file was likely truncated during download or copy. Re-download it and try again.\n",
+            "error: This executable is incomplete: {} bytes on disk, but its load segments require at least {} bytes.\n\nnote: The file was likely truncated during download or copy. Re-download it and try again.\n",
             file_size, required,
         ),
     );

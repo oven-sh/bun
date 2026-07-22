@@ -525,9 +525,11 @@ setTimeout(() => process.exit(0), 5000);
 });
 
 describe("NODE_-prefixed user messages", () => {
-  test.concurrent("a user send with cmd NODE_CLUSTER reaches a plain-fork parent as internalMessage, like node", async () => {
-    using dir = tempDir("ipc-node-cluster-user-msg", {
-      "parent.js": `
+  test.concurrent(
+    "a user send with cmd NODE_CLUSTER reaches a plain-fork parent as internalMessage, like node",
+    async () => {
+      using dir = tempDir("ipc-node-cluster-user-msg", {
+        "parent.js": `
 const { fork } = require('node:child_process');
 const child = fork('child.js');
 const got = [];
@@ -542,26 +544,27 @@ child.on('message', m => { got.push(['message', m]); done(); });
 child.on('internalMessage', m => { got.push(['internalMessage', m]); done(); });
 setTimeout(() => { console.log('TIMEOUT:' + JSON.stringify(got)); process.exit(1); }, 10000);
 `,
-      "child.js": `
+        "child.js": `
 process.send({ cmd: 'NODE_CLUSTER', x: 1 });
 process.send({ cmd: 'OTHER', y: 2 });
 setInterval(() => {}, 1 << 30);
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "parent.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    // Same routing as real node: the NODE_-prefixed message fires
-    // 'internalMessage' on the child handle; the other one is a normal message.
-    expect(JSON.parse(stdout.trim())).toEqual([
-      ["internalMessage", { cmd: "NODE_CLUSTER", x: 1 }],
-      ["message", { cmd: "OTHER", y: 2 }],
-    ]);
-    expect(exitCode).toBe(0);
-  });
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // Same routing as real node: the NODE_-prefixed message fires
+      // 'internalMessage' on the child handle; the other one is a normal message.
+      expect(JSON.parse(stdout.trim())).toEqual([
+        ["internalMessage", { cmd: "NODE_CLUSTER", x: 1 }],
+        ["message", { cmd: "OTHER", y: 2 }],
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
 });

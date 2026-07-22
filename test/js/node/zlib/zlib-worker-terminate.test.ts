@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 
 // worker.terminate() while async node:zlib compression is in flight on the

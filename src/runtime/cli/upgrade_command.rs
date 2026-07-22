@@ -508,13 +508,8 @@ impl UpgradeCommand {
         }
     };
 
-    const KNOWN_FLAGS: &'static [&'static [u8]] = &[
-        b"--canary",
-        b"--stable",
-        b"--profile",
-        b"--help",
-        b"-h",
-    ];
+    const KNOWN_FLAGS: &'static [&'static [u8]] =
+        &[b"--canary", b"--stable", b"--profile", b"--help", b"-h"];
 
     #[cold]
     pub fn exec(ctx: Command::Context) -> crate::Result<()> {

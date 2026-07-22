@@ -744,10 +744,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 } else {
                     "test"
                 };
-                bun_core::pretty_errorln!(
-                    "\nFor a list of options, run <b>bun {} --help<r>",
-                    name
-                );
+                bun_core::pretty_errorln!("\nFor a list of options, run <b>bun {} --help<r>", name);
                 Output::flush();
                 Global::exit(1);
             }

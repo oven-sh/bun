@@ -1097,10 +1097,11 @@ try {
 
 ### Transaction Errors
 
-| Transaction Errors                       | Description                           |
-| ---------------------------------------- | ------------------------------------- |
-| `ERR_POSTGRES_UNSAFE_TRANSACTION`        | Unsafe transaction operation detected |
-| `ERR_POSTGRES_INVALID_TRANSACTION_STATE` | Invalid transaction state             |
+| Transaction Errors                       | Description                                                                                               |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `ERR_POSTGRES_UNSAFE_TRANSACTION`        | Unsafe transaction operation detected                                                                     |
+| `ERR_POSTGRES_INVALID_TRANSACTION_STATE` | Invalid transaction state                                                                                 |
+| `ERR_POSTGRES_COMMIT_ROLLED_BACK`        | `COMMIT` was answered with `ROLLBACK` because the transaction was already aborted; nothing was committed |
 
 </Accordion>
 

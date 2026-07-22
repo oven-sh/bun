@@ -72,8 +72,17 @@ for (const e of entries) {
 // almost never bun bugs and sink to the bottom.
 function rankOf(e: Entry): number {
   const notBun = e.boundary === "system-module" || e.expect === "abort-expected";
-  if (e.outcome === "CRASH" && e.verdict === "confirmed" && !notBun) return 0;
-  if (e.outcome === "CRASH" && !notBun) return 1;
+  // A deliberate panic (an explicit message = bun CHOSE to abort) and a
+  // crash still inside process initialization (fatal chain has JSCInitialize
+  // / the runtime's start-up, no JS ran) are usually intentional fatals in an
+  // environment too broken to run - real but rarely fix-worthy. Sink them
+  // below silent crashes (segfaults, uninitialized state) in live subsystems.
+  const chain = (e.termChain ?? []).join(" ");
+  const startup = /JSCInitialize|cli::command::start|bun_rust::main/.test(chain);
+  const deliberate = e.crashKind === "rust-panic";
+  const soft = startup || deliberate ? 1 : 0;
+  if (e.outcome === "CRASH" && e.verdict === "confirmed" && !notBun) return 0 + soft * 3;
+  if (e.outcome === "CRASH" && !notBun) return 1 + soft * 3;
   if (e.outcome === "HANG" && e.verdict === "confirmed" && e.expect === "must-handle") return 2;
   if (e.outcome === "HANG" && e.verdict === "confirmed") return 3;
   if (e.verdict === "slow") return 5;

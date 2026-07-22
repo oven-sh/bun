@@ -550,6 +550,15 @@ void CallCtx::FormatRvas(char* out, size_t cap) const {
 
 ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
   ULONG_PTR ret = real;
+  // A post-fault lies "the call failed" - but if the real return was
+  // STATUS_PENDING the operation is genuinely queued and its completion WILL
+  // arrive on the IOCP. "Failed AND completed later" is a world the kernel
+  // never produces (double-processing the request follows), so a lie there
+  // manufactures unreal bugs. Drop the post-fault; keep the truth.
+  if (fault_ == Fault::Post && (ULONG)real == 0x103) {
+    fault_ = Fault::None;
+    LogNote("# post-fault dropped: real return was STATUS_PENDING (completion is coming)\n");
+  }
   if (live_) {
     const char* tag = "";
     if (fault_ == Fault::Post) {

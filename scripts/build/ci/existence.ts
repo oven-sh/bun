@@ -69,7 +69,9 @@ async function checkAwsAmi(image: Image, name: string, secrets: Secrets): Promis
     const e = cause as NodeJS.ErrnoException & { code?: unknown; stderr?: string };
     // ENOENT / spawn failure: the aws CLI could not start at all.
     if (typeof e.code === "string") throw new Error(`could not run the aws CLI to check ${name}: ${e.message}`);
-    throw new Error(`aws describe-images failed for ${name} (exit ${String(e.code)}): ${(e.stderr ?? e.message).trim()}`);
+    throw new Error(
+      `aws describe-images failed for ${name} (exit ${String(e.code)}): ${(e.stderr ?? e.message).trim()}`,
+    );
   }
   const parsed = JSON.parse(stdout);
   const [found] = parsed.Images;

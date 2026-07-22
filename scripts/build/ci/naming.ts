@@ -20,7 +20,7 @@ import { createHash } from "node:crypto";
 import { resolveArtifacts } from "./components/registry.ts";
 import { recipeHash } from "./recipe.ts";
 import { epoch, images } from "./spec.ts";
-import type { Arch, Image } from "./types.ts";
+import type { Image } from "./types.ts";
 
 /** Length of the hex hash suffix. 16 hex chars = 64 bits; collision odds
  * across the handful of specs that ever exist are negligible. */

@@ -515,7 +515,27 @@ bool CallCtx::PreFault() {
       // transfer would leave the offset advanced past unread bytes: an
       // unrealistic lie a correct read loop cannot survive by design.)
       int8_t li = kHooks[sys_].lengthIndex;
-      if (li >= 0 && li < argc_ && args_[li] > 1) {
+      int8_t xi = kHooks[sys_].ioctlIndex;
+      if (sys_ == SYS_NtDeviceIoControlFile && xi >= 0 && xi < argc_) {
+        // AFD sockets: the payload is INDIRECT - a WSABUF array inside the
+        // AFD_SEND_INFO the input buffer points at. Input/OutputBufferLength
+        // describe that struct, so shrinking them fabricates a malformed
+        // call. For a genuine partial send, halve the first WSABUF.len: the
+        // kernel then really accepts fewer payload bytes.
+        ULONG code = (ULONG)args_[xi];
+        if (code == 0x1201F /* AFD_SEND */ && kHooks[sys_].bufIndex >= 0) {
+          __try {
+            auto* info = (ULONG_PTR*)args_[kHooks[sys_].bufIndex]; // AFD_SEND_INFO
+            if (info && info[0]) {
+              ULONG* wsabuf = (ULONG*)info[0]; // WSABUF{ ULONG len; CHAR* buf; }
+              if (wsabuf[0] > 1) {
+                wsabuf[0] = wsabuf[0] / 2;
+                shrunk_ = true;
+              }
+            }
+          } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+      } else if (li >= 0 && li < argc_ && args_[li] > 1) {
         args_[li] = args_[li] / 2;
         shrunk_ = true;
       }
@@ -654,7 +674,37 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
                 }
               }
             }
-            if (!skip && bi >= 0 && bi < argc_ && args_[bi] && n > 0) {
+            // AFD sockets: the received payload is INDIRECT - args_[bi] is
+            // the AFD_RECV_INFO whose WSABUF array holds the real buffers.
+            // Poison the actually-received bytes (n = Information) across
+            // those buffers - malformed data from a hostile/broken peer,
+            // maximally realistic - instead of the info struct itself.
+            int8_t xi = kHooks[sys_].ioctlIndex;
+            bool afdRecv = sys_ == SYS_NtDeviceIoControlFile && xi >= 0 && xi < argc_ &&
+                           ((ULONG)args_[xi] == 0x12017 /* AFD_RECV */ ||
+                            (ULONG)args_[xi] == 0x1201B /* AFD_RECV_DATAGRAM */);
+            if (afdRecv) skip = false; // peer data, always in scope
+            if (!skip && afdRecv && bi >= 0 && bi < argc_ && args_[bi] && n > 0) {
+              applied = true;
+              uint32_t st = (uint32_t)injected_ * 2654435761u + (uint32_t)n;
+              __try {
+                auto* info = (ULONG_PTR*)args_[bi];        // AFD_RECV_INFO
+                auto* wsa = (unsigned char*)info[0];         // WSABUF array
+                ULONG count = (ULONG)info[1];               // BufferCount
+                size_t left = n;
+                for (ULONG w = 0; w < count && left > 0; w++) {
+                  ULONG len = *(ULONG*)(wsa + w * 16);       // WSABUF{ULONG len; CHAR* buf;}
+                  auto* b = *(unsigned char**)(wsa + w * 16 + 8);
+                  size_t take = len < left ? len : left;
+                  for (size_t i = 0; i < take; i++) {
+                    st = st * 1664525u + 1013904223u;
+                    if ((st >> 29) == 0) b[i] ^= (unsigned char)(st >> 21);
+                  }
+                  left -= take;
+                }
+              } __except (EXCEPTION_EXECUTE_HANDLER) {
+              }
+            } else if (!skip && bi >= 0 && bi < argc_ && args_[bi] && n > 0) {
               applied = true;
               auto* b = (unsigned char*)args_[bi];
               uint32_t st = (uint32_t)injected_ * 2654435761u + (uint32_t)n;

@@ -57,14 +57,16 @@ export const FAULTS: Record<string, Fault[]> = {
   NtDeleteFile: [F("C0000022")],
   NtFsControlFile: [F("C000009A")],
   NtCreateNamedPipeFile: [F("C000009A")],
-  // No mangle modes here: for AFD socket ioctls the transfer buffers are
-  // INDIRECT (WSABUF arrays inside the input info struct), so shrinking or
-  // poisoning Input/OutputBufferLength never models a short or corrupted
-  // transfer - it hands AFD a truncated request struct, a call the OS never
-  // makes on its own. (A stall from exactly that was triaged not-real.)
+  // Socket transfers are INDIRECT through WSABUF arrays inside the AFD
+  // info struct; the runtime follows them (halves the first WSABUF.len on
+  // AFD_SEND = genuine partial send; poisons the received bytes across the
+  // WSABUFs on AFD_RECV = a hostile/broken peer's data). Info-struct
+  // lengths are never touched - truncating those was a malformed call.
   NtDeviceIoControlFile: [
     F("C000009A"),
     F("C000009A", "post", "judgment"),
+    F("0", "mangle:short"),   // partial send (first WSABUF halved pre-call)
+    F("A5", "mangle:garbage"), // malformed peer data (received bytes poisoned)
     F(DELAY_MS, "delay", "judgment"),
   ],
   // Directory watchers (fs.watch -> ReadDirectoryChangesW). The field's

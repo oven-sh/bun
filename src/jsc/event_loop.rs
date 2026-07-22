@@ -10,7 +10,7 @@
 //! poll deadline). See PORTING.md §Dispatch.
 
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, Ordering};
 
 use bun_io::{self as Async, Waker};
 use bun_uws as uws;
@@ -89,6 +89,15 @@ pub struct EventLoop {
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
+    /// Count of `WorkPool` jobs scheduled from this VM's JS thread whose
+    /// pool-thread callback has not yet finished its last access to this
+    /// `EventLoop` (typically `enqueue_task_concurrent`). `WebWorker::shutdown`
+    /// spins on this reaching zero before freeing the JSC heap and the
+    /// `VirtualMachine` box that this `EventLoop` is a field of; without that
+    /// barrier the pool thread's `do_work()` (JSC-heap input/output buffers)
+    /// and completion post are both use-after-free. Bracket with
+    /// [`Self::work_pool_task_ref`] / [`Self::work_pool_task_unref`].
+    pub work_pool_pending: AtomicU32,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
     /// Note (§Dispatch): payload is `*mut ()` — the real
@@ -129,6 +138,7 @@ impl Default for EventLoop {
             uws_loop: (),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
+            work_pool_pending: AtomicU32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
@@ -1003,6 +1013,38 @@ impl EventLoop {
         }
         self.concurrent_tasks.push(task);
         self.wakeup();
+    }
+
+    /// JS-thread: call immediately before `WorkPool::schedule` for a task whose
+    /// pool-thread callback will dereference this `EventLoop` / the owning
+    /// `VirtualMachine` / the JSC heap (e.g. to post a completion via
+    /// [`Self::enqueue_task_concurrent`]). Paired with
+    /// [`Self::work_pool_task_unref`] on the pool thread; see
+    /// [`Self::work_pool_pending`].
+    #[inline]
+    pub fn work_pool_task_ref(&self) {
+        self.work_pool_pending.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Pool-thread: call as the last `EventLoop`/VM access in the `WorkPool`
+    /// callback (after [`Self::enqueue_task_concurrent`]). The `Release` store
+    /// pairs with [`Self::wait_for_pending_work_pool_tasks`]'s `Acquire` load
+    /// so `WebWorker::shutdown` cannot observe zero until every prior access
+    /// is visible, making the subsequent VM dealloc safe.
+    #[inline]
+    pub fn work_pool_task_unref(&self) {
+        self.work_pool_pending.fetch_sub(1, Ordering::Release);
+    }
+
+    /// Worker-thread shutdown barrier. Spins (yielding) until every
+    /// outstanding [`Self::work_pool_task_ref`] has been matched by
+    /// [`Self::work_pool_task_unref`]. Each pending task is one bounded
+    /// compression/IO step, so the wait is bounded; `terminate()` already runs
+    /// user exit handlers here, so this is not a new latency cliff.
+    pub fn wait_for_pending_work_pool_tasks(&self) {
+        while self.work_pool_pending.load(Ordering::Acquire) > 0 {
+            std::thread::yield_now();
+        }
     }
 
     pub fn ref_concurrently(&self) {

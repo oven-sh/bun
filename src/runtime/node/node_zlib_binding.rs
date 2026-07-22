@@ -449,6 +449,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             callback: Self::async_job_run_task,
         });
         this.poll_ref().with_mut(|p| p.ref_(vm));
+        // Hold the worker-shutdown barrier open until the pool thread has
+        // finished `do_work()` and posted the completion; matched by
+        // `work_pool_task_unref()` at the end of `async_job_run`.
+        vm.event_loop_shared().work_pool_task_ref();
         WorkPool::schedule(this.task().as_ptr());
 
         Ok(JSValue::UNDEFINED)
@@ -487,10 +491,18 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `enqueue_task_concurrent` body only touches the lock-free
         // `concurrent_tasks` queue (thread-safe). `this` is the heap-allocated
         // `m_ctx` payload — the matching `ref()` in `write()` keeps it alive
-        // until `run_from_js_thread` runs and calls `deref()`.
+        // until `run_from_js_thread` runs and calls `deref()`. Liveness of the
+        // VM across a worker terminate is guaranteed by the
+        // `work_pool_task_ref()` taken in `write()`: `WebWorker::shutdown`
+        // blocks on that count reaching zero before freeing the JSC heap or
+        // the VM box, so `global_this`, `vm` and `event_loop` are all still
+        // valid here.
         unsafe {
             (*vm.event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
         }
+        // Last VM access; pairs with `work_pool_task_ref()` in `write()` and
+        // releases `WebWorker::shutdown`'s barrier.
+        vm.event_loop_shared().work_pool_task_unref();
     }
 
     /// Dispatched from `dispatch.rs` when the worker-thread `do_work()` posts

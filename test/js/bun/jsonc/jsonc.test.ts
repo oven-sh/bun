@@ -148,6 +148,9 @@ test("Bun.JSONC.parse SyntaxError names the actual error, not a preceding warnin
     thrown = e;
   }
   expect(thrown).toBeInstanceOf(SyntaxError);
+  expect((thrown as Error).message).toMatchInlineSnapshot(
+    `"JSONC Parse error: Expected string but found end of file"`,
+  );
   expect((thrown as Error).message).not.toContain("Duplicate key");
 });
 

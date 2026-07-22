@@ -44,7 +44,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                         .msgs
                         .iter()
                         .find(|m| m.kind == bun_ast::Kind::Err)
-                        .or(log.msgs.first());
+                        .or_else(|| log.msgs.first());
                     if let Some(first_msg) = first_msg {
                         return Err(global.throw_value(global.create_syntax_error_instance(
                             format_args!(

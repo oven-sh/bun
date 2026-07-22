@@ -1524,6 +1524,29 @@ describe("bun test", () => {
       expect(stderr).toContain("process.exit(42) was called during bun test");
       expect(exitCode).toBe(1);
     });
+
+    // Node's test/parallel common/index.js re-spawns the current file with
+    // `// Flags:` applied and then `process.exit(child.status)` from the
+    // parent's module top level. That is the only file in the run and no
+    // test body has started, so the requested code must pass through.
+    test.concurrent.each([0, 1] as const)(
+      "passes through top-level process.exit(%p) when it is the only file",
+      async code => {
+        using dir = tempDir("bun-test-process-exit-wrapper", {
+          "wrapper.test.ts": `process.exit(${code});`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "./wrapper.test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("process.exit");
+        expect(exitCode).toBe(code);
+      },
+    );
   });
 });
 

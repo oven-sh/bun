@@ -1355,6 +1355,51 @@ impl CommandLineReporter {
             .saturating_add(sequence.expect_call_count);
     }
 
+    /// `pass / skip / filtered out / todo / fail / errors` lines, shared by
+    /// the end-of-run summary in `TestCommand::exec` and the mid-run
+    /// `process.exit()` summary so they never diverge.
+    pub fn print_summary_counts(&self, indent: &str) {
+        let summary = self.jest.summary;
+        if summary.pass > 0 {
+            pretty_error!("<r><green>");
+        }
+        pretty_error!("{}{:5>} pass<r>\n", indent, summary.pass);
+
+        if summary.skip > 0 {
+            pretty_error!("{}<r><yellow>{:5>} skip<r>\n", indent, summary.skip);
+        } else if summary.skipped_because_label > 0 {
+            pretty_error!(
+                "{}<r><d>{:5>} filtered out<r>\n",
+                indent,
+                summary.skipped_because_label
+            );
+        }
+
+        if summary.todo > 0 {
+            pretty_error!("{}<r><magenta>{:5>} todo<r>\n", indent, summary.todo);
+        }
+
+        if summary.fail > 0 {
+            pretty_error!("<r><red>");
+        } else {
+            pretty_error!("<r><d>");
+        }
+        pretty_error!("{}{:5>} fail<r>\n", indent, summary.fail);
+
+        if self.jest.unhandled_errors_between_tests > 0 {
+            pretty_error!(
+                "{}<r><red>{:5>} error{}<r>\n",
+                indent,
+                self.jest.unhandled_errors_between_tests,
+                if self.jest.unhandled_errors_between_tests > 1 {
+                    "s"
+                } else {
+                    ""
+                }
+            );
+        }
+    }
+
     pub fn print_summary(&mut self) {
         let summary_ = self.summary();
         let tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
@@ -2773,45 +2818,7 @@ impl TestCommand {
                     pretty_error!("{}<r>--seed={}<r>\n", &indenter, seed);
                 }
 
-                if summary.pass > 0 {
-                    pretty_error!("<r><green>");
-                }
-
-                pretty_error!("{}{:5>} pass<r>\n", &indenter, summary.pass);
-
-                if summary.skip > 0 {
-                    pretty_error!("{}<r><yellow>{:5>} skip<r>\n", &indenter, summary.skip);
-                } else if summary.skipped_because_label > 0 {
-                    pretty_error!(
-                        "{}<r><d>{:5>} filtered out<r>\n",
-                        &indenter,
-                        summary.skipped_because_label
-                    );
-                }
-
-                if summary.todo > 0 {
-                    pretty_error!("{}<r><magenta>{:5>} todo<r>\n", &indenter, summary.todo);
-                }
-
-                if summary.fail > 0 {
-                    pretty_error!("<r><red>");
-                } else {
-                    pretty_error!("<r><d>");
-                }
-
-                pretty_error!("{}{:5>} fail<r>\n", &indenter, summary.fail);
-                if reporter.jest.unhandled_errors_between_tests > 0 {
-                    pretty_error!(
-                        "{}<r><red>{:5>} error{}<r>\n",
-                        &indenter,
-                        reporter.jest.unhandled_errors_between_tests,
-                        if reporter.jest.unhandled_errors_between_tests > 1 {
-                            "s"
-                        } else {
-                            ""
-                        }
-                    );
-                }
+                reporter.print_summary_counts(if indenter.indent { " " } else { "" });
 
                 let mut print_expect_calls = summary.expectations > 0;
                 if reporter.jest.snapshots.total > 0 {
@@ -3289,9 +3296,29 @@ pub(crate) fn on_process_exit_during_tests(vm: &mut VirtualMachine, requested: u
         return;
     }
 
-    let started = reporter.jest.summary.files;
+    let active_phase = reporter
+        .jest
+        .bun_test_root
+        .active_file
+        .as_deref()
+        .map(|bt| bt.phase);
+    // `summary.files` is bumped after `load_entry_point_for_test_runner`
+    // returns (`TestCommand::run`), so a file still in its module-load /
+    // Collection phase hasn't been counted yet.
+    let started = reporter.jest.summary.files
+        + u32::from(active_phase == Some(bun_test::Phase::Collection));
     let total = reporter.jest.total_test_files;
     let not_run = total.saturating_sub(started);
+
+    // `process.exit()` during the last file's module load with no later
+    // files queued is the Node test harness re-spawn pattern
+    // (`test/js/node/test/common/index.js` exec-with-Flags then
+    // `process.exit(child.status)`): pass the requested code through
+    // unchanged. Anything else (a test body is executing, or later files
+    // would be skipped) is a silent-green hazard.
+    if not_run == 0 && active_phase == Some(bun_test::Phase::Collection) {
+        return;
+    }
 
     pretty_error!(
         "\n<red>error<r><d>:<r> <b>process.exit({})<r> was called during <b>bun test<r>\n",
@@ -3307,23 +3334,7 @@ pub(crate) fn on_process_exit_during_tests(vm: &mut VirtualMachine, requested: u
     }
     pretty_error!("\n");
 
-    let summary = reporter.jest.summary;
-    if summary.pass > 0 {
-        pretty_error!("<r><green>");
-    }
-    pretty_error!(" {:5>} pass<r>\n", summary.pass);
-    if summary.skip > 0 {
-        pretty_error!(" <r><yellow>{:5>} skip<r>\n", summary.skip);
-    }
-    if summary.todo > 0 {
-        pretty_error!(" <r><magenta>{:5>} todo<r>\n", summary.todo);
-    }
-    if summary.fail > 0 {
-        pretty_error!("<r><red>");
-    } else {
-        pretty_error!("<r><d>");
-    }
-    pretty_error!(" {:5>} fail<r>\n", summary.fail);
+    reporter.print_summary_counts(" ");
     reporter.print_summary();
     pretty_error!("\n");
     Output::flush();

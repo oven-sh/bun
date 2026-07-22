@@ -189,7 +189,6 @@ pub struct Flags {
     pub(crate) disable_keepalive: bool,
     pub(crate) disable_decompression: bool,
     pub(crate) did_have_handshaking_error: bool,
-    pub force_last_modified: bool,
     pub(crate) redirected: bool,
     pub(crate) proxy_tunneling: bool,
     pub reject_unauthorized: bool,
@@ -210,7 +209,6 @@ impl Default for Flags {
             disable_keepalive: false,
             disable_decompression: false,
             did_have_handshaking_error: false,
-            force_last_modified: false,
             redirected: false,
             proxy_tunneling: false,
             reject_unauthorized: true,
@@ -386,7 +384,7 @@ impl HTTPClient<'_> {
     /// undo the HTTP/1.1-specific framing decisions that don't apply when the
     /// transport delimits the body (h2 DATA frames / h3 STREAM frames).
     ///
-    /// Returns the (possibly-mutated) response so the caller can pass it to
+    /// Returns the response so the caller can pass it to
     /// `clone_metadata` once the redirect decision has been made; the borrow of
     /// `headers` flows through, so the deep copy is checked by the compiler
     /// rather than by a call-ordering contract.
@@ -396,14 +394,14 @@ impl HTTPClient<'_> {
         status_code: u32,
         headers: &'h [picohttp::Header],
     ) -> crate::Result<(HeaderResult, picohttp::Response<'h>)> {
-        let mut response = picohttp::Response {
+        let response = picohttp::Response {
             minor_version: 0,
             status_code,
             status: b"",
             headers: picohttp::HeaderList { list: headers },
             bytes_read: 0,
         };
-        let should_continue = self.handle_response_metadata(&mut response)?;
+        let should_continue = self.handle_response_metadata(&response)?;
         // h2/h3 framing delimits the body; chunked transfer-encoding and the
         // HTTP/1.x persistence rules (no Content-Length ⇒ no keep-alive, and the
         // HTTP/1.0 default that the synthetic `minor_version: 0` above trips)
@@ -777,7 +775,7 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
 // Many of these fields can be moved to a packed struct and use less space
 //
 // Lifetime `'a` ties every borrowed input — `url`, `http_proxy`, `header_buf`,
-// `if_modified_since`, `hostname`, and the borrowed `HTTPRequestBody::Bytes`
+// `hostname`, and the borrowed `HTTPRequestBody::Bytes`
 // payload — to the caller's storage. The original port erased these to `'static`
 // and lifetime-erased at every call site; threading the lifetime removes that hazard.
 // Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
@@ -824,9 +822,6 @@ pub struct HTTPClient<'a> {
     pub(crate) custom_ssl_ctx: Option<http_context::HTTPContextRc<true>>,
     pub(crate) result_callback: HTTPClientResultCallback,
 
-    /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
-    /// This is a workaround for that.
-    pub if_modified_since: &'a [u8],
     pub(crate) request_content_len_buf: [u8; b"18446744073709551615".len()],
 
     pub(crate) http_proxy: Option<URL<'a>>,
@@ -2435,15 +2430,6 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
-                h if h == hash_header_const(b"if-modified-since") => {
-                    if self.flags.force_last_modified && self.if_modified_since.is_empty() {
-                        // SAFETY: header_str() returns a slice into self.header_buf which outlives
-                        // this client; lifetime is erased here only because we don't yet thread
-                        // struct lifetime params. The borrow is valid for the life of `self`.
-                        self.if_modified_since =
-                            unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
-                    }
-                }
                 h if h == hash_header_const(HOST_HEADER_NAME) => {
                     if will_append {
                         override_host_header = true;
@@ -3686,7 +3672,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         let shared_resp = scratch::response_headers();
-        let mut response = loop {
+        let response = loop {
             let mut amount_read: usize = 0;
 
             // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
@@ -3760,7 +3746,7 @@ impl<'a> HTTPClient<'a> {
 
             break parsed;
         };
-        let should_continue = match self.handle_response_metadata(&mut response) {
+        let should_continue = match self.handle_response_metadata(&response) {
             Ok(s) => s,
             Err(err) => {
                 self.close_and_fail::<IS_SSL>(err, socket);
@@ -4793,10 +4779,9 @@ impl<'a> HTTPClient<'a> {
 
     pub(crate) fn handle_response_metadata(
         &mut self,
-        response: &mut picohttp::Response,
+        response: &picohttp::Response,
     ) -> crate::Result<ShouldContinue> {
         let mut location: &[u8] = b"";
-        let mut pretend_304 = false;
         let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
         let mut has_keep_alive_token = false;
@@ -4901,13 +4886,6 @@ impl<'a> HTTPClient<'a> {
                         None => {}
                     }
                 }
-                h if h == hash_header_const(b"Last-Modified") => {
-                    pretend_304 = self.flags.force_last_modified
-                        && response.status_code > 199
-                        && response.status_code < 300
-                        && !self.if_modified_since.is_empty()
-                        && self.if_modified_since == header.value();
-                }
                 h if h == hash_header_const(b"Alt-Svc") => {
                     // Record regardless of *this* request's shape — a future
                     // request to the same origin may be h3-eligible even if this
@@ -4930,14 +4908,6 @@ impl<'a> HTTPClient<'a> {
 
         if self.verbose != HTTPVerboseLevel::None {
             print_response(response);
-        }
-
-        if pretend_304 {
-            response.status_code = 304;
-            // The wire-level message is a 200 with a real body that we are
-            // choosing not to read; don't pool a socket with that body still
-            // in its receive buffer.
-            self.state.flags.allow_keepalive = false;
         }
 
         // According to RFC 7230 section 3.3.3:

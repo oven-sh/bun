@@ -870,6 +870,45 @@ static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   return 1;
 }
 
+/* OpenSSL 3 at its default security level (2) refuses SHA-1 (and older)
+ * certificate signatures. BoringSSL has no security levels; its X509 verifier
+ * hard-blocks MD4/MD5 in x509_digest_nid_ok() but still accepts SHA-1, so a
+ * sha1WithRSAEncryption leaf under a trusted root verifies cleanly. That is a
+ * strict weakening of what Node.js and every browser enforce. This callback
+ * wraps X509_verify_cert and, when the chain is otherwise valid, rejects any
+ * non-trust-anchor certificate whose signature digest is weaker than SHA-256,
+ * matching OpenSSL's X509_V_ERR_CA_MD_TOO_WEAK behaviour. */
+static int us_cert_signature_digest_too_weak(const X509 *cert) {
+  int digest_nid = NID_undef;
+  OBJ_find_sigid_algs(X509_get_signature_nid(cert), &digest_nid, NULL);
+  switch (digest_nid) {
+    case NID_sha1:
+    case NID_md5:
+    case NID_md4:
+      return 1;
+  }
+  return 0;
+}
+
+static int us_cert_verify_callback(X509_STORE_CTX *ctx, void *arg) {
+  int ret = X509_verify_cert(ctx);
+  if (X509_STORE_CTX_get_error(ctx) != X509_V_OK) return ret;
+  STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(ctx);
+  if (!chain) return ret;
+  size_t n = sk_X509_num(chain);
+  /* chain[n-1] is the trust anchor: its self-signature is not a link in the
+   * trust chain, so its digest strength is irrelevant (same exemption OpenSSL
+   * grants). Every other link had its signature verified above and must use a
+   * strong digest. */
+  for (size_t i = 0; i + 1 < n; i++) {
+    if (us_cert_signature_digest_too_weak(sk_X509_value(chain, i))) {
+      X509_STORE_CTX_set_error(ctx, X509_V_ERR_CERT_SIGNATURE_FAILURE);
+      break;
+    }
+  }
+  return ret;
+}
+
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
  * (the only consumer of the passwd_cb), so the secret never outlives ctx
  * construction and SSL_CTX_free() is sufficient on every later path. Also
@@ -904,6 +943,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* Default options we rely on — changing these breaks the BIO logic. */
   SSL_CTX_set_read_ahead(ssl_context, 1);
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  SSL_CTX_set_cert_verify_callback(ssl_context, us_cert_verify_callback, NULL);
   /* Honor explicit minVersion/maxVersion (Node's secureProtocol/min/maxVersion);
    * default to a TLS1.2 floor when no minimum is requested. */
   SSL_CTX_set_min_proto_version(ssl_context, options.ssl_min_version ? options.ssl_min_version : TLS1_2_VERSION);

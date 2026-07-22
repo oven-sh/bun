@@ -360,7 +360,7 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     pub(crate) fds_open: usize,
 
     #[cfg(windows)]
-    pub nt_filter_buf: [u16; 256],
+    pub(crate) nt_filter_buf: [u16; 256],
 }
 
 #[inline]

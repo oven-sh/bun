@@ -414,9 +414,8 @@ type Str = &'static [u8];
 
 // ───────────────────────────────────────────────────────────────────────────
 // api — hand-written slice of `bun.schema.api` consumed by
-// `Kind/Location/Data/Msg/Log::to_api`. The full
-// peechy → .rs codegen (`bun_api`) will supersede this; field shapes are kept
-// faithful so the generated diff stays reviewable. Lives here (not `bun_api`)
+// `Log::to_api`. The full peechy → .rs codegen (`bun_api`) will supersede
+// this. Lives here (not `bun_api`)
 // ───────────────────────────────────────────────────────────────────────────
 pub mod api {
     #[derive(Clone, Default, Debug)]

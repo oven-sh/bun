@@ -373,7 +373,7 @@ pub struct Bufs {
     pub(crate) import_path_for_standalone_module_graph: PathBuffer,
 
     #[cfg(windows)]
-    pub win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
+    pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
     #[cfg(not(windows))]
     pub win32_normalized_dir_info_cache: (),
 }

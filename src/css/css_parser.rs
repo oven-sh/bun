@@ -6071,7 +6071,7 @@ pub mod parse_utility {
     }
 }
 
-pub mod to_css {
+pub(crate) mod to_css {
     use super::*;
 
     pub(crate) fn from_list<T: generic::ToCss>(
@@ -6106,7 +6106,7 @@ pub(crate) fn parse_important(input: &mut Parser) -> CssResult<()> {
     input.expect_ident_matching(b"important")
 }
 
-pub mod signfns {
+pub(crate) mod signfns {
     /// Note: the ±0.0 sign FLIP is
     /// intentional (do NOT "fix" it). Distinct from `f32::signum` and from
     /// `calc::std_math_sign` / `CSSNumberFns::sign`.

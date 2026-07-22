@@ -175,7 +175,11 @@ fn is_valid_memory(address: usize) -> bool {
     }
     #[cfg(windows)]
     {
-        use bun_windows_sys::kernel32::{MEM_FREE, MEMORY_BASIC_INFORMATION, VirtualQuery};
+        use bun_windows_sys::kernel32::{
+            MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
+            PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE,
+            PAGE_WRITECOPY, VirtualQuery,
+        };
         // SAFETY: MEMORY_BASIC_INFORMATION is a plain Win32 POD; all-zeros is
         // a valid representation.
         let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { crate::ffi::zeroed_unchecked() };
@@ -188,7 +192,19 @@ fn is_valid_memory(address: usize) -> bool {
                 core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
             )
         };
-        rc != 0 && mbi.State != MEM_FREE
+        // "Not MEM_FREE" is not enough to make a read safe: MEM_RESERVE has no
+        // backing, and MEM_COMMIT pages can be PAGE_NOACCESS or PAGE_GUARD (the
+        // stack guard page after EXCEPTION_STACK_OVERFLOW is exactly this).
+        const READABLE: u32 = PAGE_READONLY
+            | PAGE_READWRITE
+            | PAGE_WRITECOPY
+            | PAGE_EXECUTE_READ
+            | PAGE_EXECUTE_READWRITE
+            | PAGE_EXECUTE_WRITECOPY;
+        rc != 0
+            && mbi.State == MEM_COMMIT
+            && mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD) == 0
+            && mbi.Protect & READABLE != 0
     }
     #[cfg(not(windows))]
     {
@@ -381,7 +397,7 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                         break;
                     }
                     // SAFETY: is_valid_memory just confirmed the page at `Rsp`
-                    // is mapped.
+                    // is committed and readable (not reserved/guard/noaccess).
                     unsafe {
                         ctx.Rip = *(ctx.Rsp as *const u64);
                     }

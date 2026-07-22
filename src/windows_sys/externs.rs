@@ -833,7 +833,17 @@ pub mod kernel32 {
         pub Protect: u32,
         pub Type: u32,
     }
+    pub const MEM_COMMIT: u32 = 0x1000;
     pub const MEM_FREE: u32 = 0x10000;
+
+    pub const PAGE_NOACCESS: u32 = 0x01;
+    pub const PAGE_READONLY: u32 = 0x02;
+    pub const PAGE_READWRITE: u32 = 0x04;
+    pub const PAGE_WRITECOPY: u32 = 0x08;
+    pub const PAGE_EXECUTE_READ: u32 = 0x20;
+    pub const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+    pub const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;
+    pub const PAGE_GUARD: u32 = 0x100;
 
     #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {

@@ -130,7 +130,8 @@ const FAULTS: Record<string, Fault[]> = {
   NtAssociateWaitCompletionPacket: [F("C000009A")],
   NtQueryValueKey: [F("C0000034")],
   NtOpenKeyEx: [F("C0000034")],
-  NtClose: [F("C0000008", "post", "judgment")],
+  // (NtClose post-fault removed: "close succeeded but reported failure" is a
+  // near non-event for real code - top slow-generator, zero findings.)
   NtDuplicateObject: [F("C000009A")],
   NtAllocateVirtualMemory: [F("C0000017", "pre", "abort-expected")],
   NtAllocateVirtualMemoryEx: [F("C0000017", "pre", "abort-expected")],
@@ -157,6 +158,11 @@ if (base.outcome !== "exit") {
 // 30s). And a baseline that already exits non-zero weakens error-exit as an
 // oracle - say so in the report rather than silently pretending otherwise.
 const slowMs = Math.max(8000, base.ms * 2);
+// Test-runner timeouts: bun test marks a timed-out test in its output. A
+// fault that makes MORE tests time out than the baseline stalled an awaited
+// operation - the hang class, bounded by the runner. Count occurrences.
+const timedOutTests = (out: string): number => (out.match(/timed out after \d+ms|\btimed out\b.*\bafter\b/gi) ?? []).length;
+const baseTimeouts = timedOutTests(base.stdout + base.stderr);
 const baseTrace = await readTraceDir(base.dir);
 if (!baseTrace) {
   console.error("no baseline trace produced");
@@ -198,9 +204,22 @@ for (const r of baseTrace.recs) {
 // startup infrastructure (loader, JSC init, event-loop bring-up). They get
 // exactly one injection each - they can hide real bugs, so not zero - but
 // no more, so the budget goes to what THIS program does.
-const maskRun = await runOnce({ bun, args: ["-e", "0"], workDir: join(runsDir, "startup-mask"), timeoutMs });
-const maskTrace = await readTraceDir(maskRun.dir);
-const startupMask = new Set((maskTrace?.recs ?? []).filter(r => !r.entryOnly).map(r => `${r.sys}:${r.key}`));
+// The mask is the UNION of a few micro-programs: an empty program (loader,
+// JSC init, event loop) plus one-liners that touch each subsystem's
+// one-time init (winsock, spawn/pipe machinery, ICU) - so those init
+// sites count as startup infrastructure too, not program-specific code.
+const MASK_PROGRAMS: string[][] = [
+  ["-e", "0"],
+  ["-e", "require('net').createConnection({port:1,host:'127.0.0.1'}).on('error',()=>{})"],
+  ["-e", "Bun.spawnSync(['cmd','/c','rem'])"],
+  ["-e", "new Intl.DateTimeFormat().format()"],
+];
+const startupMask = new Set<string>();
+for (let i = 0; i < MASK_PROGRAMS.length; i++) {
+  const m = await runOnce({ bun, args: MASK_PROGRAMS[i], workDir: join(runsDir, `startup-mask${i}`), timeoutMs });
+  const t = await readTraceDir(m.dir);
+  for (const r of t?.recs ?? []) if (!r.entryOnly) startupMask.add(`${r.sys}:${r.key}`);
+}
 
 const syms = await symbolize(bun, [...coords.values()].flatMap(c => c.repRvas));
 const coordModule = (c: Coord) => moduleOf({ rvas: c.repRvas } as any, syms);
@@ -339,7 +358,12 @@ async function worker(w: number) {
         else if (rr.crashSig?.boundary === "system-module") outcome = "system-crash";
         else outcome = "CRASH";
       } else if (fired === 0) outcome = "no-fire";
-      else if (rr.ms >= slowMs) outcome = "slow";
+      // A run that got slow because a test TIMED OUT is the hang class in
+      // disguise: some awaited operation never completed and the runner's
+      // per-test timeout rescued it. That is a finding ('stalled'). A run
+      // that is merely slower with no timeout is latency (retries/backoff) -
+      // 'slow', roll-up only, never queued.
+      else if (rr.ms >= slowMs) outcome = timedOutTests(rr.stdout + rr.stderr) > baseTimeouts ? "stalled" : "slow";
       else if (rr.exitCode !== base.exitCode) outcome = "error-exit";
       else if (rr.stdout !== base.stdout) outcome = "diverged";
       else outcome = "clean";
@@ -395,12 +419,13 @@ liveWriter.end();
 const rank: Record<string, number> = {
   HANG: 0,
   CRASH: 1,
-  slow: 2,
-  "expected-abort": 3,
-  "error-exit": 4,
-  diverged: 5,
-  "no-fire": 6,
-  clean: 7,
+  stalled: 2, // an awaited op never completed (a test timed out) - hang class
+  slow: 3,
+  "expected-abort": 4,
+  "error-exit": 5,
+  diverged: 6,
+  "no-fire": 7,
+  clean: 8,
   "system-crash": 8, // fault crashed a system DLL's own machinery: not a bun bug
   "driver-error": 9,
 };
@@ -413,7 +438,7 @@ for (const k of ["HANG", "CRASH", "slow", "expected-abort", "error-exit", "diver
   if (counts.has(k)) console.log(`  ${k.padEnd(15)} ${counts.get(k)}`);
 
 const findingsPath = join(workRoot, "findings.md");
-const findings = results.filter(r => r.outcome === "CRASH" || r.outcome === "HANG");
+const findings = results.filter(r => r.outcome === "CRASH" || r.outcome === "HANG" || r.outcome === "stalled");
 
 // --- auto-verify: no false positives ------------------------------------------
 // A HANG or CRASH observed during the parallel sweep may be load-induced (a
@@ -475,7 +500,9 @@ if (findings.length) {
         }
       }
     }
-    const bad = outcomes.filter(o => o === "CRASH" || o === "HANG").length;
+    // For a stalled finding, stalling again standalone (a slow replay =
+    // the test timed out again) IS the reproduction.
+    const bad = outcomes.filter(o => o === "CRASH" || o === "HANG" || (f.outcome === "stalled" && o === "slow")).length;
     const slow = outcomes.filter(o => o === "slow").length;
     const fired = outcomes.filter(o => o !== "no-fire").length;
     // "crawls twice, hangs once" is bad EVERY time (borderline on the
@@ -675,6 +702,9 @@ for (const r of results) {
   if (r.job.mode.startsWith("mangle") && v.verdict === "slow") continue;
   // Nothing to look at when no replay reproduced anything.
   if (v.verdict === "not-reproduced") continue;
+  // Plain slowness (no test timed out) is latency, not a bug - roll-up only.
+  // The interesting subset (a stalled operation) is its own outcome.
+  if (v.verdict === "slow" && r.outcome !== "stalled") continue;
   const dedupeKey = r.crashSig ? `crash: ${r.crashSig.signature}` : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;
   queueLines.push(
     JSON.stringify({

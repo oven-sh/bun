@@ -146,6 +146,9 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 
 /* Loop related */
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
+#ifdef LIBUS_USE_KQUEUE
+int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_data);
+#endif
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);

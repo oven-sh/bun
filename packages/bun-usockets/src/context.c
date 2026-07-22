@@ -764,6 +764,18 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             }
         }
     }
+    #else
+    /* A failed non-blocking connect() is reported as "writable" on every
+     * platform; the actual errno lives in SO_ERROR. epoll also sets
+     * EPOLLERR/EPOLLHUP so the dispatch flag is non-zero there, but kqueue
+     * signals it via EVFILT_WRITE + EV_EOF, which the dispatch loop no longer
+     * maps (EV_EOF on an established socket is a half-close, not an error).
+     * When the dispatch flag is zero, probe SO_ERROR — the portable contract
+     * for async connect completion — at the cost of one getsockopt on this
+     * cold path. */
+    if (error == 0) {
+        error = us_socket_get_error(s);
+    }
     #endif
     if (error) {
         if (c) {

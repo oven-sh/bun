@@ -12,7 +12,6 @@ use crate::unicode;
 pub const MAX_LINK_LABEL_LEN: usize = 999;
 
 pub struct RefDef {
-    pub label: Box<[u8]>, // normalized label
     pub dest: Box<[u8]>,  // raw destination (slice of source)
     pub title: Box<[u8]>, // raw title (slice of source)
 }
@@ -422,7 +421,6 @@ impl Parser<'_> {
                     let dest_dupe: Box<[u8]> = Box::from(result.dest);
                     let title_dupe: Box<[u8]> = Box::from(result.title);
                     self.ref_defs.push(RefDef {
-                        label,
                         dest: dest_dupe,
                         title: title_dupe,
                     });

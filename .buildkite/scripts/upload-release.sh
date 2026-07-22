@@ -61,30 +61,35 @@ function run_command() {
   { set +x; } 2>/dev/null
 }
 
-function maybe_sudo() {
-  if [ "$(id -u)" -eq 0 ]; then
-    run_command "$@"
-  elif command -v sudo &> /dev/null; then
-    run_command sudo "$@"
-  else
-    run_command "$@"
-  fi
+# Zips are read with unzip and written with cmake. Not one tool for both:
+# `cmake -E tar xf` streams, so it exits 0 on a truncated archive and leaves a
+# corrupt file behind where unzip exits 9, and `zip` is not on the agent image
+# (which has no root to install it). cmake is what wrote these zips in the
+# first place — scripts/build/ci.ts makeZip.
+function assert_archive_tools() {
+  for tool in "unzip" "cmake"; do
+    if ! command -v "$tool" &> /dev/null; then
+      echo "error: Cannot find $tool"
+      echo ""
+      echo "hint: the agent image is supposed to have it; see scripts/bootstrap.sh"
+      exit 1
+    fi
+  done
 }
 
-function package_manager_install() {
-  if command -v dnf &> /dev/null; then
-    maybe_sudo dnf install -y "$@"
-  elif command -v yum &> /dev/null; then
-    maybe_sudo yum install -y "$@"
-  elif command -v apt-get &> /dev/null; then
-    export DEBIAN_FRONTEND=noninteractive
-    maybe_sudo apt-get install -y "$@"
-  elif command -v apk &> /dev/null; then
-    maybe_sudo apk add "$@"
-  else
-    echo "error: No supported package manager found to install: $*"
-    exit 1
+# Tools this script installs go to a writable directory on PATH instead of
+# /usr/local/bin, which needs root on most agents.
+function ensure_tools_bin() {
+  if [ -n "$TOOLS_BIN" ]; then
+    return
   fi
+  TOOLS_DIR="${HOME:-}/.cache/bun-release-tools"
+  if [ -z "$HOME" ] || ! mkdir -p "$TOOLS_DIR/bin" 2> /dev/null; then
+    TOOLS_DIR="$(mktemp -d)"
+    mkdir -p "$TOOLS_DIR/bin"
+  fi
+  TOOLS_BIN="$TOOLS_DIR/bin"
+  export PATH="$TOOLS_BIN:$PATH"
 }
 
 function install_gh_linux() {
@@ -108,23 +113,25 @@ function install_gh_linux() {
   dir="$(mktemp -d)"
   run_command curl -fsSL "https://github.com/cli/cli/releases/download/v${version}/gh_${version}_linux_${arch}.tar.gz" -o "$dir/gh.tar.gz"
   run_command tar -xzf "$dir/gh.tar.gz" -C "$dir" --strip-components=1
-  maybe_sudo install -m 0755 "$dir/bin/gh" /usr/local/bin/gh
+  ensure_tools_bin
+  run_command install -m 0755 "$dir/bin/gh" "$TOOLS_BIN/gh"
   rm -rf "$dir"
 }
 
 function install_aws_linux() {
-  command -v unzip &> /dev/null || package_manager_install unzip
   local dir
   dir="$(mktemp -d)"
   run_command curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "$dir/awscliv2.zip"
   run_command unzip -q "$dir/awscliv2.zip" -d "$dir"
-  maybe_sudo "$dir/aws/install" --update
+  ensure_tools_bin
+  run_command "$dir/aws/install" --update -i "$TOOLS_DIR/aws-cli" -b "$TOOLS_BIN"
   rm -rf "$dir"
 }
 
 function install_sentry_cli_linux() {
   # The installer drops a single static binary into INSTALL_DIR.
-  maybe_sudo bash -c "curl -fsSL https://sentry.io/get-cli/ | INSTALL_DIR=/usr/local/bin sh"
+  ensure_tools_bin
+  run_command bash -c "curl -fsSL https://sentry.io/get-cli/ | INSTALL_DIR='$TOOLS_BIN' sh"
 }
 
 function assert_command() {
@@ -224,11 +231,20 @@ function upload_github_asset() {
   run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
 
   # Sometimes the upload fails, maybe this is a race condition in the gh CLI?
-  while [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" | grep -c "$file")" -eq 0 ]; do
-    echo "warn: Uploading $file to $tag failed, retrying..."
+  # Bounded: `gh release view` failing prints nothing, which reads the same as
+  # "asset missing", so an API outage would otherwise spin here until Buildkite
+  # times the job out with no error line.
+  local attempt
+  for attempt in {1..5}; do
+    if [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" | grep -c "$file")" -ne 0 ]; then
+      return 0
+    fi
+    echo "warn: Uploading $file to $tag failed, retrying ($attempt/5)..."
     sleep "$((RANDOM % 5 + 1))"
     run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
   done
+  echo "error: Uploaded $file to $tag but it never showed up in the release"
+  exit 1
 }
 
 function update_github_release() {
@@ -282,6 +298,7 @@ EOF
 function create_release() {
   assert_main
   assert_buildkite_agent
+  assert_archive_tools
   assert_github
   assert_aws
   assert_sentry
@@ -332,12 +349,12 @@ function create_release() {
     esac
   }
 
-  command -v unzip &> /dev/null || package_manager_install unzip
-  command -v zip &> /dev/null || package_manager_install zip
-
   # Repack `$src_zip` (inner dir = basename of $src_zip) as `$dst_zip` with the
-  # inner dir renamed to match `$dst_zip`'s basename. Works in a fresh mktemp
-  # dir so a caller-CWD change can't collide with the extracted names.
+  # inner dir renamed to match `$dst_zip`'s basename, which is what install.sh
+  # extracts. Not done in the build step's makeZip, where the staging dir is
+  # already in hand: the Windows zips are re-uploaded by the signing step, so
+  # an alias built there would carry the unsigned binary. Runs in a fresh
+  # mktemp dir so a caller-CWD change can't collide with the extracted names.
   function rezip_as() {
     local src_zip="$1" dst_zip="$2"
     local src_dir="${src_zip%.zip}" dst_dir="${dst_zip%.zip}"
@@ -345,21 +362,27 @@ function create_release() {
     local work; work="$(mktemp -d)"
     run_command unzip -q -d "$work" "$abs_src"
     run_command mv "$work/$src_dir" "$work/$dst_dir"
-    run_command rm -f "$abs_dst"
-    (cd "$work" && run_command zip -rq "$abs_dst" "$dst_dir")
+    (cd "$work" && run_command cmake -E tar cf "$abs_dst" --format=zip "$dst_dir")
     run_command rm -rf "$work"
   }
 
   function upload_one() {
     local artifact="$1"
+    local commit_folder="releases/$BUILDKITE_COMMIT"
     if [ "$tag" == "canary" ]; then
-      upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$artifact" &
-    else
-      upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
+      commit_folder="$commit_folder-canary"
     fi
-    upload_s3_file "releases/$tag" "$artifact" &
-    upload_github_asset "$tag" "$artifact" &
-    wait
+    local pids=()
+    upload_s3_file "$commit_folder" "$artifact" & pids+=("$!")
+    upload_s3_file "releases/$tag" "$artifact" & pids+=("$!")
+    upload_github_asset "$tag" "$artifact" & pids+=("$!")
+    # Per-pid: a bare `wait` returns 0 however the children exited, passing a
+    # failed upload off as a successful release.
+    local status=0
+    for pid in "${pids[@]}"; do
+      wait "$pid" || status=1
+    done
+    return "$status"
   }
 
   function upload_artifact() {

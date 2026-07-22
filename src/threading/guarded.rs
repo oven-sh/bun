@@ -11,11 +11,6 @@ use crate::Mutex;
 /// a guard with `Deref`/`DerefMut`, no poisoning.
 pub type Guarded<Value> = GuardedBy<Value, Mutex>;
 
-/// `parking_lot::MutexGuard<'a, T>` drop-in alias for the [`Guarded`] case.
-/// Named here (not at crate root) to avoid colliding with the bare
-/// [`crate::mutex::MutexGuard`] returned by `Mutex::lock_guard()`.
-pub type MutexGuard<'a, Value> = GuardedLock<'a, Value, Mutex>;
-
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// `M` should have `lock` and `unlock` methods.
 pub struct GuardedBy<Value, M: RawMutex> {
@@ -73,15 +68,6 @@ impl<Value> GuardedBy<Value, Mutex> {
         } else {
             None
         }
-    }
-
-    /// Borrow the underlying raw [`Mutex`]. Needed by callers that split
-    /// `lock()`/`unlock()` across function boundaries (e.g. `Progress.rs`
-    /// porting `lock_api::RawMutex`) or pair this `Guarded` with a bare
-    /// [`Condition::wait`](crate::Condition::wait).
-    #[inline]
-    pub fn raw_mutex(&self) -> &Mutex {
-        &self.mutex
     }
 }
 

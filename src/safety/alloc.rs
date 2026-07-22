@@ -178,60 +178,6 @@ impl CheckedAllocator {
             crate::alloc::assert_eq(old_alloc, alloc);
         }
     }
-
-    /// Transfers ownership of the collection to a new allocator.
-    ///
-    /// This method is valid only if both the old allocator and new allocator are `MimallocArena`s.
-    /// This is okay because data allocated by one `MimallocArena` can always be freed by another
-    /// (this includes `resize` and `remap`).
-    ///
-    /// `new_allocator` should be one of the following:
-    ///
-    /// * `&MimallocArena`
-    /// * `&MimallocArena` (const)
-    /// * `MimallocArena::Borrowed`
-    ///
-    /// If you only have a `StdAllocator`, see `MimallocArena::Borrowed::downcast`.
-    #[inline]
-    pub fn transfer_ownership(&mut self, new_alloc: &impl AsMimallocArenaAllocator) {
-        let _ = new_alloc;
-        if !ENABLED {
-            return;
-        }
-        #[cfg(debug_assertions)]
-        {
-            let new_std = new_alloc.allocator();
-
-            // A scopeguard would need a `&mut self` capture overlapping the
-            // reads below, so the assignment is hoisted to both early returns
-            // instead.
-            let Some(old_allocator) = self.allocator.get() else {
-                *self = Self::init(new_std);
-                return;
-            };
-            if crate::is_mimalloc_arena(old_allocator) {
-                *self = Self::init(new_std);
-                return;
-            }
-
-            #[cfg(debug_assertions)]
-            {
-                Output::err_generic("collection first used here:", ());
-                // bun_core::dump_stack_trace (T0 fallback — raw addrs).
-                crate::dump_stored_trace(&self.trace);
-            }
-            panic!(
-                "cannot transfer ownership from non-MimallocArena (old vtable is {:p})",
-                std::ptr::from_ref(old_allocator.vtable),
-            );
-        }
-    }
-}
-
-/// `MimallocArena` lives in `bun_runtime` (above this crate), so callers
-/// implement this trait there.
-pub trait AsMimallocArenaAllocator {
-    fn allocator(&self) -> StdAllocator;
 }
 
 pub const ENABLED: bool = cfg!(debug_assertions);

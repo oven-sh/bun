@@ -3,19 +3,12 @@ use bun_core::strings;
 pub(crate) struct PercentEncoding;
 
 /// possible errors for decode and encode
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError {
     #[error("InvalidCharacter")]
     InvalidCharacter,
     #[error("OutOfMemory")]
     OutOfMemory,
-}
-
-impl EncodeError {
-    /// Returns the error name string.
-    pub fn name(self) -> &'static str {
-        self.into()
-    }
 }
 
 /// Error set of [`DataURL::parse`] / [`DataURL::parse_without_check`].

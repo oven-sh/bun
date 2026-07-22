@@ -9,38 +9,6 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-/// Diff configuration. Defaults are usually sufficient.
-///
-/// Rust cannot pass a struct as a const generic on stable, so the only
-/// behaviorally-meaningful field (`check_comma_disparity`) is hoisted to a
-/// `const CHECK_COMMA_DISPARITY: bool` generic on `Differ`. The two sizing
-/// fields are advisory only and otherwise unused (see PERF notes
-/// in `diff`).
-#[derive(Clone, Copy)]
-pub struct Options {
-    /// Guesstimate for the number of bytes `expected` and `actual` will be.
-    /// Defaults to 256.
-    ///
-    /// Used to reserve space on the stack for the edit graph.
-    pub avg_input_size: usize,
-    /// How much stack space to reserve for edit trace frames. Defaults to 64.
-    pub initial_trace_capacity: usize,
-    /// When `true`, string lines that are only different by a trailing comma
-    /// are considered equal. Not used when comparing chars. Defaults to
-    /// `false`.
-    pub check_comma_disparity: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            avg_input_size: 256,
-            initial_trace_capacity: 64,
-            check_comma_disparity: false,
-        }
-    }
-}
-
 // By limiting maximum string and buffer lengths, we can store u32s in the
 // edit graph instead of usize's, halving our memory footprint. The
 // downside is that `(2 * (actual.len + expected.len))` must be less than
@@ -49,8 +17,6 @@ impl Default for Options {
 // Note that overflows are much more likely to occur in real user scenarios
 // than in our own testing, so overflow checks _must_ be handled. Do _not_
 // use `assert` unless you also use `@setRuntimeSafety(true)`.
-//
-// TODO: make this configurable in `Options`?
 const MAXLEN: u64 = u32::MAX as u64;
 const MAX_TRACE_BYTES: usize = 64 * 1024 * 1024;
 // Type aliasing to make future refactors easier
@@ -146,10 +112,6 @@ impl<'a> Line for &'a [u16] {
 /// The `eql` dispatch is the `Line` trait. To supply a custom equality
 /// function, implement `Line` for your type.
 pub struct Differ<L, const CHECK_COMMA_DISPARITY: bool = false>(PhantomData<L>);
-
-/// struct.
-pub type DifferWithEql<L, const CHECK_COMMA_DISPARITY: bool = false> =
-    Differ<L, CHECK_COMMA_DISPARITY>;
 
 impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY> {
     // `V = [-MAX, MAX]`.
@@ -402,9 +364,6 @@ where
 // =================================== TYPES ===================================
 // =============================================================================
 
-/// Generic equality function. Returns `true` if two lines are equal.
-pub type LineCmp<L> = fn(L, L) -> bool;
-
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Error {
     #[error("DiffTooLarge")]
@@ -438,12 +397,6 @@ impl fmt::Display for DiffKind {
 pub struct Diff<T> {
     pub kind: DiffKind,
     pub value: T,
-}
-
-impl<T: PartialEq> Diff<T> {
-    pub fn eql(&self, other: &Self) -> bool {
-        self.kind == other.kind && self.value == other.value
-    }
 }
 
 impl<T: fmt::Display> fmt::Display for Diff<T> {

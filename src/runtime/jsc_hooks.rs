@@ -3580,6 +3580,10 @@ fn get_hardcoded_module(
             Some(js_synthetic_module(b"node:zlib/iter", specifier))
         }
         HardcodedModule::BunInternalForTesting => {
+            // Non-canary release builds do not bundle this module at all.
+            if !bun_core::env::ENABLE_INTERNAL_FOR_TESTING {
+                return None;
+            }
             // Gated behind `--expose-internals` (release) / always-on (debug).
             if !bun_core::env::IS_DEBUG {
                 let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS

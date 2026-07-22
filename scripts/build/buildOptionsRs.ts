@@ -49,6 +49,9 @@ export function generateBuildOptionsRs(cfg: Config): string {
     `pub const RELEASE_SAFE: bool = ${cfg.assertions};`,
     `pub const IS_CANARY: bool = ${cfg.canary};`,
     `pub const CANARY_REVISION: &str = ${rstr(cfg.canaryRevision)};`,
+    // bun:internal-for-testing is bundled for debug and canary builds only; non-canary
+    // release builds omit the module and every TestingAPIs binding it references.
+    `pub const ENABLE_INTERNAL_FOR_TESTING: bool = cfg!(bun_debug) || ${cfg.canary};`,
     `pub const ENABLE_FUZZILLI: bool = ${cfg.fuzzilli};`,
     `pub const FALLBACK_HTML_VERSION: &str = "0000000000000000";`,
     "pub const VERSION: crate::Version = crate::Version {",

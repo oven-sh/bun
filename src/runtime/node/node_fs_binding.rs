@@ -421,6 +421,7 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     Binding::to_js_boxed(module, global)
 }
 
+#[allow(dead_code)] // only caller is generated (absent in non-canary release builds)
 #[bun_jsc::host_fn]
 pub(crate) fn create_memfd_for_testing(
     global: &JSGlobalObject,

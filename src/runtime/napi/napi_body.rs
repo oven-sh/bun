@@ -2516,6 +2516,7 @@ static THREADSAFE_FUNCTION_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Exposed via `bun:internal-for-testing` so tests can assert a threadsafe
 /// function orphaned by a dead worker is freed rather than leaked.
+#[allow(dead_code)] // only caller is generated (absent in non-canary release builds)
 #[bun_jsc::host_fn]
 pub(crate) fn js_threadsafe_function_live_count(
     _global: &JSGlobalObject,

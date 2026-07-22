@@ -112,6 +112,7 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
 /// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:
 /// shrink the parser's block-metadata cap so its `TooManyBlocks` error is
 /// testable without 4 GiB of input. Returns the previous limit.
+#[allow(dead_code)] // only caller is generated (absent in non-canary release builds)
 #[bun_jsc::host_fn]
 pub(crate) fn set_max_markdown_block_bytes_for_testing(
     global_this: &JSGlobalObject,

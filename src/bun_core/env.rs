@@ -71,6 +71,9 @@ pub const ENABLE_LOGS: bool = build_options::ENABLE_LOGS;
 pub const ENABLE_ASAN: bool = build_options::ENABLE_ASAN;
 pub const ENABLE_FUZZILLI: bool = build_options::ENABLE_FUZZILLI;
 pub const ENABLE_TINYCC: bool = build_options::ENABLE_TINYCC;
+/// Whether `bun:internal-for-testing` (and the native TestingAPIs bindings it references)
+/// was bundled into this build. False for non-canary release builds.
+pub const ENABLE_INTERNAL_FOR_TESTING: bool = build_options::ENABLE_INTERNAL_FOR_TESTING;
 
 // TYPE_ONLY: bun_semver::Version moves to bun_core (move-in pass).
 pub const VERSION: crate::Version = build_options::VERSION;

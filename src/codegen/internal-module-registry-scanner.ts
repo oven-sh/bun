@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { readdirRecursive, resolveSyncOrNull } from "./helpers";
 
-export function createInternalModuleRegistry(basedir: string) {
+export function createInternalModuleRegistry(basedir: string, { includeInternalForTesting = true } = {}) {
   const moduleList = ["bun", "node", "thirdparty", "internal"]
     .flatMap(dir => readdirRecursive(path.join(basedir, dir)))
     .filter(file => file.endsWith(".js") || (file.endsWith(".ts") && !file.endsWith(".d.ts")))
@@ -26,8 +26,10 @@ export function createInternalModuleRegistry(basedir: string) {
     }
   }
 
-  moduleList.push("internal-for-testing.ts");
-  internalRegistry.set("bun:internal-for-testing", moduleList.length - 1);
+  if (includeInternalForTesting) {
+    moduleList.push("internal-for-testing.ts");
+    internalRegistry.set("bun:internal-for-testing", moduleList.length - 1);
+  }
 
   let nextNativeModuleId = 0;
   const nativeModuleIds: Record<string, number> = {};

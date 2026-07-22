@@ -584,6 +584,7 @@ pub mod internal_bindings {
     /// thinking that the timing is wrong (this also happens when I run the modified test in
     /// Node.js). So the best course of action is for Bun to also expose a function that reveals the
     /// clock that is used to schedule timers.
+    #[allow(dead_code)] // only caller is generated (absent in non-canary release builds)
     #[bun_jsc::host_fn]
     pub(crate) fn timer_clock_ms(
         global_this: &JSGlobalObject,

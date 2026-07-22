@@ -118,10 +118,19 @@ static size_t getFramingOverhead(size_t payloadSize)
 
 const size_t maxReasonSizeInBytes = 123;
 
-// Close codes an endpoint may put on the wire (RFC 6455 7.4 + the IANA registry).
-// Deliberately the RFC endpoint set, not the browser's "1000 or 3000-4999":
-// non-browser clients legitimately send 1001 or 1011, and `ws` accepts the same set.
-static inline bool isValidCloseCodeForSending(uint16_t code)
+// https://websockets.spec.whatwg.org/#dom-websocket-close step 1: the API
+// close code set is exactly 1000 and 3000-4999. 1001-1014 are legal RFC 6455
+// endpoint codes on the wire but the WHATWG interface forbids passing them.
+static inline bool isValidWHATWGCloseCode(uint16_t code)
+{
+    return code == 1000 || (code >= 3000 && code <= 4999);
+}
+
+// RFC 6455 7.4 + the IANA registry: every code an endpoint may put on the
+// wire. The `ws` npm package validates against this set, and Bun's `ws` shim
+// forwards to this class, so close() accepts this wider set when the shim
+// asks for it (undocumented third argument).
+static inline bool isValidEndpointCloseCode(uint16_t code)
 {
     return (code >= 1000 && code <= 1014 && code != 1004 && code != 1005 && code != 1006)
         || (code >= 3000 && code <= 4999);
@@ -976,13 +985,17 @@ void WebSocket::failConnectingWebSocket()
     updateHasPendingActivity();
 }
 
-ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, const String& reason)
+ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, const String& reason, bool allowEndpointCodes)
 {
     // https://websockets.spec.whatwg.org/#dom-websocket-close
     // Validation happens before the readyState checks: an invalid code or an
     // over-long reason throws even on a CLOSING/CLOSED socket.
-    if (optionalCode && !isValidCloseCodeForSending(optionalCode.value()))
-        return Exception { InvalidAccessError, makeString("The close code must be a valid WebSocket close code (1000-1014, excluding the reserved codes 1004-1006, or in the range of 3000 to 4999). Received "_s, optionalCode.value(), '.') };
+    if (optionalCode) {
+        unsigned short code = optionalCode.value();
+        bool valid = allowEndpointCodes ? isValidEndpointCloseCode(code) : isValidWHATWGCloseCode(code);
+        if (!valid)
+            return Exception { InvalidAccessError, makeString("The close code must be either 1000 or in the range of 3000 to 4999. Received "_s, code, '.') };
+    }
     if (!reason.isEmpty()) {
         // The limit is on the UTF-8 encoding of the reason, not its UTF-16 length.
         auto utf8Reason = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);

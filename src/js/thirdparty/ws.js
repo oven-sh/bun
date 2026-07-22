@@ -91,6 +91,12 @@ function emitWarning(type, message) {
   console.warn("[bun] Warning:", message);
 }
 
+// RFC 6455 7.4 + IANA: the status codes an endpoint may send in a Close
+// frame. Matches npm `ws` lib/validation.js isValidStatusCode.
+function isValidStatusCode(code) {
+  return (code >= 1000 && code <= 1014 && code !== 1004 && code !== 1005 && code !== 1006) || (code >= 3000 && code <= 4999);
+}
+
 // TODO: add private method on WebSocket to avoid these allocations
 function normalizeData(data, opts) {
   const isBinary = opts?.binary;
@@ -376,9 +382,15 @@ class BunWebSocket extends EventEmitter {
   }
 
   close(code, reason) {
+    // Match npm `ws`: TypeError for a code outside the RFC 6455 endpoint set.
+    // The native close() is WHATWG-strict (only 1000, 3000-4999); the third
+    // argument opts into the wider endpoint set so 1001-1014 pass.
+    if (code !== undefined && (typeof code !== "number" || !isValidStatusCode(code))) {
+      throw new TypeError("First argument must be a valid error code number");
+    }
     const ws = this.#ws;
     if (ws) {
-      ws.close(code, reason);
+      ws.close(code, reason, true);
     }
   }
 
@@ -986,6 +998,9 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   close(code, reason) {
+    if (code !== undefined && (typeof code !== "number" || !isValidStatusCode(code))) {
+      throw new TypeError("First argument must be a valid error code number");
+    }
     if (this.#state === ReadyState_OPEN) {
       this.#state = ReadyState_CLOSING;
       this.#ws.close(code, reason);

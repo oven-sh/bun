@@ -44,23 +44,33 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 flush: false,
                 quote_strings: true,
             };
-            let _ = JestPrettyFormat::format(
+            // JestPrettyFormat can invoke user JS (proxy traps, getters) that throws. Bail so the
+            // caller propagates the pending JS exception instead of re-entering JSC with one live.
+            if JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
                 core::slice::from_ref(&received),
                 1,
                 &mut received_buf,
                 fmt_options,
-            ); // TODO:
+            )
+            .is_err()
+            {
+                return Err(fmt::Error);
+            }
 
-            let _ = JestPrettyFormat::format(
+            if JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
                 core::slice::from_ref(&expected),
                 1,
                 &mut expected_buf,
                 fmt_options,
-            ); // TODO:
+            )
+            .is_err()
+            {
+                return Err(fmt::Error);
+            }
         }
 
         let mut received_slice: &[u8] = received_buf.as_slice();

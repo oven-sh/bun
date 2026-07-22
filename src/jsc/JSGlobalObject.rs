@@ -626,11 +626,11 @@ impl JSGlobalObject {
 
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error.
-            // Clear any pending JS exception (e.g. from Symbol.toPrimitive) so that throwValue doesn't hit assertNoException.
-            let _ = self.clear_exception_except_termination();
-            return ZigString::init_utf8(&buf).to_error_instance(self);
+        let _ = write!(WriteVec(&mut buf), "{}", args);
+        // Formatting may invoke user JS (proxy traps, Symbol.toPrimitive, getters) that throws.
+        // Propagate that exception rather than masking it with a second error built on top.
+        if self.has_exception() {
+            return JSValue::ZERO;
         }
 
         // Ensure we clone it.
@@ -644,9 +644,9 @@ impl JSGlobalObject {
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            let _ = self.clear_exception_except_termination();
-            return ZigString::from_utf8(&buf).to_type_error_instance(self);
+        let _ = write!(WriteVec(&mut buf), "{}", args);
+        if self.has_exception() {
+            return JSValue::ZERO;
         }
         let str = ZigString::from_utf8(&buf);
         str.to_type_error_instance(self)
@@ -673,9 +673,9 @@ impl JSGlobalObject {
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            let _ = self.clear_exception_except_termination();
-            return ZigString::from_utf8(&buf).to_syntax_error_instance(self);
+        let _ = write!(WriteVec(&mut buf), "{}", args);
+        if self.has_exception() {
+            return JSValue::ZERO;
         }
         let str = ZigString::from_utf8(&buf);
         str.to_syntax_error_instance(self)
@@ -687,9 +687,9 @@ impl JSGlobalObject {
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            let _ = self.clear_exception_except_termination();
-            return ZigString::from_utf8(&buf).to_range_error_instance(self);
+        let _ = write!(WriteVec(&mut buf), "{}", args);
+        if self.has_exception() {
+            return JSValue::ZERO;
         }
         let str = ZigString::from_utf8(&buf);
         str.to_range_error_instance(self)

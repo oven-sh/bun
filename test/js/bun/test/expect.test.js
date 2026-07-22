@@ -677,6 +677,91 @@ describe("expect()", () => {
         expect(p1).toStrictEqual(p2);
       }
     });
+
+    const caught = fn => {
+      try {
+        fn();
+      } catch (e) {
+        return e;
+      }
+      throw new Error("expected throw");
+    };
+
+    test("strict deepEquals propagates a throwing Proxy get trap like loose mode", () => {
+      const trapErr = new RangeError("trapG");
+      const thr = () =>
+        new Proxy(
+          {},
+          {
+            get() {
+              throw trapErr;
+            },
+            ownKeys() {
+              return ["a"];
+            },
+            getOwnPropertyDescriptor() {
+              return { enumerable: true, configurable: true, value: 1 };
+            },
+          },
+        );
+
+      // loose already propagated; strict used to short-circuit on calculatedClassName and return false.
+      expect(caught(() => Bun.deepEquals(thr(), { a: 1 }))).toBe(trapErr);
+      expect(caught(() => Bun.deepEquals(thr(), { a: 1 }, true))).toBe(trapErr);
+      // toEqual / toStrictEqual surface the trap throw (previously aborted on assert builds).
+      expect(caught(() => expect(thr()).toEqual({ a: 1 }))).toBe(trapErr);
+      expect(caught(() => expect(thr()).toStrictEqual({ a: 1 }))).toBe(trapErr);
+      expect(caught(() => expect({ a: 1 }).toStrictEqual(thr()))).toBe(trapErr);
+
+      // A transparent Proxy now passes the strict type gate (Node's util.isDeepStrictEqual agrees).
+      expect(Bun.deepEquals(new Proxy({ a: 1 }, {}), { a: 1 }, true)).toBe(true);
+      expect(Bun.deepEquals({ a: 1 }, new Proxy({ a: 1 }, {}), true)).toBe(true);
+      expect(new Proxy({ a: 1 }, {})).toStrictEqual({ a: 1 });
+      class Foo {}
+      expect(Bun.deepEquals(new Proxy(new Foo(), {}), new Foo(), true)).toBe(true);
+      expect(Bun.deepEquals(new Proxy({}, {}), new Foo(), true)).toBe(false);
+
+      // Proxy skips the array fast path (which compares length); the generic walk never sees
+      // non-enumerable .length, so it must be compared explicitly. Matches Node/Jest.
+      expect(Bun.deepEquals(new Proxy(new Array(5), {}), [], true)).toBe(false);
+      // eslint-disable-next-line no-sparse-arrays
+      expect(Bun.deepEquals(new Proxy([1, ,], {}), [1], true)).toBe(false);
+      expect(Bun.deepEquals(new Proxy([1, 2, 3], {}), [1, 2, 3], true)).toBe(true);
+      expect(Bun.deepEquals([1, 2, 3], new Proxy([1, 2, 3], {}), true)).toBe(true);
+      expect(Bun.deepEquals(new Proxy([1, 2], {}), new Proxy([1, 2, 3], {}), true)).toBe(false);
+    });
+
+    test("expect diff rendering propagates a throwing Proxy trap instead of aborting", () => {
+      // Array target vs object: deepEquals returns false at the isArray gate, so the
+      // diff renderer is what touches the proxy. Previously aborted on assert builds
+      // with "Unexpected exception observed"; the trap throw should surface instead.
+      const trapErr = new RangeError("trapG");
+      const thrArr = () =>
+        new Proxy([1], {
+          get() {
+            throw trapErr;
+          },
+        });
+      expect(caught(() => expect(thrArr()).toStrictEqual({ a: 1 }))).toBe(trapErr);
+      expect(caught(() => expect({ a: 1 }).toStrictEqual(thrArr()))).toBe(trapErr);
+      expect(caught(() => expect(thrArr()).toEqual({ a: 1 }))).toBe(trapErr);
+
+      // this.utils.matcherHint goes through the same DiffFormatter with user-supplied
+      // received/expected; it should propagate the trap throw rather than panic.
+      let hintErr;
+      expect.extend({
+        toHitThrowingProxy() {
+          try {
+            this.utils.matcherHint("toHitThrowingProxy", thrArr(), { a: 1 });
+          } catch (e) {
+            hintErr = e;
+          }
+          return { pass: true, message: () => "" };
+        },
+      });
+      expect(0).toHitThrowingProxy();
+      expect(hintErr).toBe(trapErr);
+    });
   }
 
   test("deepEquals works with sets/maps/dates/strings", () => {

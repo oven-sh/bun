@@ -844,7 +844,33 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+        if (c1->type() == ProxyObjectType || c2->type() == ProxyObjectType) {
+            // calculatedClassName() returns "ProxyObject" for any Proxy, rejecting a transparent
+            // Proxy before any trap runs. Compare observable prototypes so the strict gate matches
+            // Node/Jest and a throwing trap is reached and propagated like the loose path.
+            JSValue p1 = o1->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue p2 = o2->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (p1 != p2) {
+                return false;
+            }
+            // Reaching here with two arrays means a Proxy skipped the fast path above, and the
+            // generic walk below never sees non-enumerable .length. Compare it through the traps.
+            if (v1Array && v2Array) {
+                JSValue len1 = o1->get(globalObject, vm.propertyNames->length);
+                RETURN_IF_EXCEPTION(scope, false);
+                uint64_t length1 = len1.toLength(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+                JSValue len2 = o2->get(globalObject, vm.propertyNames->length);
+                RETURN_IF_EXCEPTION(scope, false);
+                uint64_t length2 = len2.toLength(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (length1 != length2) {
+                    return false;
+                }
+            }
+        } else if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
     }

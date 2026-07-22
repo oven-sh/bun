@@ -238,8 +238,6 @@ function reportNinjaLog(edges: Edge[]): void {
 // main
 // ───────────────────────────────────────────────────────────────────────────
 
-const cba = await resolveClangBuildAnalyzer();
-
 if (!noBuild) {
   if (!noClean && existsSync(buildDir)) {
     console.error(`cleaning ${buildDir}`);
@@ -267,6 +265,9 @@ reportNinjaLog(readNinjaLog(buildDir));
 // ClangBuildAnalyzer: aggregate every -ftime-trace json under buildDir. Its
 // ini file must live in the CWD it's invoked from; write a transient one next
 // to the capture so section counts are useful (defaults are tiny).
+// Resolved here, after the wall-clock report, so a platform without a usable
+// binary still gets the CBA-independent .ninja_log half of the output.
+const cba = await resolveClangBuildAnalyzer();
 const capture = resolve(buildDir, "time-trace.capture");
 const ini = resolve(buildDir, "ClangBuildAnalyzer.ini");
 await Bun.write(ini, `[counts]\nfileParse=20\nfileCodegen=15\nfunction=0\ntemplate=30\nheader=30\nheaderChain=5\n`);

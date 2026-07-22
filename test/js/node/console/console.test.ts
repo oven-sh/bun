@@ -164,4 +164,21 @@ describe("global console honors util.inspect.defaultOptions", () => {
     expect(JSON.parse(stdout)).toEqual({ sealed: true, same: true, hasDepth: true });
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("writes via an inheriting object do not leak into the shared defaults", async () => {
+    const { stdout, exitCode } = await run(`
+      const util = require("node:util");
+      const my = Object.create(util.inspect.defaultOptions);
+      my.depth = 10;
+      process.stdout.write(JSON.stringify({
+        sharedDepth: util.inspect.defaultOptions.depth,
+        ownDepth: Object.hasOwn(my, "depth"),
+      }) + "\\n");
+      console.log({ a: { b: { c: { d: 1 } } } });
+    `);
+    const [json, ...rest] = stdout.split("\n");
+    expect(JSON.parse(json)).toEqual({ sharedDepth: 2, ownDepth: true });
+    expect(rest.join("\n")).not.toContain("[Object]");
+    expect(exitCode).toBe(0);
+  });
 });

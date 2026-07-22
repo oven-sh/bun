@@ -748,7 +748,10 @@ function onDefaultOptionsChanged() {
 }
 const inspectDefaultOptionsProxy = new Proxy(inspectDefaultOptions, {
   __proto__: null,
-  set(target, key, value) {
+  set(target, key, value, receiver) {
+    if (receiver !== inspectDefaultOptionsProxy) {
+      return ReflectSet(target, key, value, receiver);
+    }
     const ok = ReflectSet(target, key, value);
     if (ok) onDefaultOptionsChanged();
     return ok;

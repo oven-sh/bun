@@ -69,10 +69,10 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(await sql`SELECT ${1}::int AS v`).toEqual([{ v: 1 }]);
     await sql`DISCARD ALL`.simple();
 
-    // Two executions of the same cached statement queued back-to-back: the
-    // first sees 26000 and marks the shared statement Failed; the second is
-    // settled from statement.error_response by the flush loop. Both promises
-    // must reject rather than hang.
+    // Two executions of the same cached statement queued back-to-back. With
+    // auto-pipelining both write Bind immediately and each receives its own
+    // 26000 ErrorResponse; both must reject (not hang), and the next
+    // execution must re-prepare.
     const [a, b] = await Promise.all([
       sql`SELECT ${2}::int AS v`.then(
         v => ({ ok: v }),

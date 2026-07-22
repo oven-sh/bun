@@ -22,7 +22,6 @@ impl Url {
         })
     }
 
-    /// Returns whether the URL is absolute, and not relative.
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let import_record = dest.import_record(self.import_record_idx)?;

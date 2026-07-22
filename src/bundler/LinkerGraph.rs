@@ -507,6 +507,7 @@ impl<'a> LinkerGraph<'a> {
     /// [`symbol::Map::get_const`]; callers previously open-coded
     /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
     #[inline]
+    #[cfg(debug_assertions)]
     pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol {
         self.symbols
             .get_const(ref_)

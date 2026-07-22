@@ -1,7 +1,7 @@
 use core::fmt::Arguments;
 
 use bun_alloc::Arena as Bump;
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_alloc::{ArenaVec as BumpVec};
 
 use crate as css;
 pub use crate::Error;
@@ -203,59 +203,6 @@ impl Pattern {
         }
     }
 
-    pub fn write_to_string_with_prefix<'a>(
-        &self,
-        bump: &'a Bump,
-        prefix: &'static [u8],
-        hash_: &[u8],
-        path: &[u8],
-        local: &[u8],
-    ) -> &'a [u8] {
-        let mut res: BumpVec<'a, u8> = BumpVec::new_in(bump);
-        self.write(hash_, path, local, |slice: &[u8], replace_dots: bool| {
-            res.extend_from_slice(prefix);
-            if replace_dots {
-                let start = res.len();
-                res.extend_from_slice(slice);
-                let end = res.len();
-                for c in &mut res[start..end] {
-                    if *c == b'.' {
-                        *c = b'-';
-                    }
-                }
-                return;
-            }
-            res.extend_from_slice(slice);
-        });
-        res.into_bump_slice()
-    }
-
-    pub fn write_to_string<'a>(
-        &self,
-        _bump: &'a Bump,
-        res_: BumpVec<'a, u8>,
-        hash_: &[u8],
-        path: &[u8],
-        local: &[u8],
-    ) -> &'a [u8] {
-        let mut res = res_;
-        self.write(hash_, path, local, |slice: &[u8], replace_dots: bool| {
-            if replace_dots {
-                let start = res.len();
-                res.extend_from_slice(slice);
-                let end = res.len();
-                for c in &mut res[start..end] {
-                    if *c == b'.' {
-                        *c = b'-';
-                    }
-                }
-                return;
-            }
-            res.extend_from_slice(slice);
-        });
-
-        res.into_bump_slice()
-    }
 }
 
 /// A segment in a CSS modules class name pattern.

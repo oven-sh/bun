@@ -586,8 +586,8 @@ impl<'a> Printer<'a> {
     pub(crate) fn write_dashed_ident(&mut self, ident: &DashedIdent) -> PrintResult<()> {
         self.write_str(b"--")?;
 
-        // NOTE: cannot use `ident.v()` here — `add_dashed` requires `&'a [u8]`
-        // (arena lifetime), but the safe accessor ties the borrow to `&ident`.
+        // NOTE: cannot use `ident.v()` here — `config.pattern.write` below needs
+        // `&'a [u8]` (arena lifetime), but the safe accessor ties the borrow to `&ident`.
         // SAFETY: DashedIdent.v is an arena-owned slice valid for `'a`.
         let ident_v: &'a [u8] = unsafe { crate::arena_str(ident.v) };
 

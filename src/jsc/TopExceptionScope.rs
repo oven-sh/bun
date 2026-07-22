@@ -294,6 +294,7 @@ impl TopExceptionScope {
         Ok(())
     }
 
+    #[cfg(any(debug_assertions, bun_asan))]
     /// Asserts there has not been any exception thrown.
     pub(crate) fn assert_no_exception(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
@@ -314,6 +315,7 @@ impl TopExceptionScope {
     /// Asserts that there is or is not an exception according to the value of `should_have_exception`.
     /// Prefer over `assert(scope.has_exception() == ...)` because if there is an unexpected exception,
     /// this function prints a trace of where it was thrown.
+    #[cfg(any(debug_assertions, bun_asan))]
     pub(crate) fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
         #[cfg(any(debug_assertions, bun_asan))]
         {

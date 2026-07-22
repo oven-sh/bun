@@ -204,7 +204,6 @@ impl fmt::Display for ErrorLocation {
 /// A printer error type.
 #[allow(non_camel_case_types)]
 pub enum PrinterErrorKind {
-    /// An ambiguous relative `url()` was encountered in a custom property declaration.
     /// A [std::fmt::Error](std::fmt::Error) was encountered in the underlying destination.
     fmt_error,
     /// The CSS modules `composes` property cannot be used within nested rules.

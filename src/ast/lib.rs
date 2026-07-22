@@ -433,18 +433,6 @@ pub mod api {
     }
 
     #[derive(Clone, Default, Debug)]
-    pub struct Location {}
-
-    #[derive(Clone, Default, Debug)]
-    pub struct MessageData {}
-
-    #[derive(Clone, Default, Debug)]
-    pub struct MessageMeta {}
-
-    #[derive(Clone, Default, Debug)]
-    pub struct Message {}
-
-    #[derive(Clone, Default, Debug)]
     pub struct Log {
         pub warnings: u32,
         pub errors: u32,
@@ -601,6 +589,7 @@ impl Kind {
             Kind::Verbose => b"verbose",
         }
     }
+
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -762,6 +751,7 @@ impl Location {
             offset: self.offset,
         }
     }
+
 
     // No Drop impl needed.
 
@@ -959,6 +949,7 @@ impl Data {
             loc.count(builder);
         }
     }
+
 
     pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -1192,11 +1183,7 @@ impl Msg {
         }
     }
 
-    pub(crate) fn clone_with_builder(
-        &self,
-        notes: &mut [Data],
-        builder: &mut StringBuilder,
-    ) -> Msg {
+    pub(crate) fn clone_with_builder(&self, notes: &mut [Data], builder: &mut StringBuilder) -> Msg {
         Msg {
             kind: self.kind,
             data: self.data.clone_with_builder(builder),
@@ -1557,7 +1544,10 @@ impl Log {
             warnings += (msg.kind == Kind::Warn) as u32;
         }
 
-        api::Log { warnings, errors }
+        api::Log {
+            warnings,
+            errors,
+        }
     }
 
     pub fn init() -> Log {

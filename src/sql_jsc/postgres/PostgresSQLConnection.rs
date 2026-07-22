@@ -2508,8 +2508,7 @@ impl PostgresSQLConnection {
                 let _ = free_cells; // heap_cells dropped at scope end; defer! above runs cell.deinit()
             }
             MessageType::CopyData => {
-                let copy_data = protocol::CopyData::decode_internal(reader.reborrow())?;
-                drop(copy_data);
+                protocol::CopyData::decode_internal(reader.reborrow())?;
             }
             MessageType::ParameterStatus => {
                 let parameter_status =

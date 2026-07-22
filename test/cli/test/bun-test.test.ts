@@ -1595,8 +1595,7 @@ describe.concurrent("test file discovery (scanner)", () => {
     // `node --test` (with no positional args) matches *.test.*, *-test.*,
     // *_test.*, test-*.*, and bare test.* by default. A project ported from
     // `node --test` to `bun test` should not silently lose test files.
-    const body = (name: string) =>
-      `import { test } from "bun:test"; test("t", () => { console.log("RAN ${name}"); });`;
+    const body = (name: string) => `import { test } from "bun:test"; test("t", () => { console.log("RAN ${name}"); });`;
     using dir = tempDir("scanner-node-test-patterns", {
       "a.test.mjs": body("a.test"),
       "c_test.mjs": body("c_test"),

@@ -447,7 +447,8 @@ impl<'a> Scanner<'a> {
     }
 }
 
-pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 5] = [b".test", b"_test", b"-test", b".spec", b"_spec"];
+pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 5] =
+    [b".test", b"_test", b"-test", b".spec", b"_spec"];
 pub(crate) const TEST_NAME_PREFIXES: [&[u8]; 1] = [b"test-"];
 pub(crate) const TEST_NAME_EXACT: [&[u8]; 1] = [b"test"];
 

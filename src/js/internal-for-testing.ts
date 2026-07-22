@@ -313,6 +313,116 @@ function nodeGetStringWidth(str: string, removeControlChars: boolean = true): nu
   return width;
 }
 
+// node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
+// non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
+// so the node edge cases are handled here.
+const rustNormalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const nodeKEmptyObject = require("internal/shared").kEmptyObject;
+function nodeNormalizeEncoding(enc) {
+  if (enc == null) return "utf8";
+  if (typeof enc !== "string") return undefined;
+  const lower = enc.toLowerCase();
+  if (lower === "utf-16le") return "utf16le";
+  // The Rust map also accepts Buffer-only names node's normalizeEncoding rejects.
+  if (lower === "buffer" || lower === "utf16-le") return undefined;
+  return rustNormalizeEncoding(enc);
+}
+
+// Verbatim from node lib/internal/util.js (countBinaryOnes/getCIDR).
+function countBinaryOnes(n) {
+  // Count the number of bits set in parallel, which is faster than looping
+  n = n - ((n >>> 1) & 0x55555555);
+  n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
+  return (((n + (n >>> 4)) & 0xf0f0f0f) * 0x1010101) >>> 24;
+}
+
+function getCIDR(address, netmask, family) {
+  let ones = 0;
+  let split = ".";
+  let range = 10;
+  let groupLength = 8;
+  let hasZeros = false;
+  let lastPos = 0;
+
+  if (family === "IPv6") {
+    split = ":";
+    range = 16;
+    groupLength = 16;
+  }
+
+  for (let i = 0; i < netmask.length; i++) {
+    if (netmask[i] !== split) {
+      if (i + 1 < netmask.length) {
+        continue;
+      }
+      i++;
+    }
+    const part = netmask.slice(lastPos, i);
+    lastPos = i + 1;
+    if (part !== "") {
+      if (hasZeros) {
+        if (part !== "0") {
+          return null;
+        }
+      } else {
+        const binary = parseInt(part, range);
+        const binaryOnes = countBinaryOnes(binary);
+        ones += binaryOnes;
+        if (binaryOnes !== groupLength) {
+          if (binary.toString(2).includes("01")) {
+            return null;
+          }
+          hasZeros = true;
+        }
+      }
+    }
+  }
+
+  return `${address}/${ones}`;
+}
+
+// Verbatim from node lib/internal/util.js assignFunctionName (assert -> throw).
+function assignFunctionName(name, fn, descriptor = nodeKEmptyObject) {
+  if (typeof name !== "string") {
+    const symbolDescription = name.description;
+    if (symbolDescription === undefined) throw new Error("Attempted to name function after descriptionless Symbol");
+    name = `[${symbolDescription}]`;
+  }
+  return Object.defineProperty(fn, "name", {
+    __proto__: null,
+    writable: false,
+    enumerable: false,
+    configurable: true,
+    ...Object.getOwnPropertyDescriptor(fn, "name"),
+    ...descriptor,
+    value: name,
+  });
+}
+
+function nodeIsError(e) {
+  return require("node:util/types").isNativeError(e) || e instanceof Error;
+}
+
+// node's internal WeakReference: a WeakRef that pins the target strongly
+// while its refcount is above zero.
+class WeakReference {
+  #ref;
+  #strong = null;
+  #refCount = 0;
+  constructor(object) {
+    this.#ref = new WeakRef(object);
+  }
+  get() {
+    return this.#ref.deref();
+  }
+  incRef() {
+    if (++this.#refCount === 1) this.#strong = this.#ref.deref();
+  }
+  decRef() {
+    if (--this.#refCount === 0) this.#strong = null;
+  }
+}
+
 // Userland access to node-internal modules for vendored node tests that
 // declare `// Flags: --expose-internals` (served via the require interceptor
 // in test/js/node/test/common/index.js). Static requires only — the builtin
@@ -338,10 +448,19 @@ export const exposedInternals = {
   // Bun's internal/errors only carries aggregateTwoErrors; the ERR_* hierarchy
   // is native, not a JS `codes` table, so nothing else is exposed here.
   "internal/errors": require("internal/errors"),
-  // Only the members Bun genuinely has. normalizeEncoding is the same Rust
-  // binding node:crypto and the webstream adapters call.
+  // normalizeEncoding wraps the same Rust binding node:crypto and the
+  // webstream adapters call; the rest are node's own JS helpers, ported
+  // verbatim from lib/internal/util.js where Bun has no native equivalent.
   "internal/util": {
-    normalizeEncoding: $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1),
+    normalizeEncoding: nodeNormalizeEncoding,
+    // Bun always has crypto support compiled in.
+    assertCrypto() {},
+    getCIDR,
+    isError: nodeIsError,
+    assignFunctionName,
+    kEnumerableProperty: Object.freeze({ __proto__: null, enumerable: true }),
+    kEmptyObject: nodeKEmptyObject,
+    WeakReference,
   },
   // Bun's EventTarget/Event/CustomEvent are the native (global) ones; node
   // keeps them in internal/event_target. kWeakHandler is Bun's real weak

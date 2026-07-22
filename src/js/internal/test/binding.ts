@@ -40,6 +40,29 @@ class TestTCPWrap {
   }
 }
 
+// node's internalBinding('util').isInsideNodeModules: walk the call stack via
+// Error.prepareStackTrace CallSites and test the first frame that carries a
+// real user filename (skipping node:/internal:/native frames).
+function isInsideNodeModules() {
+  const oldPrepareStackTrace = Error.prepareStackTrace;
+  const oldStackTraceLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = Infinity;
+  Error.prepareStackTrace = (_err, frames) => frames;
+  const target: { stack?: unknown } = {};
+  Error.captureStackTrace(target, isInsideNodeModules);
+  const frames = target.stack as { getFileName(): string | null }[];
+  Error.prepareStackTrace = oldPrepareStackTrace;
+  Error.stackTraceLimit = oldStackTraceLimit;
+  for (const frame of frames) {
+    const filename = frame.getFileName();
+    if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
+      continue;
+    }
+    return /[\\/]node_modules[\\/]/.test(filename);
+  }
+  return false;
+}
+
 function internalBinding(name: string) {
   switch (name) {
     case "trace_events":
@@ -71,6 +94,8 @@ function internalBinding(name: string) {
       return { UDP: require("internal/dgram").UDP };
     case "tcp_wrap":
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
+    case "util":
+      return { isInsideNodeModules };
     default:
       throw new Error(`internalBinding("${name}") is not implemented in Bun`);
   }

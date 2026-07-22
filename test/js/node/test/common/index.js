@@ -149,10 +149,11 @@ if (process.argv.length === 2 &&
   for (const flag of flags) {
     if (flag === "--expose-internals" && process.versions.bun) {
       // Bun accepts the flag but it does not expose internals, so install the
-      // shim even in a re-spawned child that already has it in execArgv.
+      // shim even in a re-spawned child that already has it in execArgv. Keep
+      // scanning so a later --expose-gc on the same Flags line still applies.
       process.env.SKIP_FLAG_CHECK = "1";
       installBunExposeInternalsRequireInterceptor();
-      break;
+      continue;
     }
     if (!process.execArgv.includes(flag) &&
         // If the binary is build without `intl` the inspect option is

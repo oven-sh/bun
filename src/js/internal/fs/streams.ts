@@ -236,11 +236,22 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
 
     // Backwards compat for monkey patching open().
     const orgEmit: any = this.emit;
+    let deferred: any[][] | null = null;
     this.emit = function (...args) {
-      if (args[0] === "open") {
-        this.emit = orgEmit;
+      if (deferred !== null) {
+        deferred.push(args);
+      } else if (args[0] === "open") {
+        // Defer "open" (and anything the patched open() emits synchronously
+        // after it, typically "ready") to the same nextTick batch as
+        // onConstruct; see emitOpenReady below.
+        deferred = [args];
+        const self = this;
+        process.nextTick(() => {
+          self.emit = orgEmit;
+          for (let i = 0; i < deferred!.length; i++) orgEmit.$apply(self, deferred![i]);
+          deferred = null;
+        });
         callback();
-        orgEmit.$apply(this, args);
       } else if (args[0] === "error") {
         this.emit = orgEmit;
         callback(args[1]);

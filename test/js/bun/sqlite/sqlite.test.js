@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -2189,7 +2189,8 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
 });
 
 it("new Database() does not leak the sqlite3 handle when open fails", async () => {
-  const badPath = path.join(tmpdir(), `bun-sqlite-nonexistent-${Date.now()}-${process.pid}`, "x.sqlite");
+  using dir = tempDir("sqlite-open-fail", {});
+  const badPath = path.join(String(dir), "nonexistent", "x.sqlite");
 
   // The failed open must still surface the real SQLite error code after the
   // handle has been released.

@@ -1,0 +1,13 @@
+(fail) #16995
+(fail) WebSocket > headers should keep the original case
+(fail) WebSocket > rejectUnauthorized should NOT reject self-sign certs when false
+(fail) WebSocket > rejectUnauthorized should reject self-sign certs when true/default
+(fail) WebSocket > should be able to send big messages
+(fail) WebSocket > should connect many times over https
+(fail) WebSocket > should connect over http 
+(fail) WebSocket > should connect over https
+(fail) WebSocket > should not accept untrusted certificates
+(fail) WebSocket > should send and receive messages
+(fail) websocket in subprocess > should exit
+(fail) websocket in subprocess > should exit after server stop and 0 messages
+(fail) websocket in subprocess > should exit after timeout

@@ -1,0 +1,19 @@
+21 | tmpdir.refresh();
+22 | fs.mkdirSync(dirname);
+23 | process.chdir(dirname);
+24 | fs.rmdirSync(dirname);
+25 | 
+26 | const proc = spawn(process.execPath, ['-e', '0']);
+                  ^
+ENOENT: no such file or directory, posix_spawn '/Users/ciro/.bun/bin/bun'
+      path: "/Users/ciro/.bun/bin/bun",
+   syscall: "spawn /Users/ciro/.bun/bin/bun",
+     errno: -2,
+ spawnargs: [ "-e", "0" ],
+      code: "ENOENT"
+
+      at spawn (node:child_process:667:35)
+      at spawn (node:child_process:14:39)
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-insp/test/js/node/test/parallel/test-cwd-enoent.js:26:14)
+
+Bun v1.3.14 (macOS arm64)

@@ -1,0 +1,1 @@
+(fail) server.fetch(string) doesn't leak the URL buffer

@@ -1,0 +1,427 @@
+diff --git a/packages/bun-uws/src/App.h b/packages/bun-uws/src/App.h
+index 2a2c5c6a52..b0476b094b 100644
+--- a/packages/bun-uws/src/App.h
++++ b/packages/bun-uws/src/App.h
+@@ -363,6 +363,13 @@ public:
+         bool sendPingsAutomatically = true;
+         /* Maximum socket lifetime in minutes before forced closure (defaults to disabled) */
+         unsigned short maxLifetime = 0;
++        /* Route upgrade requests whose Sec-WebSocket-Key is present but not the
++         * RFC 6455 shape (16 random bytes, base64 = 24 chars) to the upgrade
++         * handler anyway, leaving the decision to it. Only meaningful together
++         * with a custom `upgrade` handler. Node's inspector protocol does not
++         * validate the key, so a Node-compatible inspector endpoint has to
++         * accept keys this check would otherwise route to the HTTP handler. */
++        bool allowAnySecWebSocketKey = false;
+         MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *, WebSocketContext<SSL, true, UserData> *)> upgrade = nullptr;
+         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *)> open = nullptr;
+         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view, OpCode)> message = nullptr;
+@@ -545,7 +552,7 @@ public:
+ 
+             /* If we have this header set, it's a websocket */
+             std::string_view secWebSocketKey = req->getHeader("sec-websocket-key");
+-            if (secWebSocketKey.length() == 24) {
++            if (secWebSocketKey.length() == 24 || (behavior.allowAnySecWebSocketKey && behavior.upgrade && secWebSocketKey.length())) {
+ 
+                 /* Emit upgrade handler */
+                 if (behavior.upgrade) {
+diff --git a/src/js/internal/debugger.ts b/src/js/internal/debugger.ts
+index eda4548788..22e4d5576f 100644
+--- a/src/js/internal/debugger.ts
++++ b/src/js/internal/debugger.ts
+@@ -112,6 +112,7 @@ export default function (
+   urlIsServer: boolean,
+   isNodeInspector: boolean,
+   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
++  enableNodeCDP: boolean,
+ ): void {
+   if (urlIsServer) {
+     connectToUnixServer(executionContextId, url, createBackend, send, close);
+@@ -220,7 +221,7 @@ export default function (
+ 
+   let debug: Debugger | undefined;
+   try {
+-    debug = new Debugger(executionContextId, url, createBackend, send, close);
++    debug = new Debugger(executionContextId, url, createBackend, send, close, false, enableNodeCDP);
+   } catch (error) {
+     exit("Failed to start inspector:\n", error);
+   }
+@@ -238,6 +239,17 @@ export default function (
+           Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
+         }
+         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
++        // Node's inspector banner, verbatim, for the CDP endpoint that is
++        // served alongside the JSC one. Tools that scrape stderr for
++        // "Debugger listening on ws://..." (Node's own inspector test helper,
++        // chrome://inspect wrappers, IDE launchers) key off this exact line.
++        const cdpUrl = debug.cdpUrl;
++        if (cdpUrl) {
++          Bun.write(
++            Bun.stderr,
++            `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/en/docs/inspector\n`,
++          );
++        }
+       }
+     } else {
+       Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
+@@ -290,7 +302,14 @@ class Debugger {
+   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
+   // /json discovery endpoints are served.
+   #nodeInspector = false;
++  // --inspect* mode: the JSC-protocol pathname above keeps working unchanged,
++  // and this second pathname (plus the /json discovery endpoints) is served for
++  // clients that speak the V8 Chrome DevTools Protocol.
++  #cdpPathname?: string;
++  #enableNodeCDP = false;
+   #server?: WebSocketServer;
++  // Secondary loopback listener; see #listen().
++  #loopbackServer?: WebSocketServer;
+ 
+   constructor(
+     executionContextId: number,
+@@ -299,8 +318,10 @@ class Debugger {
+     send: (message: string | string[]) => void,
+     close: () => void,
+     isNodeInspector: boolean = false,
++    enableNodeCDP: boolean = false,
+   ) {
+     this.#nodeInspector = isNodeInspector;
++    this.#enableNodeCDP = enableNodeCDP;
+     this.#createBackend = (refEventLoop, receive) => {
+       const backend = createBackend(executionContextId, refEventLoop, receive);
+       return {
+@@ -349,11 +370,21 @@ class Debugger {
+     return this.#url;
+   }
+ 
++  // The ws:// URL of the CDP endpoint, when one is served alongside the
++  // JSC-protocol endpoint (--inspect*). Undefined for node:inspector servers,
++  // whose only endpoint already speaks CDP, and for non-listening modes.
++  get cdpUrl(): string | undefined {
++    if (!this.#cdpPathname || !this.#url) return undefined;
++    return `ws://${this.#url.host}${this.#cdpPathname}`;
++  }
++
+   // Stops the node:inspector server and terminates its connections
+   // (inspector.close() on the inspected thread).
+   stop(): void {
+     this.#server?.stop(true);
+     this.#server = undefined;
++    this.#loopbackServer?.stop(true);
++    this.#loopbackServer = undefined;
+   }
+ 
+   // A backend connection that is not tied to a WebSocket client, used for
+@@ -377,6 +408,29 @@ class Debugger {
+       this.#server = server;
+       this.#url!.hostname = server.hostname;
+       this.#url!.port = `${server.port}`;
++      if (this.#enableNodeCDP) {
++        // A distinct random pathname, like the JSC one, so it also acts as a
++        // bearer token: knowing the port is not enough to attach.
++        this.#cdpPathname = `/${randomId()}`;
++        if (hostname === defaultHostname) {
++          // "localhost" resolves to ::1 here, so the listener above is
++          // IPv6-only, while Node's inspector listens on 127.0.0.1 and CDP
++          // clients routinely dial loopback over IPv4 explicitly. Add a
++          // best-effort second listener on the other loopback address, sharing
++          // the same handlers, so both families reach the same inspector. This
++          // is purely additive -- the primary listener, and the URL reported
++          // for it, are unchanged -- and is skipped if the address is taken.
++          const otherLoopback = server.hostname === "127.0.0.1" ? "::1" : "127.0.0.1";
++          try {
++            this.#loopbackServer = Bun.serve({
++              hostname: otherLoopback,
++              port: server.port,
++              fetch: this.#fetch.bind(this),
++              websocket: this.#websocket,
++            });
++          } catch {}
++        }
++      }
+       return;
+     }
+ 
+@@ -447,6 +501,12 @@ class Debugger {
+     return {
+       idleTimeout: 0,
+       closeOnBackpressureLimit: false,
++      // Node's inspector accepts a Sec-WebSocket-Key of any length; Bun's
++      // WebSocket server otherwise enforces the RFC 6455 shape, matching `ws`.
++      // Inspector clients written against Node -- including Node's own test
++      // helper, which sends the literal `key==` -- would be rejected at the
++      // handshake, so this server, and only this server, opts out.
++      internalAllowAnySecWebSocketKey: true,
+       open: ws => this.#open(ws, webSocketWriter(ws)),
+       message: (ws, message) => {
+         if (typeof message === "string") {
+@@ -457,7 +517,10 @@ class Debugger {
+       },
+       drain: ws => this.#drain(ws),
+       close: ws => this.#close(ws),
+-    };
++      // The cast keeps TypeScript's excess-property check off
++      // internalAllowAnySecWebSocketKey, which is intentionally absent from the
++      // public WebSocketHandler type.
++    } as WebSocketHandler<Connection>;
+   }
+ 
+   // Node-shaped /json/list payload describing the single debuggable target.
+@@ -466,7 +529,10 @@ class Debugger {
+   // not the bind address, matching Node's discovery endpoints. Disallowed Host
+   // values are rejected in #fetch before this is called.
+   #nodeInspectorTargets(host: string | null): unknown[] {
+-    const { hostname, port, pathname } = this.#url!;
++    const { hostname, port } = this.#url!;
++    // For --inspect*, discovery must point CDP clients at the CDP pathname, not
++    // at the JSC-protocol one they cannot speak.
++    const pathname = this.#cdpPathname ?? this.#url!.pathname;
+     const id = pathname.slice(1);
+     const wsAddress = `${host || `${hostname}:${port}`}${pathname}`;
+     return [
+@@ -509,19 +575,25 @@ class Debugger {
+ 
+     switch (pathname) {
+       case "/json/version":
++        // Unchanged for --inspect*: debug.bun.sh and the VSCode extension
++        // identify a Bun target by these fields, and Node's own /json/version
++        // payload ("Browser": "node.js/vX") is not something Bun can honestly
++        // claim anyway.
+         return Response.json(this.#nodeInspector ? nodeVersionInfo() : versionInfo());
+       case "/json":
+       case "/json/list":
+         // Discovery endpoint used by CDP clients (chrome://inspect, vscode-js-debug)
+         // to find the WebSocket URL. Only served for node:inspector servers; the
+         // Bun-protocol inspector has no CDP-speaking clients to discover it.
+-        if (this.#nodeInspector) {
++        if (this.#nodeInspector || this.#cdpPathname) {
+           return Response.json(this.#nodeInspectorTargets(headers.get("Host")));
+         }
+         break;
+     }
+ 
+-    if (!isUnix && this.#url!.pathname !== pathname) {
++    const isCDP = this.#cdpPathname !== undefined && pathname === this.#cdpPathname;
++
++    if (!isUnix && !isCDP && this.#url!.pathname !== pathname) {
+       return new Response(null, {
+         status: 404, // Not Found
+       });
+@@ -529,6 +601,7 @@ class Debugger {
+ 
+     const data: Connection = {
+       refEventLoop: headers.get("Ref-Event-Loop") === "0",
++      isCDP,
+     };
+ 
+     if (!server.upgrade(request, { data })) {
+@@ -547,7 +620,7 @@ class Debugger {
+ 
+     const client = bufferedWriter(writer);
+ 
+-    if (this.#nodeInspector) {
++    if (this.#nodeInspector || data.isCDP) {
+       // node:inspector clients speak CDP; the adapter sits between the
+       // WebSocket and the JSC-protocol backend connection. Unlike Bun's own
+       // --inspect connections, an attached client must not keep the process
+@@ -907,6 +980,8 @@ type ConnectionOwner = {
+ 
+ type Connection = {
+   refEventLoop: boolean;
++  // True for a connection on the CDP pathname of a --inspect* server.
++  isCDP?: boolean;
+   client?: Writer;
+   backend?: Backend;
+   // Present for node:inspector connections, which speak the V8 protocol.
+diff --git a/src/jsc/Debugger.rs b/src/jsc/Debugger.rs
+index 6451044a99..171ae5e194 100644
+--- a/src/jsc/Debugger.rs
++++ b/src/jsc/Debugger.rs
+@@ -168,6 +168,7 @@ unsafe extern "C" {
+         from_env: c_int,
+         is_connect: bool,
+         is_node_inspector: bool,
++        enable_node_cdp: bool,
+     );
+ }
+ 
+@@ -521,13 +522,28 @@ impl Debugger {
+         if !from_env.is_empty() {
+             let mut url = BunString::clone_utf8(from_env);
+             let _scope = this.enter_event_loop_scope();
+-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
++            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false, false);
+         }
+ 
+         if let Some(path_or_port) = path_or_port {
+             let mut url = BunString::clone_utf8(path_or_port);
+             let _scope = this.enter_event_loop_scope();
+-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
++            // A `--inspect*` server keeps speaking the JSC protocol on its own
++            // pathname (debug.bun.sh, the VSCode extension), and additionally
++            // serves Node's `/json` discovery endpoints plus a second pathname
++            // that speaks the V8 CDP, so `node --inspect`-shaped clients can
++            // attach. `inspector.open()` servers are CDP-only and already
++            // covered by `is_node_inspector`.
++            let enable_node_cdp = !is_node_inspector && !is_connect;
++            Bun__startJSDebuggerThread(
++                global,
++                ctx_id,
++                &mut url,
++                0,
++                is_connect,
++                is_node_inspector,
++                enable_node_cdp,
++            );
+         }
+ 
+         this.global().handle_rejected_promises();
+diff --git a/src/jsc/bindings/BunDebugger.cpp b/src/jsc/bindings/BunDebugger.cpp
+index 533e9f6a71..3939abc6bb 100644
+--- a/src/jsc/bindings/BunDebugger.cpp
++++ b/src/jsc/bindings/BunDebugger.cpp
+@@ -923,7 +923,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
+     return JSValue::encode(jsUndefined());
+ }
+ 
+-extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
++extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector, bool enableNodeCDP)
+ {
+     if (!debuggerScriptExecutionContext)
+         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
+@@ -949,6 +949,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
+     arguments.append(jsBoolean(isUrlServer));
+     arguments.append(jsBoolean(isNodeInspector));
+     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String("reportNodeInspectorServerStarted"_s), jsFunctionReportNodeInspectorServerStarted, ImplementationVisibility::Public));
++    arguments.append(jsBoolean(enableNodeCDP));
+ 
+     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
+     scope.assertNoException();
+diff --git a/src/runtime/server/WebSocketServerContext.rs b/src/runtime/server/WebSocketServerContext.rs
+index dc8713fc02..f9c94e5ee8 100644
+--- a/src/runtime/server/WebSocketServerContext.rs
++++ b/src/runtime/server/WebSocketServerContext.rs
+@@ -17,6 +17,13 @@ pub struct WebSocketServerContext {
+     pub send_pings_automatically: bool,
+     pub reset_idle_timeout_on_send: bool,
+     pub close_on_backpressure_limit: bool,
++    /// Internal, undocumented: accept a `Sec-WebSocket-Key` of any non-zero
++    /// length on this server. Bun's WebSocket server otherwise enforces the
++    /// RFC 6455 shape, matching `ws`; Node's inspector does not validate the
++    /// key at all, so the inspector server in `src/js/internal/debugger.ts`
++    /// opts out of the check for itself. Not part of the public
++    /// `Bun.serve({ websocket })` API.
++    pub allow_any_sec_websocket_key: bool,
+ }
+ 
+ pub struct Handler {
+@@ -216,6 +223,7 @@ impl WebSocketServerContext {
+             max_lifetime: self.max_lifetime,
+             reset_idle_timeout_on_send: self.reset_idle_timeout_on_send,
+             close_on_backpressure_limit: self.close_on_backpressure_limit,
++            allow_any_sec_websocket_key: self.allow_any_sec_websocket_key,
+             ..Default::default()
+         }
+     }
+@@ -291,6 +299,9 @@ pub(crate) fn on_create(
+         send_pings_automatically: true,
+         reset_idle_timeout_on_send: true,
+         close_on_backpressure_limit: false,
++        allow_any_sec_websocket_key: object
++            .get(global_object, "internalAllowAnySecWebSocketKey")?
++            .is_some_and(JSValue::to_boolean),
+     };
+ 
+     if let Some(per_message_deflate) = object.get(global_object, "perMessageDeflate")? {
+diff --git a/src/runtime/server/server_body.rs b/src/runtime/server/server_body.rs
+index c058a048d2..73bba5083d 100644
+--- a/src/runtime/server/server_body.rs
++++ b/src/runtime/server/server_body.rs
+@@ -1979,7 +1979,25 @@ where
+         }
+ 
+         if sec_websocket_key_str.len != 24 {
+-            return Ok(JSValue::FALSE);
++            // Bun's own WebSocket server enforces the RFC 6455 key shape (16
++            // random bytes, base64 = 24 chars), matching `ws`. Node's inspector
++            // does not validate the key at all -- it echoes back
++            // base64(sha1(key + GUID)) for whatever it was sent -- and clients
++            // that talk to it (including Node's own test suite, which sends the
++            // literal `key==`) rely on that.
++            // `websocket.internalAllowAnySecWebSocketKey` is the opt-in used by
++            // the inspector server in `src/js/internal/debugger.ts`; it is
++            // deliberately not a documented `Bun.serve()` option, and uWS's own
++            // routing gate (App.h) reads the same flag. The key must still be
++            // present, since the accept header is computed from it.
++            let allow_any_key = self
++                .config
++                .websocket
++                .as_ref()
++                .is_some_and(|ws| ws.allow_any_sec_websocket_key);
++            if !allow_any_key || sec_websocket_key_str.len == 0 {
++                return Ok(JSValue::FALSE);
++            }
+         }
+         if sec_websocket_protocol.len > 0 {
+             sec_websocket_protocol.mark_utf8();
+diff --git a/src/uws_sys/WebSocket.rs b/src/uws_sys/WebSocket.rs
+index 6093f9c8b4..9179a8bb94 100644
+--- a/src/uws_sys/WebSocket.rs
++++ b/src/uws_sys/WebSocket.rs
+@@ -458,6 +458,7 @@ pub struct WebSocketBehavior {
+     pub reset_idle_timeout_on_send: bool,
+     pub send_pings_automatically: bool,
+     pub max_lifetime: c_ushort,
++    pub allow_any_sec_websocket_key: bool,
+     pub upgrade: uws_websocket_upgrade_handler,
+     pub open: uws_websocket_handler,
+     pub message: uws_websocket_message_handler,
+@@ -478,6 +479,7 @@ impl Default for WebSocketBehavior {
+             reset_idle_timeout_on_send: true,
+             send_pings_automatically: true,
+             max_lifetime: 0,
++            allow_any_sec_websocket_key: false,
+             upgrade: None,
+             open: None,
+             message: None,
+@@ -680,6 +682,7 @@ where
+             reset_idle_timeout_on_send: behavior.reset_idle_timeout_on_send,
+             send_pings_automatically: behavior.send_pings_automatically,
+             max_lifetime: behavior.max_lifetime,
++            allow_any_sec_websocket_key: behavior.allow_any_sec_websocket_key,
+             upgrade: Some(Self::on_upgrade),
+             open: Some(Self::on_open),
+             message: if T::HAS_ON_MESSAGE {
+diff --git a/src/uws_sys/_libusockets.h b/src/uws_sys/_libusockets.h
+index 8f49e123ca..2b69fb677f 100644
+--- a/src/uws_sys/_libusockets.h
++++ b/src/uws_sys/_libusockets.h
+@@ -113,6 +113,8 @@ typedef struct {
+     /* Maximum socket lifetime in seconds before forced closure (defaults to
+      * disabled) */
+     unsigned short maxLifetime;
++    /* See uWS::WebSocketBehavior::allowAnySecWebSocketKey. */
++    bool allowAnySecWebSocketKey;
+ 
+     uws_websocket_upgrade_handler upgrade;
+     uws_websocket_handler open;
+diff --git a/src/uws_sys/libuwsockets.cpp b/src/uws_sys/libuwsockets.cpp
+index 1d0766198f..21dc66160a 100644
+--- a/src/uws_sys/libuwsockets.cpp
++++ b/src/uws_sys/libuwsockets.cpp
+@@ -720,6 +720,7 @@ extern "C"
+           .resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend,
+           .sendPingsAutomatically = behavior.sendPingsAutomatically,
+           .maxLifetime = behavior.maxLifetime,
++          .allowAnySecWebSocketKey = behavior.allowAnySecWebSocketKey,
+       };
+ 
+       if (behavior.upgrade)
+@@ -778,6 +779,7 @@ extern "C"
+           .resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend,
+           .sendPingsAutomatically = behavior.sendPingsAutomatically,
+           .maxLifetime = behavior.maxLifetime,
++          .allowAnySecWebSocketKey = behavior.allowAnySecWebSocketKey,
+       };
+ 
+       if (behavior.upgrade)

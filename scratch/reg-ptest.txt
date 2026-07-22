@@ -1,0 +1,8 @@
+bun test v1.4.0-canary.1 (606244857)
+
+ 114 pass
+ 2 skip
+ 3 todo
+ 0 fail
+ 313 expect() calls
+Ran 119 tests across 1 file. [1270.00ms]

@@ -1,0 +1,11 @@
+bun test v1.4.0-canary.1 (d20ead1ce)
+
+test/js/node/worker_threads/worker_threads.test.ts:
+cwd /Users/ciro/code/bun/.claude/worktrees/wave-insp
+realpath test/js/node/worker_threads/fixture-argv.js
+
+ 107 pass
+ 1 skip
+ 0 fail
+ 330 expect() calls
+Ran 108 tests across 9 files. [9.95s]

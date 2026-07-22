@@ -1,0 +1,16 @@
+bun test v1.4.0-canary.1 (606244857)
+Hello World!
+Hello World!
+
+hello-stdout-test
+
+hello-stderr-test
+
+test/js/node/fs/fs.test.ts:
+/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/fs-read_2nDEmp
+
+ 606 pass
+ 65 skip
+ 0 fail
+ 6172 expect() calls
+Ran 671 tests across 21 files. [31.54s]

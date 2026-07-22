@@ -1,0 +1,8 @@
+[2m--------------------- Bun Inspector ---------------------[22m[49m
+[2m--------------------- Bun Inspector ---------------------[22m[49m
+Debugger listening on ws://localhost:61757/da0dc32a-cbb0-4547-a24a-7fef2d0061c8
+For help, see: https://nodejs.org/en/docs/inspector
+Inspect in browser:
+  [1m]8;;https://debug.bun.sh/#localhost:61757/8a2ec731-7268-40da-9c66-2cec7763a55e\https://debug.bun.sh/#localhost:61757/8a2ec731-7268-40da-9c66-2cec7763a55e]8;;\[22m
+Listening:
+  [2mws://localhost:61757/8a2ec731-7268-40da-9c66-2cec7763a55e[22m

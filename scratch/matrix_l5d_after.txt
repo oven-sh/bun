@@ -1,0 +1,47 @@
+
+##### binary-frame-retires-session #####
+   +   38ms STDERR ws://localhost:55844/d95117fd-c1a8-43ea-8d6e-6b9143e81a91
+   +   38ms STDERR Inspect in browser:
+   +   38ms STDERR Debugger listening on ws://localhost:55844/bf85c6eb-5da2-4d9d-999c-29af2b2a743e
+   +   60ms [A] Runtime.executionContextCreated
+   +   60ms [A] NodeRuntime.waitingForDebugger
+   +   60ms [B] Runtime.executionContextCreated
+   +   60ms [B] NodeRuntime.waitingForDebugger
+   +  460ms A sends a BINARY frame
+   +  461ms STDERR 322 |       internalAllowAnySecWebSocketKey: !0,
+   +  461ms STDERR 323 |       open: (ws) => this.#open(ws, webSocketWriter(ws)),
+   +  461ms STDERR 324 |       message: (ws, message) => {
+   +  461ms STDERR 325 |         if (typeof message === "string")
+   +  461ms STDERR 326 |           this.#message(ws, message);
+   +  461ms STDERR 327 |           this.#error(ws, Error(`Unexpected binary message: ${message.toString()}`));
+   +  461ms STDERR ^
+   +  461ms STDERR error: Unexpected binary message: 
+   +  461ms STDERR at message (internal:debugger:327:32)
+   +  764ms STDERR Waiting for the debugger to disconnect...
+   +  765ms [B] Runtime.executionContextDestroyed
+   >>> B was told the context is gone = true; exited=true code=55 notice=true
+
+##### late-optin-must-not-suppress #####
+   +   44ms STDERR ws://localhost:55848/5be6cd5a-d5cd-4040-9778-ba69e55afc32
+   +   44ms STDERR Inspect in browser:
+   +   44ms STDERR Debugger listening on ws://localhost:55848/f39c162d-1132-48cd-95eb-3233f25823e8
+   +   54ms [A] Runtime.executionContextCreated
+   +   54ms [A] NodeRuntime.waitingForDebugger
+   +   54ms [B] Runtime.executionContextCreated
+   +   54ms [B] NodeRuntime.waitingForDebugger
+   +  461ms [A] Debugger.resumed
+   +  461ms [B] Debugger.resumed
+   +  461ms STDERR Waiting for the debugger to disconnect...
+   +  461ms [A] Runtime.consoleAPICalled
+   +  461ms [B] Runtime.consoleAPICalled
+   +  461ms [A] NodeRuntime.waitingForDisconnect
+   +  461ms handshake started (A saw waitingForDisconnect=true)
+   +  463ms C attach failed: status 503
+   +  463ms A leaves (last session retaining the context at handshake time)
+   +  463ms [B] Runtime.executionContextDestroyed
+   >>> B was told the context is gone = true; exited=true code=55 notice=true
+
+================ SUMMARY ================
+PASS  binary-frame-retires-session   bTold=true  exited=true  code=55
+PASS  late-optin-must-not-suppress   bTold=true  exited=true  code=55
+PASS  no cross-session session can strand another one

@@ -1,0 +1,74 @@
+bun test v1.4.0-canary.1 (606244857)
+bun install v1.4.0-canary.1 (606244857)
+Resolving dependencies
+Resolved, downloaded and extracted [1]
+error: GET https://artifactory.infra.ant.dev/artifactory/api/npm/npm-all/node-gyp - 401
+error: node-gyp@^11.2.0 failed to resolve
+
+test/js/node/process/dlopen-non-object-exports.test.ts:
+81 |       stdout: "inherit",
+82 |       stderr: "inherit",
+83 |     });
+84 | 
+85 |     if (!build.success) {
+86 |       throw new Error("Failed to build native addon");
+                                                         ^
+error: Failed to build native addon
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-insp/test/js/node/process/dlopen-non-object-exports.test.ts:86:53)
+(fail) process.dlopen with non-object exports > (unnamed) [315.31ms]
+Run: 1
+Run: 2
+Run: 3
+Run: 4
+Run: 5
+Run: 6
+Run: 7
+Run: 8
+Run: 9
+Run: 10
+bun install v1.4.0-canary.1 (606244857)
+Resolving dependencies
+Resolved, downloaded and extracted [1]
+error: GET https://artifactory.infra.ant.dev/artifactory/api/npm/npm-all/node-gyp - 401
+error: node-gyp@^11.2.0 failed to resolve
+
+test/js/node/process/dlopen-duplicate-load.test.ts:
+85 |       stdout: "inherit",
+86 |       stderr: "inherit",
+87 |     });
+88 | 
+89 |     if (!build.success) {
+90 |       throw new Error("Failed to build native addon");
+                                                         ^
+error: Failed to build native addon
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-insp/test/js/node/process/dlopen-duplicate-load.test.ts:90:53)
+(fail) process.dlopen native addon > (unnamed) [288.55ms]
+
+test/js/node/process/process.test.js:
+1569 |   process.hello = 2;
+1570 |   const { promise, resolve } = Promise.withResolvers();
+1571 |   import("node:process").then(processModule => {
+1572 |     expect(processModule.default).toBe(process);
+1573 |     expect(processModule.default.default).toBe(1);
+1574 |     expect(processModule.hello).toBe(2);
+                                       ^
+error: expect(received).toBe(expected)
+
+Expected: 2
+Received: undefined
+
+      at <anonymous> (/Users/ciro/code/bun/.claude/worktrees/wave-insp/test/js/node/process/process.test.js:1574:33)
+(fail) should handle user assigned `default` properties [1.49ms]
+  [16ms]  bundle  1 modules
+ [140ms] compile  ./out
+Bundled 1 module in 16ms
+
+  out.ts  8 bytes  (entry point)
+
+
+ 209 pass
+ 4 skip
+ 3 todo
+ 3 fail
+ 17 snapshots, 579 expect() calls
+Ran 219 tests across 20 files. [6.88s]

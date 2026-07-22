@@ -289,7 +289,7 @@ export default function (
         if (cdpUrl) {
           Bun.write(
             Bun.stderr,
-            `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/en/docs/inspector\n`,
+            `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`,
           );
         }
       }
@@ -352,6 +352,9 @@ class Debugger {
   // --inspect* mode: a second pathname (plus the /json discovery endpoints)
   // serving the V8 CDP. The JSC-protocol pathname above is unaffected.
   #cdpPathname?: string;
+  // Host advertised in the "Debugger listening on" line; Node prints 127.0.0.1
+  // for the default bind, not "localhost".
+  #cdpHost?: string;
   #enableNodeCDP = false;
   // Reads the inspected context's wait-for-frontend state; see cdp.ts.
   #isWaitingForDebugger: () => boolean;
@@ -437,7 +440,7 @@ class Debugger {
   // (--inspect*). Undefined for node:inspector servers and non-listening modes.
   get cdpUrl(): string | undefined {
     if (!this.#cdpPathname || !this.#url) return undefined;
-    return `ws://${this.#url.host}${this.#cdpPathname}`;
+    return `ws://${this.#cdpHost ?? this.#url.host}${this.#cdpPathname}`;
   }
 
   // Stops the node:inspector server and terminates its connections
@@ -491,6 +494,10 @@ class Debugger {
               // Already bound by the primary listener, or unavailable.
             }
           }
+          // Advertise 127.0.0.1 as Node's default bind does, but only when
+          // provably bound: a loopback listener on ::1 implies the primary
+          // holds 127.0.0.1, else that ::1 bind would have failed too.
+          if (this.#loopbackServer) this.#cdpHost = `127.0.0.1:${server.port}`;
         }
       }
       return;
@@ -690,6 +697,8 @@ class Debugger {
     const client = bufferedWriter(writer);
 
     if (this.#nodeInspector || data.isCDP) {
+      // Node prints this on every remote session attach; tools gate on it.
+      Bun.write(Bun.stderr, "Debugger attached.\n");
       // node:inspector clients speak CDP; the adapter sits between the
       // WebSocket and the JSC-protocol backend connection. Unlike Bun's own
       // --inspect connections, an attached client must not keep the process

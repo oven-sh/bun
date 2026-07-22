@@ -1,0 +1,42 @@
+Welcome to Bun v1.4.0
+Type [36m.copy [code][0m to copy to clipboard. [36m.help[0m for more info.
+
+[2K> [2C[2K> r[3C[2K> re[4C[2K> req[5C[2K> requ[6C[2K> requi[7C[2K> requir[8C[2K> require[9C[2K> require([10C[2K> require("[11C[2K> require("p[12C[2K> require("pa[13C[2K> require("pat[14C[2K> require("path[15C[2K> require("path"[16C[2K> require("path")[17C[2K> require("path");[18C
+{
+  resolve: [Function: resolve],
+  normalize: [Function: normalize],
+  isAbsolute: [Function: isAbsolute],
+  join: [Function: join],
+  relative: [Function: relative],
+  toNamespacedPath: [Function: toNamespacedPath],
+  dirname: [Function: dirname],
+  basename: [Function: basename],
+  extname: [Function: extname],
+  format: [Function: format],
+  parse: [Function: parse],
+  sep: "/",
+  delimiter: ":",
+  win32: {
+    resolve: [Function: resolve],
+    normalize: [Function: normalize],
+    isAbsolute: [Function: isAbsolute],
+    join: [Function: join],
+    relative: [Function: relative],
+    toNamespacedPath: [Function: toNamespacedPath],
+    dirname: [Function: dirname],
+    basename: [Function: basename],
+    extname: [Function: extname],
+    format: [Function: format],
+    parse: [Function: parse],
+    sep: "\\",
+    delimiter: ";",
+    win32: [Circular],
+    posix: [Circular],
+    _makeLong: [Function: toNamespacedPath],
+    matchesGlob: [Function: matchesGlob],
+  },
+  posix: [Circular],
+  _makeLong: [Function: toNamespacedPath],
+  matchesGlob: [Function: matchesGlob],
+}
+[2K> [2C[2K> p[3C[2K> pr[4C[2K> pro[5C[2K> proc[6C[2K> proce[7C[2K> proces[8C[2K> process[9C[2K> process.[10C[2K> process.e[11C[2K> process.ex[12C[2K> process.exi[13C[2K> process.exit[14C[2K> process.exit([15C[2K> process.exit(4[16C[2K> process.exit(42[17C[2K> process.exit(42)[18C[2K> process.exit(42);[19C

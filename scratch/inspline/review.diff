@@ -1,0 +1,89 @@
+diff --git a/src/js/internal/debugger.ts b/src/js/internal/debugger.ts
+index 2e7d7b9cb8..c8029f5624 100644
+--- a/src/js/internal/debugger.ts
++++ b/src/js/internal/debugger.ts
+@@ -288,7 +288,7 @@ export default function (
+         if (cdpUrl) {
+           Bun.write(
+             Bun.stderr,
+-            `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/en/docs/inspector\n`,
++            `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`,
+           );
+         }
+       }
+@@ -351,6 +351,9 @@ class Debugger {
+   // --inspect* mode: a second pathname (plus the /json discovery endpoints)
+   // serving the V8 CDP. The JSC-protocol pathname above is unaffected.
+   #cdpPathname?: string;
++  // Host advertised in the "Debugger listening on" line; Node prints 127.0.0.1
++  // for the default bind, not "localhost".
++  #cdpHost?: string;
+   #enableNodeCDP = false;
+   // Reads the inspected context's wait-for-frontend state; see cdp.ts.
+   #isWaitingForDebugger: () => boolean;
+@@ -435,7 +438,7 @@ class Debugger {
+   // (--inspect*). Undefined for node:inspector servers and non-listening modes.
+   get cdpUrl(): string | undefined {
+     if (!this.#cdpPathname || !this.#url) return undefined;
+-    return `ws://${this.#url.host}${this.#cdpPathname}`;
++    return `ws://${this.#cdpHost ?? this.#url.host}${this.#cdpPathname}`;
+   }
+ 
+   // Stops the node:inspector server and terminates its connections
+@@ -489,6 +492,9 @@ class Debugger {
+               // Already bound by the primary listener, or unavailable.
+             }
+           }
++          // Between the primary and loopback listeners 127.0.0.1 is always
++          // bound here, so advertise it the way Node's default bind does.
++          this.#cdpHost = `127.0.0.1:${server.port}`;
+         }
+       }
+       return;
+@@ -688,6 +694,8 @@ class Debugger {
+     const client = bufferedWriter(writer);
+ 
+     if (this.#nodeInspector || data.isCDP) {
++      // Node prints this on every remote session attach; tools gate on it.
++      Bun.write(Bun.stderr, "Debugger attached.\n");
+       // node:inspector clients speak CDP; the adapter sits between the
+       // WebSocket and the JSC-protocol backend connection. Unlike Bun's own
+       // --inspect connections, an attached client must not keep the process
+diff --git a/src/js/internal/inspector/cdp.ts b/src/js/internal/inspector/cdp.ts
+index fcdd6bdfb9..2eacf93530 100644
+--- a/src/js/internal/inspector/cdp.ts
++++ b/src/js/internal/inspector/cdp.ts
+@@ -497,10 +497,19 @@ class InspectorCDPAdapter {
+     try {
+       parsed = JSON.parse(message);
+     } catch {
++      parsed = null;
++    }
++    if (!parsed || typeof parsed !== "object") {
++      // V8's dispatcher answers unparseable input with method-not-found on
++      // id 0 rather than dropping it.
++      this.#replyErrorToClient(0, -32601, "'' wasn't found");
+       return;
+     }
+     const { id, method, params } = parsed;
+-    if (typeof method !== "string") return;
++    if (typeof method !== "string") {
++      this.#replyErrorToClient(id ?? 0, -32601, "'' wasn't found");
++      return;
++    }
+     try {
+       this.#dispatchClientCommand(id, method, params || {});
+     } catch (error) {
+diff --git a/src/js/node/inspector.ts b/src/js/node/inspector.ts
+index 1b230e383a..734af9df95 100644
+--- a/src/js/node/inspector.ts
++++ b/src/js/node/inspector.ts
+@@ -136,7 +136,7 @@ function open(port?: number, host?: string, wait?: boolean) {
+   try {
+     process.debugPort = Number(new URL(resolvedUrl).port);
+   } catch {}
+-  process.stderr.write(`Debugger listening on ${resolvedUrl}\nFor help, see: https://nodejs.org/en/docs/inspector\n`);
++  process.stderr.write(`Debugger listening on ${resolvedUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`);
+ 
+   if (wait) {
+     waitForNodeInspectorConnection();

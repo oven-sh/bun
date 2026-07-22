@@ -1,0 +1,7 @@
+(node:83418) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+load fixtures/b/d.js
+load package/index.js
+load fixtures/b/c.js
+load fixtures/a.js
+b/c.js exit

@@ -1,0 +1,2 @@
+ok - got expected output
+ok - exit success

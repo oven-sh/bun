@@ -1,0 +1,1168 @@
+bun test v1.4.0-canary.1 (d20ead1ce)
+
+test/js/bun/http/node-http-halfclose-midupload.test.ts:
+STAGE: listening
+STAGE: request-received
+STAGE: socket-ended
+STAGE: write-returned
+STAGE: fetch-rejected
+STAGE: connection-closed
+STAGE: listening
+STAGE: request-received
+STAGE: socket-ended
+STAGE: write-returned
+STAGE: connection-closed
+STAGE: fetch-rejected
+Listening on http://localhost:3000...
+
+test/js/bun/http/bun-server.test.ts:
+world
+
+test/js/bun/http/bun-serve-routes.test.ts:
+RequestParams {
+  postId: "456",
+  commentId: "789",
+}
+ HTTP/1.1 GET http://localhost:64617/
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:64617
+ Accept-Encoding: gzip, deflate, br, zstd
+< 407 Proxy Authentication Required
+< content-type: text/plain;charset=utf-8
+< Date: Mon, 20 Jul 2026 00:32:58 GMT
+< Content-Length: 29
+
+ HTTP/1.1 GET http://localhost:64617/
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:64617
+ Accept-Encoding: gzip, deflate, br, zstd
+< 403 Forbidden
+< content-type: text/plain;charset=utf-8
+< Date: Mon, 20 Jul 2026 00:32:58 GMT
+< Content-Length: 9
+
+bun test v1.4.0-canary.1 (d20ead1ce)
+http://localhost:65314/
+
+test/js/bun/http/serve-body-leak.test.ts:
+{
+  leak: 0,
+  start_memory: 138412032,
+  peak_memory: 138444800,
+  end_memory: 138444800,
+  memory_examples: [ 138412032, 138412032, 138412032, 138412032, 138412032, 138444800,
+    138444800, 138444800, 138444800
+  ],
+}
+http://localhost:65402/
+{
+  leak: 0,
+  start_memory: 106840064,
+  peak_memory: 106856448,
+  end_memory: 106856448,
+  memory_examples: [ 106856448, 106856448, 106856448, 106856448, 106856448, 106856448,
+    106856448, 106856448, 106856448
+  ],
+}
+http://localhost:65486/
+{
+  leak: 0,
+  start_memory: 108380160,
+  peak_memory: 108396544,
+  end_memory: 108396544,
+  memory_examples: [ 108396544, 108396544, 108396544, 108396544, 108396544, 108396544,
+    108396544, 108396544, 108396544
+  ],
+}
+http://localhost:49188/
+{
+  leak: 0,
+  start_memory: 101761024,
+  peak_memory: 103415808,
+  end_memory: 103415808,
+  memory_examples: [ 103055360, 103251968, 103268352, 103268352, 103268352, 103268352,
+    103268352, 103268352, 103415808
+  ],
+}
+http://localhost:49271/
+{
+  leak: 0,
+  start_memory: 103809024,
+  peak_memory: 104087552,
+  end_memory: 104087552,
+  memory_examples: [ 103825408, 103858176, 103874560, 103874560, 103874560, 104071168,
+    104087552, 104087552, 104087552
+  ],
+}
+http://localhost:49356/
+{
+  leak: 0,
+  start_memory: 125501440,
+  peak_memory: 125599744,
+  end_memory: 125599744,
+  memory_examples: [ 125583360, 125583360, 125583360, 125583360, 125583360, 125583360,
+    125583360, 125583360, 125599744
+  ],
+}
+http://localhost:49440/
+{
+  leak: 0,
+  start_memory: 105906176,
+  peak_memory: 106266624,
+  end_memory: 106266624,
+  memory_examples: [ 106266624, 106266624, 106266624, 106266624, 106266624, 106266624,
+    106266624, 106266624, 106266624
+  ],
+}
+
+test/js/bun/http/tls-keepalive.test.ts:
+Same config: 20000 requests, growth: 0.94 MB
+Distinct configs: 200 configs, growth: 3.06 MB
+
+test/js/bun/http/decodeURIComponentSIMD.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: ENOENT reading "bun:internal-for-testing"
+-------------------------------
+
+
+test/js/bun/http/node-http2-ping-flood-staged.test.ts:
+STAGE: listening
+STAGE: session
+STAGE: session-error
+STAGE: session-close
+STAGE: listening
+STAGE: session
+STAGE: session-error
+STAGE: session-close
+STAGE: listening
+STAGE: session
+STAGE: session-error
+STAGE: session-close
+
+test/js/bun/http/tls-bunfile-leak.test.ts:
+Bun.file() TLS config: 100 iterations, growth: 1.92 MB
+
+test/js/bun/http/bun-serve-static-stress-access-body.test.ts:
+Start RSS 358
+Final RSS 358
+Delta RSS 0
+Start RSS 358
+Final RSS 358
+Delta RSS 0
+Start RSS 358
+Final RSS 358
+Delta RSS 0
+Start RSS 358
+Final RSS 358
+Delta RSS 0
+Start RSS 687
+Final RSS 706
+Delta RSS 19
+Start RSS 1017
+Final RSS 1056
+Delta RSS 39
+Start RSS 1056
+Final RSS 1056
+Delta RSS 0
+Start RSS 1056
+Final RSS 1056
+Delta RSS 0
+Start RSS 1056
+Final RSS 1056
+Delta RSS 0
+Start RSS 1056
+Final RSS 1056
+Delta RSS 0
+Start RSS 1056
+Final RSS 1056
+Delta RSS 0
+Start RSS 1056
+Final RSS 1056
+Delta RSS 0
+
+test/js/bun/http/serve-syscall-fault.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+test/js/bun/http/serve.test.ts:
+'onIncomingRequest' function called 2026-07-20T00:33:52.200Z
+'abort' event fired 2026-07-20T00:33:52.201Z
+'cancel' function called 2026-07-20T00:33:52.201Z
+{
+  objects: {
+    AbortController: 2,
+    AbortSignal: 2,
+    ActiveSpySet: 1,
+    Arguments: 4,
+    "Array Iterator": 1,
+    Array: 185,
+    ArrayBuffer: 3,
+    ArrayIterator: 1,
+    AsyncDisposableStack: 1,
+    AsyncFromSyncIterator: 1,
+    AsyncFunction: 365,
+    AsyncFunctionGenerator: 4,
+    AsyncGenerator: 1,
+    AsyncGeneratorFunction: 2,
+    AsyncIterator: 1,
+    BigInt: 9,
+    BigInt64ArrayPrototype: 1,
+    BigUint64ArrayPrototype: 1,
+    Blob: 11,
+    BlobInternalReadableStreamSource: 115,
+    BlockList: 1,
+    Boolean: 1,
+    Buffer: 1,
+    BuildMessage: 2,
+    Bun: 1,
+    BunRequest: 1,
+    BytesInternalReadableStreamSource: 64,
+    Callee: 3,
+    "Cell Butterfly": 89,
+    CloseEvent: 2,
+    CryptoHasher: 1,
+    CustomGetterSetter: 103,
+    DOMAttributeGetterSetter: 260,
+    DOMException: 1,
+    DebugHTTPSServer: 6,
+    DebugHTTPServer: 29,
+    Dirent: 2,
+    DisposableStack: 1,
+    Error: 6,
+    ErrorCodeCache: 1,
+    ErrorEvent: 1,
+    Event: 3,
+    EventEmitter: 1,
+    EventTarget: 2,
+    Expect: 1,
+    ExpectAny: 1,
+    ExpectMatcherContext: 1,
+    ExpectObjectContaining: 1,
+    ExpectStatic: 1,
+    ExpectTypeOf: 1,
+    File: 1,
+    FileInternalReadableStreamSource: 1,
+    FinalizationRegistry: 2,
+    Float16ArrayPrototype: 1,
+    Float32ArrayPrototype: 1,
+    Float64ArrayPrototype: 1,
+    FormData: 2,
+    FullPromiseReaction: 1,
+    Function: 4579,
+    FunctionCodeBlock: 279,
+    FunctionExecutable: 2899,
+    FunctionRareData: 582,
+    Generator: 1,
+    GeneratorFunction: 2,
+    GetterSetter: 343,
+    GlobalObject: 1,
+    H2FrameParser: 1,
+    HTTPParser: 2,
+    HTTPSServer: 1,
+    HTTPServer: 6,
+    "Headers Iterator": 1,
+    Headers: 3,
+    Immediate: 1,
+    ImportMeta: 13,
+    Int16ArrayPrototype: 1,
+    Int32ArrayPrototype: 1,
+    Int8ArrayPrototype: 1,
+    InternalFieldTuple: 3,
+    InternalModuleRegistry: 1,
+    Intl: 1,
+    "Iterator Helper": 1,
+    Iterator: 2,
+    JSAsyncGeneratorFunction: 7,
+    JSGlobalLexicalEnvironment: 1,
+    JSGlobalProxy: 1,
+    JSLexicalEnvironment: 592,
+    JSModuleEnvironment: 52,
+    JSON: 1,
+    JSPropertyNameEnumerator: 3,
+    JSSourceCode: 54,
+    Listener: 1,
+    MIMEParams: 2,
+    MIMEType: 2,
+    "Map Iterator": 1,
+    Map: 9,
+    Math: 1,
+    MessageEvent: 2,
+    Mock: 2,
+    MockImpl: 1,
+    Module: 4,
+    ModuleLoader: 1,
+    ModuleNamespaceObject: 5,
+    ModuleProgramCodeBlock: 1,
+    ModuleProgramExecutable: 24,
+    ModuleRecord: 54,
+    ModuleRegistryEntry: 55,
+    NativeBrotli: 1,
+    NativeExecutable: 1504,
+    NativeZlib: 1,
+    NativeZstd: 1,
+    NextTickQueue: 1,
+    NodeHTTPResponse: 1,
+    NodeHTTPServerSocket: 1,
+    NodeJSFS: 2,
+    Number: 1,
+    Object: 579,
+    Process: 1,
+    ProcessBindingConstants: 1,
+    ProcessBindingHTTPParser: 1,
+    Promise: 308,
+    PropertyTable: 303,
+    Prototype: 1,
+    ReadableHTTPResponseSinkController: 1,
+    ReadableStream: 179,
+    ReadableStreamAsyncIterator: 2,
+    ReadableStreamDefaultController: 178,
+    ReadableStreamDefaultReader: 2,
+    Reflect: 1,
+    "RegExp String Iterator": 1,
+    RegExp: 74,
+    Request: 2,
+    ResourceUsage: 1,
+    Response: 8,
+    SHA256: 1,
+    ScopeFunctions: 9,
+    SecureContext: 2,
+    Sentinel: 9,
+    ServerRouteList: 7,
+    ServerWebSocket: 1,
+    "Set Iterator": 1,
+    Set: 15,
+    ShadowRealm: 1,
+    SocketAddress: 1,
+    SparseArrayValueMap: 2,
+    Stats: 2,
+    StreamsRuntime: 1,
+    "String Iterator": 1,
+    String: 1,
+    StringDecoder: 2,
+    Structure: 4970,
+    StructureChain: 76,
+    StructureRareData: 538,
+    Subprocess: 1,
+    Symbol: 1,
+    SymbolTable: 838,
+    TCPSocket: 1,
+    TLSSocket: 1,
+    TextDecoder: 1,
+    TextEncoder: 2,
+    TextEncoderStreamEncoder: 1,
+    Timeout: 5,
+    URL: 28,
+    "URLSearchParams Iterator": 1,
+    URLSearchParams: 2,
+    Uint16ArrayPrototype: 1,
+    Uint32Array: 3,
+    Uint32ArrayPrototype: 1,
+    Uint8Array: 21,
+    Uint8ArrayPrototype: 1,
+    Uint8ClampedArrayPrototype: 1,
+    UnlinkedFunctionCodeBlock: 178,
+    UnlinkedFunctionExecutable: 3022,
+    UnlinkedModuleProgramCodeBlock: 37,
+    WeakMap: 1,
+    WeakRef: 17,
+    WeakSet: 1,
+    WebAssembly: 1,
+    "WebAssembly.SuspendError": 1,
+    "WebAssembly.Suspending": 1,
+    WebSocket: 3,
+    console: 1,
+    require: 1,
+    resolve: 1,
+    string: 3547,
+    symbol: 407,
+  },
+  protected: {
+    ActiveSpySet: 1,
+    AsyncFunction: 222,
+    DebugHTTPSServer: 4,
+    DebugHTTPServer: 6,
+    Function: 107,
+    GlobalObject: 1,
+    Mock: 1,
+    Promise: 15,
+    ReadableStream: 1,
+    Timeout: 2,
+    UnlinkedModuleProgramCodeBlock: 31,
+  },
+}
+{
+  objects: {
+    AbortController: 2,
+    AbortSignal: 2,
+    ActiveSpySet: 1,
+    Arguments: 4,
+    "Array Iterator": 1,
+    Array: 185,
+    ArrayBuffer: 3,
+    ArrayIterator: 1,
+    AsyncDisposableStack: 1,
+    AsyncFromSyncIterator: 1,
+    AsyncFunction: 365,
+    AsyncFunctionGenerator: 4,
+    AsyncGenerator: 1,
+    AsyncGeneratorFunction: 2,
+    AsyncIterator: 1,
+    BigInt: 9,
+    BigInt64ArrayPrototype: 1,
+    BigUint64ArrayPrototype: 1,
+    Blob: 11,
+    BlobInternalReadableStreamSource: 106,
+    BlockList: 1,
+    Boolean: 1,
+    Buffer: 1,
+    BuildMessage: 2,
+    Bun: 1,
+    BunRequest: 1,
+    BytesInternalReadableStreamSource: 186,
+    Callee: 3,
+    "Cell Butterfly": 89,
+    CloseEvent: 2,
+    CryptoHasher: 1,
+    CustomGetterSetter: 103,
+    DOMAttributeGetterSetter: 260,
+    DOMException: 1,
+    DebugHTTPSServer: 6,
+    DebugHTTPServer: 29,
+    Dirent: 2,
+    DisposableStack: 1,
+    Error: 2,
+    ErrorCodeCache: 1,
+    ErrorEvent: 1,
+    Event: 3,
+    EventEmitter: 1,
+    EventTarget: 2,
+    Expect: 1,
+    ExpectAny: 1,
+    ExpectMatcherContext: 1,
+    ExpectObjectContaining: 1,
+    ExpectStatic: 1,
+    ExpectTypeOf: 1,
+    File: 1,
+    FileInternalReadableStreamSource: 1,
+    FinalizationRegistry: 2,
+    Float16ArrayPrototype: 1,
+    Float32ArrayPrototype: 1,
+    Float64ArrayPrototype: 1,
+    FormData: 2,
+    FullPromiseReaction: 1,
+    Function: 4579,
+    FunctionCodeBlock: 285,
+    FunctionExecutable: 2900,
+    FunctionRareData: 582,
+    Generator: 1,
+    GeneratorFunction: 2,
+    GetterSetter: 343,
+    GlobalObject: 1,
+    H2FrameParser: 1,
+    HTTPParser: 2,
+    HTTPSServer: 1,
+    HTTPServer: 6,
+    "Headers Iterator": 1,
+    Headers: 3,
+    Immediate: 1,
+    ImportMeta: 13,
+    Int16ArrayPrototype: 1,
+    Int32ArrayPrototype: 1,
+    Int8ArrayPrototype: 1,
+    InternalFieldTuple: 3,
+    InternalModuleRegistry: 1,
+    Intl: 1,
+    "Iterator Helper": 1,
+    Iterator: 2,
+    JSAsyncGeneratorFunction: 7,
+    JSGlobalLexicalEnvironment: 1,
+    JSGlobalProxy: 1,
+    JSLexicalEnvironment: 592,
+    JSModuleEnvironment: 52,
+    JSON: 1,
+    JSPropertyNameEnumerator: 3,
+    JSSourceCode: 54,
+    Listener: 1,
+    MIMEParams: 2,
+    MIMEType: 2,
+    "Map Iterator": 1,
+    Map: 9,
+    Math: 1,
+    MessageEvent: 2,
+    Mock: 2,
+    MockImpl: 1,
+    Module: 4,
+    ModuleLoader: 1,
+    ModuleNamespaceObject: 5,
+    ModuleProgramCodeBlock: 1,
+    ModuleProgramExecutable: 24,
+    ModuleRecord: 54,
+    ModuleRegistryEntry: 55,
+    NativeBrotli: 1,
+    NativeExecutable: 1504,
+    NativeZlib: 1,
+    NativeZstd: 1,
+    NextTickQueue: 1,
+    NodeHTTPResponse: 1,
+    NodeHTTPServerSocket: 1,
+    NodeJSFS: 2,
+    Number: 1,
+    Object: 579,
+    Process: 1,
+    ProcessBindingConstants: 1,
+    ProcessBindingHTTPParser: 1,
+    Promise: 426,
+    PropertyTable: 303,
+    Prototype: 1,
+    ReadableHTTPResponseSinkController: 1,
+    ReadableStream: 292,
+    ReadableStreamAsyncIterator: 2,
+    ReadableStreamDefaultController: 291,
+    ReadableStreamDefaultReader: 2,
+    Reflect: 1,
+    "RegExp String Iterator": 1,
+    RegExp: 74,
+    Request: 2,
+    ResourceUsage: 1,
+    Response: 8,
+    SHA256: 1,
+    ScopeFunctions: 9,
+    SecureContext: 2,
+    Sentinel: 9,
+    ServerRouteList: 7,
+    ServerWebSocket: 1,
+    "Set Iterator": 1,
+    Set: 15,
+    ShadowRealm: 1,
+    SocketAddress: 1,
+    SparseArrayValueMap: 2,
+    Stats: 2,
+    StreamsRuntime: 1,
+    "String Iterator": 1,
+    String: 1,
+    StringDecoder: 2,
+    Structure: 4972,
+    StructureChain: 76,
+    StructureRareData: 539,
+    Subprocess: 1,
+    Symbol: 1,
+    SymbolTable: 840,
+    TCPSocket: 1,
+    TLSSocket: 1,
+    TextDecoder: 1,
+    TextEncoder: 2,
+    TextEncoderStreamEncoder: 1,
+    Timeout: 5,
+    URL: 28,
+    "URLSearchParams Iterator": 1,
+    URLSearchParams: 2,
+    Uint16ArrayPrototype: 1,
+    Uint32Array: 3,
+    Uint32ArrayPrototype: 1,
+    Uint8Array: 21,
+    Uint8ArrayPrototype: 1,
+    Uint8ClampedArrayPrototype: 1,
+    UnlinkedFunctionCodeBlock: 181,
+    UnlinkedFunctionExecutable: 3023,
+    UnlinkedModuleProgramCodeBlock: 37,
+    WeakMap: 1,
+    WeakRef: 17,
+    WeakSet: 1,
+    WebAssembly: 1,
+    "WebAssembly.SuspendError": 1,
+    "WebAssembly.Suspending": 1,
+    WebSocket: 3,
+    console: 1,
+    require: 1,
+    resolve: 1,
+    string: 3546,
+    symbol: 407,
+  },
+  protected: {
+    ActiveSpySet: 1,
+    AsyncFunction: 222,
+    DebugHTTPSServer: 4,
+    DebugHTTPServer: 6,
+    Function: 107,
+    GlobalObject: 1,
+    Mock: 1,
+    Promise: 15,
+    ReadableStream: 1,
+    Timeout: 2,
+    UnlinkedModuleProgramCodeBlock: 31,
+  },
+}
+error: Expected a Response object, but received 'Symbol(invalid response type)'
+error: Expected a Response object, but received 'undefined'
+error: Expected a Response object, but received 'undefined'
+ HTTP/1.1 GET http://localhost:51052/?start=0&end=1
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 1
+< content-range: bytes 0-0/*
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=1&end=2
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 1
+< content-range: bytes 1-1/*
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=0&end=10
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 10
+< content-range: bytes 0-9/*
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=10&end=20
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 10
+< content-range: bytes 10-19/*
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=0&end=Infinity
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 OK
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 160768
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=10&end=Infinity
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 160758
+< content-range: bytes 10-160767/*
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=NaN&end=Infinity
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 OK
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 160768
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=160758&end=160768
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 10
+< content-range: bytes 160758-160767/*
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=160758&end=160767
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 9
+< content-range: bytes 160758-160766/*
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=160767&end=160768
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 1
+< content-range: bytes 160767-160767/*
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=0&end=160768
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 OK
+< content-type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 160768
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=0&end=1
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< Content-Range: bytes 0-1/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 1
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=1&end=2
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< Content-Range: bytes 1-2/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 1
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=0&end=10
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< Content-Range: bytes 0-10/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 10
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=10&end=20
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< Content-Range: bytes 10-20/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 10
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=0&end=Infinity
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 OK
+< Content-Range: bytes 0-Infinity/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 160768
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=10&end=Infinity
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< Content-Range: bytes 10-Infinity/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 160758
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=NaN&end=Infinity
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 OK
+< Content-Range: bytes NaN-Infinity/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 160768
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=160758&end=160768
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< Content-Range: bytes 160758-160768/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 10
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=160758&end=160767
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< Content-Range: bytes 160758-160767/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 9
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=160767&end=160768
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 206 Partial Content
+< Content-Range: bytes 160767-160768/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 1
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+ HTTP/1.1 GET http://localhost:51052/?start=0&end=160768
+ Connection: keep-alive
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:51052
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 OK
+< Content-Range: bytes 0-160768/160768
+< Content-Type: application/octet-stream
+< content-disposition: filename="fetch.js.txt.big"
+< content-length: 160768
+< Date: Mon, 20 Jul 2026 00:33:54 GMT
+
+{
+  address: "127.0.0.1",
+  family: "IPv4",
+  port: 52397,
+}
+wrote 67
+HTTP/1.1 200 OK
+content-type: text/plain;charset=utf-8
+Date: Mon, 20 Jul 2026 00:33:56 GMT
+Content-Length: 74
+
+{"headers":[["connection","close"],["host","localhost"],["test!","test"]]}
+
+test/js/bun/http/serve-response-stream-sink-leak.test.ts:
+{
+  deltas: [ 114688, 49152, 16384 ],
+  iterations: 10000,
+  perRequest: "4.9",
+}
+
+test/js/bun/http/bun-serve-html-entry.test.ts:
+{
+  dir: "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-multiple-entries-test_CtgnvS",
+}
+{
+  cwd: "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-glob-test_zdC0n7",
+}
+Bun v1.4.0 ready in 4.71 ms
+
+url: http://localhost:54140/
+
+Bun v1.4.0 ready in 3.46 ms
+
+
+Bun v1.4.0 ready in 11.05 ms
+
+url: http://localhost:54144/
+
+Routes:
+
+Bun v1.4.0 ready in 8.26 ms
+
+url: http://localhost:54145/
+
+url: http://localhost:54143/
+
+Bun v1.4.0 ready in 142.73 ms
+
+
+url: http://localhost:54160/
+
+Routes:
+  ├── / → index.html
+  └── /about → about.html
+
+Server started on http://localhost:54265/
+RSS 37
+
+test/js/bun/http/req-url-leak.test.ts:
+Max RSS 37 MB
+
+test/js/bun/http/hspec.test.ts:
+✅ Request without HTTP version: Response Status Code 505, Expected ranges: [[400,599]]
+✅ Request with Expect header: Response Status Code 100, Expected ranges: [[100,100],[200,299]]
+✅ Valid GET request: Response Status Code 200, Expected ranges: [[200,299]]
+✅ Valid GET request with HTTP/1.0: Response Status Code 200, Expected ranges: [[200,299]]
+✅ Valid GET request for a proxy URL: Response Status Code 200, Expected ranges: [[200,299]]
+✅ Valid GET request for an https proxy URL: Response Status Code 200, Expected ranges: [[200,299]]
+✅ Valid GET request for an HTTPS proxy URL: Response Status Code 200, Expected ranges: [[200,299]]
+✅ Invalid GET request for an HTTPS proxy URL: Response Status Code 400, Expected ranges: [[400,499]]
+✅ Invalid GET request for an HTTPS proxy URL: Response Status Code 400, Expected ranges: [[400,499]]
+✅ Valid GET request for an HTTP proxy URL: Response Status Code 200, Expected ranges: [[200,299]]
+✅ Invalid GET request target (space): Response Status Code 400, Expected ranges: [[400,499]]
+✅ Invalid GET request target (caret): Response Status Code 400, Expected ranges: [[400,499]]
+✅ Valid GET request with edge cases: Response Status Code 200, Expected ranges: [[200,299]]
+✅ Invalid header characters: Response Status Code 400, Expected ranges: [[400,499]]
+✅ Missing Host header: Response Status Code 400, Expected ranges: [[400,499]]
+✅ Overflowing negative Content-Length header: Response Status Code 400, Expected ranges: [[400,499]]
+✅ Negative Content-Length header: Response Status Code 400, Expected ranges: [[400,499]]
+✅ Non-numeric Content-Length header: Response Status Code 400, Expected ranges: [[400,499]]
+✅ Empty header value: Response Status Code 200, Expected ranges: [[200,299]]
+✅ Header containing invalid control character: Response Status Code 400, Expected ranges: [[400,499]]
+✅ Invalid HTTP version: Response Status Code 505, Expected ranges: [[400,499],[500,599]]
+✅ Invalid prefix of request: Response Status Code 400, Expected ranges: [[400,499],[500,599]]
+✅ Invalid line ending: Response Status Code 400, Expected ranges: [[400,499]]
+✅ Valid POST request with body: Response Status Code 200, Expected ranges: [[200,299],[404,404]]
+✅ Conflicting Transfer-Encoding and Content-Length: Response Status Code 400, Expected ranges: [[400,499]]
+✅ Fragmented method: Server waited successfully
+✅ Fragmented URL 1: Server waited successfully
+✅ Fragmented URL 2: Server waited successfully
+✅ Fragmented URL 3: Server waited successfully
+✅ Fragmented HTTP version: Server waited successfully
+✅ Fragmented request line: Server waited successfully
+✅ Fragmented request line newline 1: Server waited successfully
+✅ Fragmented request line newline 2: Server waited successfully
+✅ Fragmented field name: Server waited successfully
+✅ Fragmented field value 1: Server waited successfully
+✅ Fragmented field value 2: Server waited successfully
+✅ Fragmented field value 3: Server waited successfully
+✅ Fragmented field value 4: Server waited successfully
+✅ Fragmented request: Server waited successfully
+✅ Fragmented request termination: Server waited successfully
+
+40 out of 40 tests passed.
+
+test/js/bun/http/bun-serve-html.test.ts:
+waitForServer /private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js_CmhhFx {
+  "/": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js_CmhhFx/index.html",
+  "/dashboard": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js_CmhhFx/dashboard.html",
+}
+[0.00ms] bundle index.html 1.09 KB
+[0.00ms] bundle dashboard.html 1.27 KB
+waitForServer /private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/bun-serve-html-txt_2Ol0VK {
+  "/": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/bun-serve-html-txt_2Ol0VK/index.html",
+}
+[0.00ms] bundle index.html 0.40 KB
+HASH efbnbska
+waitForServer /private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-failing-plugin_ZAr2L5 {
+  "/": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-failing-plugin_ZAr2L5/index.html",
+}
+error: Plugin failed intentionally
+    at /private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-failing-plugin_ZAr2L5/styles.css:0
+error: Plugin failed intentionally
+    at /private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-failing-plugin_ZAr2L5/styles.css:0
+waitForServer /private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-empty-plugins_eCUG9D {
+  "/": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-empty-plugins_eCUG9D/index.html",
+}
+[0.00ms] bundle index.html 0.71 KB
+Waiting for server
+waitForServer /private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP {
+  "/": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP/index.html",
+  "/about": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP/about.html",
+  "/contact": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP/contact.html",
+  "/products": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP/products.html",
+  "/services": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP/services.html",
+  "/blog": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP/blog.html",
+  "/team": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP/team.html",
+  "/careers": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP/careers.html",
+  "/faq": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP/faq.html",
+  "/ooga": "/private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/html-css-js-concurrent-plugins_2PMXpP/ooga.html",
+}
+done waiting for server
+plugin setup
+[0.00ms] bundle blog.html 0.69 KB
+[0.00ms] bundle services.html 0.70 KB
+[0.00ms] bundle products.html 0.70 KB
+[0.00ms] bundle contact.html 0.70 KB
+[0.01ms] bundle about.html 0.69 KB
+[0.01ms] bundle index.html 0.69 KB
+[0.01ms] bundle faq.html 0.68 KB
+[0.01ms] bundle careers.html 0.70 KB
+[0.01ms] bundle team.html 0.69 KB
+[0.00ms] bundle ooga.html 0.69 KB
+Bundled page in 1ms: ../../../../../../../private/var/folders/cl/3vzw5hvn0gb1r1530ldf6nwr0000gp/T/tmp.r6RVy5rkMx/bun-serve-html-error-handling_dNESxf/index.html
+Bundled page in 23ms: test/js/bun/http/jsx-runtime/index.html
+Bundled page in 20ms: test/js/bun/http/jsx-runtime/index.html
+{
+  url: "http://localhost:54629/api",
+}
+{
+  url: "http://localhost:54629/api/",
+}
+Bundled page in 19ms: test/js/bun/http/jsx-runtime/index.html
+{
+  url: "http://localhost:54635/api",
+}
+{
+  url: "http://localhost:54635/api/",
+}
+[0.03ms] bundle index.html 970.32 KB
+[0.02ms] bundle index.html 970.32 KB
+[0.02ms] bundle index.html 970.32 KB
+[0.02ms] bundle index.html 970.32 KB
+{
+  url: "http://localhost:54641/api",
+}
+{
+  url: "http://localhost:54641/api/",
+}
+[0.02ms] bundle index.html 970.32 KB
+[0.01ms] bundle index.html 970.32 KB
+[0.02ms] bundle index.html 970.32 KB
+[0.02ms] bundle index.html 970.32 KB
+
+test/js/bun/http/http-server-chunking.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+test/js/bun/http/bun-serve-cookies.test.ts:
+value
+ HTTP/1.1 GET http://localhost:62877/
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:62877
+ Accept-Encoding: gzip, deflate, br, zstd
+ HTTP/1.1 GET https://localhost:62878/
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:62878
+ Accept-Encoding: gzip, deflate, br, zstd
+ HTTP/1.1 GET http://localhost:62879/
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:62879
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 Connection Established
+
+< 200 OK
+< Content-Length: 1
+< Connection: close
+
+ HTTP/1.1 GET https://localhost:62889/
+ User-Agent: Bun/1.4.0
+ Accept: */*
+ Host: localhost:62889
+ Accept-Encoding: gzip, deflate, br, zstd
+< 200 Connection Established
+
+< 200 OK
+< Content-Length: 1
+< Connection: close
+
+< 200 OK
+< Content-Length: 1
+< Connection: close
+
+< 200 OK
+< Content-Length: 1
+< Connection: close
+
+
+test/js/bun/http/bun-serve-static-stress-no-body.test.ts:
+Start RSS 1261
+Final RSS 1261
+Delta RSS 0
+Start RSS 1261
+Final RSS 1261
+Delta RSS 0
+Start RSS 1261
+Final RSS 1261
+Delta RSS 0
+Start RSS 1261
+Final RSS 1261
+Delta RSS 0
+Start RSS 1261
+Final RSS 1261
+Delta RSS 0
+Start RSS 1403
+Final RSS 1435
+Delta RSS 32
+Start RSS 1435
+Final RSS 1466
+Delta RSS 31
+Start RSS 1466
+Final RSS 1466
+Delta RSS 0
+Start RSS 1466
+Final RSS 1466
+Delta RSS 0
+Start RSS 1466
+Final RSS 1466
+Delta RSS 0
+Start RSS 1466
+Final RSS 1466
+Delta RSS 0
+Start RSS 1466
+Final RSS 1466
+Delta RSS 0
+
+ 1912 pass
+ 25 skip
+ 5 todo
+ 3 fail
+ 3 errors
+ 29 snapshots, 193949 expect() calls
+Ran 1945 tests across 64 files. [128.82s]

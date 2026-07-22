@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "esModuleInterop": true,
+    // baseUrl needed until resolver fix propagates to system Bun used during build
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "internal/*": ["./internal/*"] //deprecated
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", "./builtins.d.ts", "./private.d.ts"]
+}

@@ -1,0 +1,14 @@
+inspector: match Node's --inspect stderr announce lines
+
+- Advertise 127.0.0.1 (not localhost) in the "Debugger listening on" line
+  for the default bind, as Node does; only when the loopback listener
+  proves the address is bound
+- Update the "For help, see:" URL to Node v26's
+  https://nodejs.org/learn/getting-started/debugging (also in inspector.open)
+- Print "Debugger attached." when a CDP/node-inspector frontend connects
+- Answer malformed CDP client messages (unparseable, non-object, or
+  method-less) with V8's {id, error: {code: -32601, message: "'' wasn't
+  found"}} reply instead of silently dropping them
+- Vendor 5 node tests these lines unblock: test-inspector-wait,
+  test-inspector-invalid-protocol, test-inspector-multisession-ws,
+  test-esm-loader-hooks-inspect-brk, test-esm-loader-hooks-inspect-wait

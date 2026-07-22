@@ -1,0 +1,1732 @@
+src/js/builtins/Bake.ts - error TS2305: Module '"bun"' has no exported member 'Bake'.
+src/js/builtins/Bake.ts - error TS2322: Type 'void[]' is not assignable to type 'void'.
+src/js/builtins/Bake.ts - error TS2345: Argument of type 'any[]' is not assignable to parameter of type 'never'.
+src/js/builtins/Bake.ts - error TS2345: Argument of type 'any[]' is not assignable to parameter of type 'never'.
+src/js/builtins/Bake.ts - error TS2488: Type 'never' must have a '[Symbol.iterator]()' method that returns an iterator.
+src/js/builtins/Bake.ts - error TS2769: No overload matches this call.
+src/js/builtins/Bake.ts - error TS2769: No overload matches this call.
+src/js/builtins/Bake.ts - error TS6053: File '/Users/ciro/code/bun/.claude/worktrees/wave-insp/src/bake/bake.d.ts' not found.
+src/js/builtins/BundlerPlugin.ts - error TS2322: Type 'null | undefined' is not assignable to type 'Promise<null>'.
+src/js/builtins/BundlerPlugin.ts - error TS2322: Type 'Promise<Promise<any>[] | undefined>' is not assignable to type 'Promise<any>[] | Promise<Promise<any>[]> | undefined'.
+src/js/builtins/BundlerPlugin.ts - error TS2322: Type 'Promise<Promise<any>[] | undefined>' is not assignable to type 'Promise<any>[] | Promise<Promise<any>[]> | undefined'.
+src/js/builtins/BundlerPlugin.ts - error TS2339: Property '$napiDlopenHandle' does not exist on type 'object'.
+src/js/builtins/BundlerPlugin.ts - error TS2339: Property 'external' does not exist on type '{}'.
+src/js/builtins/BundlerPlugin.ts - error TS2339: Property 'namespace' does not exist on type '{}'.
+src/js/builtins/BundlerPlugin.ts - error TS2339: Property 'namespace' does not exist on type 'object'.
+src/js/builtins/BundlerPlugin.ts - error TS2339: Property 'namespace' does not exist on type 'object'.
+src/js/builtins/BundlerPlugin.ts - error TS2339: Property 'path' does not exist on type '{}'.
+src/js/builtins/BundlerPlugin.ts - error TS2352: Conversion of type '{ config: BuildConfigExt; onDispose: (...args: any[]) => never; onEnd: (this: PluginBuilder, callback: Function) => PluginBuilder; onLoad: (this: PluginBuilder, filterObject: PluginConstraints, callback: OnLoadCallback) => PluginBuilder; ... 7 more ...; esbuild: {}; }' to type 'PluginBuilderExt' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/js/builtins/BundlerPlugin.ts - error TS2353: Object literal may only specify known properties, and 'experimentalCss' does not exist in type 'BuildConfigExt'.
+src/js/builtins/ConsoleObject.ts - error TS2339: Property 'done' does not exist on type 'unknown'.
+src/js/builtins/ConsoleObject.ts - error TS2339: Property 'message' does not exist on type 'object'.
+src/js/builtins/ConsoleObject.ts - error TS2339: Property 'name' does not exist on type 'object'.
+src/js/builtins/ConsoleObject.ts - error TS2339: Property 'readMany' does not exist on type 'ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>'.
+src/js/builtins/ConsoleObject.ts - error TS2339: Property 'value' does not exist on type 'unknown'.
+src/js/builtins/ConsoleObject.ts - error TS2365: Operator '+=' cannot be applied to types 'number | Promise<number>' and 'number | Promise<number>'.
+src/js/builtins/ConsoleObject.ts - error TS2554: Expected 0 arguments, but got 1.
+src/js/builtins/ConsoleObject.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/builtins/JSBufferConstructor.ts - error TS2345: Argument of type 'Uint8Array<ArrayBufferLike> | DataView<ArrayBufferLike> | ArrayBufferView<ArrayBufferLike>' is not assignable to parameter of type 'ArrayBuffer'.
+src/js/builtins/ProcessObjectInternals.ts - error TS2322: Type '(_: InternalEnvMap, p: string | symbol, attributes: PropertyDescriptor) => InternalEnvMap' is not assignable to type '(target: InternalEnvMap, property: string | symbol, attributes: PropertyDescriptor) => boolean'.
+src/js/builtins/ProcessObjectInternals.ts - error TS2339: Property '$bunNativePtr' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.
+src/js/builtins/ProcessObjectInternals.ts - error TS2339: Property 'stack' does not exist on type '{}'.
+src/js/builtins/ProcessObjectInternals.ts - error TS2339: Property 'stack' does not exist on type '{}'.
+src/js/builtins/ProcessObjectInternals.ts - error TS2345: Argument of type '"SIGWINCH"' is not assignable to parameter of type '"memoryPressure"'.
+src/js/builtins/ProcessObjectInternals.ts - error TS2403: Subsequent variable declarations must have the same type.  Variable 'process' must be of type 'Process', but here has type 'any'.
+src/js/builtins/ProcessObjectInternals.ts - error TS2741: Property 'readMany' is missing in type 'ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>' but required in type 'ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>>'.
+src/js/builtins/shell.ts - error TS2416: Property 'then' in type 'ShellPromise' is not assignable to the same property in base type 'Promise<ShellOutput>'.
+src/js/bun/ffi.ts - error TS2339: Property 'name' does not exist on type 'Blob'.
+src/js/bun/ffi.ts - error TS2339: Property 'source' does not exist on type 'object'.
+src/js/bun/ffi.ts - error TS2339: Property 'source' does not exist on type 'object'.
+src/js/bun/sql.ts - error TS1058: The return type of an async function must either be a valid promise or must not contain a callable 'then' member.
+src/js/bun/sql.ts - error TS1058: The return type of an async function must either be a valid promise or must not contain a callable 'then' member.
+src/js/bun/sql.ts - error TS1058: The return type of an async function must either be a valid promise or must not contain a callable 'then' member.
+src/js/bun/sql.ts - error TS1320: Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member.
+src/js/bun/sql.ts - error TS1320: Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member.
+src/js/bun/sql.ts - error TS1320: Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member.
+src/js/bun/sql.ts - error TS1320: Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member.
+src/js/bun/sql.ts - error TS2304: Cannot find name 'ConnectionHandle'.
+src/js/bun/sql.ts - error TS2304: Cannot find name 'PooledPostgresConnection'.
+src/js/bun/sql.ts - error TS2304: Cannot find name 'PooledPostgresConnection'.
+src/js/bun/sql.ts - error TS2307: Cannot find module 'internal/sql/mysql' or its corresponding type declarations.
+src/js/bun/sql.ts - error TS2307: Cannot find module 'internal/sql/postgres' or its corresponding type declarations.
+src/js/bun/sql.ts - error TS2307: Cannot find module 'internal/sql/query' or its corresponding type declarations.
+src/js/bun/sql.ts - error TS2307: Cannot find module 'internal/sql/shared' or its corresponding type declarations.
+src/js/bun/sql.ts - error TS2322: Type '{ (stringOrUrlOrOptions?: Bun.SQL.Options | string | undefined, definitelyOptionsButMaybeEmpty?: Bun.SQL.Options): Bun.SQL; SQLError: typeof Bun.SQL.SQLError; PostgresError: typeof Bun.SQL.PostgresError; SQLiteError: typeof Bun.SQL.SQLiteError; MySQLError: typeof Bun.SQL.MySQLError; }' is not assignable to type 'typeof SQL'.
+src/js/bun/sql.ts - error TS2322: Type '{ (strings: any, ...values: any[]): Query<unknown, BaseQueryHandle<any>> | Promise<never> | SQLHelper<any> | SQLHelper<never[]>; ... 15 more ...; [Symbol.asyncDispose]: any; }' is not assignable to type 'SQL'.
+src/js/bun/sql.ts - error TS2339: Property 'attachConnectionCloseHandler' does not exist on type 'MySQLAdapter | PostgresAdapter | SQLiteAdapter'.
+src/js/bun/sql.ts - error TS2339: Property 'attachConnectionCloseHandler' does not exist on type 'MySQLAdapter | PostgresAdapter | SQLiteAdapter'.
+src/js/bun/sql.ts - error TS2339: Property 'bigint' does not exist on type 'DefinedOptions'.
+src/js/bun/sql.ts - error TS2339: Property 'bigint' does not exist on type 'DefinedOptions'.
+src/js/bun/sql.ts - error TS2339: Property 'bigint' does not exist on type 'DefinedOptions'.
+src/js/bun/sql.ts - error TS2339: Property 'bigint' does not exist on type 'DefinedOptions'.
+src/js/bun/sql.ts - error TS2339: Property 'detachConnectionCloseHandler' does not exist on type 'MySQLAdapter | PostgresAdapter | SQLiteAdapter'.
+src/js/bun/sql.ts - error TS2339: Property 'detachConnectionCloseHandler' does not exist on type 'MySQLAdapter | PostgresAdapter | SQLiteAdapter'.
+src/js/bun/sql.ts - error TS2339: Property 'detachConnectionCloseHandler' does not exist on type 'MySQLAdapter | PostgresAdapter | SQLiteAdapter'.
+src/js/bun/sql.ts - error TS2339: Property 'detachConnectionCloseHandler' does not exist on type 'MySQLAdapter | PostgresAdapter | SQLiteAdapter'.
+src/js/bun/sql.ts - error TS2345: Argument of type 'MySQLAdapter | PostgresAdapter | SQLiteAdapter' is not assignable to parameter of type 'DatabaseAdapter<any, any, BaseQueryHandle<any>>'.
+src/js/bun/sql.ts - error TS2345: Argument of type 'MySQLAdapter | PostgresAdapter | SQLiteAdapter' is not assignable to parameter of type 'DatabaseAdapter<any, any, BaseQueryHandle<any>>'.
+src/js/bun/sql.ts - error TS2345: Argument of type 'MySQLAdapter | PostgresAdapter | SQLiteAdapter' is not assignable to parameter of type 'DatabaseAdapter<any, any, BaseQueryHandle<any>>'.
+src/js/bun/sql.ts - error TS2345: Argument of type 'MySQLAdapter | PostgresAdapter | SQLiteAdapter' is not assignable to parameter of type 'DatabaseAdapter<any, any, BaseQueryHandle<any>>'.
+src/js/bun/sql.ts - error TS2348: Value of type 'typeof SQL' is not callable. Did you mean to include 'new'?
+src/js/bun/sql.ts - error TS2348: Value of type 'typeof SQL' is not callable. Did you mean to include 'new'?
+src/js/bun/sql.ts - error TS2348: Value of type 'typeof SQL' is not callable. Did you mean to include 'new'?
+src/js/bun/sql.ts - error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+src/js/bun/sql.ts - error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+src/js/bun/sql.ts - error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+src/js/bun/sql.ts - error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+src/js/bun/sql.ts - error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+src/js/bun/sql.ts - error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+src/js/bun/sqlite.ts - error TS2339: Property 'prepare' does not exist on type 'CppSQL'.
+src/js/bun/sqlite.ts - error TS2339: Property 'run' does not exist on type 'CppSQL'.
+src/js/bun/sqlite.ts - error TS2339: Property 'run' does not exist on type 'CppSQL'.
+src/js/bun/sqlite.ts - error TS2339: Property 'run' does not exist on type 'CppSQL'.
+src/js/bun/sqlite.ts - error TS2345: Argument of type 'ArrayBufferLike | TypedArray<ArrayBufferLike>' is not assignable to parameter of type 'string | TypedArray<ArrayBufferLike> | Buffer<ArrayBufferLike> | undefined'.
+src/js/bun/sqlite.ts - error TS2345: Argument of type 'ArrayBufferLike | TypedArray<ArrayBufferLike>' is not assignable to parameter of type 'string | TypedArray<ArrayBufferLike> | Buffer<ArrayBufferLike> | undefined'.
+src/js/bun/sqlite.ts - error TS2345: Argument of type 'ArrayBufferLike | TypedArray<ArrayBufferLike>' is not assignable to parameter of type 'string | TypedArray<ArrayBufferLike> | Buffer<ArrayBufferLike> | undefined'.
+src/js/bun/sqlite.ts - error TS2416: Property 'prepare' in type 'Database' is not assignable to the same property in base type 'Database'.
+src/js/bun/sqlite.ts - error TS2416: Property 'query' in type 'Database' is not assignable to the same property in base type 'Database'.
+src/js/bun/sqlite.ts - error TS2416: Property 'transaction' in type 'Database' is not assignable to the same property in base type 'Database'.
+src/js/eval/feedback.ts - error TS2322: Type 'string | boolean | undefined' is not assignable to type 'string | undefined'.
+src/js/eval/feedback.ts - error TS2339: Property 'ok' does not exist on type 'Response'.
+src/js/eval/feedback.ts - error TS2339: Property 'status' does not exist on type 'Response'.
+src/js/eval/feedback.ts - error TS2339: Property 'status' does not exist on type 'Response'.
+src/js/eval/feedback.ts - error TS2339: Property 'statusText' does not exist on type 'Response'.
+src/js/eval/feedback.ts - error TS2339: Property 'text' does not exist on type 'Response'.
+src/js/eval/fuzzilli-reprl.ts - error TS18046: 'n' is of type 'unknown'.
+src/js/eval/fuzzilli-reprl.ts - error TS2304: Cannot find name 'resetCoverage'.
+src/js/eval/fuzzilli-reprl.ts - error TS2322: Type '() => void' is not assignable to type '(file: string, args?: readonly string[] | undefined, env?: ProcessEnv | undefined) => never'.
+src/js/eval/fuzzilli-reprl.ts - error TS2554: Expected 5 arguments, but got 2.
+src/js/eval/fuzzilli-reprl.ts - error TS2554: Expected 5 arguments, but got 2.
+src/js/internal/abort_listener.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/assert/assertion_error.ts - error TS2339: Property 'header' does not exist on type '{ message: any; header: string; skipped: boolean; } | { message: string; } | { message: string; header: string; }'.
+src/js/internal/assert/assertion_error.ts - error TS2339: Property 'skipped' does not exist on type '{ message: any; header: string; skipped: boolean; } | { message: string; } | { message: string; header: string; }'.
+src/js/internal/assert/assertion_error.ts - error TS2352: Conversion of type '{ myersDiff: (actual: string[], expected: string[], checkCommaDisparity?: boolean, lines?: boolean) => Diff[]; printMyersDiff: (diff: Diff[], _simple?: boolean) => { message: string; skipped: boolean; }; printSimpleMyersDiff: (diff: Diff[]) => string; }' to type 'typeof Internal' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/js/internal/assert/calltracker.ts - error TS2353: Object literal may only specify known properties, and '__proto__' does not exist in type 'ProxyHandler<any>'.
+src/js/internal/assert/utils.ts - error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.
+src/js/internal/cluster/child.ts - error TS18048: 'process.env.NODE_UNIQUE_ID' is possibly 'undefined'.
+src/js/internal/cluster/child.ts - error TS2322: Type 'null' is not assignable to type 'Control | undefined'.
+src/js/internal/cluster/child.ts - error TS2339: Property '_getServer' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/child.ts - error TS2339: Property '_setupWorker' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/child.ts - error TS2339: Property 'exitedAfterDisconnect' does not exist on type '(options: any) => any'.
+src/js/internal/cluster/child.ts - error TS2339: Property 'getsockname' does not exist on type '{ close: () => void; listen: (_backlog: any) => number; ref: () => void; unref: () => void; }'.
+src/js/internal/cluster/child.ts - error TS2339: Property 'isMaster' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/child.ts - error TS2339: Property 'isPrimary' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/child.ts - error TS2339: Property 'isWorker' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/child.ts - error TS2339: Property 'worker' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/child.ts - error TS2339: Property 'worker' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/child.ts - error TS2339: Property 'worker' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/child.ts - error TS2339: Property 'Worker' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/child.ts - error TS2345: Argument of type '"disconnect"' is not assignable to parameter of type '"memoryPressure"'.
+src/js/internal/cluster/child.ts - error TS2345: Argument of type '"disconnect"' is not assignable to parameter of type '"memoryPressure"'.
+src/js/internal/cluster/child.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/internal/cluster/child.ts - error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/js/internal/cluster/child.ts - error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/js/internal/cluster/child.ts - error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/js/internal/cluster/child.ts - error TS2769: No overload matches this call.
+src/js/internal/cluster/primary.ts - error TS18046: 'worker' is of type 'unknown'.
+src/js/internal/cluster/primary.ts - error TS18046: 'worker' is of type 'unknown'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'disconnect' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'fork' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'isMaster' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'isPrimary' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'isWorker' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'SCHED_NONE' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'SCHED_RR' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'schedulingPolicy' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'schedulingPolicy' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'settings' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'setupMaster' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'setupPrimary' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'setupPrimary' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'setupPrimary' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'syscall' does not exist on type 'Error'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'Worker' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'workers' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'workers' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'workers' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'workers' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'workers' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2339: Property 'workers' does not exist on type 'EventEmitter<any>'.
+src/js/internal/cluster/primary.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/internal/cluster/SharedHandle.ts - error TS2531: Object is possibly 'null'.
+src/js/internal/cluster/Worker.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/internal/debugger.ts - error TS2314: Generic type 'Server<WebSocketData>' requires 1 type argument(s).
+src/js/internal/debugger.ts - error TS2314: Generic type 'Server<WebSocketData>' requires 1 type argument(s).
+src/js/internal/debugger.ts - error TS2314: Generic type 'Server<WebSocketData>' requires 1 type argument(s).
+src/js/internal/debugger.ts - error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/js/internal/debugger.ts - error TS2339: Property 'get' does not exist on type 'BunHeadersOverride'.
+src/js/internal/debugger.ts - error TS2339: Property 'get' does not exist on type 'BunHeadersOverride'.
+src/js/internal/debugger.ts - error TS2339: Property 'get' does not exist on type 'BunHeadersOverride'.
+src/js/internal/debugger.ts - error TS2339: Property 'get' does not exist on type 'BunHeadersOverride'.
+src/js/internal/debugger.ts - error TS2339: Property 'method' does not exist on type 'Request'.
+src/js/internal/debugger.ts - error TS2339: Property 'url' does not exist on type 'Request'.
+src/js/internal/dgram.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'srcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'updatedSrcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS18046: 'updatedSrcStat' is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/js/internal/fs/cp-sync.ts - error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/js/internal/fs/cp-sync.ts - error TS2571: Object is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS2571: Object is of type 'unknown'.
+src/js/internal/fs/cp-sync.ts - error TS2571: Object is of type 'unknown'.
+src/js/internal/fs/cp.ts - error TS18046: 'dir' is of type 'unknown'.
+src/js/internal/fs/cp.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/internal/fs/streams.ts - error TS2339: Property '_writableState' does not exist on type 'FSStream'.
+src/js/internal/fs/streams.ts - error TS2739: Type '{ appendFile: (path: any, data: any, options: any, callback: any) => void; appendFileSync: (arg0?: unknown, arg1?: unknown, arg2?: unknown, ...args: unknown[]) => unknown; access: (path: any, mode: any, callback: any) => void; accessSync: (arg0?: unknown, arg1?: unknown, ...args: unknown[]) => unknown; ... 102 more ...' is missing the following properties from type 'typeof import("node:fs")': StatsFs, Utf8Stream
+src/js/internal/fs/watchfile.ts - error TS2739: Type 'Promise<unknown>' is missing the following properties from type 'StatWatcherHandle': ref, unref, close
+src/js/internal/html.ts - error TS2314: Generic type 'Server<WebSocketData>' requires 1 type argument(s).
+src/js/internal/html.ts - error TS2339: Property 'platform' does not exist on type 'typeof path'.
+src/js/internal/html.ts - error TS2345: Argument of type '"SIGHUP"' is not assignable to parameter of type '"memoryPressure"'.
+src/js/internal/html.ts - error TS2345: Argument of type '"SIGINT"' is not assignable to parameter of type '"memoryPressure"'.
+src/js/internal/html.ts - error TS2345: Argument of type '"SIGTERM"' is not assignable to parameter of type '"memoryPressure"'.
+src/js/internal/html.ts - error TS2353: Object literal may only specify known properties, and 'static' does not exist in type '(HostnamePortServeOptions<undefined> & { unix?: undefined; } & { fetch?(this: Server<undefined>, req: Request, server: Server<undefined>): MaybePromise<...>; routes: Routes<...>; } & { ...; }) | (HostnamePortServeOptions<...> & ... 2 more ... & { ...; }) | (HostnamePortServeOptions<...> & ... 3 more ... & {}) | (Hos...'.
+src/js/internal/html.ts - error TS2353: Object literal may only specify known properties, and 'static' does not exist in type '(HostnamePortServeOptions<undefined> & { unix?: undefined; } & { fetch?(this: Server<undefined>, req: Request, server: Server<undefined>): MaybePromise<...>; routes: Routes<...>; } & { ...; }) | (HostnamePortServeOptions<...> & ... 2 more ... & { ...; }) | (HostnamePortServeOptions<...> & ... 3 more ... & {}) | (Hos...'.
+src/js/internal/http/FakeSocket.ts - error TS2304: Cannot find name 'OutgoingMessage'.
+src/js/internal/http/FakeSocket.ts - error TS2304: Cannot find name 'Server'.
+src/js/internal/process/pre_execution.ts - error TS2322: Type '(arg0?: unknown, arg1?: unknown, arg2?: unknown, arg3?: unknown, arg4?: unknown, ...args: unknown[]) => unknown' is not assignable to type '{ (fd: number, buffer: ArrayBufferView<ArrayBufferLike>, offset?: number | null | undefined, length?: number | null | undefined, position?: number | null | undefined): number; (fd: number, string: string, position?: number | ... 1 more ... | undefined, encoding?: BufferEncoding | ... 1 more ... | undefined): number; }'.
+src/js/internal/process/pre_execution.ts - error TS2322: Type 'any' is not assignable to type 'never'.
+src/js/internal/promisify.ts - error TS2339: Property 'custom' does not exist on type '(original: any) => any'.
+src/js/internal/shared.ts - error TS18046: 'observer' is of type 'unknown'.
+src/js/internal/shared.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/sql/mysql.ts - error TS2307: Cannot find module 'internal/sql/shared' or its corresponding type declarations.
+src/js/internal/sql/mysql.ts - error TS2339: Property 'message' does not exist on type 'MySQLErrorOptions'.
+src/js/internal/sql/mysql.ts - error TS2345: Argument of type '(query: any, result: any, commandTag: any, count: any, queries: any, is_last: any, last_insert_rowid: any, affected_rows: any) => void' is not assignable to parameter of type '(query: Query<any, any>, result: SQLResultArray, commandTag: string, count: number, queries: any, is_last: boolean) => void'.
+src/js/internal/sql/postgres.ts - error TS2307: Cannot find module 'internal/sql/shared' or its corresponding type declarations.
+src/js/internal/sql/postgres.ts - error TS2339: Property 'message' does not exist on type 'PostgresErrorOptions'.
+src/js/internal/sql/postgres.ts - error TS2339: Property 'toISOString' does not exist on type 'never'.
+src/js/internal/sql/postgres.ts - error TS2339: Property 'toString' does not exist on type 'never'.
+src/js/internal/sql/postgres.ts - error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+src/js/internal/sql/query.ts - error TS2475: 'const' enums can only be used in property or index access expressions or the right hand side of an import declaration or export assignment or type query.
+src/js/internal/sql/query.ts - error TS2475: 'const' enums can only be used in property or index access expressions or the right hand side of an import declaration or export assignment or type query.
+src/js/internal/sql/query.ts - error TS2475: 'const' enums can only be used in property or index access expressions or the right hand side of an import declaration or export assignment or type query.
+src/js/internal/sql/shared.ts - error TS2322: Type '((err: Error | null) => void) | undefined' is not assignable to type '((error?: Error | undefined) => void) | undefined'.
+src/js/internal/sql/shared.ts - error TS2322: Type '((err: Error | null) => void) | undefined' is not assignable to type '((error?: Error | undefined) => void) | undefined'.
+src/js/internal/sql/shared.ts - error TS2322: Type '(error?: Error | undefined) => void' is not assignable to type '(err: Error | null) => void'.
+src/js/internal/sql/shared.ts - error TS2322: Type '(error?: Error | undefined) => void' is not assignable to type '(err: Error | null) => void'.
+src/js/internal/sql/shared.ts - error TS2322: Type 'boolean | BunFile | TLSOptions | undefined' is not assignable to type 'boolean | TLSOptions | undefined'.
+src/js/internal/sql/shared.ts - error TS2339: Property 'serverName' does not exist on type 'boolean | TLSOptions'.
+src/js/internal/sql/shared.ts - error TS2698: Spread types may only be created from object types.
+src/js/internal/sql/sqlite.ts - error TS2307: Cannot find module 'internal/sql/query' or its corresponding type declarations.
+src/js/internal/sql/sqlite.ts - error TS2307: Cannot find module 'internal/sql/shared' or its corresponding type declarations.
+src/js/internal/sql/sqlite.ts - error TS2475: 'const' enums can only be used in property or index access expressions or the right hand side of an import declaration or export assignment or type query.
+src/js/internal/sql/sqlite.ts - error TS2769: No overload matches this call.
+src/js/internal/stream.promises.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/internal/stream.ts - error TS2322: Type '(options: any) => DuplexSide[]' is not assignable to type '(options?: DuplexOptions<Duplex> | undefined) => [Duplex, Duplex]'.
+src/js/internal/stream.ts - error TS2322: Type '(options: any) => void' is not assignable to type 'typeof PassThrough'.
+src/js/internal/stream.ts - error TS2339: Property '_isArrayBufferView' does not exist on type 'typeof Stream'.
+src/js/internal/stream.ts - error TS2339: Property '_isUint8Array' does not exist on type 'typeof Stream'.
+src/js/internal/stream.ts - error TS2339: Property '_uint8ArrayToBuffer' does not exist on type 'typeof Stream'.
+src/js/internal/stream.ts - error TS2339: Property 'destroy' does not exist on type 'typeof Stream'.
+src/js/internal/stream.ts - error TS2339: Property 'isDestroyed' does not exist on type 'typeof Stream'.
+src/js/internal/stream.ts - error TS2339: Property 'isDisturbed' does not exist on type 'typeof Stream'.
+src/js/internal/stream.ts - error TS2741: Property '__promisify__' is missing in type '(...streams: any[]) => any' but required in type 'typeof pipeline'.
+src/js/internal/stream.ts - error TS2741: Property '__promisify__' is missing in type 'typeof eos' but required in type 'typeof finished'.
+src/js/internal/streams/add-abort-signal.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/internal/streams/compose.ts - error TS2339: Property 'getReader' does not exist on type 'ReadableStream<any> | WritableStream<any>'.
+src/js/internal/streams/compose.ts - error TS2339: Property 'getWriter' does not exist on type 'ReadableStream<any> | WritableStream<any>'.
+src/js/internal/streams/compose.ts - error TS2353: Object literal may only specify known properties, and 'writable' does not exist in type 'DuplexOptions<Duplex>'.
+src/js/internal/streams/compose.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/internal/streams/duplex.ts - error TS2339: Property 'ReadableState' does not exist on type 'typeof Readable'.
+src/js/internal/streams/duplex.ts - error TS2339: Property 'WritableState' does not exist on type 'typeof Writable'.
+src/js/internal/streams/duplexify.ts - error TS2322: Type 'null' is not assignable to type '(value?: unknown) => void'.
+src/js/internal/streams/duplexify.ts - error TS2322: Type 'null' is not assignable to type '(value?: unknown) => void'.
+src/js/internal/streams/duplexify.ts - error TS2322: Type 'null' is not assignable to type '(value?: unknown) => void'.
+src/js/internal/streams/duplexify.ts - error TS2322: Type 'null' is not assignable to type 'Promise<unknown>'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property '_readableState' does not exist on type 'Duplexify'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property '_readableState' does not exist on type 'Duplexify'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property '_readableState' does not exist on type 'Duplexify'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property '_writableState' does not exist on type 'Duplexify'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property '_writableState' does not exist on type 'Duplexify'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property '_writableState' does not exist on type 'Duplexify'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property '_writableState' does not exist on type 'Duplexify'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property 'cb' does not exist on type 'unknown'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property 'chunk' does not exist on type 'unknown'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property 'done' does not exist on type 'unknown'.
+src/js/internal/streams/duplexify.ts - error TS2339: Property 'wrap' does not exist on type 'typeof Readable'.
+src/js/internal/streams/duplexify.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/internal/streams/duplexify.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/internal/streams/duplexify.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/internal/streams/duplexify.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/internal/streams/duplexpair.ts - error TS2322: Type 'any' is not assignable to type 'never'.
+src/js/internal/streams/duplexpair.ts - error TS2339: Property 'push' does not exist on type 'never'.
+src/js/internal/streams/duplexpair.ts - error TS2531: Object is possibly 'null'.
+src/js/internal/streams/duplexpair.ts - error TS2531: Object is possibly 'null'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/broadcast.ts - error TS2322: Type '(reason?: any) => void' is not assignable to type 'null'.
+src/js/internal/streams/iter/broadcast.ts - error TS2322: Type '(value?: unknown) => void' is not assignable to type 'null'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'backpressure' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'cursor' does not exist on type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'cursor' does not exist on type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'cursor' does not exist on type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'highWaterMark' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'reject' does not exist on type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'reject' does not exist on type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'resolve' does not exist on type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'resolve' does not exist on type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'resolve' does not exist on type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'resolve' does not exist on type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2339: Property 'signal' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/broadcast.ts - error TS2345: Argument of type '{ __proto__: null; cursor: number; resolve: null; reject: null; detached: boolean; }' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2345: Argument of type '{ __proto__: null; resolve: (value?: unknown) => void; reject: (reason?: any) => void; }' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/broadcast.ts - error TS2349: This expression is not callable.
+src/js/internal/streams/iter/broadcast.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/iter/broadcast.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/iter/broadcast.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/iter/classic.ts - error TS2322: Type 'any' is not assignable to type 'never'.
+src/js/internal/streams/iter/classic.ts - error TS2339: Property 'backpressure' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/classic.ts - error TS2339: Property 'highWaterMark' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/classic.ts - error TS2339: Property 'highWaterMark' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/classic.ts - error TS2339: Property 'reject' does not exist on type 'never'.
+src/js/internal/streams/iter/classic.ts - error TS2339: Property 'reject' does not exist on type 'never'.
+src/js/internal/streams/iter/classic.ts - error TS2339: Property 'resolve' does not exist on type 'never'.
+src/js/internal/streams/iter/classic.ts - error TS2339: Property 'signal' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/classic.ts - error TS2339: Property 'stream' does not exist on type 'AsyncGenerator<any, void, unknown>'.
+src/js/internal/streams/iter/classic.ts - error TS2345: Argument of type '{ __proto__: null; resolve: (value?: unknown) => void; reject: (reason?: any) => void; }' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/classic.ts - error TS2345: Argument of type '{ __proto__: null; resolve(): void; reject(): void; }' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/classic.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/classic.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/classic.ts - error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'Error & { errors?: Error[] | undefined; }'.
+src/js/internal/streams/iter/classic.ts - error TS2551: Property 'writev' does not exist on type '{ __proto__: null; highWaterMark: number; write: (chunk: any, encoding: any, cb: any) => void; final: (cb: any) => void; destroy: (err: any, cb: any) => void; }'. Did you mean 'write'?
+src/js/internal/streams/iter/classic.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/iter/classic.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/iter/classic.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/iter/consumers.ts - error TS2322: Type '(value: unknown) => void' is not assignable to type 'null'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'encoding' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'encoding' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'error' does not exist on type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'error' does not exist on type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'limit' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'limit' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'limit' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'limit' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'limit' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'limit' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'limit' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'limit' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'return' does not exist on type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'return' does not exist on type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'signal' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'signal' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'signal' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2339: Property 'signal' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2345: Argument of type '{ __proto__: null; error: any; }' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2345: Argument of type '{ __proto__: null; error: any; }' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/consumers.ts - error TS2345: Argument of type 'string' is not assignable to parameter of type 'Encoding | undefined'.
+src/js/internal/streams/iter/consumers.ts - error TS2349: This expression is not callable.
+src/js/internal/streams/iter/consumers.ts - error TS2349: This expression is not callable.
+src/js/internal/streams/iter/consumers.ts - error TS2349: This expression is not callable.
+src/js/internal/streams/iter/consumers.ts - error TS2353: Object literal may only specify known properties, and '__proto__' does not exist in type '{ fatal?: boolean | undefined; ignoreBOM?: boolean | undefined; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2353: Object literal may only specify known properties, and '__proto__' does not exist in type '{ fatal?: boolean | undefined; ignoreBOM?: boolean | undefined; }'.
+src/js/internal/streams/iter/consumers.ts - error TS2552: Cannot find name '$ERR_INVALID_ARG_VALUE_RangeError'. Did you mean '$ERR_INVALID_STATE_RangeError'?
+src/js/internal/streams/iter/duplex.ts - error TS2339: Property 'a' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/duplex.ts - error TS2339: Property 'b' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/duplex.ts - error TS2339: Property 'backpressure' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/duplex.ts - error TS2339: Property 'highWaterMark' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/duplex.ts - error TS2339: Property 'return' does not exist on type 'never'.
+src/js/internal/streams/iter/duplex.ts - error TS2339: Property 'return' does not exist on type 'never'.
+src/js/internal/streams/iter/duplex.ts - error TS2339: Property 'return' does not exist on type 'never'.
+src/js/internal/streams/iter/duplex.ts - error TS2339: Property 'return' does not exist on type 'never'.
+src/js/internal/streams/iter/duplex.ts - error TS2339: Property 'signal' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/from.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/from.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/from.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/from.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/from.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/pull.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/pull.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/pull.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/pull.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/pull.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/pull.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/pull.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/pull.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/pull.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/push.ts - error TS2339: Property 'backpressure' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/push.ts - error TS2339: Property 'highWaterMark' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/push.ts - error TS2339: Property 'promise' does not exist on type 'never'.
+src/js/internal/streams/iter/push.ts - error TS2339: Property 'reject' does not exist on type 'never'.
+src/js/internal/streams/iter/push.ts - error TS2339: Property 'reject' does not exist on type 'never'.
+src/js/internal/streams/iter/push.ts - error TS2339: Property 'reject' does not exist on type 'never'.
+src/js/internal/streams/iter/push.ts - error TS2339: Property 'reject' does not exist on type 'never'.
+src/js/internal/streams/iter/push.ts - error TS2339: Property 'resolve' does not exist on type 'never'.
+src/js/internal/streams/iter/push.ts - error TS2339: Property 'resolve' does not exist on type 'never'.
+src/js/internal/streams/iter/push.ts - error TS2339: Property 'signal' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/push.ts - error TS2345: Argument of type '{ __proto__: null; resolve: (value?: unknown) => void; reject: (reason?: any) => void; }' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/push.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/push.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/iter/push.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS18046: 'consumer' is of type 'unknown'.
+src/js/internal/streams/iter/share.ts - error TS2322: Type '{ __proto__: null; next(): Promise<any>; return(): Promise<any>; }' is not assignable to type 'null'.
+src/js/internal/streams/iter/share.ts - error TS2339: Property 'backpressure' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/share.ts - error TS2339: Property 'backpressure' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/share.ts - error TS2339: Property 'highWaterMark' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/share.ts - error TS2339: Property 'highWaterMark' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/share.ts - error TS2339: Property 'return' does not exist on type 'never'.
+src/js/internal/streams/iter/share.ts - error TS2339: Property 'return' does not exist on type 'never'.
+src/js/internal/streams/iter/share.ts - error TS2339: Property 'return' does not exist on type 'never'.
+src/js/internal/streams/iter/share.ts - error TS2339: Property 'return' does not exist on type 'never'.
+src/js/internal/streams/iter/share.ts - error TS2339: Property 'signal' does not exist on type '{ __proto__: null; }'.
+src/js/internal/streams/iter/share.ts - error TS2345: Argument of type '(value?: unknown) => void' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/share.ts - error TS2345: Argument of type '(value?: unknown) => void' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/share.ts - error TS2349: This expression is not callable.
+src/js/internal/streams/iter/share.ts - error TS2349: This expression is not callable.
+src/js/internal/streams/iter/share.ts - error TS2349: This expression is not callable.
+src/js/internal/streams/iter/share.ts - error TS2531: Object is possibly 'null'.
+src/js/internal/streams/iter/share.ts - error TS2531: Object is possibly 'null'.
+src/js/internal/streams/iter/share.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/iter/share.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/iter/transform.ts - error TS18047: 'error' is possibly 'null'.
+src/js/internal/streams/iter/transform.ts - error TS18047: 'error' is possibly 'null'.
+src/js/internal/streams/iter/transform.ts - error TS18048: 'buf' is possibly 'undefined'.
+src/js/internal/streams/iter/transform.ts - error TS18048: 'buf' is possibly 'undefined'.
+src/js/internal/streams/iter/transform.ts - error TS2322: Type 'Error' is not assignable to type 'null'.
+src/js/internal/streams/iter/transform.ts - error TS2339: Property 'errno' does not exist on type 'Error'.
+src/js/internal/streams/iter/transform.ts - error TS2339: Property 'errno' does not exist on type 'Error'.
+src/js/internal/streams/iter/transform.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/transform.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/transform.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/transform.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/transform.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/transform.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/transform.ts - error TS2345: Argument of type 'undefined' is not assignable to parameter of type 'never'.
+src/js/internal/streams/iter/transform.ts - error TS2345: Argument of type 'undefined' is not assignable to parameter of type 'never'.
+src/js/internal/streams/native-readable.ts - error TS2322: Type 'Readable' is not assignable to type 'NativeReadable'.
+src/js/internal/streams/native-readable.ts - error TS2339: Property '$bunNativePtr' does not exist on type 'Readable'.
+src/js/internal/streams/native-readable.ts - error TS2339: Property '$start' does not exist on type 'Readable'.
+src/js/internal/streams/native-readable.ts - error TS2339: Property 'debugId' does not exist on type 'Readable'.
+src/js/internal/streams/native-readable.ts - error TS2339: Property 'debugId' does not exist on type 'Readable'.
+src/js/internal/streams/native-readable.ts - error TS2339: Property 'ref' does not exist on type 'Readable'.
+src/js/internal/streams/native-readable.ts - error TS2339: Property 'unref' does not exist on type 'Readable'.
+src/js/internal/streams/native-readable.ts - error TS2345: Argument of type '"streams/BunStreamConsumers.cpp"' is not assignable to parameter of type 'NativeFilenameCPP'.
+src/js/internal/streams/operators.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/internal/streams/pipeline.ts - error TS2339: Property 'readable' does not exist on type 'ReadableStream<any> | TransformStream<any, any>'.
+src/js/internal/streams/pipeline.ts - error TS2339: Property 'readable' does not exist on type 'ReadableStream<any> | TransformStream<any, any>'.
+src/js/internal/streams/pipeline.ts - error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'Error & { errors?: Error[] | undefined; }'.
+src/js/internal/streams/pipeline.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/internal/streams/pipeline.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/internal/streams/pipeline.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/internal/streams/pipeline.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/internal/streams/pipeline.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/internal/streams/readable.ts - error TS2339: Property '_isArrayBufferView' does not exist on type 'typeof Stream'.
+src/js/internal/streams/readable.ts - error TS2339: Property '_isArrayBufferView' does not exist on type 'typeof Stream'.
+src/js/internal/streams/readable.ts - error TS2339: Property '_uint8ArrayToBuffer' does not exist on type 'typeof Stream'.
+src/js/internal/streams/readable.ts - error TS2339: Property '_uint8ArrayToBuffer' does not exist on type 'typeof Stream'.
+src/js/internal/streams/readable.ts - error TS2339: Property 'stream' does not exist on type 'AsyncGenerator<any, void, unknown>'.
+src/js/internal/streams/readable.ts - error TS2454: Variable 'error' is used before being assigned.
+src/js/internal/streams/readable.ts - error TS2454: Variable 'error' is used before being assigned.
+src/js/internal/streams/readable.ts - error TS2454: Variable 'error' is used before being assigned.
+src/js/internal/streams/readable.ts - error TS2454: Variable 'error' is used before being assigned.
+src/js/internal/streams/readable.ts - error TS2454: Variable 'error' is used before being assigned.
+src/js/internal/streams/readable.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/internal/streams/readable.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/internal/streams/writable.ts - error TS2322: Type '{ kOnConstructed: symbol; isDestroyed: (stream: any) => boolean | null; kIsDestroyed: symbol; isDisturbed: (stream: any) => boolean; kIsDisturbed: symbol; isErrored: (stream: any) => boolean; ... 36 more ...; kConstructed: number; }' is not assignable to type '{ readonly kState: unique symbol; readonly kOnConstructed: unique symbol; kObjectMode: number; kErrorEmitted: number; kAutoDestroy: number; kEmitClose: number; kDestroyed: number; kClosed: number; kCloseEmitted: number; kErrored: number; kConstructed: number; }'.
+src/js/internal/streams/writable.ts - error TS2339: Property '_isArrayBufferView' does not exist on type 'typeof Stream'.
+src/js/internal/streams/writable.ts - error TS2339: Property '_uint8ArrayToBuffer' does not exist on type 'typeof Stream'.
+src/js/internal/streams/writable.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/internal/test_runner/mock_timers.ts - error TS2322: Type '(callback: any, delay: any, ...args: any[]) => Timeout' is not assignable to type '{ (handler: TimerHandler, interval?: number | undefined, ...arguments: any[]): Timer; <TArgs extends any[]>(callback: (...args: TArgs) => void, delay?: number | undefined, ...args: MakeVoidParameterOptional<...>): Timeout; }'.
+src/js/internal/test_runner/mock_timers.ts - error TS2322: Type '(callback: any, delay: any, ...args: any[]) => Timeout' is not assignable to type '{ (handler: TimerHandler, interval?: number | undefined, ...arguments: any[]): Timer; <TArgs extends any[]>(callback: (...args: TArgs) => void, delay?: number | undefined, ...args: MakeVoidParameterOptional<...>): Timeout; }'.
+src/js/internal/test_runner/mock_timers.ts - error TS2322: Type '{ (year: any, month: any, date: any, hours: any, minutes: any, seconds: any, ms: any): any; now(): any; toString(): any; prototype: any; parse: any; UTC: any; }' is not assignable to type 'DateConstructor'.
+src/js/internal/test_runner/mock_timers.ts - error TS2353: Object literal may only specify known properties, and '__proto__' does not exist in type '{ timerFn: any; clearFn: any; ms: any; result: any; options: any; }'.
+src/js/internal/test_runner/mock_timers.ts - error TS2353: Object literal may only specify known properties, and '__proto__' does not exist in type '{ timerFn: any; clearFn: any; ms: any; result: any; options: any; }'.
+src/js/internal/test_runner/mock_timers.ts - error TS2741: Property '__promisify__' is missing in type '(callback: any, ...args: any[]) => Timeout' but required in type 'typeof setImmediate'.
+src/js/internal/test_runner/mock_timers.ts - error TS2741: Property '__promisify__' is missing in type '(callback: any, ...args: any[]) => Timeout' but required in type 'typeof setImmediate'.
+src/js/internal/test_runner/mock_timers.ts - error TS2741: Property '__promisify__' is missing in type '(callback: any, delay: any, ...args: any[]) => Timeout' but required in type 'typeof setTimeout'.
+src/js/internal/test_runner/mock_timers.ts - error TS2741: Property '__promisify__' is missing in type '(callback: any, delay: any, ...args: any[]) => Timeout' but required in type 'typeof setTimeout'.
+src/js/internal/test_runner/mock_timers.ts - error TS2783: '__proto__' is specified more than once, so this usage will be overwritten.
+src/js/internal/test/binding.ts - error TS2339: Property 'errno' does not exist on type '{}'.
+src/js/internal/test/binding.ts - error TS2339: Property 'errno' does not exist on type '{}'.
+src/js/internal/test/binding.ts - error TS2339: Property 'errno' does not exist on type '{}'.
+src/js/internal/tls.ts - error TS2339: Property 'every' does not exist on type 'never'.
+src/js/internal/tls.ts - error TS2339: Property 'length' does not exist on type 'never'.
+src/js/internal/tls.ts - error TS2339: Property 'length' does not exist on type 'never'.
+src/js/internal/tls.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/internal/trace_events.ts - error TS2322: Type 'unknown' is not assignable to type 'string[]'.
+src/js/internal/trace_events.ts - error TS2345: Argument of type '"exit"' is not assignable to parameter of type '"memoryPressure"'.
+src/js/internal/trace_events.ts - error TS2345: Argument of type '"rejectionHandled"' is not assignable to parameter of type '"memoryPressure"'.
+src/js/internal/trace_events.ts - error TS2345: Argument of type '"unhandledRejection"' is not assignable to parameter of type '"memoryPressure"'.
+src/js/internal/trace_events.ts - error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/js/internal/trace_events.ts - error TS2552: Cannot find name '$Array'. Did you mean 'Array'?
+src/js/internal/trace_events.ts - error TS2741: Property '__promisify__' is missing in type '(callback: any, delay: any, ...args: any[]) => any' but required in type 'typeof setTimeout'.
+src/js/internal/tty.ts - error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/js/internal/webstreams_adapters.ts - error TS2322: Type 'Error | null' is not assignable to type 'Error'.
+src/js/internal/webstreams_adapters.ts - error TS2339: Property '__id' does not exist on type 'ReadableFromWeb'.
+src/js/internal/webstreams_adapters.ts - error TS2339: Property 'pull' does not exist on type '{ __proto__: null; type: string | undefined; start(c: any): void; cancel(reason: any): void; }'.
+src/js/internal/webstreams_adapters.ts - error TS2345: Argument of type '{} | null' is not assignable to parameter of type 'string'.
+src/js/internal/webstreams_adapters.ts - error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/js/internal/webstreams_adapters.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/internal/webstreams_adapters.ts - error TS2769: No overload matches this call.
+src/js/internal/worker/messaging.ts - error TS2347: Untyped function calls may not accept type arguments.
+src/js/node/_http_client.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_client.ts - error TS18047: 'traceEvents' is possibly 'null'.
+src/js/node/_http_client.ts - error TS18047: 'traceEvents' is possibly 'null'.
+src/js/node/_http_client.ts - error TS18047: 'traceEvents' is possibly 'null'.
+src/js/node/_http_client.ts - error TS2322: Type '{ enableCategories: (categories: string[]) => void; disableCategories: (categories: string[]) => void; getEnabledCategories: () => string | undefined; getCategoryEnabledBuffer: (category: string) => Uint8Array; ... 12 more ...; rawReadFileSync: (arg0?: unknown, arg1?: unknown, ...args: unknown[]) => unknown; }' is not assignable to type 'null'.
+src/js/node/_http_client.ts - error TS2339: Property 'domain' does not exist on type 'Process'.
+src/js/node/_http_client.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_common.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_incoming.ts - error TS2339: Property '_dumped' does not exist on type 'IncomingMessage'.
+src/js/node/_http_incoming.ts - error TS2339: Property '_unrefTimer' does not exist on type 'Socket'.
+src/js/node/_http_incoming.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/_http_incoming.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/_http_incoming.ts - error TS2749: 'IncomingMessage' refers to a value, but is being used as a type here. Did you mean 'typeof IncomingMessage'?
+src/js/node/_http_incoming.ts - error TS2749: 'IncomingMessage' refers to a value, but is being used as a type here. Did you mean 'typeof IncomingMessage'?
+src/js/node/_http_incoming.ts - error TS2749: 'NodeHTTPResponseAbortEvent' refers to a value, but is being used as a type here. Did you mean 'typeof NodeHTTPResponseAbortEvent'?
+src/js/node/_http_outgoing.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/node/_http_outgoing.ts - error TS2554: Expected 1 arguments, but got 2.
+src/js/node/_http_outgoing.ts - error TS2554: Expected 1 arguments, but got 2.
+src/js/node/_http_outgoing.ts - error TS2571: Object is of type 'unknown'.
+src/js/node/_http_server.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/_http_server.ts - error TS18047: 'traceEvents' is possibly 'null'.
+src/js/node/_http_server.ts - error TS18047: 'traceEvents' is possibly 'null'.
+src/js/node/_http_server.ts - error TS18047: 'traceEvents' is possibly 'null'.
+src/js/node/_http_server.ts - error TS2322: Type '{ enableCategories: (categories: string[]) => void; disableCategories: (categories: string[]) => void; getEnabledCategories: () => string | undefined; getCategoryEnabledBuffer: (category: string) => Uint8Array; ... 12 more ...; rawReadFileSync: (arg0?: unknown, arg1?: unknown, ...args: unknown[]) => unknown; }' is not assignable to type 'null'.
+src/js/node/_http_server.ts - error TS2339: Property '_readableState' does not exist on type 'Socket'.
+src/js/node/_http_server.ts - error TS2339: Property '_writableState' does not exist on type 'Socket'.
+src/js/node/_http_server.ts - error TS2339: Property '_writableState' does not exist on type 'Socket'.
+src/js/node/_http_server.ts - error TS2339: Property 'code' does not exist on type '{}'.
+src/js/node/_http_server.ts - error TS2339: Property 'encrypted' does not exist on type 'Socket'.
+src/js/node/_http_server.ts - error TS2339: Property 'encrypted' does not exist on type 'Socket'.
+src/js/node/_http_server.ts - error TS2339: Property 'encrypted' does not exist on type 'Socket'.
+src/js/node/_http_server.ts - error TS2339: Property 'encrypted' does not exist on type 'Socket'.
+src/js/node/_http_server.ts - error TS2339: Property 'entries' does not exist on type 'never'.
+src/js/node/_http_server.ts - error TS2339: Property 'entries' does not exist on type 'never'.
+src/js/node/_http_server.ts - error TS2339: Property 'host' does not exist on type 'object'.
+src/js/node/_http_server.ts - error TS2339: Property 'parser' does not exist on type 'Socket'.
+src/js/node/_http_server.ts - error TS2339: Property 'path' does not exist on type 'object'.
+src/js/node/_http_server.ts - error TS2339: Property 'port' does not exist on type 'object'.
+src/js/node/_http_server.ts - error TS2339: Property 'push' does not exist on type 'never'.
+src/js/node/_http_server.ts - error TS2339: Property 'resume' does not exist on type 'never'.
+src/js/node/_http_server.ts - error TS2339: Property 'tls' does not exist on type 'object'.
+src/js/node/_http_server.ts - error TS2345: Argument of type '{ highWaterMark: Server; allowHalfOpen: true; } | { allowHalfOpen: true; }' is not assignable to parameter of type 'SocketConstructorOpts | undefined'.
+src/js/node/_http_server.ts - error TS2353: Object literal may only specify known properties, and 'onNodeHTTPRequest' does not exist in type '(HostnamePortServeOptions<any> & { unix?: undefined; } & { websocket: WebSocketHandler<any>; } & { fetch?(this: Server<...>, req: Request, server: Server<...>): MaybePromise<...>; routes: RoutesWithUpgrade<...>; } & {}) | (HostnamePortServeOptions<...> & ... 3 more ... & {})'.
+src/js/node/_http_server.ts - error TS2416: Property 'connect' in type 'Socket' is not assignable to the same property in base type 'Socket'.
+src/js/node/_http_server.ts - error TS2416: Property 'resetAndDestroy' in type 'Socket' is not assignable to the same property in base type 'Socket'.
+src/js/node/_http_server.ts - error TS2416: Property 'setEncoding' in type 'Socket' is not assignable to the same property in base type 'Socket'.
+src/js/node/_http_server.ts - error TS2416: Property 'setKeepAlive' in type 'Socket' is not assignable to the same property in base type 'Socket'.
+src/js/node/_http_server.ts - error TS2554: Expected 0 arguments, but got 1.
+src/js/node/_http_server.ts - error TS2554: Expected 0 arguments, but got 1.
+src/js/node/_http_server.ts - error TS2554: Expected 0-1 arguments, but got 3.
+src/js/node/_http_server.ts - error TS2554: Expected 0-1 arguments, but got 3.
+src/js/node/_http_server.ts - error TS2554: Expected 0-1 arguments, but got 3.
+src/js/node/_http_server.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/_http_server.ts - error TS2611: 'bufferSize' is defined as a property in class 'Socket', but is overridden here in 'Socket' as an accessor.
+src/js/node/_http_server.ts - error TS2611: 'bytesWritten' is defined as a property in class 'Socket', but is overridden here in 'Socket' as an accessor.
+src/js/node/_http_server.ts - error TS2611: 'localAddress' is defined as a property in class 'Socket', but is overridden here in 'Socket' as an accessor.
+src/js/node/_http_server.ts - error TS2611: 'localFamily' is defined as a property in class 'Socket', but is overridden here in 'Socket' as an accessor.
+src/js/node/_http_server.ts - error TS2611: 'localPort' is defined as a property in class 'Socket', but is overridden here in 'Socket' as an accessor.
+src/js/node/_http_server.ts - error TS2611: 'pending' is defined as a property in class 'Socket', but is overridden here in 'Socket' as an accessor.
+src/js/node/_http_server.ts - error TS2611: 'readyState' is defined as a property in class 'Socket', but is overridden here in 'Socket' as an accessor.
+src/js/node/_http_server.ts - error TS2611: 'remoteAddress' is defined as a property in class 'Socket', but is overridden here in 'Socket' as an accessor.
+src/js/node/_http_server.ts - error TS2611: 'remoteFamily' is defined as a property in class 'Socket', but is overridden here in 'Socket' as an accessor.
+src/js/node/_http_server.ts - error TS2611: 'remotePort' is defined as a property in class 'Socket', but is overridden here in 'Socket' as an accessor.
+src/js/node/_http_server.ts - error TS2749: 'NodeHTTPResponseAbortEvent' refers to a value, but is being used as a type here. Did you mean 'typeof NodeHTTPResponseAbortEvent'?
+src/js/node/_http_server.ts - error TS2749: 'NodeHTTPServerSocket' refers to a value, but is being used as a type here. Did you mean 'typeof NodeHTTPServerSocket'?
+src/js/node/_http_server.ts - error TS2749: 'NodeHTTPServerSocket' refers to a value, but is being used as a type here. Did you mean 'typeof NodeHTTPServerSocket'?
+src/js/node/_http_server.ts - error TS2749: 'NodeHTTPServerSocket' refers to a value, but is being used as a type here. Did you mean 'typeof NodeHTTPServerSocket'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http_server.ts - error TS2749: 'Server' refers to a value, but is being used as a type here. Did you mean 'typeof Server'?
+src/js/node/_http2_upgrade.ts - error TS18047: 'events' is possibly 'null'.
+src/js/node/_http2_upgrade.ts - error TS18047: 'events' is possibly 'null'.
+src/js/node/_http2_upgrade.ts - error TS18047: 'events' is possibly 'null'.
+src/js/node/_http2_upgrade.ts - error TS18047: 'events' is possibly 'null'.
+src/js/node/_http2_upgrade.ts - error TS2322: Type '(err?: Error | undefined) => void' is not assignable to type '(err?: Error | null | undefined) => void'.
+src/js/node/_http2_upgrade.ts - error TS2322: Type 'boolean | undefined' is not assignable to type 'boolean'.
+src/js/node/_http2_upgrade.ts - error TS2339: Property '_final' does not exist on type 'TLSProxySocket'.
+src/js/node/_http2_upgrade.ts - error TS2339: Property '_read' does not exist on type 'TLSProxySocket'.
+src/js/node/_http2_upgrade.ts - error TS2339: Property '_write' does not exist on type 'TLSProxySocket'.
+src/js/node/_http2_upgrade.ts - error TS2339: Property 'on' does not exist on type 'TLSProxySocket'.
+src/js/node/_http2_upgrade.ts - error TS2339: Property 'once' does not exist on type 'TLSProxySocket'.
+src/js/node/_http2_upgrade.ts - error TS2551: Property '_destroy' does not exist on type 'TLSProxySocket'. Did you mean 'destroy'?
+src/js/node/_http2_upgrade.ts - error TS2769: No overload matches this call.
+src/js/node/_http2_upgrade.ts - error TS2769: No overload matches this call.
+src/js/node/_http2_upgrade.ts - error TS2769: No overload matches this call.
+src/js/node/_http2_upgrade.ts - error TS2769: No overload matches this call.
+src/js/node/_http2_upgrade.ts - error TS2769: No overload matches this call.
+src/js/node/_http2_upgrade.ts - error TS2769: No overload matches this call.
+src/js/node/assert.ts - error TS2322: Type '(fn: () => Promise<unknown>, ...args: unknown[]) => Promise<void>' is not assignable to type '{ (block: Promise<unknown> | (() => Promise<unknown>), message?: string | Error | undefined): Promise<void>; (block: Promise<unknown> | (() => Promise<unknown>), error: AssertPredicate, message?: string | ... 1 more ... | undefined): Promise<...>; }'.
+src/js/node/assert.ts - error TS2322: Type 'unknown' is not assignable to type 'string | Error | undefined'.
+src/js/node/assert.ts - error TS2328: Types of parameters 'fn' and 'block' are incompatible.
+src/js/node/assert.ts - error TS2328: Types of parameters 'promiseFn' and 'block' are incompatible.
+src/js/node/assert.ts - error TS2339: Property 'message' does not exist on type 'object'.
+src/js/node/assert.ts - error TS2339: Property 'stack' does not exist on type '{}'.
+src/js/node/assert.ts - error TS2394: This overload signature is not compatible with its implementation signature.
+src/js/node/assert.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/assert.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/assert.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/assert.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/assert.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/assert.ts - error TS2702: 'nodeAssert' only refers to a type, but is being used as a namespace here.
+src/js/node/async_hooks.ts - error TS2322: Type 'string' is not assignable to type 'undefined'.
+src/js/node/async_hooks.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/node/async_hooks.ts - error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+src/js/node/async_hooks.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/child_process.ts - error TS18046: 'ex' is of type 'unknown'.
+src/js/node/child_process.ts - error TS18046: 'ex' is of type 'unknown'.
+src/js/node/child_process.ts - error TS18046: 'ex' is of type 'unknown'.
+src/js/node/child_process.ts - error TS2322: Type 'any[]' is not assignable to type 'never[]'.
+src/js/node/child_process.ts - error TS2322: Type 'string | undefined' is not assignable to type 'Buffer<ArrayBufferLike> | null'.
+src/js/node/child_process.ts - error TS2322: Type 'string | undefined' is not assignable to type 'Buffer<ArrayBufferLike> | null'.
+src/js/node/child_process.ts - error TS2322: Type 'unknown' is not assignable to type 'Error | null'.
+src/js/node/child_process.ts - error TS2339: Property '_eval' does not exist on type 'Process'.
+src/js/node/child_process.ts - error TS2339: Property '_handle' does not exist on type 'string'.
+src/js/node/child_process.ts - error TS2339: Property '_handle' does not exist on type 'string'.
+src/js/node/child_process.ts - error TS2339: Property 'child' does not exist on type 'Promise<unknown>'.
+src/js/node/child_process.ts - error TS2339: Property 'cmd' does not exist on type 'Error'.
+src/js/node/child_process.ts - error TS2339: Property 'code' does not exist on type 'object'.
+src/js/node/child_process.ts - error TS2339: Property 'error' does not exist on type '{ signal: string | null; status: number; output: (Buffer<ArrayBufferLike> | null)[]; pid: number; }'.
+src/js/node/child_process.ts - error TS2339: Property 'error' does not exist on type '{ signal: string | null; status: number; output: (Buffer<ArrayBufferLike> | null)[]; pid: number; }'.
+src/js/node/child_process.ts - error TS2339: Property 'error' does not exist on type '{ signal: string | null; status: number; output: (Buffer<ArrayBufferLike> | null)[]; pid: number; }'.
+src/js/node/child_process.ts - error TS2339: Property 'error' does not exist on type '{ signal: string | null; status: number; output: (Buffer<ArrayBufferLike> | null)[]; pid: number; }'.
+src/js/node/child_process.ts - error TS2339: Property 'fd' does not exist on type 'string'.
+src/js/node/child_process.ts - error TS2339: Property 'fd' does not exist on type 'string'.
+src/js/node/child_process.ts - error TS2339: Property 'pid' does not exist on type 'SystemError'.
+src/js/node/child_process.ts - error TS2339: Property 'resume' does not exist on type 'NativeReadable'.
+src/js/node/child_process.ts - error TS2339: Property 'spawnargs' does not exist on type 'SystemError'.
+src/js/node/child_process.ts - error TS2339: Property 'spawnargs' does not exist on type 'SystemError'.
+src/js/node/child_process.ts - error TS2339: Property 'stderr' does not exist on type '{ signal: string | null; status: number; output: (Buffer<ArrayBufferLike> | null)[]; pid: number; } | { signal: null; status: null; output: null[]; pid: number; stdout: null; stderr: null; error: SystemError; }'.
+src/js/node/child_process.ts - error TS2339: Property 'stderr' does not exist on type '{ signal: string | null; status: number; output: (Buffer<ArrayBufferLike> | null)[]; pid: number; } | { signal: null; status: null; output: null[]; pid: number; stdout: null; stderr: null; error: SystemError; }'.
+src/js/node/child_process.ts - error TS2339: Property 'stderr' does not exist on type '{ signal: string | null; status: number; output: (Buffer<ArrayBufferLike> | null)[]; pid: number; }'.
+src/js/node/child_process.ts - error TS2339: Property 'stdout' does not exist on type '{ signal: string | null; status: number; output: (Buffer<ArrayBufferLike> | null)[]; pid: number; } | { signal: null; status: null; output: null[]; pid: number; stdout: null; stderr: null; error: SystemError; }'.
+src/js/node/child_process.ts - error TS2339: Property 'stdout' does not exist on type '{ signal: string | null; status: number; output: (Buffer<ArrayBufferLike> | null)[]; pid: number; } | { signal: null; status: null; output: null[]; pid: number; stdout: null; stderr: null; error: SystemError; }'.
+src/js/node/child_process.ts - error TS2339: Property 'stdout' does not exist on type '{ signal: string | null; status: number; output: (Buffer<ArrayBufferLike> | null)[]; pid: number; }'.
+src/js/node/child_process.ts - error TS2345: Argument of type 'string' is not assignable to parameter of type 'object'.
+src/js/node/child_process.ts - error TS2345: Argument of type 'string' is not assignable to parameter of type 'object'.
+src/js/node/child_process.ts - error TS2454: Variable 'exitCode' is used before being assigned.
+src/js/node/child_process.ts - error TS2454: Variable 'pid' is used before being assigned.
+src/js/node/child_process.ts - error TS2551: Property 'disconnect' does not exist on type 'ChildProcess'. Did you mean '#disconnect'?
+src/js/node/child_process.ts - error TS2551: Property 'send' does not exist on type 'ChildProcess'. Did you mean '#send'?
+src/js/node/child_process.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/child_process.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/child_process.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/child_process.ts - error TS2769: No overload matches this call.
+src/js/node/child_process.ts - error TS2769: No overload matches this call.
+src/js/node/child_process.ts - error TS2769: No overload matches this call.
+src/js/node/cluster.ts - error TS2339: Property '_setupWorker' does not exist on type 'EventEmitter<any>'.
+src/js/node/crypto.ts - error TS2304: Cannot find name 'key'.
+src/js/node/crypto.ts - error TS2769: No overload matches this call.
+src/js/node/dgram.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dgram.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dgram.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dgram.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dgram.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dgram.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dgram.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dgram.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dgram.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dgram.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dgram.ts - error TS2322: Type '(err: any, sent: any) => void' is not assignable to type 'undefined'.
+src/js/node/dgram.ts - error TS2339: Property 'code' does not exist on type 'Socket<"buffer">'.
+src/js/node/dgram.ts - error TS2339: Property 'errqueue' does not exist on type 'Socket<"buffer">'.
+src/js/node/dgram.ts - error TS2339: Property 'lookup' does not exist on type '{ socket: undefined; queueSize: number; queueCount: number; sendQueue: undefined; sendQueueHead: number; send: (req: any, list: any, count: any, port: any, address: any, _hasCallback: any) => any; drain: () => void; getSendQueueSize: () => any; getSendQueueCount: () => any; readonly fd: any; }'.
+src/js/node/dgram.ts - error TS2339: Property 'lookup' does not exist on type '{ socket: undefined; queueSize: number; queueCount: number; sendQueue: undefined; sendQueueHead: number; send: (req: any, list: any, count: any, port: any, address: any, _hasCallback: any) => any; drain: () => void; getSendQueueSize: () => any; getSendQueueCount: () => any; readonly fd: any; }'.
+src/js/node/dgram.ts - error TS2339: Property 'message' does not exist on type 'Socket<"buffer">'.
+src/js/node/dgram.ts - error TS2339: Property 'onmessage' does not exist on type '{ socket: undefined; queueSize: number; queueCount: number; sendQueue: undefined; sendQueueHead: number; send: (req: any, list: any, count: any, port: any, address: any, _hasCallback: any) => any; drain: () => void; getSendQueueSize: () => any; getSendQueueCount: () => any; readonly fd: any; }'.
+src/js/node/dgram.ts - error TS2339: Property 'syscall' does not exist on type 'Socket<"buffer">'.
+src/js/node/dgram.ts - error TS2339: Property 'syscall' does not exist on type 'Socket<"buffer">'.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/dgram.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/diagnostics_channel.ts - error TS2339: Property 'error' does not exist on type '{}'.
+src/js/node/diagnostics_channel.ts - error TS2339: Property 'error' does not exist on type '{}'.
+src/js/node/diagnostics_channel.ts - error TS2339: Property 'error' does not exist on type '{}'.
+src/js/node/diagnostics_channel.ts - error TS2339: Property 'error' does not exist on type '{}'.
+src/js/node/diagnostics_channel.ts - error TS2339: Property 'error' does not exist on type '{}'.
+src/js/node/diagnostics_channel.ts - error TS2339: Property 'result' does not exist on type '{}'.
+src/js/node/diagnostics_channel.ts - error TS2339: Property 'result' does not exist on type '{}'.
+src/js/node/diagnostics_channel.ts - error TS2339: Property 'result' does not exist on type '{}'.
+src/js/node/dns.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dns.ts - error TS18046: 'err' is of type 'unknown'.
+src/js/node/dns.ts - error TS2339: Property '_handle' does not exist on type 'Resolver'.
+src/js/node/dns.ts - error TS2339: Property '_handle' does not exist on type 'Resolver'.
+src/js/node/dns.ts - error TS2339: Property 'errno' does not exist on type 'Error'.
+src/js/node/dns.ts - error TS2339: Property 'getServers' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'lookupService' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'lookupService' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'native' does not exist on type '(options: any) => any'.
+src/js/node/dns.ts - error TS2339: Property 'native' does not exist on type '(options: any) => any'.
+src/js/node/dns.ts - error TS2339: Property 'native' does not exist on type '(options: any) => any'.
+src/js/node/dns.ts - error TS2339: Property 'resolve' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolve' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolve' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolve' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolveAny' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolveCaa' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolveCname' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolveMx' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolveNaptr' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolveNs' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolvePtr' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolveSoa' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolveSrv' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'resolveTxt' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'reverse' does not exist on type 'typeof dns'.
+src/js/node/dns.ts - error TS2339: Property 'syscall' does not exist on type 'Error'.
+src/js/node/dns.ts - error TS2339: Property 'value' does not exist on type '() => any'.
+src/js/node/dns.ts - error TS2339: Property 'value' does not exist on type '() => any'.
+src/js/node/dns.ts - error TS2339: Property 'value' does not exist on type '() => any'.
+src/js/node/dns.ts - error TS2339: Property 'value' does not exist on type '() => any'.
+src/js/node/dns.ts - error TS2339: Property 'warned' does not exist on type '(hostname: any) => void'.
+src/js/node/dns.ts - error TS2339: Property 'warned' does not exist on type '(hostname: any) => void'.
+src/js/node/dns.ts - error TS2345: Argument of type '(string | number)[]' is not assignable to parameter of type 'never'.
+src/js/node/dns.ts - error TS2345: Argument of type '(string | number)[]' is not assignable to parameter of type 'never'.
+src/js/node/dns.ts - error TS2345: Argument of type 'any[]' is not assignable to parameter of type 'never'.
+src/js/node/dns.ts - error TS2345: Argument of type 'string | 53' is not assignable to parameter of type 'string'.
+src/js/node/dns.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/dns.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/dns.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/dns.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/dns.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/dns.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/domain.ts - error TS2339: Property 'domain' does not exist on type 'Process'.
+src/js/node/domain.ts - error TS2339: Property 'domain' does not exist on type 'Process'.
+src/js/node/events.ts - error TS17005: A constructor cannot contain a 'super' call when its class extends 'null'.
+src/js/node/events.ts - error TS2322: Type '() => any' is not assignable to type 'undefined'.
+src/js/node/events.ts - error TS2322: Type 'typeof AsyncResource' is not assignable to type 'null'.
+src/js/node/events.ts - error TS2339: Property 'addListener' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'addListener' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'count' does not exist on type 'Error'.
+src/js/node/events.ts - error TS2339: Property 'emit' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'emitter' does not exist on type 'Error'.
+src/js/node/events.ts - error TS2339: Property 'eventNames' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'getMaxListeners' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'getMaxListeners' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'listener' does not exist on type '() => any'.
+src/js/node/events.ts - error TS2339: Property 'listenerCount' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'listenerCount' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'listeners' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'off' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'on' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'once' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'once' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'prependListener' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'prependOnceListener' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'rawListeners' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'removeAllListeners' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'removeListener' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'removeListener' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'setMaxListeners' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'setMaxListeners' does not exist on type '{}'.
+src/js/node/events.ts - error TS2339: Property 'type' does not exist on type 'Error'.
+src/js/node/events.ts - error TS2345: Argument of type 'any[]' is not assignable to parameter of type 'never'.
+src/js/node/events.ts - error TS2488: Type 'undefined' must have a '[Symbol.iterator]()' method that returns an iterator.
+src/js/node/events.ts - error TS2507: Type '(opts: any) => void' is not a constructor function type.
+src/js/node/events.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/events.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/events.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/fs.promises.ts - error TS18046: 'bytesWritten' is of type 'unknown'.
+src/js/node/fs.promises.ts - error TS18046: 'bytesWritten' is of type 'unknown'.
+src/js/node/fs.promises.ts - error TS18046: 'wrote' is of type 'unknown'.
+src/js/node/fs.promises.ts - error TS2322: Type 'Promise<number>' is not assignable to type 'null'.
+src/js/node/fs.promises.ts - error TS2322: Type 'unknown' is not assignable to type 'null'.
+src/js/node/fs.promises.ts - error TS2322: Type 'unknown' is not assignable to type 'null'.
+src/js/node/fs.promises.ts - error TS2339: Property 'close' does not exist on type 'Promise<unknown>'.
+src/js/node/fs.promises.ts - error TS2339: Property 'close' does not exist on type 'Promise<unknown>'.
+src/js/node/fs.promises.ts - error TS2339: Property 'ignore' does not exist on type '{ encoding?: BufferEncoding | undefined; persistent?: boolean | undefined; recursive?: boolean | undefined; signal?: AbortSignal | undefined; }'.
+src/js/node/fs.promises.ts - error TS2345: Argument of type 'undefined' is not assignable to parameter of type 'string | null'.
+src/js/node/fs.promises.ts - error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/js/node/fs.ts - error TS18046: 'entries' is of type 'unknown'.
+src/js/node/fs.ts - error TS18046: 'entries' is of type 'unknown'.
+src/js/node/fs.ts - error TS2322: Type '(arg0?: unknown, arg1?: unknown, arg2?: unknown, ...args: unknown[]) => unknown' is not assignable to type '{ (path: PathLike, options?: EncodingOption): string; (path: PathLike, options: BufferEncodingOption): NonSharedBuffer; (path: PathLike, options?: EncodingOption): string | NonSharedBuffer; }'.
+src/js/node/fs.ts - error TS2322: Type '(p: any, options: any, callback: any) => void' is not assignable to type '{ (path: PathLike, options: EncodingOption, callback: (err: ErrnoException | null, resolvedPath: string) => void): void; (path: PathLike, options: BufferEncodingOption, callback: (err: ErrnoException | null, resolvedPath: NonSharedBuffer) => void): void; (path: PathLike, options: EncodingOption, callback: (err: Errn...'.
+src/js/node/fs.ts - error TS2322: Type 'unknown' is not assignable to type 'Dirent<string>[] | null'.
+src/js/node/fs.ts - error TS2322: Type 'unknown' is not assignable to type 'Stats'.
+src/js/node/fs.ts - error TS2322: Type 'unknown' is not assignable to type 'Stats'.
+src/js/node/fs.ts - error TS2322: Type 'unknown' is not assignable to type 'Stats'.
+src/js/node/fs.ts - error TS2339: Property 'code' does not exist on type '{}'.
+src/js/node/fs.ts - error TS2339: Property 'code' does not exist on type '{}'.
+src/js/node/fs.ts - error TS2339: Property 'errno' does not exist on type '{}'.
+src/js/node/fs.ts - error TS2339: Property 'errno' does not exist on type '{}'.
+src/js/node/fs.ts - error TS2339: Property 'errno' does not exist on type 'Error'.
+src/js/node/fs.ts - error TS2339: Property 'path' does not exist on type 'Error'.
+src/js/node/fs.ts - error TS2339: Property 'syscall' does not exist on type '{}'.
+src/js/node/fs.ts - error TS2339: Property 'syscall' does not exist on type '{}'.
+src/js/node/fs.ts - error TS2339: Property 'syscall' does not exist on type 'Error'.
+src/js/node/fs.ts - error TS2345: Argument of type 'CallableFunction' is not assignable to parameter of type '(reason: any) => PromiseLike<never>'.
+src/js/node/fs.ts - error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/js/node/fs.ts - error TS2571: Object is of type 'unknown'.
+src/js/node/fs.ts - error TS2571: Object is of type 'unknown'.
+src/js/node/http.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/http.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/http2.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/http2.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/http2.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/http2.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/http2.ts - error TS18046: 'HTTPParser' is of type 'unknown'.
+src/js/node/http2.ts - error TS18047: 'head' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'rawHeadersList' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'rawHeadersList' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'rawHeadersList' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'rawHeadersList' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'rawHeadersList' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'rawHeadersList' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'rawHeadersList' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'rawHeadersList' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'req' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'req' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'req' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'req' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'req' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'req' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'req' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'req' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'req' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'seen' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'session' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'session' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'session' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'session' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'session' is possibly 'null'.
+src/js/node/http2.ts - error TS18047: 'session' is possibly 'null'.
+src/js/node/http2.ts - error TS2304: Cannot find name 'VoidFunction'.
+src/js/node/http2.ts - error TS2322: Type '() => void' is not assignable to type 'null'.
+src/js/node/http2.ts - error TS2322: Type '{ statusCode: any; statusMessage: any; headers: any; autoHeaderBits: any; keepAliveTimeoutSecs: any; }' is not assignable to type 'null'.
+src/js/node/http2.ts - error TS2322: Type 'Http2Server | undefined' is not assignable to type 'Http2Server'.
+src/js/node/http2.ts - error TS2322: Type 'null' is not assignable to type '(callback: any) => void'.
+src/js/node/http2.ts - error TS2322: Type 'null' is not assignable to type 'Http2Server'.
+src/js/node/http2.ts - error TS2322: Type 'readonly any[] | undefined' is not assignable to type 'symbol'.
+src/js/node/http2.ts - error TS2339: Property '_dumped' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property '_readableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_readableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_readableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_readableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_readableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_writableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_writableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_writableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_writableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_writableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_writableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_writableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_writableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property '_writableState' does not exist on type 'Http2Stream'.
+src/js/node/http2.ts - error TS2339: Property 'authority' does not exist on type 'ClientHttp2Stream'.
+src/js/node/http2.ts - error TS2339: Property 'authority' does not exist on type 'ClientHttp2Stream'.
+src/js/node/http2.ts - error TS2339: Property 'authority' does not exist on type 'ClientHttp2Stream'.
+src/js/node/http2.ts - error TS2339: Property 'authority' does not exist on type 'ClientHttp2Stream'.
+src/js/node/http2.ts - error TS2339: Property 'authority' does not exist on type 'ClientHttp2Stream'.
+src/js/node/http2.ts - error TS2339: Property 'autoHeaderBits' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'charCodeAt' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'complete' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'custom' does not exist on type '(original: any) => any'.
+src/js/node/http2.ts - error TS2339: Property 'customSettings' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'customSettings' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'destroy' does not exist on type 'Http2Session'.
+src/js/node/http2.ts - error TS2339: Property 'destroyed' does not exist on type 'Http2Session'.
+src/js/node/http2.ts - error TS2339: Property 'destroyed' does not exist on type 'Http2Session'.
+src/js/node/http2.ts - error TS2339: Property 'enableConnectProtocol' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'enableConnectProtocol' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'enablePush' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'enablePush' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'endStream' does not exist on type 'object'.
+src/js/node/http2.ts - error TS2339: Property 'endStream' does not exist on type 'object'.
+src/js/node/http2.ts - error TS2339: Property 'has' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'headers' does not exist on type '{ req: ClientHttp2Stream; headers: any; sensitiveNames: any; options: any; } | undefined'.
+src/js/node/http2.ts - error TS2339: Property 'headers' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'headersTimeout' does not exist on type 'Http2SecureServer'.
+src/js/node/http2.ts - error TS2339: Property 'headerTableSize' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'headerTableSize' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'initialWindowSize' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'initialWindowSize' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'keepAliveTimeout' does not exist on type 'Http2SecureServer'.
+src/js/node/http2.ts - error TS2339: Property 'length' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'maxConcurrentStreams' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'maxConcurrentStreams' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'maxConcurrentStreams' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'maxFrameSize' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'maxFrameSize' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'maxHeaderListSize' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'maxHeaderListSize' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'maxHeadersCount' does not exist on type 'Http2SecureServer'.
+src/js/node/http2.ts - error TS2339: Property 'maxHeaderSize' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'maxHeaderSize' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'maxOutstandingSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'maxOutstandingSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'maxOutstandingSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'maxOutstandingSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'maxOutstandingSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'maxOutstandingSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'maxRequestsPerSocket' does not exist on type 'Http2SecureServer'.
+src/js/node/http2.ts - error TS2339: Property 'maxReservedRemoteStreams' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'maxReservedRemoteStreams' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'options' does not exist on type '{ req: ClientHttp2Stream; headers: any; sensitiveNames: any; options: any; } | undefined'.
+src/js/node/http2.ts - error TS2339: Property 'push' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'push' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'remoteCustomSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'remoteCustomSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'remoteCustomSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'remoteCustomSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'remoteCustomSettings' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'req' does not exist on type '{ req: ClientHttp2Stream; headers: any; sensitiveNames: any; options: any; } | undefined'.
+src/js/node/http2.ts - error TS2339: Property 'req' does not exist on type '{ req: ClientHttp2Stream; headers: any; sensitiveNames: any; options: any; } | undefined'.
+src/js/node/http2.ts - error TS2339: Property 'req' does not exist on type 'Http2ServerResponse'.
+src/js/node/http2.ts - error TS2339: Property 'requestTimeout' does not exist on type 'Http2SecureServer'.
+src/js/node/http2.ts - error TS2339: Property 'sensitiveNames' does not exist on type '{ req: ClientHttp2Stream; headers: any; sensitiveNames: any; options: any; } | undefined'.
+src/js/node/http2.ts - error TS2339: Property 'sentTrailers' does not exist on type 'ClientHttp2Session'.
+src/js/node/http2.ts - error TS2339: Property 'servername' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'servername' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'servername' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'signal' does not exist on type 'object'.
+src/js/node/http2.ts - error TS2339: Property 'signal' does not exist on type 'object'.
+src/js/node/http2.ts - error TS2339: Property 'statusCode' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'statusMessage' does not exist on type 'never'.
+src/js/node/http2.ts - error TS2339: Property 'strictFieldWhitespaceValidation' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'strictFieldWhitespaceValidation' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'strictSingleValueFields' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'strictSingleValueFields' does not exist on type 'Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2339: Property 'timeout' does not exist on type 'Http2Session'.
+src/js/node/http2.ts - error TS2339: Property 'wireHeaders' does not exist on type '{ req: ClientHttp2Stream; headers: any; sensitiveNames: any; options: any; } | undefined'.
+src/js/node/http2.ts - error TS2339: Property 'writable' does not exist on type 'Http2ServerResponse'.
+src/js/node/http2.ts - error TS2345: Argument of type '(typeof Http2ServerRequest | typeof Http2ServerResponse | typeof ClientHttp2Stream | typeof ClientHttp2Session | ((buf?: any, options?: any) => any) | ((url: string | URL, options?: Http2ConnectOptions | undefined, listener?: Function | undefined) => ClientHttp2Session))[]' is not assignable to parameter of type 'Function'.
+src/js/node/http2.ts - error TS2345: Argument of type 'ClientHttp2Session | ServerHttp2Session | null' is not assignable to parameter of type 'Http2Session'.
+src/js/node/http2.ts - error TS2345: Argument of type 'Error | null' is not assignable to parameter of type 'number | Error | undefined'.
+src/js/node/http2.ts - error TS2345: Argument of type 'Function | undefined' is not assignable to parameter of type '((err?: Error | undefined) => void) | undefined'.
+src/js/node/http2.ts - error TS2345: Argument of type 'Function | undefined' is not assignable to parameter of type '((err?: Error | undefined) => void) | undefined'.
+src/js/node/http2.ts - error TS2345: Argument of type 'Function' is not assignable to parameter of type '(...args: any[]) => void'.
+src/js/node/http2.ts - error TS2345: Argument of type 'Function' is not assignable to parameter of type '(...args: any[]) => void'.
+src/js/node/http2.ts - error TS2353: Object literal may only specify known properties, and 'ALPNProtocols' does not exist in type 'URL | Http2ConnectOptions'.
+src/js/node/http2.ts - error TS2353: Object literal may only specify known properties, and 'wireHeaders' does not exist in type '{ req: ClientHttp2Stream; headers: any; sensitiveNames: any; options: any; }'.
+src/js/node/http2.ts - error TS2416: Property 'close' in type 'Http2SecureServer' is not assignable to the same property in base type 'Server'.
+src/js/node/http2.ts - error TS2416: Property 'close' in type 'Http2Server' is not assignable to the same property in base type 'Server'.
+src/js/node/http2.ts - error TS2416: Property 'end' in type 'Http2Stream' is not assignable to the same property in base type 'Duplex'.
+src/js/node/http2.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/node/http2.ts - error TS2554: Expected 1-2 arguments, but got 0.
+src/js/node/http2.ts - error TS2554: Expected 1-2 arguments, but got 0.
+src/js/node/http2.ts - error TS2554: Expected 2 arguments, but got 0.
+src/js/node/http2.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/http2.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/http2.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/http2.ts - error TS2554: Expected 3 arguments, but got 0.
+src/js/node/http2.ts - error TS2554: Expected 3 arguments, but got 0.
+src/js/node/http2.ts - error TS2554: Expected 3 arguments, but got 0.
+src/js/node/http2.ts - error TS2554: Expected 3 arguments, but got 0.
+src/js/node/http2.ts - error TS2554: Expected 3 arguments, but got 0.
+src/js/node/http2.ts - error TS2554: Expected 3 arguments, but got 0.
+src/js/node/http2.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/http2.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/http2.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/http2.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/http2.ts - error TS2564: Property '#url' has no initializer and is not definitely assigned in the constructor.
+src/js/node/http2.ts - error TS2611: 'closed' is defined as a property in class 'Duplex', but is overridden here in 'Http2Stream' as an accessor.
+src/js/node/http2.ts - error TS2611: 'destroyed' is defined as a property in class 'Duplex', but is overridden here in 'Http2Stream' as an accessor.
+src/js/node/http2.ts - error TS2698: Spread types may only be created from object types.
+src/js/node/http2.ts - error TS2698: Spread types may only be created from object types.
+src/js/node/http2.ts - error TS2698: Spread types may only be created from object types.
+src/js/node/http2.ts - error TS2698: Spread types may only be created from object types.
+src/js/node/http2.ts - error TS2740: Type 'Record<string, any>' is missing the following properties from type 'Settings': headerTableSize, enablePush, maxConcurrentStreams, initialWindowSize, and 3 more.
+src/js/node/http2.ts - error TS2740: Type 'Record<string, any>' is missing the following properties from type 'Settings': headerTableSize, enablePush, maxConcurrentStreams, initialWindowSize, and 3 more.
+src/js/node/http2.ts - error TS2741: Property '__promisify__' is missing in type '(callback: Function, ...args: any[]) => void' but required in type 'typeof setImmediate'.
+src/js/node/http2.ts - error TS2741: Property '__promisify__' is missing in type '(callback: Function, ...args: any[]) => void' but required in type 'typeof setImmediate'.
+src/js/node/http2.ts - error TS2741: Property '__promisify__' is missing in type '(callback: Function, ...args: any[]) => void' but required in type 'typeof setImmediate'.
+src/js/node/http2.ts - error TS2749: 'Proxy' refers to a value, but is being used as a type here. Did you mean 'typeof Proxy'?
+src/js/node/http2.ts - error TS2749: 'Proxy' refers to a value, but is being used as a type here. Did you mean 'typeof Proxy'?
+src/js/node/http2.ts - error TS2749: 'Socket' refers to a value, but is being used as a type here. Did you mean 'typeof Socket'?
+src/js/node/http2.ts - error TS2749: 'Socket' refers to a value, but is being used as a type here. Did you mean 'typeof Socket'?
+src/js/node/http2.ts - error TS2749: 'Socket' refers to a value, but is being used as a type here. Did you mean 'typeof Socket'?
+src/js/node/http2.ts - error TS2749: 'Socket' refers to a value, but is being used as a type here. Did you mean 'typeof Socket'?
+src/js/node/http2.ts - error TS2749: 'Socket' refers to a value, but is being used as a type here. Did you mean 'typeof Socket'?
+src/js/node/http2.ts - error TS2749: 'TLSSocket' refers to a value, but is being used as a type here. Did you mean 'typeof TLSSocket'?
+src/js/node/http2.ts - error TS2749: 'TLSSocket' refers to a value, but is being used as a type here. Did you mean 'typeof TLSSocket'?
+src/js/node/http2.ts - error TS2749: 'TLSSocket' refers to a value, but is being used as a type here. Did you mean 'typeof TLSSocket'?
+src/js/node/http2.ts - error TS2749: 'TLSSocket' refers to a value, but is being used as a type here. Did you mean 'typeof TLSSocket'?
+src/js/node/http2.ts - error TS2769: No overload matches this call.
+src/js/node/http2.ts - error TS2769: No overload matches this call.
+src/js/node/https.ts - error TS2339: Property '_defaultAgent' does not exist on type '{}'.
+src/js/node/https.ts - error TS2339: Property 'convertALPNProtocols' does not exist on type 'typeof import("node:tls")'.
+src/js/node/https.ts - error TS2339: Property 'proxyTunnelTimeout' does not exist on type 'Error & { code: "ERR_PROXY_TUNNEL"; }'.
+src/js/node/https.ts - error TS2339: Property 'proxyTunnelTimeout' does not exist on type 'Error & { code: "ERR_PROXY_TUNNEL"; }'.
+src/js/node/https.ts - error TS2339: Property 'statusCode' does not exist on type 'Error & { code: "ERR_PROXY_TUNNEL"; }'.
+src/js/node/https.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/https.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/https.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/https.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/inspector.ts - error TS2322: Type 'Function | ((err: Error | null, result?: any) => void)' is not assignable to type '((err: Error | null, result?: any) => void) | undefined'.
+src/js/node/net.ts - error TS18047: 'traceEvents' is possibly 'null'.
+src/js/node/net.ts - error TS18047: 'traceEvents' is possibly 'null'.
+src/js/node/net.ts - error TS18047: 'traceEvents' is possibly 'null'.
+src/js/node/net.ts - error TS18047: 'traceEvents' is possibly 'null'.
+src/js/node/net.ts - error TS18048: 'port' is possibly 'undefined'.
+src/js/node/net.ts - error TS18048: 'req' is possibly 'undefined'.
+src/js/node/net.ts - error TS18048: 'tls' is possibly 'undefined'.
+src/js/node/net.ts - error TS18048: 'tls' is possibly 'undefined'.
+src/js/node/net.ts - error TS18048: 'tls' is possibly 'undefined'.
+src/js/node/net.ts - error TS18048: 'tls' is possibly 'undefined'.
+src/js/node/net.ts - error TS2304: Cannot find name 'DEFAULT_IPV4_ADDR'.
+src/js/node/net.ts - error TS2304: Cannot find name 'DEFAULT_IPV6_ADDR'.
+src/js/node/net.ts - error TS2322: Type '(chunk: any, encoding: any, cb: any) => any' is not assignable to type '{ (buffer: string | Uint8Array<ArrayBufferLike>, cb?: ((err?: Error | null | undefined) => void) | undefined): boolean; (str: string | Uint8Array<ArrayBufferLike>, encoding?: BufferEncoding | undefined, cb?: ((err?: Error | ... 1 more ... | undefined) => void) | undefined): boolean; }'.
+src/js/node/net.ts - error TS2322: Type '(chunk: any, encoding: any, cb: any) => any' is not assignable to type '{ (buffer: string | Uint8Array<ArrayBufferLike>, cb?: ((err?: Error | null | undefined) => void) | undefined): boolean; (str: string | Uint8Array<ArrayBufferLike>, encoding?: BufferEncoding | undefined, cb?: ((err?: Error | ... 1 more ... | undefined) => void) | undefined): boolean; }'.
+src/js/node/net.ts - error TS2322: Type '{ enableCategories: (categories: string[]) => void; disableCategories: (categories: string[]) => void; getEnabledCategories: () => string | undefined; getCategoryEnabledBuffer: (category: string) => Uint8Array; ... 12 more ...; rawReadFileSync: (arg0?: unknown, arg1?: unknown, ...args: unknown[]) => unknown; }' is not assignable to type 'null'.
+src/js/node/net.ts - error TS2322: Type 'Error' is not assignable to type 'undefined'.
+src/js/node/net.ts - error TS2339: Property '_hadError' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_hadError' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_hadError' does not exist on type 'Socket | TLSSocket'.
+src/js/node/net.ts - error TS2339: Property '_hadError' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_hadError' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_hadError' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_hadError' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_handle' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_handle' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_handshakeTimeout' does not exist on type 'Server'.
+src/js/node/net.ts - error TS2339: Property '_host' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_host' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_pendingData' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_pendingData' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_pendingData' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_pendingData' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_pendingData' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_pendingData' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_pendingEncoding' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_pendingEncoding' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_rejectUnauthorized' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_rejectUnauthorized' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_rejectUnauthorized' does not exist on type 'Server'.
+src/js/node/net.ts - error TS2339: Property '_rejectUnauthorized' does not exist on type 'Socket | TLSSocket'.
+src/js/node/net.ts - error TS2339: Property '_rejectUnauthorized' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_rejectUnauthorized' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_rejectUnauthorized' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_requestCert' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_requestCert' does not exist on type 'Socket | TLSSocket'.
+src/js/node/net.ts - error TS2339: Property '_requestCert' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_requestCert' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_secureEstablished' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_secureEstablished' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_secureEstablished' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_securePending' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_securePending' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_securePending' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_unrefTimer' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property '_unrefTimer' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property '_unrefTimer' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'address' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'addressType' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'all' does not exist on type '{ family: any; hints: any; }'.
+src/js/node/net.ts - error TS2339: Property 'allowHalfOpen' does not exist on type 'Server'.
+src/js/node/net.ts - error TS2339: Property 'alpnCallback' does not exist on type 'SocketHandler<Socket, "buffer">'.
+src/js/node/net.ts - error TS2339: Property 'alpnCallback' does not exist on type 'SocketHandler<Socket, "buffer">'.
+src/js/node/net.ts - error TS2339: Property 'alpnProtocol' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'alpnProtocol' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'alpnProtocol' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'authorizationError' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'authorizationError' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'authorizationError' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'authorized' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'authorized' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'authorized' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'authorized' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'authorized' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'authorized' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'authorized' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'authorized' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'blockList' does not exist on type 'Server'.
+src/js/node/net.ts - error TS2339: Property 'bytesRead' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'checkServerIdentity' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'checkServerIdentity' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'checkServerIdentity' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'checkServerIdentity' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'connecting' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'connecting' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'data' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'destroy' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'destroy' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'dispatching' does not exist on type 'object'.
+src/js/node/net.ts - error TS2339: Property 'emit' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'emit' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'emit' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'emit' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'emit' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'emit' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'emit' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'errno' does not exist on type 'Error'.
+src/js/node/net.ts - error TS2339: Property 'errno' does not exist on type 'Error'.
+src/js/node/net.ts - error TS2339: Property 'errno' does not exist on type 'Error'.
+src/js/node/net.ts - error TS2339: Property 'errno' does not exist on type 'object'.
+src/js/node/net.ts - error TS2339: Property 'getPeerCertificate' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'getPeerCertificate' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'highWaterMark' does not exist on type 'Server'.
+src/js/node/net.ts - error TS2339: Property 'host' does not exist on type 'ConnResetException'.
+src/js/node/net.ts - error TS2339: Property 'keepAlive' does not exist on type 'Server'.
+src/js/node/net.ts - error TS2339: Property 'keepAliveInitialDelay' does not exist on type 'Server'.
+src/js/node/net.ts - error TS2339: Property 'keepAliveInitialDelay' does not exist on type 'Server'.
+src/js/node/net.ts - error TS2339: Property 'length' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'localAddress' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'localAddress' does not exist on type 'ConnResetException'.
+src/js/node/net.ts - error TS2339: Property 'localAddress' does not exist on type 'ExceptionWithHostPort'.
+src/js/node/net.ts - error TS2339: Property 'localAddress' does not exist on type 'ExceptionWithHostPort'.
+src/js/node/net.ts - error TS2339: Property 'localPort' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'localPort' does not exist on type 'ExceptionWithHostPort'.
+src/js/node/net.ts - error TS2339: Property 'localPort' does not exist on type 'ExceptionWithHostPort'.
+src/js/node/net.ts - error TS2339: Property 'noDelay' does not exist on type 'Server'.
+src/js/node/net.ts - error TS2339: Property 'oncomplete' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'oncomplete' does not exist on type 'object'.
+src/js/node/net.ts - error TS2339: Property 'oncomplete' does not exist on type 'object'.
+src/js/node/net.ts - error TS2339: Property 'onconnection' does not exist on type 'SocketListener<undefined> | SocketListener<Socket>'.
+src/js/node/net.ts - error TS2339: Property 'onconnection' does not exist on type 'SocketListener<undefined> | SocketListener<Socket>'.
+src/js/node/net.ts - error TS2339: Property 'path' does not exist on type 'ConnResetException'.
+src/js/node/net.ts - error TS2339: Property 'pauseOnConnect' does not exist on type 'Server'.
+src/js/node/net.ts - error TS2339: Property 'pauseOnConnect' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'port' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'port' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'port' does not exist on type 'ConnResetException'.
+src/js/node/net.ts - error TS2339: Property 'push' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'rejectUnauthorized' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'rejectUnauthorized' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'rejectUnauthorized' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'rejectUnauthorized' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'removeListener' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'requestCert' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'requestCert' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'secureConnecting' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'secureConnecting' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'secureConnecting' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'servername' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'servername' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'servername' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'servername' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'servername' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'serverName' does not exist on type 'SocketHandler<Socket, "buffer">'.
+src/js/node/net.ts - error TS2339: Property 'serverName' does not exist on type 'SocketHandler<Socket, "buffer">'.
+src/js/node/net.ts - error TS2339: Property 'session' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'session' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'session' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'session' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'setSession' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'setSession' does not exist on type 'Socket'.
+src/js/node/net.ts - error TS2339: Property 'setTimeout' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'socket' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'socket' does not exist on type 'never'.
+src/js/node/net.ts - error TS2339: Property 'timeout' does not exist on type '{}'.
+src/js/node/net.ts - error TS2339: Property 'tls' does not exist on type '{}'.
+src/js/node/net.ts - error TS2345: Argument of type 'string' is not assignable to parameter of type 'never'.
+src/js/node/net.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/net.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/net.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/net.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/net.ts - error TS2353: Object literal may only specify known properties, and 'keylog' does not exist in type 'SocketHandler<Socket, "buffer">'.
+src/js/node/net.ts - error TS2353: Object literal may only specify known properties, and 'session' does not exist in type 'SocketHandler<{ self: Socket; req?: object | undefined; }, "buffer">'.
+src/js/node/net.ts - error TS2353: Object literal may only specify known properties, and 'session' does not exist in type 'SocketHandler<unknown, "buffer">'.
+src/js/node/net.ts - error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/js/node/net.ts - error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/js/node/net.ts - error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/js/node/net.ts - error TS2394: This overload signature is not compatible with its implementation signature.
+src/js/node/net.ts - error TS2540: Cannot assign to 'bytesRead' because it is a read-only property.
+src/js/node/net.ts - error TS2540: Cannot assign to 'bytesRead' because it is a read-only property.
+src/js/node/net.ts - error TS2540: Cannot assign to 'connecting' because it is a read-only property.
+src/js/node/net.ts - error TS2540: Cannot assign to 'connecting' because it is a read-only property.
+src/js/node/net.ts - error TS2551: Property '_server' does not exist on type 'Socket | TLSSocket'. Did you mean 'server'?
+src/js/node/net.ts - error TS2551: Property 'isServer' does not exist on type 'Socket | TLSSocket'. Did you mean 'server'?
+src/js/node/net.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/net.ts - error TS2554: Expected 2 arguments, but got 3.
+src/js/node/net.ts - error TS2554: Expected 2 arguments, but got 3.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 2.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 7.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 7.
+src/js/node/net.ts - error TS2554: Expected 3 arguments, but got 7.
+src/js/node/net.ts - error TS2554: Expected 5 arguments, but got 3.
+src/js/node/net.ts - error TS2554: Expected 5 arguments, but got 3.
+src/js/node/net.ts - error TS2571: Object is of type 'unknown'.
+src/js/node/net.ts - error TS2571: Object is of type 'unknown'.
+src/js/node/net.ts - error TS2571: Object is of type 'unknown'.
+src/js/node/net.ts - error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/js/node/net.ts - error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/js/node/net.ts - error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/js/node/net.ts - error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/js/node/net.ts - error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/js/node/net.ts - error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/js/node/net.ts - error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/js/node/net.ts - error TS2741: Property 'resolveTlsa' is missing in type '{ lookup: (hostname: any, options: any, callback: any) => void; lookupService: (address: any, port: any, callback: any) => void; Resolver: (options: any) => Resolver; setServers: (servers: any) => void; ... 44 more ...; V4MAPPED: number; }' but required in type 'typeof import("node:dns")'.
+src/js/node/net.ts - error TS2769: No overload matches this call.
+src/js/node/net.ts - error TS2769: No overload matches this call.
+src/js/node/net.ts - error TS2769: No overload matches this call.
+src/js/node/perf_hooks.ts - error TS2339: Property 'supportedEntryTypes' does not exist on type '{ new (): PerformanceObserver; prototype: PerformanceObserver; }'.
+src/js/node/perf_hooks.ts - error TS2554: Expected 0 arguments, but got 1.
+src/js/node/perf_hooks.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/perf_hooks.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/perf_hooks.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/perf_hooks.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/perf_hooks.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/perf_hooks.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/perf_hooks.ts - error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+src/js/node/punycode.ts - error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/js/node/punycode.ts - error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/js/node/querystring.ts - error TS18048: 'mod' is possibly 'undefined'.
+src/js/node/querystring.ts - error TS2740: Type '{ exports: {}; }' is missing the following properties from type 'NodeModule': children, filename, id, isPreloading, and 5 more.
+src/js/node/readline.ts - error TS2339: Property 'autoCommit' does not exist on type 'never'.
+src/js/node/readline.ts - error TS2339: Property 'autoCommit' does not exist on type 'never'.
+src/js/node/readline.ts - error TS2339: Property 'autoCommit' does not exist on type 'never'.
+src/js/node/readline.ts - error TS2339: Property 'completer' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'completer' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'crlfDelay' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'crlfDelay' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'cursor' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'custom' does not exist on type '(original: any) => any'.
+src/js/node/readline.ts - error TS2339: Property 'emit' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'emit' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'emit' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'emit' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'emit' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'emit' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'emit' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'emit' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'escapeCodeTimeout' does not exist on type '{}'.
+src/js/node/readline.ts - error TS2339: Property 'history' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'history' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'history' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'history' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'history' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'history' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'history' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'history' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historyIndex' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historyIndex' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historyIndex' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historyIndex' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historyIndex' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historyIndex' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historyIndex' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historyIndex' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historyIndex' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historySize' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'historySize' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'input' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'input' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'input' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'input' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'input' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'isCompletionEnabled' does not exist on type '{}'.
+src/js/node/readline.ts - error TS2339: Property 'isCompletionEnabled' does not exist on type '{}'.
+src/js/node/readline.ts - error TS2339: Property 'isCompletionEnabled' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'line' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'listenerCount' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'listenerCount' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'output' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'output' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'output' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'output' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'output' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'output' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'output' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'output' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'output' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'output' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'prevRows' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'prevRows' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'prevRows' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'removeHistoryDuplicates' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'tabSize' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'tabSize' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'terminal' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'terminal' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2339: Property 'terminal' does not exist on type 'Interface'.
+src/js/node/readline.ts - error TS2345: Argument of type '"SIGCONT"' is not assignable to parameter of type '"memoryPressure"'.
+src/js/node/readline.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/readline.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/readline.ts - error TS2350: Only a void function can be called with the 'new' keyword.
+src/js/node/readline.ts - error TS2507: Type '(input: any, output: any, completer: any, terminal: any) => any' is not a constructor function type.
+src/js/node/readline.ts - error TS2551: Property 'closed' does not exist on type 'Interface'. Did you mean 'close'?
+src/js/node/readline.ts - error TS2551: Property 'closed' does not exist on type 'Interface'. Did you mean 'close'?
+src/js/node/readline.ts - error TS2551: Property 'closed' does not exist on type 'Interface'. Did you mean 'close'?
+src/js/node/readline.ts - error TS2551: Property 'paused' does not exist on type 'Interface'. Did you mean 'pause'?
+src/js/node/readline.ts - error TS2551: Property 'paused' does not exist on type 'Interface'. Did you mean 'pause'?
+src/js/node/readline.ts - error TS2551: Property 'paused' does not exist on type 'Interface'. Did you mean 'pause'?
+src/js/node/readline.ts - error TS2551: Property 'paused' does not exist on type 'Interface'. Did you mean 'pause'?
+src/js/node/readline.ts - error TS2551: Property 'paused' does not exist on type 'Interface'. Did you mean 'pause'?
+src/js/node/readline.ts - error TS2551: Property 'paused' does not exist on type 'Interface'. Did you mean 'pause'?
+src/js/node/readline.ts - error TS2551: Property 'paused' does not exist on type 'Interface'. Did you mean 'pause'?
+src/js/node/readline.ts - error TS2554: Expected 2 arguments, but got 0.
+src/js/node/readline.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/readline.ts - error TS2554: Expected 2 arguments, but got 1.
+src/js/node/readline.ts - error TS2554: Expected 4 arguments, but got 2.
+src/js/node/readline.ts - error TS2554: Expected 4 arguments, but got 2.
+src/js/node/readline.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/readline.ts - error TS2769: No overload matches this call.
+src/js/node/readline.ts - error TS7029: Fallthrough case in switch.
+src/js/node/repl.ts - error TS2322: Type '() => void' is not assignable to type '(target: {}, p: string | symbol, newValue: any, receiver: any) => boolean'.
+src/js/node/repl.ts - error TS2322: Type '() => void' is not assignable to type '(target: {}, p: string | symbol, newValue: any, receiver: any) => boolean'.
+src/js/node/stream.ts - error TS2339: Property 'eos' does not exist on type 'typeof Stream'.
+src/js/node/test.ts - error TS2339: Property 'CallTracker' does not exist on type '{ fileSnapshot: (_value: unknown, _path: string, _options?: { serializers?: Function[] | undefined; }) => void; snapshot: (_value: unknown, _options?: { serializers?: Function[] | undefined; }) => void; ... 21 more ...; strict: typeof strict; }'.
+src/js/node/test.ts - error TS2345: Argument of type '(value?: void | PromiseLike<void> | undefined) => void' is not assignable to parameter of type '(value: unknown) => void | PromiseLike<void>'.
+src/js/node/test.ts - error TS2352: Conversion of type 'readonly never[]' to type 'string[]' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/js/node/test.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/node/test.ts - error TS2790: The operand of a 'delete' operator must be optional.
+src/js/node/test.ts - error TS2790: The operand of a 'delete' operator must be optional.
+src/js/node/timers.promises.ts - error TS2339: Property 'next' does not exist on type '{}'.
+src/js/node/timers.promises.ts - error TS2339: Property 'ref' does not exist on type '{}'.
+src/js/node/timers.promises.ts - error TS2339: Property 'ref' does not exist on type '{}'.
+src/js/node/timers.promises.ts - error TS2339: Property 'ref' does not exist on type '{}'.
+src/js/node/timers.promises.ts - error TS2339: Property 'return' does not exist on type '{}'.
+src/js/node/timers.promises.ts - error TS2339: Property 'signal' does not exist on type '{}'.
+src/js/node/timers.promises.ts - error TS2339: Property 'signal' does not exist on type '{}'.
+src/js/node/timers.promises.ts - error TS2339: Property 'signal' does not exist on type '{}'.
+src/js/node/timers.promises.ts - error TS2345: Argument of type '{ next: () => Promise<never>; }' is not assignable to parameter of type '{ next: any; return: any; }'.
+src/js/node/timers.promises.ts - error TS2345: Argument of type '{ next: () => Promise<never>; }' is not assignable to parameter of type '{ next: any; return: any; }'.
+src/js/node/timers.promises.ts - error TS2345: Argument of type '{ next: () => Promise<never>; }' is not assignable to parameter of type '{ next: any; return: any; }'.
+src/js/node/timers.promises.ts - error TS2345: Argument of type '{ next: () => Promise<never>; }' is not assignable to parameter of type '{ next: any; return: any; }'.
+src/js/node/timers.promises.ts - error TS2345: Argument of type '{ next: () => Promise<never>; }' is not assignable to parameter of type '{ next: any; return: any; }'.
+src/js/node/timers.promises.ts - error TS2345: Argument of type '{ next: () => void; }' is not assignable to parameter of type '{ next: any; return: any; }'.
+src/js/node/timers.promises.ts - error TS2794: Expected 1 arguments, but got 0. Did you forget to include 'void' in your type argument to 'Promise'?
+src/js/node/timers.promises.ts - error TS2794: Expected 1 arguments, but got 0. Did you forget to include 'void' in your type argument to 'Promise'?
+src/js/node/tls.ts - error TS2339: Property 'ALPNProtocols' does not exist on type '{}'.
+src/js/node/tls.ts - error TS2345: Argument of type '{}' is not assignable to parameter of type 'string'.
+src/js/node/tls.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/node/tls.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/node/url.ts - error TS18047: 'port' is possibly 'null'.
+src/js/node/url.ts - error TS18047: 'port' is possibly 'null'.
+src/js/node/url.ts - error TS2322: Type 'string' is not assignable to type 'RegExpExecArray'.
+src/js/node/url.ts - error TS2339: Property 'format' does not exist on type '{}'.
+src/js/node/url.ts - error TS2367: This comparison appears to be unintentional because the types 'RegExpExecArray | null' and 'string' have no overlap.
+src/js/node/url.ts - error TS2384: Overload signatures must all be ambient or non-ambient.
+src/js/node/url.ts - error TS2749: 'Url' refers to a value, but is being used as a type here. Did you mean 'typeof Url'?
+src/js/node/url.ts - error TS2749: 'Url' refers to a value, but is being used as a type here. Did you mean 'typeof Url'?
+src/js/node/url.ts - error TS2749: 'Url' refers to a value, but is being used as a type here. Did you mean 'typeof Url'?
+src/js/node/url.ts - error TS2749: 'Url' refers to a value, but is being used as a type here. Did you mean 'typeof Url'?
+src/js/node/url.ts - error TS7029: Fallthrough case in switch.
+src/js/node/util.ts - error TS2339: Property 'reason' does not exist on type 'Error'.
+src/js/node/vm.ts - error TS2416: Property 'link' in type 'SyntheticModule' is not assignable to the same property in base type 'Module'.
+src/js/node/wasi.ts - error TS18046: 'e' is of type 'unknown'.
+src/js/node/wasi.ts - error TS18046: 'e' is of type 'unknown'.
+src/js/node/wasi.ts - error TS18046: 'e' is of type 'unknown'.
+src/js/node/wasi.ts - error TS18046: 'e' is of type 'unknown'.
+src/js/node/wasi.ts - error TS18048: 'mod' is possibly 'undefined'.
+src/js/node/wasi.ts - error TS2304: Cannot find name 'bindings'.
+src/js/node/wasi.ts - error TS2304: Cannot find name 'bindings'.
+src/js/node/wasi.ts - error TS2322: Type 'bigint' is not assignable to type 'number'.
+src/js/node/wasi.ts - error TS2322: Type 'Uint8Array<any>' is not assignable to type 'never'.
+src/js/node/wasi.ts - error TS2339: Property 'args' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'bindings' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'bindings' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'bindings' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'code' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'code' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'code' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'code' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'code' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'enabled' does not exist on type '() => void'.
+src/js/node/wasi.ts - error TS2339: Property 'enabled' does not exist on type '() => void'.
+src/js/node/wasi.ts - error TS2339: Property 'enabled' does not exist on type '() => void'.
+src/js/node/wasi.ts - error TS2339: Property 'env' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'env' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'env' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'env' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'env' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'env' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'env' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'errno' does not exist on type 'WASIError'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'FD_MAP' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'getStdin' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'getStdin' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'getStdin' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'lastStdin' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'lastStdin' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'lastStdin' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'lastStdin' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'memory' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'preopens' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'sendStderr' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'sendStderr' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'sendStderr' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'sendStderr' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'sendStdout' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'sendStdout' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'sendStdout' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'sendStdout' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'signal' does not exist on type 'WASIKillError'.
+src/js/node/wasi.ts - error TS2339: Property 'sleep' does not exist on type '{}'.
+src/js/node/wasi.ts - error TS2339: Property 'sleep' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'sleep' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'sleep' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'sleep' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'sleep' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'stdinBuffer' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'stdinBuffer' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'stdinBuffer' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'stdinBuffer' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'stdinBuffer' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'stdinBuffer' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'stdinBuffer' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'stdinBuffer' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'view' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'wasiImport' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'wasiImport' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'wasiImport' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'wasiImport' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'wasiImport' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'wasiImport' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'wasiImport' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2339: Property 'wasiImport' does not exist on type 'WASI'.
+src/js/node/wasi.ts - error TS2365: Operator '-=' cannot be applied to types 'bigint' and 'number'.
+src/js/node/wasi.ts - error TS2367: This comparison appears to be unintentional because the types 'number' and 'bigint' have no overlap.
+src/js/node/wasi.ts - error TS2367: This comparison appears to be unintentional because the types 'number' and 'bigint' have no overlap.
+src/js/node/wasi.ts - error TS2367: This comparison appears to be unintentional because the types 'number' and 'bigint' have no overlap.
+src/js/node/wasi.ts - error TS2551: Property 'O_RSYNC' does not exist on type 'typeof constants'. Did you mean 'O_SYNC'?
+src/js/node/wasi.ts - error TS2554: Expected 0 arguments, but got 1.
+src/js/node/wasi.ts - error TS2554: Expected 0 arguments, but got 1.
+src/js/node/wasi.ts - error TS2554: Expected 0 arguments, but got 1.
+src/js/node/wasi.ts - error TS2554: Expected 0 arguments, but got 2.
+src/js/node/wasi.ts - error TS2554: Expected 0 arguments, but got 2.
+src/js/node/wasi.ts - error TS2554: Expected 0 arguments, but got 2.
+src/js/node/wasi.ts - error TS2554: Expected 0 arguments, but got 2.
+src/js/node/wasi.ts - error TS2554: Expected 0 arguments, but got 2.
+src/js/node/wasi.ts - error TS2554: Expected 0 arguments, but got 3.
+src/js/node/wasi.ts - error TS2554: Expected 1 arguments, but got 3.
+src/js/node/wasi.ts - error TS2740: Type '{ exports: {}; }' is missing the following properties from type 'NodeModule': children, filename, id, isPreloading, and 5 more.
+src/js/node/worker_threads.ts - error TS2322: Type 'any' is not assignable to type 'never'.
+src/js/node/worker_threads.ts - error TS2322: Type 'Promise<unknown>' is not assignable to type 'number | Promise<number> | undefined'.
+src/js/node/worker_threads.ts - error TS2322: Type 'unknown' is not assignable to type 'never'.
+src/js/node/worker_threads.ts - error TS2339: Property 'cpuUsageInternal' does not exist on type 'Worker'.
+src/js/node/worker_threads.ts - error TS2339: Property 'data' does not exist on type '(object & Record<"@@bunWorkerThreadsStdio", unknown>) | (object & Record<"@@bunWorkerThreadsMessaging", unknown>)'.
+src/js/node/worker_threads.ts - error TS2339: Property 'endFromOwner' does not exist on type 'Readable'.
+src/js/node/worker_threads.ts - error TS2339: Property 'getHeapSnapshot' does not exist on type 'Worker'.
+src/js/node/worker_threads.ts - error TS2339: Property 'getHeapStatistics' does not exist on type 'Worker'.
+src/js/node/worker_threads.ts - error TS2339: Property 'length' does not exist on type 'never'.
+src/js/node/worker_threads.ts - error TS2339: Property 'length' does not exist on type 'never'.
+src/js/node/worker_threads.ts - error TS2339: Property 'length' does not exist on type 'never'.
+src/js/node/worker_threads.ts - error TS2339: Property 'stack' does not exist on type 'ErrorEvent'.
+src/js/node/worker_threads.ts - error TS2339: Property 'startCpuProfileInternal' does not exist on type 'Worker'.
+src/js/node/worker_threads.ts - error TS2339: Property 'stopCpuProfileInternal' does not exist on type 'Worker'.
+src/js/node/worker_threads.ts - error TS2554: Expected 1 arguments, but got 0.
+src/js/node/worker_threads.ts - error TS2739: Type 'Console' is missing the following properties from type 'Console': write, $writer
+src/js/node/zlib.ts - error TS2322: Type 'number | boolean' is not assignable to type 'number'.
+src/js/node/zlib.ts - error TS2339: Property '_writeState' does not exist on type 'Zstd'.
+src/js/node/zlib.ts - error TS2339: Property 'errno' does not exist on type 'Error'.
+src/js/node/zlib.ts - error TS2507: Type '(opts: any, mode: any, handle: any, { flush, finishFlush, fullFlush }: { flush: any; finishFlush: any; fullFlush: any; }) => void' is not a constructor function type.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2554: Expected 4 arguments, but got 3.
+src/js/node/zlib.ts - error TS2740: Type 'Buffer<ArrayBuffer>' is missing the following properties from type 'BufferConstructor': from, of, concat, copyBytesFrom, and 6 more.
+src/js/thirdparty/node-fetch.ts - error TS2322: Type 'string[]' is not assignable to type 'string'.
+src/js/thirdparty/node-fetch.ts - error TS2339: Property 'arrayBuffer' does not exist on type 'Response'.
+src/js/thirdparty/node-fetch.ts - error TS2339: Property 'arrayBuffer' does not exist on type 'Response'.
+src/js/thirdparty/node-fetch.ts - error TS2339: Property 'blob' does not exist on type 'Response'.
+src/js/thirdparty/node-fetch.ts - error TS2339: Property 'body' does not exist on type 'Response'.
+src/js/thirdparty/node-fetch.ts - error TS2339: Property 'clone' does not exist on type 'Response'.
+src/js/thirdparty/node-fetch.ts - error TS2339: Property 'formData' does not exist on type 'Response'.
+src/js/thirdparty/node-fetch.ts - error TS2339: Property 'json' does not exist on type 'Response'.
+src/js/thirdparty/node-fetch.ts - error TS2339: Property 'ok' does not exist on type 'Response'.
+src/js/thirdparty/node-fetch.ts - error TS2339: Property 'text' does not exist on type 'Response'.
+src/js/thirdparty/node-fetch.ts - error TS2339: Property 'url' does not exist on type 'Request'.
+src/js/thirdparty/node-fetch.ts - error TS2345: Argument of type 'Stream' is not assignable to parameter of type 'ReadableStream'.
+src/js/thirdparty/node-fetch.ts - error TS2345: Argument of type 'Stream' is not assignable to parameter of type 'ReadableStream'.
+src/js/thirdparty/node-fetch.ts - error TS2769: No overload matches this call.

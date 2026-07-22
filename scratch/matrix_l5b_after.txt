@@ -1,0 +1,42 @@
+
+##### jsc-only-attached-through-exit #####
+   +   33ms STDERR --------------------- Bun Inspector ---------------------
+   +   33ms STDERR Listening:
+   +   33ms STDERR ws://localhost:55699/3dd38e36-3add-449f-8023-3ccd26e7bc01
+   +   33ms STDERR Inspect in browser:
+   +   33ms STDERR https://debug.bun.sh/#localhost:55699/3dd38e36-3add-449f-8023-3ccd26e7bc01
+   +   33ms STDERR --------------------- Bun Inspector ---------------------
+   +   33ms STDERR Debugger listening on ws://localhost:55699/46f46ef0-c511-464e-bc2b-3023e3d66ae3
+   +   33ms STDERR For help, see: https://nodejs.org/en/docs/inspector
+   +   46ms attached JSC at /3dd38e36-3add-449f-8023-3ccd26e7bc01
+   +  299ms STDOUT ran
+   + 3301ms after 3s attached: exited=false
+   + 3301ms dropping remaining sockets
+   + 3303ms EXIT code=55 signal=null
+   >>> exited=true code=55 waitingMsg=false
+
+##### jsc-plus-cdp-attached #####
+   +   32ms STDERR --------------------- Bun Inspector ---------------------
+   +   32ms STDERR Listening:
+   +   32ms STDERR ws://localhost:55703/51125a9a-a42d-4d3e-8956-c4635bc97e5c
+   +   32ms STDERR Inspect in browser:
+   +   32ms STDERR https://debug.bun.sh/#localhost:55703/51125a9a-a42d-4d3e-8956-c4635bc97e5c
+   +   32ms STDERR --------------------- Bun Inspector ---------------------
+   +   33ms STDERR Debugger listening on ws://localhost:55703/0e9491bf-f5b3-41bb-8aa4-6db24144e94d
+   +   33ms STDERR For help, see: https://nodejs.org/en/docs/inspector
+   +   35ms attached JSC at /51125a9a-a42d-4d3e-8956-c4635bc97e5c
+   +  291ms STDOUT ran
+   +  294ms attached CDP
+   +  295ms [cdp] Runtime.executionContextCreated {"context":{"id":1,"origin":"","name":"Bun","uniqueId":"1"}}
+   +  296ms [jsc] Console.messageAdded {"message":{"source":"console-api","level":"log","text":"ran
+   +  297ms [cdp] Runtime.consoleAPICalled {"type":"log","args":[{"type":"string","value":"ran"}],"exec
+   + 3598ms after 3s attached: exited=false
+   + 3598ms dropping CDP socket only (JSC stays)
+   + 6100ms after CDP drop: exited=false
+   + 6100ms dropping remaining sockets
+   + 6102ms EXIT code=55 signal=null
+   >>> exited=true code=55 waitingMsg=false
+
+================ SUMMARY ================
+PASS  jsc-only-attached-through-exit  exited=true code=55 waitingMsg=false (want false)
+PASS  jsc-plus-cdp-attached  exited=true code=55 waitingMsg=false

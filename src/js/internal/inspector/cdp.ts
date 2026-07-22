@@ -579,10 +579,15 @@ class InspectorCDPAdapter {
     try {
       parsed = JSON.parse(message);
     } catch {
+      parsed = null;
+    }
+    if (!parsed || typeof parsed !== "object" || typeof parsed.method !== "string") {
+      // V8's dispatcher answers any malformed message (unparseable, non-object,
+      // or method-less) with method-not-found on the given id, 0 otherwise.
+      this.#replyErrorToClient(parsed?.id ?? 0, -32601, "'' wasn't found");
       return;
     }
     const { id, method, params } = parsed;
-    if (typeof method !== "string") return;
     try {
       this.#dispatchClientCommand(id, method, params || {});
     } catch (error) {

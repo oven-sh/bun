@@ -1,0 +1,7 @@
+(fail) Bun.serve HTTP/3 lifecycle > server.stop() with live H3 connections does not UAF
+(fail) returning a Response with an already-used body > returning the same Uint8Array-bodied Response twice calls the error handler
+(fail) should be able to abrupt stop the server
+(fail) should be able to redirect when using empty streams #15320
+(fail) should work with dispose keyword
+(fail) static route Content-Type > a string body still serves its body bytes unchanged
+(fail) static route Content-Type > is stable across registrations: Uint8Array body

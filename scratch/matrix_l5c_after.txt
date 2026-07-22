@@ -1,0 +1,29 @@
+iter jit exitedWhileBAttached exitedEventually code msg  B
+   0   0                false             true   55  true  answered
+   1   1                false             true   55  true  answered
+   2   2                false             true   55  true  answered
+   3   3                false             true   55  true  answered
+   4   4                false             true   55  true  answered
+   5   5                false             true   55  true  answered
+   6   6                false             true   55  true  answered
+   7   7                false             true   55  true  answered
+   8   8                false             true   55  true  answered
+   9   9                false             true   55  true  answered
+  10  10                false             true   55  true  answered
+  11  11                false             true   55  true  answered
+  12  12                false             true   55  true  answered
+  13   0                false             true   55  true  answered
+  14   1                false             true   55  true  answered
+  15   2                false             true   55  true  answered
+  16   3                false             true   55  true  answered
+  17   4                false             true   55  true  answered
+  18   5                false             true   55  true  answered
+  19   6                false             true   55  true  answered
+
+================ SUMMARY ================
+iterations                                        : 20
+held open by the late frontend (expected, not a bug): 20
+never exited at all                               : 0
+exited with the wrong code                        : 0
+held open AND never answered (the starvation bug) : 0
+PASS  a frontend attaching in the exit window is answered and never wedges exit

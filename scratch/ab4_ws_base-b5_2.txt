@@ -1,0 +1,849 @@
+bun test v1.4.0-canary.1 (b5657c612)
+
+test/js/web/websocket/websocket-syscall-fault.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: ENOENT reading "bun:internal-for-testing"
+-------------------------------
+
+failed to connect to the docker API at unix:///Users/ciro/.orbstack/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /Users/ciro/.orbstack/run/docker.sock: connect: no such file or directory
+
+test/js/web/websocket/websocket-blob.test.ts:
+Server: WebSocket opened
+Client: WebSocket opened
+Sending blob with length: 5
+Server received: <Buffer 48 65 6c 6c 6f>
+Client received message: File (5 bytes)
+Received bytes: [ 72, 101, 108, 108, 111 ]
+Client: WebSocket closed 1000 
+Server: WebSocket closed
+Sending empty blob with length: 0
+Client received message: File (0 KB)
+Received bytes length: 0
+Client: WebSocket closed 1000 
+Client: WebSocket opened
+Sending ping with blob
+Server received ping with data: <Buffer 50 49 4e 47>
+Client received pong: File (4 bytes)
+Client: WebSocket closed 1000 
+failed to connect to the docker API at unix:///Users/ciro/.orbstack/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /Users/ciro/.orbstack/run/docker.sock: connect: no such file or directory
+Listening: ws://127.0.0.1:53149/
+Received client error: Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20) {
+  errno: -54,
+  code: 'ECONNRESET',
+  syscall: 'read'
+}
+Received client error: Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20) {
+  errno: -54,
+  code: 'ECONNRESET',
+  syscall: 'read'
+}
+Received client error: Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20) {
+  errno: -54,
+  code: 'ECONNRESET',
+  syscall: 'read'
+}
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'Inw4g9c3QdWS1ZdMjsyBxA=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '/FhjUPYJQNyqnciGrgg29A=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'mnF1V1DrRO2DirtHpgj+gA=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'EFMSWSGPToqOIUsoF7Z5NA=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '5GO6FLznRsqkay5d7MAl5A=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'KrQ51C9lS0Ga9+0J1UGk8w=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'jMkWY7VITmGJatq9U6udUg=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'm01Br8c8T5uVDirJn+VQqw=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '+W2yghcbTNKNF81ezwAImA=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '3gUCgAn/S0GCZkmRPqyo1Q=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'zrZ4mP8XSm2KVmLMlxsDLw=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'x7Uy6OEAQRGVBMP2MdrLyw=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'ZMyVEoTTSaCnz/S/4jielw=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '+JaQAqSVRWixqQ7USJSSeQ=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'ZhIyiyiARa+GmSxB9Xi5Dw=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'B8Xy+LF+Q+OXmMSAXtdaqw=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'zh6KTL+rQr28Voy3Sqcb4Q=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'lCOLL4nqRZeJv3GoCcr5lw=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'GUS/dPGcQ5uCyN8mX2WmGQ=='
+}
+Received connection: 127.0.0.1
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'lohfgUVATWO+rOnv9iP0xw=='
+}
+Received connection: 127.0.0.1
+Received bytes: <Buffer 88 82 7c 6e 25 14 7f 86>
+Received bytes: <Buffer 82 81 6c a9 a7 d3 6c>
+Received message: <Buffer 00>
+Received bytes: <Buffer 82 81 37 d4 ff 58 37>
+Received message: <Buffer 00>
+Received bytes: <Buffer 81 85 44 ae ad ef 25 dd ce 86 2d>
+Received message: <Buffer 61 73 63 69 69>
+Received bytes: <Buffer 81 89 65 3d a1 ff 09 5c d5 96 0b 0c 8c 3d cc>
+Received message: <Buffer 6c 61 74 69 6e 31 2d c2 a9>
+Received bytes: <Buffer 81 89 6f 7d d3 40 1a 09 b5 78 42 8d 4c d8 d9>
+Received message: <Buffer 75 74 66 38 2d f0 9f 98 b6>
+Received bytes: <Buffer 82 89 16 69 a0 02 63 1d c6 3a 3b 99 3f 9b 94>
+Received message: <Buffer 75 74 66 38 2d f0 9f 99 82>
+Received bytes: <Buffer 82 89 7c fe 26 47 09 8a 40 7f 51 0e b9 de ff>
+Received message: <Buffer 75 74 66 38 2d f0 9f 99 83>
+Received bytes: <Buffer 82 89 5e e1 71 0d 2b 95 17 35 73 11 ee a9 f7>
+Received message: <Buffer 75 74 66 38 2d f0 9f a4 a9>
+Received bytes: <Buffer 89 80 f5 3b cc 80>
+Received ping: <Buffer >
+Received bytes: <Buffer 89 85 d9 69 f5 7e b8 1a 96 17 b0>
+Received ping: <Buffer 61 73 63 69 69>
+Received bytes: <Buffer 89 89 db 1c cb 94 b7 7d bf fd b5 2d e6 56 72>
+Received ping: <Buffer 6c 61 74 69 6e 31 2d c2 a9>
+Received bytes: <Buffer 89 89 7f 1a 6a b7 0a 6e 0c 8f 52 ea f5 2f c9>
+Received ping: <Buffer 75 74 66 38 2d f0 9f 98 b6>
+Received bytes: <Buffer 89 89 c9 18 c7 57 bc 6c a1 6f e4 e8 58 ce 4b>
+Received ping: <Buffer 75 74 66 38 2d f0 9f 99 82>
+Received bytes: <Buffer 89 89 27 fe c4 bc 52 8a a2 84 0a 0e 5b 25 a4>
+Received ping: <Buffer 75 74 66 38 2d f0 9f 99 83>
+Received bytes: <Buffer 89 89 7d 70 31 83 08 04 57 bb 50 80 ae 27 d4>
+Received ping: <Buffer 75 74 66 38 2d f0 9f a4 a9>
+Received bytes: <Buffer 8a 80 1d c5 b0 01>
+Received pong: <Buffer >
+Received bytes: <Buffer 8a 85 6d ed b9 2f 0c 9e da 46 04>
+Received pong: <Buffer 61 73 63 69 69>
+Received bytes: <Buffer 8a 89 3b 22 a8 73 57 43 dc 1a 55 13 85 b1 92>
+Received pong: <Buffer 6c 61 74 69 6e 31 2d c2 a9>
+Received bytes: <Buffer 8a 89 7b 52 ac 16 0e 26 ca 2e 56 a2 33 8e cd>
+Received pong: <Buffer 75 74 66 38 2d f0 9f 98 b6>
+Received close: 1000 <Buffer >
+Received bytes: <Buffer 89 80 3d d9 02 bc>
+Received ping: <Buffer >
+Received bytes: <Buffer 89 80 69 a2 a5 8d>
+Received ping: <Buffer >
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'RBLf/CJUSUWE0WFF559/tA=='
+}
+Received connection: 127.0.0.1
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'Mwkz8EJHTTKu+UFULe5ABw=='
+}
+Received connection: 127.0.0.1
+Received bytes: <Buffer 8a 89 f3 9b 74 64 86 ef 12 5c de 6b eb fd 70>
+Received pong: <Buffer 75 74 66 38 2d f0 9f 99 83>
+Received bytes: <Buffer 8a 89 e0 ac e4 2a 95 d8 82 12 cd 5c 7b b3 62>
+Received pong: <Buffer 75 74 66 38 2d f0 9f 99 82>
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'QW25ci1nQsOJcRtJkq8xOg=='
+}
+Received connection: 127.0.0.1
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received bytes: <Buffer 8a 89 b0 fd e6 32 c5 89 80 0a 9d 0d 79 96 19>
+Received pong: <Buffer 75 74 66 38 2d f0 9f a4 a9>
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'hFXIjW/gT3CxWmZWRp2Evw=='
+}
+Received connection: 127.0.0.1
+Received close: 1006 <Buffer >
+Received close: 1006 <Buffer >
+Received bytes: <Buffer 88 82 a4 a7 49 b2 a7 4f>
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': '+LJNVGI+Tgat9gQNbDu6RA=='
+}
+Received connection: 127.0.0.1
+Received close: 1006 <Buffer >
+Received bytes: <Buffer 88 82 31 7f 82 10 32 96>
+Received upgrade: {
+  host: '127.0.0.1:53149',
+  connection: 'Upgrade',
+  upgrade: 'websocket',
+  'sec-websocket-version': '13',
+  'sec-websocket-extensions': 'permessage-deflate; client_max_window_bits',
+  'sec-websocket-key': 'hMppNdQKQgKed3iP33Vj9A=='
+}
+Received connection: 127.0.0.1
+Received close: 1000 <Buffer >
+Received close: 1001 <Buffer >
+Received close: 1006 <Buffer >
+
+test/js/web/websocket/websocket-permessage-deflate-simple.test.ts:
+Server: WebSocket opened
+Client connected
+Client extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover
+1 | const host = process.argv[2];
+2 | 
+3 | const ws = new WebSocket(host);
+               ^
+SyntaxError: Invalid url for WebSocket invalid url
+      at /Users/ciro/code/bun/.claude/worktrees/wave-insp/test/js/web/websocket/websocket-subprocess.ts:3:12
+
+Bun v1.4.0-canary.1+b5657c612 (macOS arm64)
+Connected!
+
+test/js/web/websocket/websocket.test.js:
+(fail) #16995 [11464.39ms]
+  ^ this test timed out after 5000ms.
+Closed!
+(fail) WebSocket > should connect over https [11573.45ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > should connect many times over https [11573.43ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > rejectUnauthorized should reject self-sign certs when true/default [11572.86ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > rejectUnauthorized should NOT reject self-sign certs when false [11572.18ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > should not accept untrusted certificates [11570.69ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > should connect over http  [11556.25ms]
+  ^ this test timed out after 5000ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+(fail) WebSocket > should send and receive messages [11552.02ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > should be able to send big messages [11551.59ms]
+  ^ this test timed out after 5000ms.
+(fail) WebSocket > headers should keep the original case [11550.64ms]
+  ^ this test timed out after 5000ms.
+(fail) websocket in subprocess > should exit [11550.21ms]
+  ^ this test timed out after 5000ms.
+(fail) websocket in subprocess > should exit after timeout [11499.84ms]
+  ^ this test timed out after 5000ms.
+(fail) websocket in subprocess > should exit after server stop and 0 messages [11494.12ms]
+  ^ this test timed out after 5000ms.
+
+# Unhandled error between tests
+-------------------------------
+error: WebSocket connection to 'https://localhost:53330/' failed: WebSocket is closed before the connection is established
+ErrorEvent {
+  type: "error",
+  message: "WebSocket connection to 'https://localhost:53330/' failed: WebSocket is closed before the connection is established",
+  error: error: WebSocket connection to 'https://localhost:53330/' failed: WebSocket is closed before the connection is established
+,
+}
+-------------------------------
+
+Connected!
+ErrorEvent {
+  type: "error",
+  message: "WebSocket connection to 'http://localhost:53402/' failed: Connection ended",
+  error: error: WebSocket connection to 'http://localhost:53402/' failed: Connection ended
+,
+}
+Closed!
+Closed!
+{
+  current_websocket_count: 28,
+  initial_websocket_count: 53,
+}
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+GuardMalloc[bun-base-b5-33516]: Allocations will be placed on byte boundaries.
+GuardMalloc[bun-base-b5-33516]:  - Applications expecting word-aligned pointers may fail (such as Carbon applications)
+GuardMalloc[bun-base-b5-33516]:  - Applications using vector instructions (e.g., SSE) may fail.
+GuardMalloc[bun-base-b5-33516]: version 064575.39.1
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60307/
+[bun] Connected ws://localhost:60307/
+[bun] Connected ws://localhost:60308/
+[bun] Connected ws://localhost:60308/
+Received abrupt close: 1000 
+[bun] Connected ws://localhost:60300/
+[bun] Connected ws://localhost:60300/
+Received abrupt close: 1000 
+[bun] Connected ws://localhost:60309/
+[bun] Connected ws://localhost:60309/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60310/
+[bun] Connected ws://localhost:60310/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60315/
+[bun] Connected ws://localhost:60315/
+[bun] Connected ws://localhost:60312/
+[bun] Connected ws://localhost:60312/
+Received pong: <Buffer >
+[bun] Connected ws://localhost:60311/
+[bun] Connected ws://localhost:60311/
+Received ping: <Buffer >
+[bun] Connected ws://localhost:60317/
+[bun] Connected ws://localhost:60317/
+Closed: 1
+Closed: 2
+Closed: 3
+Closed: 4
+Closed: 5
+Exiting
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60378/
+[bun] Connected ws://localhost:60376/
+[bun] Connected ws://localhost:60378/
+[bun] Connected ws://localhost:60375/
+[bun] Connected ws://localhost:60376/
+[bun] Connected ws://localhost:60375/
+[bun] Connected ws://localhost:60383/
+[bun] Connected ws://localhost:60383/
+[bun] Connected ws://localhost:60372/
+[bun] Connected ws://localhost:60372/
+[bun] Connected ws://localhost:60373/
+[bun] Connected ws://localhost:60373/
+Received abrupt close: 1000 
+[bun] Connected ws://localhost:60374/
+[bun] Connected ws://localhost:60374/
+[bun] Connected ws://localhost:60377/
+[bun] Connected ws://localhost:60377/
+[bun] Connected ws://localhost:60380/
+[bun] Connected ws://localhost:60380/
+[bun] Connected ws://localhost:60382/
+[bun] Connected ws://localhost:60382/
+[bun] Connected ws://localhost:60386/
+[bun] Connected ws://localhost:60386/
+[bun] Connected ws://localhost:60379/
+[bun] Connected ws://localhost:60379/
+[bun] Connected ws://localhost:60381/
+[bun] Connected ws://localhost:60381/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+Received ping: <Buffer >
+Received ping: <Buffer >
+Received ping: <Buffer >
+[bun] Connected ws://localhost:60396/
+[bun] Connected ws://localhost:60396/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60404/
+[bun] Connected ws://localhost:60404/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60406/
+[bun] Connected ws://localhost:60406/
+[bun] Connected ws://localhost:60416/
+[bun] Connected ws://localhost:60416/
+[bun] Connected ws://localhost:60407/
+[bun] Connected ws://localhost:60407/
+[bun] Connected ws://localhost:60417/
+[bun] Connected ws://localhost:60417/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60429/
+[bun] Connected ws://localhost:60429/
+[bun] Connected ws://localhost:60432/
+[bun] Connected ws://localhost:60432/
+[bun] Connected ws://localhost:60437/
+[bun] Connected ws://localhost:60437/
+[bun] Connected ws://localhost:60426/
+[bun] Connected ws://localhost:60426/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60438/
+[bun] Connected ws://localhost:60438/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60439/
+[bun] Connected ws://localhost:60439/
+[bun] Connected ws://localhost:60442/
+[bun] Connected ws://localhost:60442/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60447/
+[bun] Connected ws://localhost:60447/
+[bun] Connected ws://localhost:60450/
+[bun] Connected ws://localhost:60450/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60453/
+[bun] Connected ws://localhost:60453/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60458/
+[bun] Connected ws://localhost:60458/
+[bun] Connected ws://localhost:60464/
+[bun] Connected ws://localhost:60464/
+[bun] Connected ws://localhost:60463/
+[bun] Connected ws://localhost:60463/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60465/
+[bun] Connected ws://localhost:60465/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60438/
+[bun] Connected ws://localhost:60438/
+[bun] Connected ws://localhost:60474/
+[bun] Connected ws://localhost:60474/
+[bun] Connected ws://localhost:60442/
+[bun] Connected ws://localhost:60447/
+[bun] Connected ws://localhost:60447/
+[bun] Connected ws://localhost:60442/
+[bun] Connected ws://localhost:60450/
+[bun] Connected ws://localhost:60450/
+[bun] Connected ws://localhost:60439/
+[bun] Connected ws://localhost:60439/
+[bun] Connected ws://localhost:60453/
+[bun] Connected ws://localhost:60453/
+[bun] Connected ws://localhost:60483/
+[bun] Connected ws://localhost:60483/
+[bun] Connected ws://localhost:60486/
+[bun] Connected ws://localhost:60486/
+[bun] Connected ws://localhost:60491/
+[bun] Connected ws://localhost:60491/
+[bun] Connected ws://localhost:60487/
+[bun] Connected ws://localhost:60487/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60503/
+[bun] Connected ws://localhost:60503/
+[bun] Connected ws://localhost:60498/
+[bun] Connected ws://localhost:60498/
+[bun] Connected ws://localhost:60497/
+[bun] Connected ws://localhost:60497/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60465/
+[bun] Connected ws://localhost:60465/
+[bun] Connected ws://localhost:60508/
+[bun] Connected ws://localhost:60508/
+[bun] Connected ws://localhost:60463/
+[bun] Connected ws://localhost:60463/
+[bun] Connected ws://localhost:60464/
+[bun] Connected ws://localhost:60464/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60474/
+[bun] Connected ws://localhost:60474/
+[bun] Connected ws://localhost:60486/
+[bun] Connected ws://localhost:60486/
+[bun] Connected ws://localhost:60483/
+[bun] Connected ws://localhost:60483/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60537/
+[bun] Connected ws://localhost:60537/
+[bun] Connected ws://localhost:60529/
+[bun] Connected ws://localhost:60529/
+[bun] Connected ws://localhost:60532/
+[bun] Connected ws://localhost:60532/
+Received ping: <Buffer >
+Received ping: <Buffer 6c 61 74 69 6e 31 2d c2 a9>
+Received ping: <Buffer 61 73 63 69 69>
+[bun] Connected ws://localhost:60538/
+[bun] Connected ws://localhost:60538/
+Received ping: <Buffer 75 74 66 38 2d f0 9f 98 b6>
+[bun] Connected ws://localhost:60541/
+[bun] Connected ws://localhost:60541/
+Received ping: <Buffer 75 74 66 38 2d f0 9f 99 82>
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+Received pong: <Buffer >
+Received pong: <Buffer 6c 61 74 69 6e 31 2d c2 a9>
+Received pong: <Buffer 61 73 63 69 69>
+Received pong: <Buffer 75 74 66 38 2d f0 9f 99 82>
+[bun] Connected ws://localhost:60552/
+[bun] Connected ws://localhost:60552/
+Received ping: <Buffer 75 74 66 38 2d f0 9f 99 83>
+[bun] Connected ws://localhost:60562/
+[bun] Connected ws://localhost:60562/
+Received pong: <Buffer >
+[bun] Connected ws://localhost:60559/
+[bun] Connected ws://localhost:60559/
+Received ping: <Buffer 75 74 66 38 2d f0 9f a4 a9>
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+Received pong: <Buffer 75 74 66 38 2d f0 9f 99 83>
+Received pong: <Buffer 75 74 66 38 2d f0 9f a4 a9>
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60576/
+[bun] Connected ws://localhost:60576/
+[bun] Connected ws://localhost:60580/
+[bun] Connected ws://localhost:60580/
+Received pong: <Buffer 6c 61 74 69 6e 31 2d c2 a9>
+Received pong: <Buffer 75 74 66 38 2d f0 9f 99 82>
+[bun] Connected ws://localhost:60579/
+[bun] Connected ws://localhost:60579/
+Received pong: <Buffer 75 74 66 38 2d f0 9f 98 b6>
+[bun] Connected ws://localhost:60571/
+[bun] Connected ws://localhost:60571/
+Received pong: <Buffer 61 73 63 69 69>
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60587/
+[bun] Connected ws://localhost:60587/
+[bun] Connected ws://localhost:60581/
+[bun] Connected ws://localhost:60581/
+[bun] Connected ws://localhost:60582/
+[bun] Connected ws://localhost:60582/
+Received pong: <Buffer 75 74 66 38 2d f0 9f 99 83>
+Received pong: <Buffer 75 74 66 38 2d f0 9f a4 a9>
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60595/
+[bun] Connected ws://localhost:60592/
+[bun] Connected ws://localhost:60592/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60612/
+[bun] Connected ws://localhost:60612/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+[bun] Warning: ws.WebSocket 'redirect' event is not implemented in bun
+[bun] Warning: ws.WebSocket 'unexpected-response' event is not implemented in bun
+[bun] Connected ws://localhost:60391/
+[bun] Connected ws://localhost:60391/
+
+ 325 pass
+ 10 skip
+ 3 todo
+ 14 fail
+ 2 errors
+ 4 snapshots, 806 expect() calls
+Ran 352 tests across 31 files. [19.99s]

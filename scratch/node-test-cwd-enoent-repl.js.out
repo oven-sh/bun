@@ -1,0 +1,42 @@
+(node:83421) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+Welcome to Node.js v26.3.0.
+Type ".help" for more information.
+> <ref *2> {
+  resolve: [Function: resolve],
+  normalize: [Function: normalize],
+  isAbsolute: [Function: isAbsolute],
+  join: [Function: join],
+  relative: [Function: relative],
+  toNamespacedPath: [Function: toNamespacedPath],
+  dirname: [Function: dirname],
+  basename: [Function: basename],
+  extname: [Function: extname],
+  format: [Function: bound _format],
+  parse: [Function: parse],
+  matchesGlob: [Function: matchesGlob],
+  sep: '/',
+  delimiter: ':',
+  win32: <ref *1> {
+    resolve: [Function: resolve],
+    normalize: [Function: normalize],
+    isAbsolute: [Function: isAbsolute],
+    join: [Function: join],
+    relative: [Function: relative],
+    toNamespacedPath: [Function: toNamespacedPath],
+    dirname: [Function: dirname],
+    basename: [Function: basename],
+    extname: [Function: extname],
+    format: [Function: bound _format],
+    parse: [Function: parse],
+    matchesGlob: [Function: matchesGlob],
+    sep: '\\',
+    delimiter: ';',
+    win32: [Circular *1],
+    posix: [Circular *2],
+    _makeLong: [Function: toNamespacedPath]
+  },
+  posix: [Circular *2],
+  _makeLong: [Function: toNamespacedPath]
+}
+> 

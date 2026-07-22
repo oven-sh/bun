@@ -1725,14 +1725,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
-            let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this));
-            return Err(JsError::Thrown);
-        }
-    }
-
+    // Start the readers before the Writable::Buffer stdin writer so that if
+    // the writer's start() throws below, both PipeReaders have taken their
+    // start() ref and on_process_exit's later drain is refcount-balanced.
     if let Readable::Pipe(pipe) = subprocess.stdout.get() {
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
@@ -1753,6 +1748,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
+        }
+    }
+
+    if let Writable::Buffer(buffer) = subprocess.stdin.get() {
+        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
+            let _ = subprocess.try_kill(subprocess.kill_signal);
+            let _ = global_this.throw_value(err.to_js(global_this));
+            return Err(JsError::Thrown);
         }
     }
 

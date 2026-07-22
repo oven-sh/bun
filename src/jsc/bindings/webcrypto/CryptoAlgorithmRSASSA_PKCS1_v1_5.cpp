@@ -85,7 +85,7 @@ void CryptoAlgorithmRSASSA_PKCS1_v1_5::generateKey(const CryptoAlgorithmParamete
     const auto& rsaParameters = downcast<CryptoAlgorithmRsaHashedKeyGenParams>(parameters);
 
     if (usages & (CryptoKeyUsageDecrypt | CryptoKeyUsageEncrypt | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for a RSA key"_s);
         return;
     }
 

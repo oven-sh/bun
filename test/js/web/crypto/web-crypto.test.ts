@@ -336,6 +336,81 @@ describe("Ed25519", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/32613
+describe("ChaCha20-Poly1305 and AKP review fixes", () => {
+  it("deriveKey can derive a ChaCha20-Poly1305 key", async () => {
+    const base = await crypto.subtle.importKey("raw", new Uint8Array(32), "HKDF", false, ["deriveKey"]);
+    const derived = await crypto.subtle.deriveKey(
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(8), info: new Uint8Array(0) },
+      base,
+      { name: "ChaCha20-Poly1305" },
+      true,
+      ["encrypt", "decrypt"],
+    );
+    expect(derived.algorithm.name).toBe("ChaCha20-Poly1305");
+    const iv = new Uint8Array(12);
+    const ct = await crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv }, derived, new Uint8Array([1, 2, 3]));
+    const pt = await crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv }, derived, ct);
+    expect(new Uint8Array(pt)).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it("rejects a ChaCha20-Poly1305 iv that is not 12 bytes with Node's message", async () => {
+    const key = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    for (const size of [0, 11, 16]) {
+      expect(
+        crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(size) }, key, new Uint8Array(4)),
+      ).rejects.toThrow("algorithm.iv must contain exactly 12 bytes");
+    }
+    const ct = await crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(12) }, key, new Uint8Array(4));
+    expect(
+      crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(16) }, key, ct),
+    ).rejects.toThrow("algorithm.iv must contain exactly 12 bytes");
+  });
+
+  it("importKey('raw') still rejects for ChaCha20-Poly1305 like Node", async () => {
+    expect(
+      crypto.subtle.importKey("raw", new Uint8Array(32), "ChaCha20-Poly1305", true, ["encrypt"]),
+    ).rejects.toThrow();
+  });
+
+  it("wrapKey and unwrapKey accept raw-public for Ed25519 public keys", async () => {
+    const kek = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-KW", false, ["wrapKey", "unwrapKey"]);
+    const pair = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+    const wrapped = await crypto.subtle.wrapKey("raw-public", pair.publicKey, kek, "AES-KW");
+    expect(wrapped.byteLength).toBeGreaterThan(0);
+    const unwrapped = await crypto.subtle.unwrapKey("raw-public", wrapped, kek, "AES-KW", "Ed25519", true, ["verify"]);
+    const a = new Uint8Array(await crypto.subtle.exportKey("raw-public", unwrapped));
+    const b = new Uint8Array(await crypto.subtle.exportKey("raw-public", pair.publicKey));
+    expect(a).toEqual(b);
+  });
+
+  it.each(["ML-DSA-65", "ML-KEM-768"])("getPublicKey round-trips the %s public key", async alg => {
+    const usages = alg.startsWith("ML-DSA") ? ["sign", "verify"] : ["encapsulateBits", "decapsulateBits"];
+    const pubUsages = alg.startsWith("ML-DSA") ? ["verify"] : ["encapsulateBits"];
+    const pair = (await crypto.subtle.generateKey(alg, true, usages as KeyUsage[])) as CryptoKeyPair;
+    const pub = await crypto.subtle.getPublicKey(pair.privateKey, pubUsages as KeyUsage[]);
+    expect(pub.type).toBe("public");
+    const a = new Uint8Array(await crypto.subtle.exportKey("spki", pub));
+    const b = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
+    expect(a).toEqual(b);
+  });
+
+  it("generateKey reports Node's unsupported-usage messages", async () => {
+    expect(crypto.subtle.generateKey({ name: "AES-CBC", length: 256 }, true, ["sign"])).rejects.toThrow(
+      "Unsupported key usage for an AES key",
+    );
+    expect(
+      crypto.subtle.generateKey(
+        { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        ["sign"],
+      ),
+    ).rejects.toThrow("Unsupported key usage for a RSA key");
+  });
+});
+
 describe("AES-KW wrapKey/unwrapKey with jwk format", () => {
   // The serialized JWK is rarely a multiple of 8 bytes, which AES-KW (RFC 3394)
   // requires. Bun used to reject these with OperationError; it now pads the JWK

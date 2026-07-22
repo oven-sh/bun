@@ -764,16 +764,6 @@ JSValue KeyObject::asymmetricKeyType(JSGlobalObject* globalObject)
         return jsNontrivialString(vm, "x25519"_s);
     case EVP_PKEY_X448:
         return jsNontrivialString(vm, "x448"_s);
-    case EVP_PKEY_ML_DSA_44:
-        return jsNontrivialString(vm, "ml-dsa-44"_s);
-    case EVP_PKEY_ML_DSA_65:
-        return jsNontrivialString(vm, "ml-dsa-65"_s);
-    case EVP_PKEY_ML_DSA_87:
-        return jsNontrivialString(vm, "ml-dsa-87"_s);
-    case EVP_PKEY_ML_KEM_768:
-        return jsNontrivialString(vm, "ml-kem-768"_s);
-    case EVP_PKEY_ML_KEM_1024:
-        return jsNontrivialString(vm, "ml-kem-1024"_s);
     default:
         if (ASCIILiteral pqcName = pqcNidToKeyTypeName(m_data->asymmetricKey.id()))
             return jsNontrivialString(vm, WTF::String(pqcName));

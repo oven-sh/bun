@@ -94,7 +94,7 @@ void CryptoAlgorithmAES_CBC::generateKey(const CryptoAlgorithmParameters& parame
     const auto& aesParameters = downcast<CryptoAlgorithmAesKeyParams>(parameters);
 
     if (usagesAreInvalidForCryptoAlgorithmAES_CBC(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 
@@ -112,7 +112,7 @@ void CryptoAlgorithmAES_CBC::importKey(CryptoKeyFormat format, KeyData&& data, c
     using namespace CryptoAlgorithmAES_CBCInternal;
 
     if (usagesAreInvalidForCryptoAlgorithmAES_CBC(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 

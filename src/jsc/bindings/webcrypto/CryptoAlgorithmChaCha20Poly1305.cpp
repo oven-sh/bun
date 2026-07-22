@@ -61,6 +61,17 @@ static bool validateTagLength(std::optional<uint8_t>& tagLength, const CryptoAlg
     return true;
 }
 
+// RFC 8439 fixes the ChaCha20-Poly1305 nonce at 96 bits; Node rejects any other
+// length up front instead of surfacing BoringSSL's generic AEAD failure.
+static bool validateIvLength(const CryptoAlgorithmAeadParams& parameters, const CryptoAlgorithm::ExceptionCallback& exceptionCallback)
+{
+    if (parameters.ivVector().size() != 12) {
+        exceptionCallback(OperationError, "algorithm.iv must contain exactly 12 bytes"_s);
+        return false;
+    }
+    return true;
+}
+
 Ref<CryptoAlgorithm> CryptoAlgorithmChaCha20Poly1305::create()
 {
     return adoptRef(*new CryptoAlgorithmChaCha20Poly1305);
@@ -76,6 +87,8 @@ void CryptoAlgorithmChaCha20Poly1305::encrypt(const CryptoAlgorithmParameters& p
     auto& aeadParameters = downcast<CryptoAlgorithmAeadParams>(parameters);
     if (!validateTagLength(aeadParameters.tagLength, exceptionCallback))
         return;
+    if (!validateIvLength(aeadParameters, exceptionCallback))
+        return;
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
         [parameters = crossThreadCopy(aeadParameters), key = WTF::move(key), plainText = WTF::move(plainText)] {
@@ -89,6 +102,8 @@ void CryptoAlgorithmChaCha20Poly1305::decrypt(const CryptoAlgorithmParameters& p
 
     auto& aeadParameters = downcast<CryptoAlgorithmAeadParams>(parameters);
     if (!validateTagLength(aeadParameters.tagLength, exceptionCallback))
+        return;
+    if (!validateIvLength(aeadParameters, exceptionCallback))
         return;
     if (cipherText.size() < TagLength / 8) {
         exceptionCallback(OperationError, "The provided data is too small"_s);

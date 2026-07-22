@@ -87,7 +87,7 @@ void CryptoAlgorithmRSA_OAEP::generateKey(const CryptoAlgorithmParameters& param
     const auto& rsaParameters = downcast<CryptoAlgorithmRsaHashedKeyGenParams>(parameters);
 
     if (usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageKemMask)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for a RSA key"_s);
         return;
     }
 

@@ -58,7 +58,7 @@ CryptoAlgorithmIdentifier CryptoAlgorithmAES_KW::identifier() const
 void CryptoAlgorithmAES_KW::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
     if (usagesAreInvalidForCryptoAlgorithmAES_KW(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 
@@ -76,7 +76,7 @@ void CryptoAlgorithmAES_KW::importKey(CryptoKeyFormat format, KeyData&& data, co
     using namespace CryptoAlgorithmAES_KWInternal;
 
     if (usagesAreInvalidForCryptoAlgorithmAES_KW(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 

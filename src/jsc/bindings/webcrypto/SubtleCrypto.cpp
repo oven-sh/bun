@@ -712,8 +712,6 @@ static bool isAkpAlgorithm(CryptoAlgorithmIdentifier identifier)
     return CryptoKeyAKP::isMlDsa(identifier) || CryptoKeyAKP::isMlKem(identifier);
 }
 
-static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params, Ref<DeferredPromise>&& promise);
-
 // Rejects with a DOMException carrying a `cause`, matching Node's error shapes
 // for the ML-DSA/ML-KEM code paths.
 static void rejectWithCause(Ref<DeferredPromise>&& promise, ExceptionCode ec, const String& message, Function<JSC::JSValue(JSDOMGlobalObject&)>&& makeCause)
@@ -1128,7 +1126,13 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
                 rejectWithException(promise.releaseNonNull(), ec, msg);
         };
 
-        importAlgorithm->importKey(SubtleCrypto::KeyFormat::Raw, WTF::move(data), *importParams, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
+        // Legacy secret-key algorithms accept both raw spellings, but the modern
+        // ones (ChaCha20-Poly1305, AKP) only take raw-secret; HKDF/PBKDF2 only
+        // take raw. Mirrors the encapsulateKey/decapsulateKey import below.
+        auto importFormat = importParams->identifier == CryptoAlgorithmIdentifier::HKDF || importParams->identifier == CryptoAlgorithmIdentifier::PBKDF2
+            ? SubtleCrypto::KeyFormat::Raw
+            : SubtleCrypto::KeyFormat::RawSecret;
+        importAlgorithm->importKey(importFormat, WTF::move(data), *importParams, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
     };
     auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -1177,6 +1181,86 @@ void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& 
     RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
 }
 
+// Node's aliasKeyFormat maps raw-secret and raw-public to raw for these
+// algorithms and rejects the seed/public formats everywhere else; only the
+// ML algorithms consume them directly (lib/internal/crypto/webcrypto.js).
+// Shared by importKey and unwrapKey; returns false after rejecting the promise.
+static bool aliasImportKeyFormat(CryptoAlgorithmIdentifier identifier, SubtleCrypto::KeyFormat& format, DeferredPromise& promise)
+{
+    using KeyFormat = SubtleCrypto::KeyFormat;
+    switch (identifier) {
+    case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
+    case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
+    case CryptoAlgorithmIdentifier::RSA_PSS:
+    case CryptoAlgorithmIdentifier::RSA_OAEP:
+    case CryptoAlgorithmIdentifier::ECDSA:
+    case CryptoAlgorithmIdentifier::ECDH:
+    case CryptoAlgorithmIdentifier::Ed25519:
+    case CryptoAlgorithmIdentifier::X25519:
+    case CryptoAlgorithmIdentifier::HKDF:
+    case CryptoAlgorithmIdentifier::PBKDF2:
+        if (format == KeyFormat::RawSecret)
+            format = KeyFormat::Raw;
+        break;
+    default:
+        break;
+    }
+    if (!isAkpAlgorithm(identifier) && (format == KeyFormat::RawPublic || format == KeyFormat::RawSeed)) {
+        bool aliasesRawPublic = false;
+        switch (identifier) {
+        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
+        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
+        case CryptoAlgorithmIdentifier::RSA_PSS:
+        case CryptoAlgorithmIdentifier::RSA_OAEP:
+        case CryptoAlgorithmIdentifier::ECDSA:
+        case CryptoAlgorithmIdentifier::ECDH:
+        case CryptoAlgorithmIdentifier::Ed25519:
+        case CryptoAlgorithmIdentifier::X25519:
+        case CryptoAlgorithmIdentifier::HKDF:
+        case CryptoAlgorithmIdentifier::PBKDF2:
+            aliasesRawPublic = true;
+            break;
+        default:
+            break;
+        }
+        if (format == KeyFormat::RawPublic && aliasesRawPublic)
+            format = KeyFormat::Raw;
+        else {
+            promise.reject(NotSupportedError, makeString("Unable to import "_s, CryptoAlgorithmRegistry::singleton().name(identifier), " using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));
+            return false;
+        }
+    }
+    return true;
+}
+
+// Export-side twin of aliasImportKeyFormat, shared by exportKey and wrapKey.
+static bool aliasExportKeyFormat(const CryptoKey& key, SubtleCrypto::KeyFormat& format, DeferredPromise& promise)
+{
+    using KeyFormat = SubtleCrypto::KeyFormat;
+    if (!isAkpAlgorithm(key.algorithmIdentifier()) && (format == KeyFormat::RawPublic || format == KeyFormat::RawSeed)) {
+        bool aliasesRawPublic = false;
+        switch (key.algorithmIdentifier()) {
+        case CryptoAlgorithmIdentifier::ECDSA:
+        case CryptoAlgorithmIdentifier::ECDH:
+        case CryptoAlgorithmIdentifier::Ed25519:
+        case CryptoAlgorithmIdentifier::X25519:
+            aliasesRawPublic = key.type() == CryptoKeyType::Public;
+            break;
+        default:
+            break;
+        }
+        if (format == KeyFormat::RawPublic && aliasesRawPublic)
+            format = KeyFormat::Raw;
+        else {
+            auto type = key.type() == CryptoKeyType::Private ? "private"_s : key.type() == CryptoKeyType::Public ? "public"_s
+                                                                                                                 : "secret"_s;
+            promise.reject(NotSupportedError, makeString("Unable to export "_s, CryptoAlgorithmRegistry::singleton().name(key.algorithmIdentifier()), ' ', type, " key using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));
+            return false;
+        }
+    }
+    return true;
+}
+
 void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDataVariant&& keyDataVariant, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
@@ -1198,51 +1282,8 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     auto keyData = *keyDataOrNull;
     auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
-    // Node's aliasKeyFormat maps raw-secret and raw-public to raw for these
-    // algorithms and rejects the seed/public formats everywhere else; only the
-    // ML algorithms consume them directly (lib/internal/crypto/webcrypto.js).
-    switch (params->identifier) {
-    case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-    case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
-    case CryptoAlgorithmIdentifier::RSA_PSS:
-    case CryptoAlgorithmIdentifier::RSA_OAEP:
-    case CryptoAlgorithmIdentifier::ECDSA:
-    case CryptoAlgorithmIdentifier::ECDH:
-    case CryptoAlgorithmIdentifier::Ed25519:
-    case CryptoAlgorithmIdentifier::X25519:
-    case CryptoAlgorithmIdentifier::HKDF:
-    case CryptoAlgorithmIdentifier::PBKDF2:
-        if (format == KeyFormat::RawSecret)
-            format = KeyFormat::Raw;
-        break;
-    default:
-        break;
-    }
-    if (!isAkpAlgorithm(params->identifier) && (format == KeyFormat::RawPublic || format == KeyFormat::RawSeed)) {
-        bool aliasesRawPublic = false;
-        switch (params->identifier) {
-        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
-        case CryptoAlgorithmIdentifier::RSA_PSS:
-        case CryptoAlgorithmIdentifier::RSA_OAEP:
-        case CryptoAlgorithmIdentifier::ECDSA:
-        case CryptoAlgorithmIdentifier::ECDH:
-        case CryptoAlgorithmIdentifier::Ed25519:
-        case CryptoAlgorithmIdentifier::X25519:
-        case CryptoAlgorithmIdentifier::HKDF:
-        case CryptoAlgorithmIdentifier::PBKDF2:
-            aliasesRawPublic = true;
-            break;
-        default:
-            break;
-        }
-        if (format == KeyFormat::RawPublic && aliasesRawPublic)
-            format = KeyFormat::Raw;
-        else {
-            promise->reject(NotSupportedError, makeString("Unable to import "_s, CryptoAlgorithmRegistry::singleton().name(params->identifier), " using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));
-            return;
-        }
-    }
+    if (!aliasImportKeyFormat(params->identifier, format, promise.get()))
+        return;
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
@@ -1303,29 +1344,8 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
         return;
     }
 
-    // Node aliases raw-public to raw for EC and OKP public keys and rejects the
-    // seed/public formats everywhere else; only the ML algorithms consume them.
-    if (!isAkpAlgorithm(key.algorithmIdentifier()) && (format == KeyFormat::RawPublic || format == KeyFormat::RawSeed)) {
-        bool aliasesRawPublic = false;
-        switch (key.algorithmIdentifier()) {
-        case CryptoAlgorithmIdentifier::ECDSA:
-        case CryptoAlgorithmIdentifier::ECDH:
-        case CryptoAlgorithmIdentifier::Ed25519:
-        case CryptoAlgorithmIdentifier::X25519:
-            aliasesRawPublic = key.type() == CryptoKeyType::Public;
-            break;
-        default:
-            break;
-        }
-        if (format == KeyFormat::RawPublic && aliasesRawPublic)
-            format = KeyFormat::Raw;
-        else {
-            auto type = key.type() == CryptoKeyType::Private ? "private"_s : key.type() == CryptoKeyType::Public ? "public"_s
-                                                                                                                 : "secret"_s;
-            promise->reject(NotSupportedError, makeString("Unable to export "_s, CryptoAlgorithmRegistry::singleton().name(key.algorithmIdentifier()), ' ', type, " key using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));
-            return;
-        }
-    }
+    if (!aliasExportKeyFormat(key, format, promise.get()))
+        return;
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
@@ -1400,6 +1420,12 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
         promise->reject(Exception { NotSupportedError });
         return;
     }
+
+    // wrapKey re-uses the exportKey machinery, so it needs the same
+    // raw-public/raw-seed aliasing (subtle.wrapKey('raw-public', ...) works in
+    // Node for EC/OKP public keys).
+    if (!aliasExportKeyFormat(key, format, promise.get()))
+        return;
 
     if (!key.extractable()) {
         promise->reject(InvalidAccessError, "key is not extractable"_s);
@@ -1531,6 +1557,11 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
         promise->reject(InvalidAccessError, "Unable to use this key to unwrapKey"_s);
         return;
     }
+
+    // unwrapKey re-uses the importKey machinery, so it needs the same
+    // raw-secret/raw-public aliasing that importKey applies.
+    if (!aliasImportKeyFormat(unwrappedKeyAlgorithm->identifier, format, promise.get()))
+        return;
 
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(unwrappedKeyAlgorithm->identifier);
     if (!importAlgorithm) [[unlikely]] {

@@ -288,6 +288,7 @@ void CryptoAlgorithmMLKEM::encapsulate(Ref<CryptoKey>&& key, VectorPairCallback&
     size_t ciphertextLength = 0;
     size_t sharedKeyLength = 0;
     if (!EVP_PKEY_encapsulate(ctx.get(), nullptr, &ciphertextLength, nullptr, &sharedKeyLength)) {
+        ERR_clear_error();
         exceptionCallback(OperationError, ""_s);
         return;
     }
@@ -295,6 +296,7 @@ void CryptoAlgorithmMLKEM::encapsulate(Ref<CryptoKey>&& key, VectorPairCallback&
     Vector<uint8_t> ciphertext(ciphertextLength);
     Vector<uint8_t> sharedKey(sharedKeyLength);
     if (!EVP_PKEY_encapsulate(ctx.get(), ciphertext.begin(), &ciphertextLength, sharedKey.begin(), &sharedKeyLength)) {
+        ERR_clear_error();
         exceptionCallback(OperationError, ""_s);
         return;
     }

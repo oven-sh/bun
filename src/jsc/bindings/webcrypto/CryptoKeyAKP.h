@@ -46,7 +46,6 @@ public:
     static bool isMlKem(CryptoAlgorithmIdentifier);
     static const EVP_PKEY_ALG* algForIdentifier(CryptoAlgorithmIdentifier);
     static int nidForIdentifier(CryptoAlgorithmIdentifier);
-    static size_t seedSizeForIdentifier(CryptoAlgorithmIdentifier);
 
     static RefPtr<CryptoKeyAKP> create(CryptoAlgorithmIdentifier, CryptoKeyType, EvpPKeyPtr&&, bool extractable, CryptoKeyUsageBitmap);
 

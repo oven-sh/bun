@@ -100,12 +100,6 @@ int CryptoKeyAKP::nidForIdentifier(CryptoAlgorithmIdentifier identifier)
     }
 }
 
-size_t CryptoKeyAKP::seedSizeForIdentifier(CryptoAlgorithmIdentifier identifier)
-{
-    // ML-DSA seeds are the 32-byte xi from FIPS 204; ML-KEM seeds are d||z (FIPS 203).
-    return isMlKem(identifier) ? 64 : 32;
-}
-
 CryptoKeyAKP::CryptoKeyAKP(CryptoAlgorithmIdentifier identifier, CryptoKeyType type, EvpPKeyPtr&& key, bool extractable, CryptoKeyUsageBitmap usages)
     : CryptoKey(identifier, type, extractable, usages)
     , m_key(WTF::move(key))

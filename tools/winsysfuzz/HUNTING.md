@@ -248,3 +248,10 @@ any callsite, and the runtime follows the WSABUF indirection.
   IOSB matches, poison Information bytes across those buffers. Until that
   exists, hostile-peer-data coverage of the receive path is NOT achieved;
   do not read a clean afd:RECV run as coverage.
+
+  Correction (2026-07-22): `NtDeviceIoControlFile` is manifest id **90** in the
+  regenerated table (not 210 as one earlier note assumed - 210 is
+  `NtProtectVirtualMemory`). The compiled enum is correct (same codegen run);
+  the outstanding question is why an `afd:RECV` garbage rule never MATCHES
+  (`fired=0`) while `afd:SEND` does - to be settled by a match-site LogNote,
+  not further inference.

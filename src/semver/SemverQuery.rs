@@ -832,9 +832,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 }
 
                 i += 1;
-                while i < input.len() && input[i] == b' ' {
-                    i += 1;
-                }
+                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
             }
             b'<' => {
                 if input.len() > i + 1 && input[i + 1] == b'=' {
@@ -845,17 +843,13 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 }
 
                 i += 1;
-                while i < input.len() && input[i] == b' ' {
-                    i += 1;
-                }
+                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
             }
             b'=' | b'v' => {
                 token.tag = TokenTag::Version;
                 is_or = true;
                 i += 1;
-                while i < input.len() && input[i] == b' ' {
-                    i += 1;
-                }
+                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
             }
             b'~' => {
                 token.tag = TokenTag::Tilda;
@@ -865,16 +859,12 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     i += 1;
                 }
 
-                while i < input.len() && input[i] == b' ' {
-                    i += 1;
-                }
+                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
             }
             b'^' => {
                 token.tag = TokenTag::Caret;
                 i += 1;
-                while i < input.len() && input[i] == b' ' {
-                    i += 1;
-                }
+                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
             }
             b'0'..=b'9' | b'X' | b'x' | b'*' => {
                 token.tag = TokenTag::Version;
@@ -886,24 +876,21 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 while i < input.len() && input[i] == b'|' {
                     i += 1;
                 }
-                while i < input.len() && input[i] == b' ' {
-                    i += 1;
-                }
+                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
                 is_or = true;
                 token.tag = TokenTag::None;
                 skip_round = true;
             }
             b'-' => {
                 i += 1;
-                while i < input.len() && input[i] == b' ' {
-                    i += 1;
-                }
+                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
             }
-            b' ' => {
+            // node-semver splits comparator sets on /\s+/, so treat tab/newline/CR/VT/FF
+            // the same as a space instead of letting them fall through to the catch-all
+            // arm below (which would swallow the following comparator as a "tagged version").
+            b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => {
                 i += 1;
-                while i < input.len() && input[i] == b' ' {
-                    i += 1;
-                }
+                i += strings::length_of_leading_whitespace_ascii(&input[i..]);
                 skip_round = true;
             }
             _ => {
@@ -913,7 +900,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 // skip tagged versions
                 // we are assuming this is the beginning of a tagged version like "boop"
                 // "1.0.0 || boop"
-                while i < input.len() && input[i] != b' ' && input[i] != b'|' {
+                while i < input.len()
+                    && !strings::WHITESPACE_CHARS.contains(&input[i])
+                    && input[i] != b'|'
+                {
                     i += 1;
                 }
                 skip_round = true;
@@ -935,7 +925,8 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             i += parse_result.len as usize;
             let rollback = i;
 
-            let maybe_hyphenate = i < input.len() && (input[i] == b' ' || input[i] == b'-');
+            let maybe_hyphenate = i < input.len()
+                && (strings::WHITESPACE_CHARS.contains(&input[i]) || input[i] == b'-');
 
             // TODO: can we do this without rolling back?
             let hyphenate: bool = maybe_hyphenate

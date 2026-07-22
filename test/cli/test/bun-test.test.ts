@@ -369,8 +369,8 @@ describe("bun test", () => {
           "bail.test.ts": `
           import { test, expect } from "bun:test";
           import { v } from "./v";
-          test("t1", () => { expect(v).toBe(1); });
-          test("t2", () => { expect(2).toBe(2); });
+          test("test #1", () => { expect(v).toBe(1); });
+          test("test #2", () => { expect(2).toBe(2); });
         `,
         });
 
@@ -396,11 +396,12 @@ describe("bun test", () => {
           return buf.length;
         }
 
-        // First run: t1 fails, bail fires, t2 must not run, and the normal
-        // end-of-run summary must still print (not a hard exit mid-run).
+        // First run: test #1 fails, bail fires, test #2 must not run, and
+        // the normal end-of-run summary must still print (not a hard exit
+        // mid-run).
         const afterBail = await waitFor("Bailed out after 1 failure");
         await waitFor("Ran 1 test across 1 file");
-        expect(buf).not.toContain("t2");
+        expect(buf).not.toContain("test #2");
         expect(proc.exitCode).toBeNull();
 
         // Fix the failing test. The watcher should still be alive, pick up

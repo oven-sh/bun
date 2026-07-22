@@ -484,21 +484,20 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             // SAFETY: sockaddr_storage is plain C data; all-zero is a valid
             unsafe {
                 let mut ss: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
-                let ss_len: libc::socklen_t;
-                if family == libc::AF_INET6 {
+                let ss_len: libc::socklen_t = if family == libc::AF_INET6 {
                     let sin6: &mut libc::sockaddr_in6 =
                         &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
                     sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
                     sin6.sin6_port = (port as u16).to_be();
-                    ss_len = core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
+                    core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t
                 } else {
                     let sin: &mut libc::sockaddr_in =
                         &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
                     sin.sin_family = libc::AF_INET as libc::sa_family_t;
                     sin.sin_port = (port as u16).to_be();
                     sin.sin_addr.s_addr = libc::INADDR_ANY.to_be();
-                    ss_len = core::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
-                }
+                    core::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t
+                };
                 (ss, ss_len)
             }
         }

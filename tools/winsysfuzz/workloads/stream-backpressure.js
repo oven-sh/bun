@@ -145,11 +145,18 @@ console.log("STAGE: web-streams");
 console.log("STAGE: spawn-roundtrip");
 {
   const v = makeVerifier("spawn");
+  // The child is round-trip infrastructure, not the code under test: it
+  // runs unfaulted (schedule stripped from ITS environment - the injection
+  // env is inherited by default), so a corruption verdict here indicts the
+  // PARENT's spawn/pipe path or the pipe itself, never a sabotaged child
+  // that legitimately emitted nothing / a truncated stream. Its stderr is
+  // inherited so a genuine child crash still reaches the crash oracle.
   const child = Bun.spawn({
     cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
     stdin: "pipe",
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "inherit",
+    env: { ...process.env, WSF_MODE: "trace" },
   });
   const reader = (async () => {
     for await (const c of child.stdout) v.write(Buffer.from(c));

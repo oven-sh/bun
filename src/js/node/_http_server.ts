@@ -1654,12 +1654,36 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     this[kHandle] = undefined;
     handle.onclose = this.#onCloseForDestroy.bind(this, callback, err);
     handle.close();
-    // lets sync check and destroy the request if it's not complete
+    // Abort the in-flight request now, while _httpMessage still points at it:
+    // a synchronous res.destroy() inside the request handler leads to
+    // detachSocket() clearing _httpMessage before the native close delivers
+    // #onClose, which would otherwise leave the request never destroyed.
+    this.#abortIncoming();
+  }
+  // Node.js's socketOnClose → abortIncoming + onServerResponseClose: destroy the
+  // still-attached request with ECONNRESET and schedule res 'close'. Scheduling
+  // res 'close' here (before req.destroy's deferred 'error'/'close') is what
+  // gives Node.js's req 'aborted' → res 'close' → req 'error' → req 'close'
+  // order. Idempotent; whichever of #closeHandle / #onClose runs first wins.
+  #abortIncoming() {
     const message = this._httpMessage;
     const req = message?.req;
-    if (req && !req.complete) {
-      // at this point the handle is not destroyed yet, lets destroy the request
-      req.destroy();
+
+    if (req && !req.destroyed && !req[kHandle]?.upgraded) {
+      // At this point the socket is already destroyed; let's avoid UAF
+      req[kHandle] = undefined;
+      if (req.listenerCount("error") > 0) {
+        req.destroy(new ConnResetException("aborted"));
+      } else {
+        req.destroy();
+      }
+    }
+
+    // A response that was still attached to this socket (it had not finished
+    // when the connection died) must emit 'close' too, exactly like Node.js's
+    // onServerResponseClose socket listener does.
+    if (message && !message._closed) {
+      process.nextTick(emitCloseNT, message);
     }
   }
   #onClose() {
@@ -1692,25 +1716,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     // flips `complete` before the response is written, so an aborted
     // connection would otherwise never reach `req.destroy()` →
     // `emit("close")` (test-http-should-emit-close-when-connection-is-aborted).
-    const message = this._httpMessage;
-    const req = message?.req;
-
-    if (req && !req.destroyed && !req[kHandle]?.upgraded) {
-      // At this point the socket is already destroyed; let's avoid UAF
-      req[kHandle] = undefined;
-      if (req.listenerCount("error") > 0) {
-        req.destroy(new ConnResetException("aborted"));
-      } else {
-        req.destroy();
-      }
-    }
-
-    // A response that was still attached to this socket (it had not finished
-    // when the connection died) must emit 'close' too, exactly like Node.js's
-    // onServerResponseClose socket listener does.
-    if (message && !message._closed) {
-      process.nextTick(emitCloseNT, message);
-    }
+    this.#abortIncoming();
 
     // Pipelined responses (and their requests) that were still queued behind
     // the in-flight response are aborted, like Node.js's socketOnClose

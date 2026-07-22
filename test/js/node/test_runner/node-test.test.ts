@@ -126,6 +126,18 @@ describe("node:test", () => {
     });
   });
 
+  test("should not apply bun:test's per-test timeout to node:test bodies with no explicit timeout", async () => {
+    // Node's runner has no default per-test timeout; the shim's (done) => {}
+    // wrapper used to inherit bun:test's default and then blame a done callback
+    // the user never wrote. --timeout 200 stands in for the 5s default.
+    const { exitCode, stderr } = await runTests(["25-no-default-timeout.js"], {}, ["--timeout", "200"]);
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("1 fail");
+    expect(stderr).toContain("test timed out after 50ms");
+    expect(stderr).not.toContain("done callback");
+    expect(exitCode).toBe(1);
+  });
+
   test("should not leak file-level beforeEach hooks across files in one process", async () => {
     const { exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
     expect(stderr).toContain("4 pass");

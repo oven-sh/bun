@@ -30,8 +30,6 @@ const realClearTimeout = clearTimeout;
 const kDefaultOptions = kEmptyObject;
 // Matches Node's internal/timers TIMEOUT_MAX.
 const kTimeoutMax = 2 ** 31 - 1;
-// Matches bun:test's default per-test timeout.
-const kBunTestDefaultTimeoutMs = 5_000;
 const kJoinSeparator = " > ";
 
 function run() {
@@ -1691,23 +1689,13 @@ function bunTest() {
   return jest(Bun.main);
 }
 
-function bunTestOptions(options: TestOptions) {
-  // The node-style timeout is enforced by executeTestNode itself so that a
-  // tiny timeout (e.g. 1ms) with a synchronous body still passes like in Node.
-  // bun:test's own watchdog measures the whole wrapper, so it is only told
-  // about timeouts that extend past its 5s default.
-  const { timeout } = options;
-  if (timeout === Infinity) {
-    // Node's "no timeout" must override bun:test's default (bun saturates it).
-    return { timeout };
-  }
-  if (typeof timeout === "number" && Number.isFinite(timeout)) {
-    // Keep bun:test's watchdog at or above both the node-style timeout and
-    // bun's default so a lower `--timeout` cannot cut a node timeout short.
-    return { timeout: Math.max(timeout, kBunTestDefaultTimeoutMs) };
-  }
-  return undefined;
-}
+// The node-style timeout is enforced entirely by executeTestNode (so a tiny
+// timeout with a synchronous body still passes, like Node). bun:test's own
+// watchdog measures the whole (done) => {} wrapper, so letting it fire would
+// (a) apply bun's 5s default to node:test files that, per Node, have no
+// default timeout, and (b) blame a "done callback" the user never wrote.
+// Disable it unconditionally; Infinity saturates to u32::MAX on the native side.
+const kBunTestNoTimeout = { timeout: Infinity };
 
 function currentCollectionParent(): TestNode {
   const node = currentNode();
@@ -1776,7 +1764,6 @@ function addTest(
   node.ownTags = ownTags;
 
   const { test } = bunTest();
-  const passOptions = bunTestOptions(options);
 
   const effectiveMode = mode ?? (options.todo ? "todo" : options.skip ? "skip" : undefined);
 
@@ -1784,23 +1771,14 @@ function addTest(
     const register = effectiveMode === "todo" ? test.todo : test.skip;
     // Node runs todo bodies; bun:test only does so under --todo.
     const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;
-    if (passOptions !== undefined) {
-      register(name, body, passOptions);
-    } else {
-      register(name, body);
-    }
+    register(name, body, kBunTestNoTimeout);
     return Promise.resolve(undefined);
   }
 
   // Node's `only` (the option and the test.only()/describe.only() spellings)
   // is a no-op unless --test-only is passed, so it registers an ordinary
   // test/suite; bun:test's only() would skip siblings and is rejected in CI.
-  const runner = createTopLevelTestRunner(node, fn);
-  if (passOptions !== undefined) {
-    test(name, runner, passOptions);
-  } else {
-    test(name, runner);
-  }
+  test(name, createTopLevelTestRunner(node, fn), kBunTestNoTimeout);
 
   // Resolved eagerly rather than when the runner settles: bun:test never invokes
   // the runner for a test `--test-name-pattern` filters out, so a deferred tied
@@ -1868,17 +1846,12 @@ function addSuite(
   };
 
   const effectiveMode = mode ?? (options.todo ? "todo" : options.skip ? "skip" : undefined);
-  const passOptions = bunTestOptions(options);
 
   let register: Function = describe;
   if (effectiveMode === "skip") register = describe.skip;
   else if (effectiveMode === "todo") register = describe.todo;
 
-  if (passOptions !== undefined) {
-    register(name, wrapped, passOptions);
-  } else {
-    register(name, wrapped);
-  }
+  register(name, wrapped, kBunTestNoTimeout);
   return Promise.resolve(undefined);
 }
 

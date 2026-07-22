@@ -220,7 +220,9 @@ describe("does not send a request when", () => {
     // proxy: "" means "explicit direct", not "some proxy", so the unix/proxy
     // conflict check must let it through. The request itself fails (no server
     // at the socket) but with a connection error, not the conflict TypeError.
-    const err = await fetch(url, { proxy: "", unix: "/tmp/bun-fetch-args-empty-proxy.sock" }).then(
+    // Use a literal URL: the block-local `url` above is assigned in afterAll,
+    // so relying on it would make this test vacuous (reject at blank-URL).
+    const err = await fetch("http://127.0.0.1/", { proxy: "", unix: "/tmp/bun-fetch-args-empty-proxy.sock" }).then(
       () => null,
       e => e,
     );

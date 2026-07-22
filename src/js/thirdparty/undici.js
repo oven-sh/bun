@@ -56,6 +56,9 @@ function applyDispatcher(url, options) {
   const proxy = resolveProxy(dispatcher, url);
   if (proxy === undefined) return options;
   if (options == null) return { proxy };
+  // Bun's fetch(url, Request) reads method/headers/body via prototype getters;
+  // spreading a Request yields `{}`, so pass it through untouched.
+  if (options instanceof Request) return options;
   // Don't clobber a caller-provided Bun proxy option.
   if (options.proxy !== undefined) return options;
   return { ...options, proxy };

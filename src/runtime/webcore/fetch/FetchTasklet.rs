@@ -2092,7 +2092,7 @@ impl FetchTasklet {
 
         if let HTTPRequestBody::Sendfile(sendfile) = &fetch_tasklet.request_body {
             debug_assert!(url_is_http);
-            debug_assert!(fetch_options.proxy.is_none());
+            debug_assert!(fetch_options.proxy.as_ref().is_none_or(|p| p.is_empty()));
             fetch_tasklet.http.as_mut().unwrap().request_body =
                 http::HTTPRequestBody::Sendfile(*sendfile);
         }

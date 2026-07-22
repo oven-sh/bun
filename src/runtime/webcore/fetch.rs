@@ -1728,7 +1728,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // An explicit `compress` request always wins over the sendfile
             // heuristic — otherwise the same `Bun.file()` body would compress
             // over https/proxy/<32 KiB/Windows but silently not over plain http.
-            if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
+            // Some(empty) (`proxy: ""`) means direct, so sendfile is still
+            // eligible — only a real proxy URL needs the tunnel envelope.
+            if proxy.as_ref().is_none_or(ZigURL::is_empty)
+                && compress.is_none()
+                && http::SendFile::is_eligible(&url)
+            {
                 'use_sendfile: {
                     let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
                         Ok(result) => result,

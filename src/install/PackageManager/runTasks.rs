@@ -394,9 +394,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // A full idle-timeout (default 5 min) against a wedged
                     // endpoint won't recover on immediate retry; fail fast
                     // instead of multiplying it by `max_retry_count` (~30 min).
-                    let is_idle_timeout = matches!(task.response.fail, Some(http::Error::Timeout));
-
-                    if !is_idle_timeout && task.retried < manager.options.max_retry_count {
+                    if !task.response.is_timeout() && task.retried < manager.options.max_retry_count
+                    {
                         task.retried += 1;
                         enqueue::enqueue_network_task(manager, task_ptr);
 
@@ -667,9 +666,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     // See the manifest arm above: a full idle-timeout is not a
                     // transient blip, so don't multiply it by `max_retry_count`.
-                    let is_idle_timeout = matches!(task.response.fail, Some(http::Error::Timeout));
-
-                    if !is_idle_timeout && task.retried < manager.options.max_retry_count {
+                    if !task.response.is_timeout() && task.retried < manager.options.max_retry_count
+                    {
                         task.retried += 1;
                         // Streaming never committed (asserted above), so
                         // the pre-allocated stream is safe to reuse for

@@ -121,4 +121,11 @@ describe("cache: only-if-cached", () => {
     await expect(fetch("http://127.0.0.1:1/", { cache: "only-if-cached" })).rejects.toThrow(TypeError);
     await expect(fetch("http://127.0.0.1:1/", { cache: "only-if-cached", mode: "cors" })).rejects.toThrow(TypeError);
   });
+
+  test("fetch() rejects for data: URLs too", async () => {
+    await expect(fetch("data:text/plain,hi", { cache: "only-if-cached" })).rejects.toThrow(TypeError);
+    expect(await (await fetch("data:text/plain,hi", { cache: "only-if-cached", mode: "same-origin" })).text()).toBe(
+      "hi",
+    );
+  });
 });

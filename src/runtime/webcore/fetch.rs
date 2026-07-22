@@ -573,6 +573,88 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         );
     }
 
+    // cache: "default" | "no-store" | "reload" | "no-cache" | "force-cache" | "only-if-cached"
+    // Extracted before the data: early return so the step-31 TypeError below is
+    // consistent with `new Request()` regardless of scheme.
+    let cache_mode: FetchCacheMode = 'extract_cache_mode: {
+        let mut cache_mode = FetchCacheMode::Default;
+        if let Some(req) = request_mut!() {
+            cache_mode = req.flags.cache;
+        }
+
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                match obj.get_optional_enum::<FetchCacheMode>(global_this, "cache") {
+                    Err(_) => {
+                        return Ok(JSValue::ZERO);
+                    }
+                    Ok(Some(cache_value)) => {
+                        break 'extract_cache_mode cache_value;
+                    }
+                    Ok(None) => {}
+                }
+            }
+        }
+
+        break 'extract_cache_mode cache_mode;
+    };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    // mode: "same-origin" | "no-cors" | "cors" | "navigate"
+    let request_mode: FetchRequestMode = 'extract_request_mode: {
+        let mut request_mode = FetchRequestMode::Cors;
+        if let Some(req) = request_mut!() {
+            request_mode = req.flags.mode;
+        }
+
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                match obj.get_optional_enum::<FetchRequestMode>(global_this, "mode") {
+                    Err(_) => {
+                        return Ok(JSValue::ZERO);
+                    }
+                    Ok(Some(mode_value)) => {
+                        break 'extract_request_mode mode_value;
+                    }
+                    Ok(None) => {}
+                }
+            }
+        }
+
+        break 'extract_request_mode request_mode;
+    };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    // https://fetch.spec.whatwg.org/#dom-request step 31 — fetch_impl parses init
+    // directly rather than constructing a Request, so replicate the check here.
+    if cache_mode == FetchCacheMode::OnlyIfCached && request_mode != FetchRequestMode::SameOrigin {
+        let err = global_this.create_type_error_instance(format_args!(
+            "'only-if-cached' can be set only with 'same-origin' mode"
+        ));
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
+
     if url_str.has_prefix_comptime(b"data:") {
         let url_slice = url_str.to_utf8_without_ref();
         // `defer url_slice.deinit()` → Drop.
@@ -932,86 +1014,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
-    }
-
-    // cache: "default" | "no-store" | "reload" | "no-cache" | "force-cache" | "only-if-cached"
-    let cache_mode: FetchCacheMode = 'extract_cache_mode: {
-        let mut cache_mode = FetchCacheMode::Default;
-        if let Some(req) = request_mut!() {
-            cache_mode = req.flags.cache;
-        }
-
-        let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                match obj.get_optional_enum::<FetchCacheMode>(global_this, "cache") {
-                    Err(_) => {
-                        return Ok(JSValue::ZERO);
-                    }
-                    Ok(Some(cache_value)) => {
-                        break 'extract_cache_mode cache_value;
-                    }
-                    Ok(None) => {}
-                }
-            }
-        }
-
-        break 'extract_cache_mode cache_mode;
-    };
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
-
-    // mode: "same-origin" | "no-cors" | "cors" | "navigate"
-    let request_mode: FetchRequestMode = 'extract_request_mode: {
-        let mut request_mode = FetchRequestMode::Cors;
-        if let Some(req) = request_mut!() {
-            request_mode = req.flags.mode;
-        }
-
-        let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                match obj.get_optional_enum::<FetchRequestMode>(global_this, "mode") {
-                    Err(_) => {
-                        return Ok(JSValue::ZERO);
-                    }
-                    Ok(Some(mode_value)) => {
-                        break 'extract_request_mode mode_value;
-                    }
-                    Ok(None) => {}
-                }
-            }
-        }
-
-        break 'extract_request_mode request_mode;
-    };
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
-
-    // https://fetch.spec.whatwg.org/#dom-request step 31 — fetch_impl parses init
-    // directly rather than constructing a Request, so replicate the check here.
-    if cache_mode == FetchCacheMode::OnlyIfCached && request_mode != FetchRequestMode::SameOrigin {
-        let err = global_this.create_type_error_instance(format_args!(
-            "'only-if-cached' can be set only with 'same-origin' mode"
-        ));
-        return Ok(
-            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global_this,
-                err,
-            ),
-        );
     }
 
     // keepalive: boolean | undefined;

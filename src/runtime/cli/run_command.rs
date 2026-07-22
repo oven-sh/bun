@@ -2854,7 +2854,9 @@ impl RunCommand {
                         bstr::BStr::new(target_name),
                     );
                 }
-                if looks_like_file && ctx.debug.hot_reload == cli::command::HotReload::Watch {
+                if (looks_like_file || default_loader.is_some())
+                    && ctx.debug.hot_reload == cli::command::HotReload::Watch
+                {
                     wait_for_entrypoint_and_reload(target_name);
                 }
             }

@@ -82,6 +82,14 @@ export const subprocessInternals = {
   ) => boolean,
 };
 
+export const dnsInternals = {
+  setFailNextResultBuild: $newRustFunction(
+    "runtime/dns_jsc/dns.rs",
+    "TestingAPIs.setFailNextResultBuild",
+    0,
+  ) as () => void,
+};
+
 export const iniInternals = {
   parse: $newRustFunction("ini.rs", "IniTestingAPIs.parse", 1),
   loadNpmrc: $newRustFunction("ini.rs", "IniTestingAPIs.loadNpmrcFromJS", 2),

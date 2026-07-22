@@ -281,4 +281,55 @@ describe("dns", () => {
       );
     });
   });
+
+  // The DNS completion callbacks convert the c-ares reply into a JS array/object
+  // before resolving the returned promise. If that conversion throws (e.g. OOM),
+  // the promise must reject with the thrown error instead of resolving with an
+  // empty value while the exception is still pending on the VM.
+  test.each(["system", "c-ares"] as const)(
+    "lookup() rejects when building the JS result throws [backend: %s]",
+    async backend => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { dnsInternals } = require("bun:internal-for-testing");
+            const { dns } = require("bun");
+
+            // Force the next result-to-JS conversion to throw, simulating an
+            // allocation failure while building the result array.
+            dnsInternals.setFailNextResultBuild();
+            const settled = await dns.lookup("127.0.0.1", { backend: ${JSON.stringify(backend)} }).then(
+              value => ({ status: "fulfilled", value }),
+              reason => ({ status: "rejected", reason }),
+            );
+            if (settled.status !== "rejected") {
+              throw new Error("expected rejection, got " + Bun.inspect(settled));
+            }
+            if (!(settled.reason instanceof Error) || !String(settled.reason).includes("Out of memory")) {
+              throw new Error("expected OutOfMemoryError, got " + Bun.inspect(settled.reason));
+            }
+
+            // The injected failure is one-shot: a follow-up lookup must succeed
+            // (proving no pending exception was left on the VM).
+            const ok = await dns.lookup("127.0.0.1", { backend: ${JSON.stringify(backend)} });
+            if (!Array.isArray(ok) || ok.length === 0) {
+              throw new Error("expected non-empty array, got " + Bun.inspect(ok));
+            }
+            console.log("ok");
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "ok",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+  );
 });

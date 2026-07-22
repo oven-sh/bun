@@ -3,8 +3,10 @@ import { once } from "node:events";
 import net from "node:net";
 import {
   Agent,
+  Client,
   EnvHttpProxyAgent,
   getGlobalDispatcher,
+  Pool,
   ProxyAgent,
   request,
   RetryAgent,
@@ -429,5 +431,25 @@ describe("undici ProxyAgent / dispatcher", () => {
     expect(() => new (ProxyAgent as any)()).toThrow();
     expect(() => new (ProxyAgent as any)({})).toThrow();
     expect(() => new (ProxyAgent as any)(123)).toThrow();
+  });
+
+  it("Client/Pool store constructor origin and close()/destroy() resolve (#14498, #21944, #7920)", async () => {
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: req => Response.json({ path: new URL(req.url).pathname }),
+    });
+
+    const client = new Client(`http://127.0.0.1:${origin.port}`);
+    const { statusCode, body } = await client.request({ path: "/from-client", method: "GET" });
+    expect(statusCode).toBe(200);
+    expect(await body!.json()).toEqual({ path: "/from-client" });
+
+    const pool = new Pool(`http://127.0.0.1:${origin.port}`);
+    const r2 = await pool.request({ path: "/from-pool", method: "GET" });
+    expect(await r2.body!.json()).toEqual({ path: "/from-pool" });
+
+    await expect(new Agent().close()).resolves.toBeUndefined();
+    await expect(client.close()).resolves.toBeUndefined();
+    await expect(pool.destroy()).resolves.toBeUndefined();
   });
 });

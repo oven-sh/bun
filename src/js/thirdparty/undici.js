@@ -353,9 +353,28 @@ class Dispatcher extends EventEmitter {
 }
 
 class Agent extends Dispatcher {}
-class Pool extends Dispatcher {}
 class BalancedPool extends Dispatcher {}
-class Client extends Dispatcher {}
+
+class Client extends Dispatcher {
+  #origin;
+
+  constructor(origin, _options) {
+    super();
+    if (origin == null || (typeof origin !== "string" && !(origin instanceof URL))) {
+      throw new InvalidArgumentError("Invalid URL: origin must be a non-empty string or URL");
+    }
+    this.#origin = String(origin);
+  }
+
+  request(options, callback) {
+    if (options != null && typeof options === "object" && !(options instanceof URL)) {
+      options = { origin: this.#origin, ...options };
+    }
+    return super.request(options, callback);
+  }
+}
+
+class Pool extends Client {}
 
 class ProxyAgent extends Dispatcher {
   #proxy;

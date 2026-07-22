@@ -874,10 +874,12 @@ static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
  * certificate signatures. BoringSSL has no security levels; its X509 verifier
  * hard-blocks MD4/MD5 in x509_digest_nid_ok() but still accepts SHA-1, so a
  * sha1WithRSAEncryption leaf under a trusted root verifies cleanly. That is a
- * strict weakening of what Node.js and every browser enforce. This callback
- * wraps X509_verify_cert and, when the chain is otherwise valid, rejects any
+ * strict weakening of what Node.js and every browser enforce. These helpers
+ * wrap X509_verify_cert and, when the chain is otherwise valid, reject any
  * non-trust-anchor certificate whose signature digest is weaker than SHA-256,
- * matching OpenSSL's X509_V_ERR_CA_MD_TOO_WEAK behaviour. */
+ * matching OpenSSL's X509_V_ERR_CA_MD_TOO_WEAK behaviour. rsassaPss needs no
+ * special case: BoringSSL's rsa_parse_pss_params only accepts SHA-256/384/512,
+ * so a SHA-1 PSS signature already fails X509_verify_cert. */
 static int us_cert_signature_digest_too_weak(const X509 *cert) {
   int digest_nid = NID_undef;
   OBJ_find_sigid_algs(X509_get_signature_nid(cert), &digest_nid, NULL);
@@ -890,11 +892,14 @@ static int us_cert_signature_digest_too_weak(const X509 *cert) {
   return 0;
 }
 
-static int us_cert_verify_callback(X509_STORE_CTX *ctx, void *arg) {
-  int ret = X509_verify_cert(ctx);
-  if (X509_STORE_CTX_get_error(ctx) != X509_V_OK) return ret;
+/* Called on a ctx whose X509_verify_cert just succeeded. Walks the built chain
+ * and records CERT_SIGNATURE_FAILURE if any link other than the trust anchor
+ * was signed with a weak digest. Returns 1 when such a link was found. Shared
+ * with the QUIC client's custom_verify callback so h1/h2/h3 enforce the same
+ * policy. */
+int us_verified_chain_has_weak_signature(X509_STORE_CTX *ctx) {
   STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(ctx);
-  if (!chain) return ret;
+  if (!chain) return 0;
   size_t n = sk_X509_num(chain);
   /* chain[n-1] is the trust anchor: its self-signature is not a link in the
    * trust chain, so its digest strength is irrelevant (same exemption OpenSSL
@@ -903,8 +908,16 @@ static int us_cert_verify_callback(X509_STORE_CTX *ctx, void *arg) {
   for (size_t i = 0; i + 1 < n; i++) {
     if (us_cert_signature_digest_too_weak(sk_X509_value(chain, i))) {
       X509_STORE_CTX_set_error(ctx, X509_V_ERR_CERT_SIGNATURE_FAILURE);
-      break;
+      return 1;
     }
+  }
+  return 0;
+}
+
+static int us_cert_verify_callback(X509_STORE_CTX *ctx, void *arg) {
+  int ret = X509_verify_cert(ctx);
+  if (X509_STORE_CTX_get_error(ctx) == X509_V_OK) {
+    us_verified_chain_has_weak_signature(ctx);
   }
   return ret;
 }

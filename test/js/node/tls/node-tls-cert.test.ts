@@ -755,7 +755,7 @@ describe("weak certificate signature digests", () => {
     const server = tls.createServer(leaf(md), c => c.end());
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
-      const { promise, resolve } = Promise.withResolvers<{ authorized: boolean; authorizationError: unknown }>();
+      const { promise, resolve, reject } = Promise.withResolvers<{ authorized: boolean; authorizationError: unknown }>();
       const socket = tls.connect(
         {
           port: (server.address() as AddressInfo).port,
@@ -769,7 +769,7 @@ describe("weak certificate signature digests", () => {
           socket.end();
         },
       );
-      socket.on("error", () => {});
+      socket.on("error", reject);
       return await promise;
     } finally {
       server.close();
@@ -785,7 +785,7 @@ describe("weak certificate signature digests", () => {
   it("rejects a SHA-1-signed leaf under a trusted root", async () => {
     const result = await verifyLeaf("sha1");
     expect(result.authorized).toBe(false);
-    expect(String(result.authorizationError)).toContain("CERT_SIGNATURE_FAILURE");
+    expect(result.authorizationError).toBe("CERT_SIGNATURE_FAILURE");
   });
 
   it("rejectUnauthorized aborts a SHA-1-signed connection", async () => {
@@ -793,7 +793,7 @@ describe("weak certificate signature digests", () => {
     server.on("tlsClientError", () => {});
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
-      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
       const socket = tls.connect(
         { port: (server.address() as AddressInfo).port, host: "127.0.0.1", servername: "localhost", ca: [root] },
         () => {
@@ -802,7 +802,7 @@ describe("weak certificate signature digests", () => {
         },
       );
       socket.on("error", err => resolve(err));
-      const err: any = await promise;
+      const err = await promise;
       expect(err.code).toBe("CERT_SIGNATURE_FAILURE");
     } finally {
       server.close();

@@ -1239,8 +1239,7 @@ impl Response {
             if arguments[0].is_undefined_or_null() {
                 break 'brk Body::new(BodyValue::Null);
             }
-            // `Body::extract` is a free fn re-exported as `body::extract`.
-            super::body::extract(global_this, arguments[0])?
+            super::body::extract_for_response(global_this, arguments[0])?
         };
         // `Body` has NO `Drop`; arm a guard so the
         // error returns below release the extracted body payload.

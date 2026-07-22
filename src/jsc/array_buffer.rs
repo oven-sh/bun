@@ -135,9 +135,13 @@ unsafe extern "C" {
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    // safe: by-value `JSValue`; returns the non-JS-cell `JSC::ArrayBuffer*`
-    // (or null when unsuitable for borrowing). See `pinned_store_allocator`.
-    safe fn Bun__ArrayBuffer__retainPinnedStore(v: JSValue) -> *mut JSCArrayBuffer;
+    // safe: by-value `JSValue` plus raw out-params the C++ only writes on a
+    // non-null return; see `pinned_store_allocator`.
+    safe fn Bun__ArrayBuffer__retainPinnedStore(
+        v: JSValue,
+        out_ptr: &mut *const u8,
+        out_len: &mut usize,
+    ) -> *mut JSCArrayBuffer;
     // safe: `JSCArrayBuffer` is an `opaque_ffi!` ZST handle; releases exactly
     // the pin + ref taken by `retainPinnedStore`.
     safe fn Bun__ArrayBuffer__releasePinnedStore(buf: &JSCArrayBuffer);
@@ -177,19 +181,25 @@ pub mod pinned_store_allocator {
     static VTABLE: &AllocatorVTable = &AllocatorVTable::free_only(free);
 
     /// Retain `value`'s backing `JSC::ArrayBuffer` (pin + native ref) and
-    /// return an allocator whose `free` releases exactly that pin + ref.
-    /// `None` when `value` has no ArrayBuffer impl or the buffer is
-    /// resizable/growable (a shrink would invalidate borrowed storage).
+    /// return the view's byte range plus an allocator whose `free` releases
+    /// exactly that pin + ref. `None` when `value` has no ArrayBuffer impl or
+    /// the buffer is resizable/growable/shared.
     #[inline]
-    pub fn retain(value: JSValue) -> Option<StdAllocator> {
-        let buf = Bun__ArrayBuffer__retainPinnedStore(value);
+    pub fn retain(value: JSValue) -> Option<(*const u8, usize, StdAllocator)> {
+        let mut ptr: *const u8 = core::ptr::null();
+        let mut len: usize = 0;
+        let buf = Bun__ArrayBuffer__retainPinnedStore(value, &mut ptr, &mut len);
         if buf.is_null() {
             return None;
         }
-        Some(StdAllocator {
-            ptr: buf.cast::<c_void>(),
-            vtable: VTABLE,
-        })
+        Some((
+            ptr,
+            len,
+            StdAllocator {
+                ptr: buf.cast::<c_void>(),
+                vtable: VTABLE,
+            },
+        ))
     }
 
     #[inline]

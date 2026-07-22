@@ -885,22 +885,23 @@ pub mod store {
             }))
         }
 
-        /// Borrow the storage of the `JSC::ArrayBuffer` behind `buffer` as a
+        /// Borrow the storage of the `JSC::ArrayBuffer` behind `value` as a
         /// `Store::Bytes` without copying. The native `ArrayBuffer` is
         /// `ref()`ed and `pin()`ed so its contents stay attached for the
         /// store's lifetime; the store's `Drop` releases both via
         /// [`array_buffer::pinned_store_allocator`]. Returns `None` when the
         /// backing buffer is resizable/growable, a `SharedArrayBuffer`, or
         /// otherwise unsuitable for borrowing.
-        pub fn init_pinned_array_buffer(buffer: &crate::ArrayBuffer) -> Option<StoreRef> {
-            debug_assert!(!buffer.ptr.is_null());
-            let allocator = crate::array_buffer::pinned_store_allocator::retain(buffer.value)?;
-            let len = buffer.byte_len as SizeType;
-            // SAFETY: `ptr[..byte_len]` is the view's slice of the live
-            // `JSC::ArrayBuffer` contents; the native ref keeps the
-            // allocation alive and the pin keeps it attached, so the region
-            // stays valid until the allocator's `free` releases both.
-            let bytes = unsafe { Bytes::from_raw_parts(buffer.ptr, len, len, allocator) };
+        pub fn init_pinned_array_buffer(value: JSValue) -> Option<StoreRef> {
+            let (ptr, len, allocator) =
+                crate::array_buffer::pinned_store_allocator::retain(value)?;
+            let len = len as SizeType;
+            // SAFETY: `ptr[..len]` is the view's slice of the live
+            // `JSC::ArrayBuffer` contents, read after materialization by
+            // `retainPinnedStore`; the native ref keeps the allocation alive
+            // and the pin keeps it attached, so the region stays valid until
+            // the allocator's `free` releases both.
+            let bytes = unsafe { Bytes::from_raw_parts(ptr.cast_mut(), len, len, allocator) };
             Some(StoreRef::from(Store::new(Store {
                 data: Data::Bytes(bytes),
                 mime_type: bun_http_types::MimeType::NONE,

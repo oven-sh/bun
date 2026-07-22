@@ -109,9 +109,6 @@ macro_rules! define_statfs_type {
 }
 
 unsafe extern "C" {
-    pub safe fn Bun__JSBigIntStatFSObjectConstructor(global: &JSGlobalObject) -> JSValue;
-    pub safe fn Bun__JSStatFSObjectConstructor(global: &JSGlobalObject) -> JSValue;
-
     pub(crate) safe fn Bun__createJSStatFSObject(
         global: &JSGlobalObject,
         fstype: i64,

@@ -29,10 +29,6 @@ impl SignalCode {
         }
     }
 
-    pub fn valid(self) -> bool {
-        self.0 <= Self::SIGSYS.0 && self.0 >= Self::SIGHUP.0
-    }
-
     /// Shell scripts use exit codes 128 + signal number
     /// https://tldp.org/LDP/abs/html/exitcodes.html
     pub fn to_exit_code(self) -> Option<u8> {

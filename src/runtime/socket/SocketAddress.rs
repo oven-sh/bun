@@ -670,13 +670,6 @@ impl SocketAddress {
         self._addr.as_sin6().map(|s| s.flowinfo)
     }
 
-    pub fn socklen(&self) -> inet::socklen_t {
-        match self._addr.family() {
-            AF::INET => mem::size_of::<inet::sockaddr_in>() as inet::socklen_t,
-            AF::INET6 => mem::size_of::<inet::sockaddr_in6>() as inet::socklen_t,
-        }
-    }
-
     pub fn estimated_size(&self) -> usize {
         mem::size_of::<SocketAddress>() + self._presentation.get().estimated_size()
     }
@@ -1033,7 +1026,6 @@ pub mod inet {
     pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub use ws2::AF_INET;
     pub use ws2::AF_INET6;
-    pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }
 
 #[cfg(not(windows))]

@@ -57,7 +57,6 @@ impl<'a> Snapshots<'a> {
 }
 
 // hoisted out of `impl Snapshots` — inherent associated types are unstable.
-pub type ValuesHashMap = HashMap<u64, Box<[u8]>>;
 
 pub struct InlineSnapshotToWrite {
     pub line: c_ulong,

@@ -72,14 +72,6 @@ pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
         .any(|s| s.load(Ordering::Relaxed) == needle)
 }
 
-/// `MimallocArena.isInstance` — `bun_alloc` is below us, so call it directly
-/// (no registry needed for this one).
-#[cfg(debug_assertions)]
-#[inline]
-pub(crate) fn is_mimalloc_arena(alloc: bun_alloc::StdAllocator) -> bool {
-    bun_alloc::MimallocArena::is_instance(&alloc)
-}
-
 /// Dump a captured trace via the T0 fallback (raw addresses / std::backtrace).
 /// Crash-report symbolication lives in `bun_crash_handler` and is invoked
 /// from there directly.

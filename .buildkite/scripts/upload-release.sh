@@ -61,17 +61,40 @@ function run_command() {
   { set +x; } 2>/dev/null
 }
 
+# Probe with `sudo -n` first: agents that lack passwordless sudo would otherwise
+# block on a password prompt until the job times out.
 function maybe_sudo() {
   if [ "$(id -u)" -eq 0 ]; then
     run_command "$@"
-  elif command -v sudo &> /dev/null; then
-    run_command sudo "$@"
+  elif command -v sudo &> /dev/null && sudo -n true &> /dev/null; then
+    run_command sudo -n "$@"
   else
     run_command "$@"
   fi
 }
 
+# Tools this script installs go to a writable directory on PATH instead of
+# /usr/local/bin, which needs root on most agents.
+function ensure_tools_bin() {
+  if [ -n "$TOOLS_BIN" ]; then
+    return
+  fi
+  TOOLS_DIR="${HOME:-}/.cache/bun-release-tools"
+  if [ -z "$HOME" ] || ! mkdir -p "$TOOLS_DIR/bin" 2> /dev/null; then
+    TOOLS_DIR="$(mktemp -d)"
+    mkdir -p "$TOOLS_DIR/bin"
+  fi
+  TOOLS_BIN="$TOOLS_DIR/bin"
+  export PATH="$TOOLS_BIN:$PATH"
+}
+
 function package_manager_install() {
+  if [ "$(id -u)" -ne 0 ] && ! { command -v sudo &> /dev/null && sudo -n true &> /dev/null; }; then
+    echo "error: Need root to install packages: $*"
+    echo ""
+    echo "hint: Pre-install them in the agent image, or grant the agent passwordless sudo"
+    exit 1
+  fi
   if command -v dnf &> /dev/null; then
     maybe_sudo dnf install -y "$@"
   elif command -v yum &> /dev/null; then
@@ -108,7 +131,8 @@ function install_gh_linux() {
   dir="$(mktemp -d)"
   run_command curl -fsSL "https://github.com/cli/cli/releases/download/v${version}/gh_${version}_linux_${arch}.tar.gz" -o "$dir/gh.tar.gz"
   run_command tar -xzf "$dir/gh.tar.gz" -C "$dir" --strip-components=1
-  maybe_sudo install -m 0755 "$dir/bin/gh" /usr/local/bin/gh
+  ensure_tools_bin
+  run_command install -m 0755 "$dir/bin/gh" "$TOOLS_BIN/gh"
   rm -rf "$dir"
 }
 
@@ -118,13 +142,15 @@ function install_aws_linux() {
   dir="$(mktemp -d)"
   run_command curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "$dir/awscliv2.zip"
   run_command unzip -q "$dir/awscliv2.zip" -d "$dir"
-  maybe_sudo "$dir/aws/install" --update
+  ensure_tools_bin
+  run_command "$dir/aws/install" --update -i "$TOOLS_DIR/aws-cli" -b "$TOOLS_BIN"
   rm -rf "$dir"
 }
 
 function install_sentry_cli_linux() {
   # The installer drops a single static binary into INSTALL_DIR.
-  maybe_sudo bash -c "curl -fsSL https://sentry.io/get-cli/ | INSTALL_DIR=/usr/local/bin sh"
+  ensure_tools_bin
+  run_command bash -c "curl -fsSL https://sentry.io/get-cli/ | INSTALL_DIR='$TOOLS_BIN' sh"
 }
 
 function assert_command() {

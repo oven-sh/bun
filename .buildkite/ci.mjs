@@ -761,6 +761,48 @@ function getVerifyBaselineStep(platform, options) {
 }
 
 /**
+ * Trace the symbol order file for a cross-compiled target on a native-arch
+ * host, so the next build's `inheritOrderFile()` has something to download.
+ *
+ * The build lane cross-compiles from debian and cannot run the binary it
+ * linked, so it cannot trace. This step runs on the mac test fleet, downloads
+ * that lane's unstripped `bun-profile`, runs it under `scripts/orderfile/
+ * generate.ts` (the traced binary doubles as the interpreter), and uploads the
+ * result. One build of lag: build N's trace is consumed by build N+1's link.
+ *
+ * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
+ * no consumer and would occupy a bare-metal mac for nothing. Soft-fail: the
+ * order file is an optimization, and a broken tracer must not fail a build.
+ *
+ * darwin-aarch64 only at present; the same shape seeds any target whose build
+ * lane cross-compiles but whose test fleet is native.
+ * @param {Target} platform
+ * @returns {CommandStep}
+ */
+function getTraceOrderStep(platform) {
+  const targetKey = getTargetKey(platform);
+  const triplet = getTargetTriplet(platform);
+  const profileDir = `${triplet}-profile`;
+  return {
+    key: `${targetKey}-trace-order`,
+    label: `${getTargetLabel(platform)} - trace-order`,
+    depends_on: [`${targetKey}-build-bun`],
+    agents: { queue: "test-darwin", os: "darwin", arch: "aarch64", "release-tier": "latest" },
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    soft_fail: true,
+    timeout_in_minutes: 15,
+    command: [
+      `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
+      `unzip -o '${profileDir}.zip'`,
+      `chmod +x ${profileDir}/bun-profile`,
+      `./${profileDir}/bun-profile scripts/orderfile/generate.ts --build-dir=${profileDir} --out=${triplet}.order`,
+      `buildkite-agent artifact upload '${triplet}.order'`,
+    ],
+  };
+}
+
+/**
  * @typedef {Object} TestOptions
  * @property {string} [buildId]
  * @property {string[]} [testFiles]
@@ -1498,6 +1540,12 @@ async function getPipeline(options = {}) {
           const verifyDeps =
             verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
           steps.push(getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps));
+        }
+
+        // Seed the symbol order file for a cross-compiled target on its native
+        // test fleet (see getTraceOrderStep). Non-PR only: PRs never consume it.
+        if (target.os === "darwin" && target.arch === "aarch64" && isMainBranch()) {
+          steps.push(getTraceOrderStep(target));
         }
 
         return getStepWithDependsOn(

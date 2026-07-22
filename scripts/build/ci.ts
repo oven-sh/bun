@@ -709,13 +709,17 @@ export function canTraceOrderFile(cfg: Config): boolean {
 
 /**
  * An eligible lane that cannot trace (cross-compiled) and inherited nothing is
- * shipping unordered with no way to recover on this host. Annotate so it is
- * visible; the fix is tracing under qemu-user or on a native-arch step.
+ * shipping unordered. A sibling `-trace-order` step on a native-arch host seeds
+ * the chain (see getTraceOrderStep in .buildkite/ci.mjs), so this fires once on
+ * the first build and then the next build inherits that trace. If it persists,
+ * the trace step is failing or missing for this target.
  */
 export function reportOrderFileCannotTrace(cfg: Config): void {
   const msg =
     `${orderFileArtifact(cfg)}: nothing to inherit and this lane cross-compiles ` +
-    `(target ${cfg.crossTarget}), so the binary cannot be traced here. Shipping unordered.`;
+    `(target ${cfg.crossTarget}), so the binary cannot be traced here. Shipping unordered. ` +
+    `Expected once while the native-arch trace-order step seeds the chain; if this ` +
+    `appears on every build, that step is failing or missing.`;
   console.log(`~ symbol order: ${msg}`);
   if (!isBuildkite) return;
   utils.reportAnnotationToBuildKite({
@@ -833,22 +837,20 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
   const start = Date.now();
   const artifact = orderFileArtifact(cfg);
 
-  if (!ctx.stepKey) {
-    console.log("~ symbol order: BUILDKITE_STEP_KEY unset — linking unordered");
-    return false;
-  }
-
   console.log(`Looking for ${artifact} published by an earlier build on ${ctx.branch}...`);
   const downloaded = resolve(cfg.buildDir, artifact);
   let tried = 0;
 
   for await (const build of candidateBuilds(ctx)) {
     if (++tried > PREVIOUS_BUILDS_TO_TRY) break;
-    const result = spawnSync(
-      "buildkite-agent",
-      ["artifact", "download", artifact, ".", "--step", ctx.stepKey, "--build", build.id],
-      { cwd: cfg.buildDir, stdio: "ignore", timeout: ARTIFACT_DOWNLOAD_TIMEOUT_MS },
-    );
+    // No --step: the artifact name is target-unique, and a cross-compiled lane's
+    // order file is published by a sibling trace-order step on a native-arch
+    // host (see getTraceOrderStep in .buildkite/ci.mjs), not by this step.
+    const result = spawnSync("buildkite-agent", ["artifact", "download", artifact, ".", "--build", build.id], {
+      cwd: cfg.buildDir,
+      stdio: "ignore",
+      timeout: ARTIFACT_DOWNLOAD_TIMEOUT_MS,
+    });
     if (result.status !== 0 || !existsSync(downloaded)) {
       console.log(`  #${build.number ?? "?"}: no ${artifact} (cancelled, failed, or too old) — looking further back`);
       continue;

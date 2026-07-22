@@ -841,9 +841,8 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
         return {};
     }
 
-    char* baseAddress = reinterpret_cast<char*>(arrayBufferView.baseAddress());
-    size_t length = arrayBufferView.byteLength();
-    this->sendWebSocketData(baseAddress, length, Opcode::Binary);
+    auto bytes = arrayBufferView.span();
+    this->sendWebSocketData(reinterpret_cast<const char*>(bytes.data()), bytes.size(), Opcode::Binary);
 
     return {};
 }
@@ -1154,11 +1153,10 @@ ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
         return {};
     }
 
-    char* baseAddress = reinterpret_cast<char*>(arrayBufferView.baseAddress());
-    size_t length = arrayBufferView.byteLength();
-    if (length > maxControlFramePayloadSize)
-        return controlFramePayloadTooLargeException(length);
-    this->sendWebSocketData(baseAddress, length, Opcode::Ping);
+    auto bytes = arrayBufferView.span();
+    if (bytes.size() > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(bytes.size());
+    this->sendWebSocketData(reinterpret_cast<const char*>(bytes.data()), bytes.size(), Opcode::Ping);
 
     return {};
 }
@@ -1242,11 +1240,10 @@ ExceptionOr<void> WebSocket::pong(ArrayBufferView& arrayBufferView)
         return {};
     }
 
-    char* baseAddress = reinterpret_cast<char*>(arrayBufferView.baseAddress());
-    size_t length = arrayBufferView.byteLength();
-    if (length > maxControlFramePayloadSize)
-        return controlFramePayloadTooLargeException(length);
-    this->sendWebSocketData(baseAddress, length, Opcode::Pong);
+    auto bytes = arrayBufferView.span();
+    if (bytes.size() > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(bytes.size());
+    this->sendWebSocketData(reinterpret_cast<const char*>(bytes.data()), bytes.size(), Opcode::Pong);
 
     return {};
 }

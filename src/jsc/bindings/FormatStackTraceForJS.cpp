@@ -668,11 +668,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
-    if (!destination->stackTrace()) {
+    if (!destination->stackTrace() && globalObject->stackTraceLimit()) {
         destination->captureStackTrace(vm, globalObject, 1);
     }
 
-    if (source->stackTrace()) {
+    if (source->stackTrace() && destination->stackTrace()) {
         destination->stackTrace()->appendVector(*source->stackTrace());
         source->stackTrace()->clear();
     }

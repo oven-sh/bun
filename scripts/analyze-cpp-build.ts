@@ -154,8 +154,15 @@ function readNinjaLog(dir: string): Edge[] {
     const [s, e, , out] = line.split("\t");
     if (!out) continue;
     const edge = { start: +s, end: +e, out };
-    if (edge.end < prevEnd && byOut.has(out)) byOut.clear();
-    prevEnd = edge.end;
+    if (edge.end < prevEnd && byOut.has(out)) {
+      byOut.clear();
+      prevEnd = edge.end;
+    } else {
+      // Monotone except across a detected boundary, so a brand-new output at
+      // the start of an appended run can't mask the drop from the repeat
+      // that follows it. (New-run entries before that repeat are dropped.)
+      prevEnd = Math.max(prevEnd, edge.end);
+    }
     byOut.set(out, edge);
   }
   return [...byOut.values()];

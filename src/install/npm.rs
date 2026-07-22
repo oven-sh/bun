@@ -2044,7 +2044,6 @@ impl PackageManifest {
                 let sliced_version = SlicedString::init(version_name, version_name);
                 let parsed_version = Semver::Version::parse(sliced_version);
 
-                debug_assert!(parsed_version.valid);
                 if !parsed_version.valid {
                     log.add_error_fmt(
                         Some(&source),
@@ -2326,7 +2325,9 @@ impl PackageManifest {
                 let mut sliced_version = SlicedString::init(version_name, version_name);
                 let mut parsed_version = Semver::Version::parse(sliced_version);
 
-                debug_assert!(parsed_version.valid);
+                if !parsed_version.valid {
+                    continue;
+                }
                 // We only need to copy the version tags if it contains pre and/or build
                 if parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre() {
                     let version_string = string_builder.append::<SemverString>(version_name);
@@ -2337,9 +2338,6 @@ impl PackageManifest {
                         parsed_version.version.tag.has_build()
                             || parsed_version.version.tag.has_pre()
                     );
-                }
-                if !parsed_version.valid {
-                    continue;
                 }
 
                 let version_obj = prop.value.as_object();
@@ -2650,15 +2648,8 @@ impl PackageManifest {
 
                         for item in items {
                             let name_str = item.key.slice();
-                            let version_str = match item.value.as_str() {
-                                Some(s) => s,
-                                None => {
-                                    if cfg!(debug_assertions) {
-                                        unreachable!("non-value Expr from JSON parser")
-                                    } else {
-                                        continue;
-                                    }
-                                }
+                            let Some(version_str) = item.value.as_str() else {
+                                continue;
                             };
 
                             all_extern_strings[names_base + i] =
@@ -2885,10 +2876,12 @@ impl PackageManifest {
                             }
 
                             // Per-element string-content checks against the
-                            // source JSON. Skipped when meta-only
-                            // optional peers may have been synthesised, since
-                            // `items[j]` correspondence no longer holds then.
-                            if !is_peer || optional_peer_dep_names.is_empty() {
+                            // source JSON. Skipped when `items[j]` no longer
+                            // lines up 1:1 (meta-only peers synthesised, or
+                            // non-string dependency values skipped above).
+                            if count == items.len()
+                                && (!is_peer || optional_peer_dep_names.is_empty())
+                            {
                                 let string_buf: &[u8] = string_builder.allocated_slice();
                                 for (j, dep_name) in name_dependencies.iter().enumerate() {
                                     debug_assert!(
@@ -3137,14 +3130,13 @@ impl PackageManifest {
 
                     if cfg!(debug_assertions) {
                         if cloned_versions.len() > 1 {
-                            // Sanity check:
-                            // When reading the versions, we iterate through the
-                            // list backwards to choose the highest matching
-                            // version
+                            // Sanity check: we iterate backwards to pick the highest match.
+                            // Untrusted registry keys may parse to duplicate canonical
+                            // versions (e.g. "1.0.0" and "01.0.0"), so allow Equal.
                             let first = semver_versions_[0];
                             let second = semver_versions_[1];
                             let order = second.order(first, string_bytes, string_bytes);
-                            debug_assert!(order == core::cmp::Ordering::Greater);
+                            debug_assert!(order != core::cmp::Ordering::Less);
                         }
                     }
                 }

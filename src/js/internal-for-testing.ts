@@ -425,7 +425,6 @@ class WeakReference {
   }
 }
 
-
 // node's internal/child_process.getValidStdio, ported verbatim except that
 // bun has no Pipe/TTY/TCP handle wraps: pipe entries get a closeable stand-in
 // handle and wrap detection is omitted (throws ERR_INVALID_ARG_VALUE instead).

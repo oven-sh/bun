@@ -47,10 +47,15 @@ export const FAULTS: Record<string, Fault[]> = {
     F("0", "mangle:short"),
     F(DELAY_MS, "delay", "judgment"),
   ],
-  NtQueryInformationFile: [F("C0000185")],
+  // C0000023 BUFFER_TOO_SMALL: the fixed struct didn't fit; a caller that
+  // sizes a follow-up buffer from this answer produces logic bugs.
+  NtQueryInformationFile: [F("C0000023"), F("C0000185")],
   NtSetInformationFile: [F("C0000022")],
-  NtQueryDirectoryFile: [F("C0000185"), F("0", "mangle:short"), F("A5", "mangle:garbage")],
-  NtQueryDirectoryFileEx: [F("C0000185"), F("0", "mangle:short"), F("A5", "mangle:garbage")],
+  // 80000005 BUFFER_OVERFLOW: partial results, caller must re-query with a
+  // bigger buffer / continue enumeration - the double-fetch sizing trap
+  // that produces truncated or duplicated readdir entries when mishandled.
+  NtQueryDirectoryFile: [F("80000005"), F("C0000185"), F("0", "mangle:short"), F("A5", "mangle:garbage")],
+  NtQueryDirectoryFileEx: [F("80000005"), F("C0000185"), F("0", "mangle:short"), F("A5", "mangle:garbage")],
   NtQueryVolumeInformationFile: [F("C0000185")],
   NtQueryAttributesFile: [F("C0000034")],
   NtQueryFullAttributesFile: [F("C0000034")],

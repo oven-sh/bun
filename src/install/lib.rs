@@ -607,10 +607,7 @@ impl RunCommand {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(DIR_Z) {
                     Ok(st)
-                        if bun_sys::stat_is_owner_only_writable_dir(
-                            &st,
-                            bun_sys::c::getuid(),
-                        ) => {}
+                        if bun_sys::stat_is_owner_only_writable_dir(&st, bun_sys::c::getuid()) => {}
                     _ => return Ok(()),
                 },
                 Err(_) => return Ok(()),

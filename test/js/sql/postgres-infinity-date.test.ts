@@ -107,7 +107,12 @@ const extended = await listeningServer(socket => {
     pending = pgReadFrontendMessages(pending, type => {
       if (type === 0x50 /* Parse */) {
         socket.write(
-          Buffer.concat([pgParseComplete(), pgParameterDescription([]), pgRowDescription(reply().cols), pgReadyForQuery()]),
+          Buffer.concat([
+            pgParseComplete(),
+            pgParameterDescription([]),
+            pgRowDescription(reply().cols),
+            pgReadyForQuery(),
+          ]),
         );
       } else if (type === 0x42 /* Bind */) {
         socket.write(
@@ -143,20 +148,27 @@ async function runExtended(cols: PgRowDescriptionColumn[], row: (Buffer | null)[
 
 // --- scalar text path ------------------------------------------------------
 
-test.each(["date", "timestamp", "timestamptz"] as const)("scalar %s text 'infinity'/'-infinity' → ±Infinity", async t => {
-  const row = await runSimple(
-    [
-      { name: "pos", typeOid: OID[t] },
-      { name: "neg", typeOid: OID[t] },
-      { name: "fin", typeOid: OID[t] },
-    ],
-    [Buffer.from("infinity"), Buffer.from("-infinity"), Buffer.from(t === "date" ? "2000-01-02" : "2000-01-02 00:00:00+00")],
-  );
-  expect(row.pos).toBe(Infinity);
-  expect(row.neg).toBe(-Infinity);
-  expect(row.fin).toBeInstanceOf(Date);
-  expect((row.fin as Date).getTime()).toBe(Date.UTC(2000, 0, 2));
-});
+test.each(["date", "timestamp", "timestamptz"] as const)(
+  "scalar %s text 'infinity'/'-infinity' → ±Infinity",
+  async t => {
+    const row = await runSimple(
+      [
+        { name: "pos", typeOid: OID[t] },
+        { name: "neg", typeOid: OID[t] },
+        { name: "fin", typeOid: OID[t] },
+      ],
+      [
+        Buffer.from("infinity"),
+        Buffer.from("-infinity"),
+        Buffer.from(t === "date" ? "2000-01-02" : "2000-01-02 00:00:00+00"),
+      ],
+    );
+    expect(row.pos).toBe(Infinity);
+    expect(row.neg).toBe(-Infinity);
+    expect(row.fin).toBeInstanceOf(Date);
+    expect((row.fin as Date).getTime()).toBe(Date.UTC(2000, 0, 2));
+  },
+);
 
 // --- scalar binary path (timestamp / timestamptz) --------------------------
 
@@ -182,10 +194,7 @@ test.each(["date_array", "timestamp_array", "timestamptz_array"] as const)(
   "%s text {infinity,-infinity,<finite>} → [Infinity, -Infinity, Date]",
   async t => {
     const fin = t === "date_array" ? "2000-01-02" : '"2000-01-02 00:00:00+00"';
-    const row = await runSimple(
-      [{ name: "a", typeOid: OID[t] }],
-      [Buffer.from(`{infinity,-infinity,${fin}}`)],
-    );
+    const row = await runSimple([{ name: "a", typeOid: OID[t] }], [Buffer.from(`{infinity,-infinity,${fin}}`)]);
     expect(row.a[0]).toBe(Infinity);
     expect(row.a[1]).toBe(-Infinity);
     expect(row.a[2]).toBeInstanceOf(Date);

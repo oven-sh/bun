@@ -139,23 +139,8 @@ impl Body {
         self.value.get().slice()
     }
 
-    pub fn use_(&self) -> Blob {
-        self.value_mut().use_()
-    }
-
     pub fn clone(&self, global_this: &JSGlobalObject) -> JsResult<Body> {
         Ok(Body::new(self.value_mut().clone(global_this)?))
-    }
-
-    pub fn clone_with_readable_stream(
-        &self,
-        global_this: &JSGlobalObject,
-        readable: Option<&mut ReadableStream>,
-    ) -> JsResult<Body> {
-        Ok(Body::new(
-            self.value_mut()
-                .clone_with_readable_stream(global_this, readable)?,
-        ))
     }
 }
 
@@ -638,19 +623,6 @@ impl ValueError {
         js_value
     }
 
-    /// Like `to_js` but populates the error's stack trace with async frames
-    /// from the given promise's await chain. Use when rejecting from a
-    /// fetch/body callback at the top of the event loop.
-    pub fn to_js_with_async_stack(
-        &mut self,
-        global_object: &JSGlobalObject,
-        promise: &JSPromise,
-    ) -> JSValue {
-        let js_value = self.to_js(global_object);
-        js_value.attach_async_stack_from_promise(global_object, promise);
-        js_value
-    }
-
     pub fn dupe(&self, global_object: &JSGlobalObject) -> Self {
         match self {
             // `.clone()` on BunString/SystemError already bumps the refcount (paired
@@ -758,16 +730,6 @@ impl Value {
         }
     }
 
-    pub fn fast_size(&self) -> blob::SizeType {
-        match self {
-            Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
-            Value::WTFStringImpl(s) => wtf_impl(s).byte_slice().len() as blob::SizeType,
-            Value::Locked(l) => l.size_hint(),
-            // Value::InlineBlob(b) => b.slice_const().len() as blob::SizeType,
-            _ => 0,
-        }
-    }
-
     pub fn memory_cost(&self) -> usize {
         match self {
             Value::InternalBlob(b) => b.memory_cost(),
@@ -786,30 +748,6 @@ impl Value {
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }
-    }
-
-    /// Shorthand constructor for the `Blob` variant.
-    #[inline]
-    pub fn blob(b: Blob) -> Value {
-        Value::Blob(b)
-    }
-
-    pub fn create_blob_value(data: Vec<u8>, was_string: bool) -> Value {
-        // if (data.len <= InlineBlob.available_bytes) {
-        //     var _blob = InlineBlob{
-        //         .bytes = undefined,
-        //         .was_string = was_string,
-        //         .len = @truncate(InlineBlob.IntSize, data.len),
-        //     };
-        //     @memcpy(&_blob.bytes, data.ptr, data.len);
-        //     allocator.free(data);
-        //     return Value{ .InlineBlob = _blob };
-        // }
-
-        Value::InternalBlob(InternalBlob {
-            bytes: data,
-            was_string,
-        })
     }
 
     // pub const empty = Value::Empty;
@@ -1400,16 +1338,6 @@ impl Value {
         }
         *self = Value::Error(err);
         Ok(())
-    }
-
-    pub fn to_error(&mut self, err: &crate::Error, global: &JSGlobalObject) -> JsTerminated<()> {
-        self.to_error_instance(
-            ValueError::Message(BunString::create_format(format_args!(
-                "Error reading file {}",
-                err.name()
-            ))),
-            global,
-        )
     }
 
     // mutates self to Null and is called explicitly at specific protocol points.

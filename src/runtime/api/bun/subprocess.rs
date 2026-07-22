@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::{RefCount, RefPtr};
+use bun_ptr::RefCount;
 
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
@@ -174,8 +174,6 @@ bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_t
 // spawn_maybe_sync` fills every field explicitly (see note there), and
 // `*mut Process` has no sound placeholder anyway.
 
-pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
-
 // ── manual `#[bun_jsc::JsClass]` expansion (generic struct) ──────────────────
 // Routes through the codegen'd `crate::generated_classes::js_Subprocess`
 // wrappers (which are typed against `Subprocess<'static>`) so the extern
@@ -293,7 +291,6 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
-        const KILLED                       = 1 << 1;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
         const DEREF_ON_STDIN_DESTROYED     = 1 << 4;
@@ -1020,16 +1017,22 @@ impl Subprocess<'_> {
 
         // Node.js keeps reading stdout/stderr until EOF after the direct child
         // is reaped (a grandchild may still be writing). Sync and async both
-        // resume reads here; timeout/maxBuffer bound the sync wait.
+        // resume reads here; timeout/maxBuffer bound the sync wait. A lazy
+        // reader is paused until JS pulls, so unpause it first; backpressure
+        // is moot once the direct child has exited.
         if let Readable::Pipe(pipe) = self.stdout.get() {
             if !pipe.reader.is_done() {
-                Readable::pipe_reader_mut(pipe).reader.read();
+                let reader = &mut Readable::pipe_reader_mut(pipe).reader;
+                reader.unpause();
+                reader.read();
             }
         }
 
         if let Readable::Pipe(pipe) = self.stderr.get() {
             if !pipe.reader.is_done() {
-                Readable::pipe_reader_mut(pipe).reader.read();
+                let reader = &mut Readable::pipe_reader_mut(pipe).reader;
+                reader.unpause();
+                reader.read();
             }
         }
 
@@ -1473,10 +1476,6 @@ impl Subprocess<'_> {
         // `JsCell` and callers do not hold the borrow across JS re-entry that
         // touches `ipc_data` itself.
         unsafe { self.ipc_data.get_mut() }.as_mut()
-    }
-
-    pub fn get_global_this(&self) -> Option<&JSGlobalObject> {
-        Some(self.global_this())
     }
 }
 

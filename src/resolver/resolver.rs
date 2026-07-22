@@ -19,10 +19,6 @@ use std::io::Write as _;
 use ::bun_install_types::resolver_hooks as Install;
 use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
 use ::bun_semver as Semver;
-// Re-exported so downstream (bun_bundler) can name the trait in
-// `Transpiler::get_package_manager`'s return type without a direct
-// `bun_install_types` dep (LAYERING: pass-through, no new edge).
-pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrait;
 
 // LAYERING: `PackageManager.initWithRuntime` lives in
 // `bun_install`, which depends on this crate. The lazy-init body is defined
@@ -58,10 +54,6 @@ pub mod Dependency {
     }
 }
 
-/// Transitional re-export module: `package_json.rs` and a few external crates
-/// still spell these paths via `__forward_decls`; the items are now real
-/// re-exports of `bun_install_types` (no local stubs).
-pub(crate) mod __forward_decls {}
 // bun_paths shim — value-dispatched join helpers over `resolve_path::Platform`.
 // `dirname` (`Option`-returning) and
 // `PosixToWinNormalizer` are the real `::bun_paths` items — brought in by the
@@ -297,9 +289,9 @@ use bun_ast::SideEffects;
 // address is stable across `Vec` growth, so handing out `&'static T` is sound.
 
 /// Intern a parsed `PackageJSON` into the process-lifetime DirInfo arena.
-/// Returns `NonNull` (not `&'static`) so the mut-provenance survives into
-/// `DirInfo::reset()`'s `drop_in_place` -- handing out `&T` here and casting
-/// back to `*mut T` at the drop site would be UB under Stacked Borrows.
+/// Returns `NonNull` (not `&'static`) so mut-provenance survives to write
+/// sites — handing out `&T` here and casting back to `*mut T` would be UB
+/// under Stacked Borrows.
 fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     // `Box` is load-bearing: returns `NonNull<PackageJSON>` derived from the
     // box interior, treated as `'static`; unboxing would dangle on `Vec` realloc.
@@ -332,8 +324,6 @@ static ResolverDev: bun_core::output::ScopedLogger =
 // DirnameStore/FilenameStore). Alias here so the ~80 bare-`Path` use sites
 // resolve without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
-
-use crate::dir_info::HashMapExt as _;
 
 /// A temporary threadlocal buffer with a lifetime more than the current
 /// function call.
@@ -380,7 +370,6 @@ pub struct Bufs {
     pub remap_path_trailing_slash: PathBuffer,
     pub path_in_global_disk_cache: PathBuffer,
     pub abs_to_rel: PathBuffer,
-    pub node_modules_paths_buf: PathBuffer,
     pub import_path_for_standalone_module_graph: PathBuffer,
 
     #[cfg(windows)]
@@ -476,30 +465,6 @@ pub use bun_watcher::AnyResolveWatcher;
 // const params depending on type params are both forbidden. Carry a
 // runtime fn-pointer alongside the context — `init` produces the
 // `AnyResolveWatcher` erased shim.
-
-pub struct ResolveWatcher<C> {
-    on_watch: fn(*mut C, &[u8], FD),
-    _marker: core::marker::PhantomData<*mut C>,
-}
-impl<C> ResolveWatcher<C> {
-    pub const fn new(on_watch: fn(*mut C, &[u8], FD)) -> Self {
-        Self {
-            on_watch,
-            _marker: core::marker::PhantomData,
-        }
-    }
-    pub fn init(self, ctx: *mut C) -> AnyResolveWatcher {
-        AnyResolveWatcher {
-            context: ctx.cast(),
-            // SAFETY: `fn(*mut C, ..)` and `fn(*mut (), ..)` are ABI-identical
-            // (Rust-ABI, thin-ptr first arg). The callback body discharges its
-            // own type-recovery.
-            callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(self.on_watch)
-            },
-        }
-    }
-}
 
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
@@ -733,13 +698,6 @@ impl<'a> Resolver<'a> {
         // all mutation across worker clones; `&mut self` rules out
         // intra-instance aliasing.
         unsafe { &mut *self.fs }
-    }
-
-    /// Resolve the current [`options::ExtOrder`] tag to the slice it names
-    /// inside `self.opts`.
-    #[inline(always)]
-    pub fn extension_order(&self) -> &[Box<[u8]>] {
-        self.opts.ext_order_slice(self.extension_order)
     }
 
     /// Raw-pointer projection to the inner `RealFS` (`self.fs.fs`).
@@ -2453,78 +2411,6 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.
-    pub fn package_json_for_resolved_node_module(
-        &mut self,
-        result: &Result,
-    ) -> Option<*const PackageJSON> {
-        let mut dir_info = self
-            .dir_info_cached(result.path_pair.primary.name().dir)
-            .ok()
-            .flatten()?;
-        loop {
-            if let Some(pkg) = dir_info.package_json() {
-                // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)
-                // In that case, we really would like the top-level package that you download from NPM
-                // so we ignore any unnamed packages
-                return Some(std::ptr::from_ref(pkg));
-            }
-
-            dir_info = dir_info.get_parent()?;
-        }
-    }
-
-    pub fn root_node_module_package_json(&mut self, result: &Result) -> Option<RootPathPair<'_>> {
-        let path = result.path_const()?;
-        let mut absolute = path.text();
-        // /foo/node_modules/@babel/standalone/index.js
-        //     ^------------^
-        let mut end = strings::last_index_of(absolute, NODE_MODULE_ROOT_STRING).or_else(|| {
-            // try non-symlinked version
-            if path.pretty().len() != absolute.len() {
-                absolute = path.pretty();
-                return strings::last_index_of(absolute, NODE_MODULE_ROOT_STRING);
-            }
-            None
-        })?;
-        end += NODE_MODULE_ROOT_STRING.len();
-
-        let is_scoped_package = absolute[end] == b'@';
-        end += strings::index_of_char(&absolute[end..], SEP)? as usize;
-
-        // /foo/node_modules/@babel/standalone/index.js
-        //                   ^
-        if is_scoped_package {
-            end += 1;
-            end += strings::index_of_char(&absolute[end..], SEP)? as usize;
-        }
-
-        end += 1;
-
-        // /foo/node_modules/@babel/standalone/index.js
-        //                                    ^
-        let slice = &absolute[0..end];
-
-        // Try to avoid the hash table lookup whenever possible
-        // That can cause filesystem lookups in parent directories and it requires a lock
-        if let Some(pkg) = result.package_json_ref() {
-            if slice == pkg.source.path.name().dir_with_trailing_slash() {
-                return Some(RootPathPair {
-                    package_json: std::ptr::from_ref(pkg),
-                    base_path: slice,
-                });
-            }
-        }
-
-        {
-            let dir_info = self.dir_info_cached(slice).ok().flatten()?;
-            Some(RootPathPair {
-                base_path: slice,
-                package_json: std::ptr::from_ref(dir_info.package_json()?),
-            })
-        }
-    }
-
     /// Directory cache keys must follow the following rules. If the rules are broken,
     /// then there will be conflicting cache entries, and trying to bust the cache may not work.
     ///
@@ -3252,7 +3138,6 @@ impl<'a> Resolver<'a> {
                                     return MatchStatus::Pending(Box::new(PendingResolution {
                                         esm: cloned,
                                         dependency: dependency_version,
-                                        resolution_id: resolved_package_id,
                                         string_buf,
                                         tag: PendingResolutionTag::Download,
                                         ..Default::default()
@@ -4814,7 +4699,8 @@ impl<'a> Resolver<'a> {
                 // because we want the output to always be deterministic
                 let plen = i32::try_from(prefix.len()).expect("int cast");
                 let slen = i32::try_from(suffix.len()).expect("int cast");
-                if path.starts_with(prefix)
+                if path.len() >= prefix.len() + suffix.len()
+                    && path.starts_with(prefix)
                     && path.ends_with(suffix)
                     && (plen > longest_match_prefix_length
                         || (plen == longest_match_prefix_length
@@ -6567,29 +6453,6 @@ impl<'a> Resolver<'a> {
     }
 }
 
-impl<'a> Resolver<'a> {
-    /// NOTE: NOT `impl Drop` — the bundler builds a `Resolver` per worker
-    /// thread (see `for_worker`), and all instances share the same `dir_cache`
-    /// singleton. A `Drop` impl would fire once per worker going out of scope,
-    /// resetting the SHARED cache (freeing PackageJSON/TSConfigJSON, closing cached
-    /// fds) while other live Resolvers still hold pointers into it. Call
-    /// `deinit` explicitly exactly once at shutdown.
-    pub fn deinit(&mut self) {
-        // Caller is the sole remaining owner at shutdown; no other Resolver alias is live.
-        for di in self.dir_cache_mut().values_mut() {
-            // `DirInfo::reset` releases owned PackageJSON / TSConfigJSON resources
-            // in-place (side effects beyond memory: those Drops close cached fds /
-            // deref intrusive refcounts).
-            di.reset();
-        }
-        // dir_cache is &'static — do not deinit the singleton here. `dir_cache`
-        // is the process-global
-        // BSSMap singleton (`DirInfo.HashMap` / `hash_map_instance()`); the
-        // entries' owned resources are released by the `reset()` loop above and
-        // the map storage itself lives for the process.
-    }
-}
-
 // ─── nested helper types ───────────────────────────────────────────────────
 
 enum DependencyToResolve {
@@ -6727,9 +6590,6 @@ fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 
-const NODE_MODULE_ROOT_STRING: &[u8] =
-    const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
-
 pub struct Dirname;
 
 impl Dirname {
@@ -6785,9 +6645,4 @@ impl Dirname {
 
         &path[0..end_index + 1]
     }
-}
-
-pub struct RootPathPair<'b> {
-    pub base_path: &'b [u8],
-    pub package_json: *const PackageJSON,
 }

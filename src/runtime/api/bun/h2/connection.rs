@@ -353,27 +353,8 @@ impl Connection {
         }
     }
 
-    /// §3.4 client preface (24-octet magic), sent before our first SETTINGS.
-    pub fn send_client_preface(&mut self, sink: &impl Sink) {
-        sink.write(wire::CONNECTION_PREFACE);
-    }
-
-    pub fn send_settings(&mut self, sink: &impl Sink) {
-        let mut buf = [0u8; Settings::STANDARD_COUNT * 6];
-        let n = self.local_settings.pack_standard(&mut buf);
-        self.pending_local_settings_acks
-            .push_back(PendingLocalSettings {
-                settings: self.local_settings,
-            });
-        self.write_frame(sink, FrameType::Settings, 0, 0, &buf[..n]);
-    }
-
     fn send_settings_ack(&mut self, sink: &impl Sink) {
         self.write_frame(sink, FrameType::Settings, wire::flags::ACK, 0, &[]);
-    }
-
-    pub fn send_ping(&mut self, sink: &impl Sink, payload: [u8; 8]) {
-        self.write_frame(sink, FrameType::Ping, 0, 0, &payload);
     }
 
     fn send_ping_ack(&mut self, sink: &impl Sink, payload: &[u8]) {
@@ -1926,14 +1907,6 @@ impl Connection {
         };
         if inc > 0 {
             self.send_window_update(sink, stream_id, inc);
-        }
-    }
-
-    /// Locally reset a stream (RST_STREAM) and mark it closed.
-    pub fn send_reset(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
-        self.send_rst_stream(sink, stream_id, code);
-        if let Some(s) = self.streams.get_mut(&stream_id) {
-            s.state = State::Closed;
         }
     }
 

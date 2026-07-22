@@ -457,12 +457,10 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 if (otherString.find(substring) != WTF::notFound) {
                     return AsymmetricMatcherResult::PASS;
                 }
-            } else if (expectedTestValue.isCell() and expectedTestValue.asCell()->type() == RegExpObjectType) {
-                if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
-                    JSString* otherString = otherProp.toString(globalObject);
-                    if (regex->match(globalObject, otherString)) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
+            } else if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
+                JSString* otherString = otherProp.toString(globalObject);
+                if (regex->match(globalObject, otherString)) {
+                    return AsymmetricMatcherResult::PASS;
                 }
             }
         }

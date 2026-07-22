@@ -83,7 +83,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             FnOrArrowDataParse {
                 needs_async_loc: loc,
                 async_range: async_range.unwrap_or(bun_ast::Range::NONE),
-                has_async_range: async_range.is_some(),
                 allow_await: if is_async {
                     AwaitOrYield::AllowExpr
                 } else {

@@ -411,7 +411,7 @@ fn on_handshake(
             let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
             match ProxyTunnel::socket_of(proxy_nn) {
                 &Socket::Ssl(socket) => {
-                    if !this.check_server_identity::<true>(socket, handshake_error, ssl, false) {
+                    if !this.check_server_identity::<true>(socket, ssl, false) {
                         scoped_log!(
                             http_proxy_tunnel,
                             "ProxyTunnel onHandshake checkServerIdentity failed"
@@ -424,7 +424,7 @@ fn on_handshake(
                     }
                 }
                 &Socket::Tcp(socket) => {
-                    if !this.check_server_identity::<false>(socket, handshake_error, ssl, false) {
+                    if !this.check_server_identity::<false>(socket, ssl, false) {
                         scoped_log!(
                             http_proxy_tunnel,
                             "ProxyTunnel onHandshake checkServerIdentity failed"
@@ -665,13 +665,6 @@ impl ProxyTunnel {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start");
             wrapper.start();
         }
-    }
-
-    pub fn close(&mut self, err: Error) {
-        // `&mut self` was derived from the heap::alloc pointer; the receiver is
-        // never used again after this line so the raw call's disjoint field
-        // projections do not alias it.
-        Self::close_raw(NonNull::from(&mut *self), err);
     }
 
     /// Raw-pointer close: sets `shutdown_err` then drives `wrapper.shutdown()`.

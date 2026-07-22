@@ -138,7 +138,6 @@ pub struct PosixBufferedReader {
     pub _offset: usize,
     pub vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
-    pub count: usize,
     // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
     // `add_to_pipereader`/`remove_from_pipereader`, not Arc — see MaxBuf.rs.
     pub maxbuf: Option<NonNull<MaxBuf>>,
@@ -157,12 +156,13 @@ bitflags::bitflags! {
         const MEMFD                    = 1 << 7;
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
+        const KEEP_ALIVE               = 1 << 10; // default true
     }
 }
 
 impl PosixFlags {
     pub const fn new() -> Self {
-        PosixFlags::CLOSE_HANDLE
+        Self::from_bits_truncate(PosixFlags::CLOSE_HANDLE.bits() | PosixFlags::KEEP_ALIVE.bits())
     }
 }
 
@@ -174,12 +174,14 @@ impl PosixBufferedReader {
             _offset: 0,
             vtable: BufferedReaderVTable::init::<T>(),
             flags: PosixFlags::new(),
-            count: 0,
             maxbuf: None,
         }
     }
 
-    pub fn update_ref(&self, value: bool) {
+    pub fn update_ref(&mut self, value: bool) {
+        // Remember the ref state so a poll created later (lazy start) honours
+        // an unref() that preceded the first registration.
+        self.flags.set(PosixFlags::KEEP_ALIVE, value);
         let Some(poll) = self.handle.get_poll() else {
             return;
         };
@@ -205,7 +207,6 @@ impl PosixBufferedReader {
             _offset: other._offset,
             flags: other.flags,
             vtable: BufferedReaderVTable { kind, parent },
-            count: 0,
             maxbuf: None,
         };
         other.flags.insert(PosixFlags::IS_DONE);
@@ -331,12 +332,8 @@ impl PosixBufferedReader {
         self.buffer()
     }
 
-    pub fn disable_keeping_process_alive<C>(&self, _event_loop_ctx: C) {
+    pub fn disable_keeping_process_alive<C>(&mut self, _event_loop_ctx: C) {
         self.update_ref(false);
-    }
-
-    pub fn enable_keeping_process_alive<C>(&self, _event_loop_ctx: C) {
-        self.update_ref(true);
     }
 
     fn finish(&mut self) {
@@ -414,7 +411,9 @@ impl PosixBufferedReader {
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
-        if !poll.has_flag(FilePollFlag::WasEverRegistered) {
+        if !poll.has_flag(FilePollFlag::WasEverRegistered)
+            && self.flags.contains(PosixFlags::KEEP_ALIVE)
+        {
             poll.enable_keeping_process_alive(ev);
         }
 
@@ -439,7 +438,9 @@ impl PosixBufferedReader {
         if self.get_fd() != fd {
             self.handle = PollOrFd::Fd(fd);
         }
-        self.register_poll();
+        if !self.flags.contains(PosixFlags::IS_PAUSED) {
+            self.register_poll();
+        }
 
         sys::Result::Ok(())
     }
@@ -467,14 +468,6 @@ impl PosixBufferedReader {
             PollOrFd::Fd(_) => true,
             _ => false,
         }
-    }
-
-    pub fn loop_(&self) -> *mut Loop {
-        self.vtable.loop_()
-    }
-
-    pub fn event_loop(&self) -> EventLoopHandle {
-        self.vtable.event_loop()
     }
 
     pub fn read(&mut self) {
@@ -1114,7 +1107,6 @@ pub struct WindowsBufferedReader {
     pub flags: WindowsFlags,
     pub maxbuf: Option<NonNull<MaxBuf>>,
 
-    pub parent: *mut c_void,
     pub vtable: BufferedReaderVTable,
 }
 
@@ -1155,7 +1147,6 @@ impl WindowsBufferedReader {
             _buffer: Vec::new(),
             flags: WindowsFlags::new(),
             maxbuf: None,
-            parent: core::ptr::null_mut(),
             vtable: BufferedReaderVTable::init::<T>(),
         }
     }
@@ -1200,7 +1191,6 @@ impl WindowsBufferedReader {
     }
 
     pub fn set_parent(&mut self, parent: *mut c_void) {
-        self.parent = parent;
         self.vtable.parent = parent;
         if !self.flags.contains(WindowsFlags::IS_DONE) {
             // `Source::set_data` only writes the libuv `.data` field (raw ptr
@@ -1705,11 +1695,6 @@ impl WindowsBufferedReader {
             }
         }
 
-        sys::Result::Ok(())
-    }
-
-    #[cfg(not(windows))]
-    pub fn start_reading(&mut self) -> sys::Result<()> {
         sys::Result::Ok(())
     }
 

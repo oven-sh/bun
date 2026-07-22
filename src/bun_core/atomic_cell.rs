@@ -79,12 +79,6 @@ impl<T: Copy> AtomicCell<T> {
             inner: UnsafeCell::new(value),
         }
     }
-
-    /// Consume and return the inner value (no atomic op; we own it).
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.inner.into_inner()
-    }
 }
 
 impl<T: Atom> AtomicCell<T> {
@@ -101,13 +95,6 @@ impl<T: Atom> AtomicCell<T> {
     pub fn store(&self, value: T) {
         // SAFETY: as above.
         unsafe { T::_atomic_store(self.inner.get(), value, Ordering::Release) }
-    }
-
-    /// AcqRel swap; returns the previous value.
-    #[inline]
-    pub fn swap(&self, value: T) -> T {
-        // SAFETY: as above.
-        unsafe { T::_atomic_swap(self.inner.get(), value, Ordering::AcqRel) }
     }
 
     /// AcqRel compare-and-swap. `Ok(prev)` on success, `Err(actual)` on
@@ -139,22 +126,6 @@ impl<T: Atom> AtomicCell<T> {
             }
         }
         Err(prev)
-    }
-
-    /// Relaxed load. **Only** for telemetry / best-effort hints (e.g.
-    /// `memory_cost()` from a GC helper thread). Named `load_relaxed` not
-    /// `load(Ordering)` so grep finds every site that opted out of ordering.
-    #[inline]
-    pub fn load_relaxed(&self) -> T {
-        // SAFETY: as above.
-        unsafe { T::_atomic_load(self.inner.get(), Ordering::Relaxed) }
-    }
-
-    /// Relaxed store. See [`load_relaxed`](Self::load_relaxed).
-    #[inline]
-    pub fn store_relaxed(&self, value: T) {
-        // SAFETY: as above.
-        unsafe { T::_atomic_store(self.inner.get(), value, Ordering::Relaxed) }
     }
 }
 
@@ -672,10 +643,9 @@ mod tests {
         let c = AtomicCell::new(42_i32);
         assert_eq!(c.load(), 42);
         c.store(-7);
-        assert_eq!(c.swap(100), -7);
-        assert_eq!(c.load(), 100);
-        assert_eq!(c.compare_exchange(0, 1), Err(100));
-        assert_eq!(c.compare_exchange(100, 1), Ok(100));
+        assert_eq!(c.load(), -7);
+        assert_eq!(c.compare_exchange(0, 1), Err(-7));
+        assert_eq!(c.compare_exchange(-7, 1), Ok(-7));
         assert_eq!(c.load(), 1);
     }
 
@@ -684,7 +654,7 @@ mod tests {
         let c = AtomicCell::new(false);
         assert!(!c.load());
         c.store(true);
-        assert!(c.swap(false));
+        assert!(c.load());
     }
 
     #[test]

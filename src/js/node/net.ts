@@ -42,6 +42,11 @@ const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 
+const dc = require("node:diagnostics_channel");
+const netClientSocketChannel = dc.channel("net.client.socket");
+const netServerSocketChannel = dc.channel("net.server.socket");
+const netServerListen = dc.tracingChannel("net.server.listen");
+
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
@@ -1063,6 +1068,11 @@ function onconnection(err, clientHandle) {
   }
 
   self.emit("connection", _socket);
+  if (netServerSocketChannel.hasSubscribers) {
+    netServerSocketChannel.publish({
+      socket: _socket,
+    });
+  }
   // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
   if (!pauseOnConnect && !isTLS) {
     _socket.resume();
@@ -1701,6 +1711,13 @@ Socket.prototype.connect = function connect(...args) {
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
+
+    if (netClientSocketChannel.hasSubscribers) {
+      netClientSocketChannel.publish({
+        socket: this,
+      });
+    }
+
     let connection = this[ksocket];
     let upgradeDuplex = false;
     let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
@@ -3361,6 +3378,15 @@ Server.prototype.getConnections = function getConnections(callback) {
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
   const argsLength = arguments.length;
+
+  if (this._handle) {
+    throw $ERR_SERVER_ALREADY_LISTEN();
+  }
+
+  if (netServerListen.asyncStart.hasSubscribers) {
+    netServerListen.asyncStart.publish({ server: this, options: normalizeArgs(arguments)[0] });
+  }
+
   if (typeof port === "string") {
     const numPort = Number(port);
     if (!Number.isNaN(numPort)) port = numPort;
@@ -3509,10 +3535,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SOCKET_BAD_PORT(`options.port should be >= 0 and < 65536. Received type number: (${port})`);
   }
 
-  if (this._handle) {
-    throw $ERR_SERVER_ALREADY_LISTEN();
-  }
-
   if (onListen != null) {
     this.once("listening", onListen);
   }
@@ -3557,7 +3579,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     );
   } catch (err) {
     const isUnix = path != null;
-    setTimeout(emitErrorNextTick, 1, this, formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port));
+    const error = formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port);
+    if (netServerListen.error.hasSubscribers) {
+      netServerListen.error.publish({ server: this, error });
+    }
+    setTimeout(emitErrorNextTick, 1, this, error);
   }
   return this;
 };
@@ -3653,6 +3679,10 @@ Server.prototype[kRealListen] = function (
       // the native SSL_CTX wrapper at `.context`.
       addServerName(this._handle, name, context.context ?? context);
     }
+  }
+
+  if (netServerListen.asyncEnd.hasSubscribers) {
+    netServerListen.asyncEnd.publish({ server: this });
   }
 
   // Unref the handle if the server was unref'ed prior to listening

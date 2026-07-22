@@ -889,7 +889,7 @@ export function regenerateOrderFile(cfg: Config, ctx: OrderFileContext): void {
       ? "[generate symbol order] in the commit message"
       : "nothing to inherit";
   console.log(`Tracing ${exeName} to build a fresh order file (${why})`);
-  console.log("Each workload runs under an LD_PRELOAD page-fault tracer, so it is slower than a normal run.\n");
+  console.log("Each workload runs under an injected function-entry tracer, so it is slower than a normal run.\n");
 
   const { count } = generateOrderFile({ buildDir: cfg.buildDir, exeName, verbose: true });
 
@@ -1028,7 +1028,9 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
   if (control > 0 && hot > control * MAX_FRACTION_OF_CONTROL) {
     fail(
       `the order file had no effect: hot functions sit at ${mb(hot)}, a typical one at ${mb(control)}`,
-      "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
+      cfg.darwin
+        ? "Apple ld ignored it — check -order_file and that the names match nm's"
+        : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
     );
     return;
   }

@@ -262,3 +262,29 @@ any callsite, and the runtime follows the WSABUF indirection.
   is poisoned (count 0). The code ASSUMES AFD echoes the original
   IO_STATUS_BLOCK pointer as the completion's ApcContext; that layout
   assumption is unverified and is the next thing to instrument.
+
+
+## Socket receive payloads live above the ntdll layer (2026-07-22, closed)
+
+Final resolution of the receive-poison work: with `afd:` rules restricted to
+the boundary bun crosses (b:/k:/n: keys), an `afd:RECV` garbage rule arms on
+NOTHING on the http-load workload - every payload-bearing `AFD_RECV` there
+is `o:`-keyed, issued from inside mswsock. bun calls the WSA API
+(`WSARecv`/`recv`); mswsock is what issues the `\Device\Afd` ioctl, from its
+own address space, wrapping its own WSABUF/IOSB. So at the ntdll layer the
+receive payload is mswsock's machinery on both the arm side and the
+completion side - not bun's.
+
+This is a layer boundary, not a fixable gap: an ntdll-export fuzzer sees the
+syscall a system DLL makes on bun's behalf. Corrupting the bytes bun
+actually receives requires hooking one layer up (the ws2_32 WSARecv/recv
+boundary), which is deliberately outside this tool's design. The
+receive-payload thread is CLOSED here: do not iterate on afd:RECV further.
+(afd:SEND / partial-send status: also not established - the corrected
+mechanism was never retested against a b:/k:-keyed send; treat as untested,
+not as coverage.)
+
+Lesson kept: when a fault branch does not fire, dump the guard values from
+the codegen'd table (bufIndex etc.) FIRST - three retracted theories on this
+thread came from inferring before reading, and each was ended in one shot by
+instrumentation.

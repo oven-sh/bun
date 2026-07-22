@@ -22,9 +22,11 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // callers (tsconfig, package.json); the public `Bun.JSONC.parse` matches
             // `JSON.parse` / `Bun.JSON5.parse` and rejects it instead.
             if source.contents.is_empty() {
-                return Err(global.throw_value(global.create_syntax_error_instance(
-                    format_args!("JSONC Parse error: Unexpected end of input"),
-                )));
+                return Err(
+                    global.throw_value(global.create_syntax_error_instance(format_args!(
+                        "JSONC Parse error: Unexpected end of input"
+                    ))),
+                );
             }
             let parsed = match json::ParsedJson::parse_jsonc(source, log) {
                 Ok(v) => v,

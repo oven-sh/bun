@@ -247,9 +247,15 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
     }
     /* HttpContext<SSL>::onWritable shuts the socket down once the buffered
      * response data has flushed and HTTP_CONNECTION_CLOSE is set, so the FIN
-     * is sequenced after the response bytes (like Node's destroySoon). */
+     * is sequenced after the response bytes (like Node's destroySoon).
+     * HTTP_NODE_PARSING_STOPPED: a pipelined request still in the read buffer
+     * would otherwise be dispatched and its resetResponseState() clear
+     * HTTP_CONNECTION_CLOSE, losing the deferred shutdown; the immediate
+     * (getBufferedAmount() == 0) path already stops parsing via
+     * us_socket_is_shut_down(). */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
-    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE
+        | uWS::HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
     return true;
 }
 

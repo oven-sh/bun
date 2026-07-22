@@ -92,7 +92,7 @@ fn collect_isolated_untrusted_scripts(
                         match bun_sys::lstatat(store_fd, ent.name.as_zstr()) {
                             Ok(st) => {
                                 bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
-                                    == bun_sys::EntryKind::SymLink
+                                    != bun_sys::EntryKind::Directory
                             }
                             Err(_) => true,
                         }

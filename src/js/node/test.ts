@@ -1919,7 +1919,7 @@ function before(arg0: unknown, arg1: unknown) {
       () => done(),
       err => done(err ?? new Error("before hook failed")),
     );
-  });
+  }, kBunTestNoTimeout);
 }
 
 function after(arg0: unknown, arg1: unknown) {
@@ -1935,7 +1935,7 @@ function after(arg0: unknown, arg1: unknown) {
       () => done(),
       err => done(err ?? new Error("after hook failed")),
     );
-  });
+  }, kBunTestNoTimeout);
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {

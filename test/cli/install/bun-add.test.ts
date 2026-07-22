@@ -46,7 +46,12 @@ const uglify_files = {
 };
 beforeAll(() => {
   setGithubTarball("mishoo", "UglifyJS", "v3.14.1", makeGithubTarball("mishoo-UglifyJS-e219a9a", uglify_files));
-  setGithubTarball("dylan-conway", "install-test-3", "v1.0.0", makeGithubTarball("dylan-conway-install-test-3-d8f1c19", {}));
+  setGithubTarball(
+    "dylan-conway",
+    "install-test-3",
+    "v1.0.0",
+    makeGithubTarball("dylan-conway-install-test-3-d8f1c19", {}),
+  );
   setGithubTarball(
     "dylan-conway",
     "install-test-3",

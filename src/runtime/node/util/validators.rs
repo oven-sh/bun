@@ -340,7 +340,7 @@ pub(crate) fn validate_object(
     options: ValidateObjectOptions,
 ) -> JsResult<()> {
     if !options.allow_nullable() && !options.allow_array() && !options.allow_function() {
-        if value.is_null() || value.js_type().is_array() {
+        if value.is_null() || value.js_type().is_array() || value.is_callable() {
             return Err(throw_err_invalid_arg_type(
                 global_this,
                 name,

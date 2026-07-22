@@ -747,3 +747,76 @@ it("https.request reports an impossible version window as a TLS error, not a cer
   await once(response, "end");
   expect(body).toBe("ok");
 });
+
+it("skips checkServerIdentity on a resumed session (Node parity)", async () => {
+  // Node gates onConnectSecure's identity check on !this.isSessionReused(): the
+  // peer was verified on the full handshake that issued the ticket.
+  await using server = tls.createServer({ ...COMMON_CERT_ }, c => {
+    c.on("error", () => {});
+    c.end("x");
+  });
+  server.on("tlsClientError", () => {});
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  // Full handshake: capture the ticket. Wait for the server's 'end' so the
+  // post-handshake NewSessionTicket has arrived before resuming.
+  let ticket: Buffer | undefined;
+  const first = tlsConnect({ port, host: "127.0.0.1", ca: COMMON_CERT_.cert, servername: "localhost" });
+  first.once("session", s => (ticket = s));
+  first.on("data", () => {});
+  first.on("error", () => {});
+  await once(first, "close");
+  expect(first.authorized).toBe(true);
+  expect(Buffer.isBuffer(ticket)).toBe(true);
+
+  type Outcome = { reused: boolean; authorized: boolean; authorizationError: unknown; result: string };
+  const resume = (extra: tls.ConnectionOptions) =>
+    new Promise<Outcome>(resolve => {
+      let done = false;
+      const s = tlsConnect({
+        port,
+        host: "127.0.0.1",
+        ca: COMMON_CERT_.cert,
+        servername: "localhost",
+        session: ticket,
+        ...extra,
+      });
+      const finish = (result: string) => {
+        if (done) return;
+        done = true;
+        s.destroy();
+        resolve({ reused, authorized: s.authorized, authorizationError: s.authorizationError, result });
+      };
+      let reused = false;
+      s.on("secureConnect", () => {
+        reused = s.isSessionReused();
+      });
+      s.on("data", () => {});
+      s.on("end", () => finish("ok"));
+      s.on("error", (e: any) => finish(String(e.code ?? e.message)));
+    });
+
+  // A counting checkServerIdentity is not invoked on the resumed connection.
+  let calls = 0;
+  const a = await resume({ checkServerIdentity: () => (calls++, undefined) });
+  expect({ ...a, calls }).toEqual({
+    reused: true,
+    authorized: true,
+    authorizationError: undefined,
+    result: "ok",
+    calls: 0,
+  });
+
+  // A checkServerIdentity that returns an Error (certificate pinning) does not
+  // run, so the resumed connection succeeds and is authorized.
+  const b = await resume({
+    checkServerIdentity: () => Object.assign(new Error("pin mismatch"), { code: "EPIN" }),
+  });
+  expect(b).toEqual({ reused: true, authorized: true, authorizationError: undefined, result: "ok" });
+
+  // A servername absent from the certificate's SAN still connects when the
+  // server accepts the ticket: the default hostname check is skipped too.
+  const c = await resume({ servername: "not-in-cert.example" });
+  expect(c).toEqual({ reused: true, authorized: true, authorizationError: undefined, result: "ok" });
+});

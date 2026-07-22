@@ -470,7 +470,10 @@ const SocketHandlers: SocketHandler = {
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
+    // Node skips the identity check when the server resumed our session: the
+    // peer's identity was established on the full handshake that issued the
+    // ticket (lib/internal/tls/wrap.js onConnectSecure).
+    if (!verifyError && !socket.isSessionReused() && typeof checkServerIdentity === "function") {
       const hostname = self.servername || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {
@@ -1252,7 +1255,10 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
+    // Node skips the identity check when the server resumed our session: the
+    // peer's identity was established on the full handshake that issued the
+    // ticket (lib/internal/tls/wrap.js onConnectSecure).
+    if (!verifyError && !socket.isSessionReused() && typeof checkServerIdentity === "function") {
       const hostname = self.servername || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {

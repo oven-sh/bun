@@ -54,15 +54,16 @@ use bun_http::ssl_config::SSLConfig;
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
 bun_core::declare_scope!(alloc, hidden);
 
-/// Opening-handshake timeout in seconds. Armed on the connecting socket and
-/// re-armed in `handle_open` (uSockets clears the socket timeout when a
-/// SEMI_SOCKET transitions to open). 0 disables.
+/// Opening-handshake timeout in seconds, normalised for uSockets' timer
+/// wheel (short-timeout counter wraps at 240 ticks; `set_timeout` routes
+/// larger values onto the minute-granularity long timer). 0 disables.
 #[inline]
 fn handshake_timeout_seconds() -> core::ffi::c_uint {
-    bun_core::env_var::BUN_CONFIG_WS_HANDSHAKE_TIMEOUT
-        .get()
-        .unwrap_or(120)
-        .min(u64::from(core::ffi::c_uint::MAX)) as core::ffi::c_uint
+    bun_http::normalize_idle_timeout_seconds(
+        bun_core::env_var::BUN_CONFIG_WS_HANDSHAKE_TIMEOUT
+            .get()
+            .unwrap_or(120),
+    )
 }
 
 /// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
@@ -509,7 +510,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         }
                     }
 
-                    client_ref.tcp.timeout(handshake_timeout_seconds());
+                    client_ref.tcp.set_timeout(handshake_timeout_seconds());
                     client_ref.state = State::Reading;
                     // +1 for cpp_websocket
                     client_ref.ref_();
@@ -557,7 +558,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     }
                 }
 
-                out.tcp.timeout(handshake_timeout_seconds());
+                out.tcp.set_timeout(handshake_timeout_seconds());
                 out.state = State::Reading;
                 // +1 for cpp_websocket
                 out.ref_();
@@ -809,13 +810,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived `&mut` for setup; ends before any reentrant call.
         let me = unsafe { &mut *this.as_ptr() };
         me.tcp = socket;
-        // `us_internal_socket_after_open` clears the socket timeout when the
-        // SEMI_SOCKET becomes a full socket, so the `timeout()` set in
-        // `connect()` only covered the TCP connect. Re-arm here so a peer that
-        // accepts the TCP connection but never answers the upgrade (or never
-        // completes the TLS handshake) eventually fails instead of sitting in
-        // `CONNECTING` forever.
-        socket.timeout(handshake_timeout_seconds());
+        // `us_internal_socket_after_open` zeroes the socket timeout when the
+        // SEMI_SOCKET opens, so the value `connect()` armed only covered the
+        // TCP connect. Re-arm so an accept-but-never-answer peer times out.
+        socket.set_timeout(handshake_timeout_seconds());
 
         debug_assert!(!me.input_body_buf.is_empty());
         debug_assert!(me.to_send_len == 0);
@@ -1599,7 +1597,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // SAFETY: short-lived read; `this` is live per caller contract.
                 let has_ws = unsafe { (*this).outgoing_websocket.is_some() };
                 if !tcp.is_closed() && has_ws {
-                    tcp.timeout(0);
+                    tcp.set_timeout(0);
                     log!("onDidConnect (tunnel mode)");
 
                     // Release the ref that paired with C++'s m_upgradeClient: C++
@@ -1657,7 +1655,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived read; `this` is live per caller contract.
         let has_ws = unsafe { (*this).outgoing_websocket.is_some() };
         if !tcp.is_closed() && has_ws {
-            tcp.timeout(0);
+            tcp.set_timeout(0);
             log!("onDidConnect");
 
             // SAFETY: short-lived `&mut` for the field take/detach; ends before

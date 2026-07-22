@@ -55,11 +55,8 @@ new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_
 // handshake through the response body. 0 disables. See `src/http/lib.rs`.
 new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", { default: 300 });
 // Opening-handshake timeout for the `new WebSocket()` client, in seconds.
-// Armed on the connecting socket and re-armed when the TCP connection opens;
-// if the server accepts the TCP connection but never answers the upgrade, the
-// WebSocket errors after this many seconds instead of sitting in `CONNECTING`
-// forever. 0 disables. uSockets' sweep granularity is 4 s, so very small
-// values round up.
+// A peer that accepts the TCP connection but never answers the upgrade fails
+// with error + close(1006). 0 disables; uSockets' 4 s sweep rounds small values up.
 new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIMEOUT", { default: 120 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});

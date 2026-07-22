@@ -4,12 +4,8 @@ import { bunEnv, bunExe } from "harness";
 
 describe("WebSocket upgrade", () => {
   // https://github.com/oven-sh/bun/issues/2896
-  // A server that accepts the TCP connection but never answers the upgrade
-  // used to leave the WebSocket in CONNECTING forever: the handshake timeout
-  // was armed on the connecting socket, but usockets clears it when the
-  // socket opens and handle_open never re-armed it. With
-  // BUN_CONFIG_WS_HANDSHAKE_TIMEOUT=1 (usockets sweeps every 4 s, so the
-  // effective delay is ~4-8 s) the WebSocket should error and close.
+  // BUN_CONFIG_WS_HANDSHAKE_TIMEOUT=1: uSockets sweeps every 4 s, so the
+  // effective delay is ~4-8 s, hence the 30 s test budget.
   test("fails the handshake when the server never responds", async () => {
     const script = `
       const net = require("node:net");

@@ -797,6 +797,23 @@ describe("constructing a Response from a large ArrayBuffer borrows the storage",
     expect(out[0]).toBe(0x61);
   });
 
+  test("text() on a clone re-scans the borrow after the source is mutated", async () => {
+    // r1 and r2 share the same borrowed Store; r1.text() must not cache an
+    // ASCII verdict on the shared Store that r2.text() would trust after
+    // the source bytes have changed.
+    const buf = new Uint8Array(N).fill(0x61);
+    const r1 = new Response(buf);
+    const r2 = r1.clone();
+    expect((await r1.text())[0]).toBe("a");
+    for (let i = 0; i < N; i += 2) {
+      buf[i] = 0xc3;
+      buf[i + 1] = 0xa9;
+    }
+    const t2 = await r2.text();
+    expect(t2.length).toBe(N / 2);
+    expect(t2[0]).toBe("é");
+  });
+
   describe("Response", () => {
     const fn = (body: BodyInit) => new Response(body);
 

@@ -2585,6 +2585,12 @@ impl BlobExt for Blob {
         // we can update the store's is_all_ascii flag
         if self.size.get() > 0 && self.offset.get() == 0 {
             if let Some(store_ref) = self.store() {
+                // A borrowed-ArrayBuffer store's bytes are user-mutable, so
+                // this cache would go stale; a cloned Response sharing the
+                // StoreRef would then skip the UTF-8 scan and mis-decode.
+                if store_ref.bytes_borrow_js_array_buffer() {
+                    return;
+                }
                 let store = store_ref.as_ptr();
                 // SAFETY: `store` is live (we hold a `StoreRef`); single-threaded
                 // JS execution means no concurrent &Store borrow is outstanding.

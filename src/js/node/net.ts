@@ -305,6 +305,16 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+// The name a client verifies the peer certificate against, mirroring Node's
+// onConnectSecure. Reading `host` off the connect options rather than `_host`
+// also covers tls.connect({ socket, host }), which returns before
+// lookupAndConnect ever assigns `_host`; Node honors `host` for certificate
+// validation even when a socket is supplied.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_tls_wrap.js#L1721
+function certificateHostname(self) {
+  return self.servername || self[kConnectOptions]?.host || "localhost";
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -471,7 +481,7 @@ const SocketHandlers: SocketHandler = {
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
+      const hostname = certificateHostname(self);
       const cert = self.getPeerCertificate(true);
       if (cert) {
         verifyError = checkServerIdentity(hostname, cert);
@@ -1253,7 +1263,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
+      const hostname = certificateHostname(self);
       const cert = self.getPeerCertificate(true);
       if (cert) {
         verifyError = checkServerIdentity(hostname, cert);

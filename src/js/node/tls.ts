@@ -1079,15 +1079,13 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
   return this._handle?.getX509Certificate?.();
 };
 
-TLSSocket.prototype[buntls] = function (port, host) {
+TLSSocket.prototype[buntls] = function () {
   const ctx = this[ksecureContext];
-  // RFC 6066 forbids IP literals in SNI. Match Node.js: only default servername to host
-  // when host is not an IP. For IP hosts, pass "" so the native layer skips SNI instead of
-  // falling back to the connection host.
-  let servername = this.servername || ctx?.servername;
-  if (servername === undefined) {
-    servername = host && !net.isIP(host) ? host : "";
-  }
+  // Node's tls.connect sends an SNI server_name only when `servername` was set
+  // explicitly; deriving one from the connection host is the https Agent's job
+  // (calculateServerName). "" makes the native layer omit the extension rather
+  // than fall back to the connection host the way Bun.connect does.
+  const servername = this.servername || ctx?.servername || "";
   return {
     socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,

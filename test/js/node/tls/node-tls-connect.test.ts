@@ -3,6 +3,7 @@ import { once } from "events";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN } from "harness";
 import https from "https";
 import net from "net";
+import http2 from "node:http2";
 import { join } from "path";
 import stream from "stream";
 import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
@@ -397,9 +398,11 @@ for (const { name, connect } of tests) {
     // Test using only options
     // prettier-ignore
     it.skipIf(connect === duplexProxy || !canReachBunSh)("should process options correctly when connect is called with only options", done => {
+      // `servername` is explicit: tls.connect never derives SNI from `host`.
       let socket = connect({
         port: 443,
         host: "bun.sh",
+        servername: "bun.sh",
         rejectUnauthorized: false,
       });
 
@@ -419,6 +422,7 @@ for (const { name, connect } of tests) {
     // Test using port and host
     itNetwork("should process port and host correctly", done => {
       let socket = connect(443, "bun.sh", {
+        servername: "bun.sh",
         rejectUnauthorized: false,
       });
 
@@ -443,6 +447,7 @@ for (const { name, connect } of tests) {
         443,
         "bun.sh",
         {
+          servername: "bun.sh",
           rejectUnauthorized: false,
         },
         () => {
@@ -461,6 +466,7 @@ for (const { name, connect } of tests) {
     // Additional tests to ensure the callback is optional and handled correctly
     itNetwork("should handle the absence of a callback gracefully", done => {
       let socket = connect(443, "bun.sh", {
+        servername: "bun.sh",
         rejectUnauthorized: false,
       });
 
@@ -486,6 +492,7 @@ for (const { name, connect } of tests) {
           {
             port: 443,
             host: "bun.sh",
+            servername: "bun.sh",
           },
           () => {
             socket.setTimeout(1000, () => {
@@ -746,4 +753,97 @@ it("https.request reports an impossible version window as a TLS error, not a cer
   response.on("data", (chunk: Buffer) => (body += chunk));
   await once(response, "end");
   expect(body).toBe("ok");
+});
+
+describe("SNI server_name extension", () => {
+  // tls.connect never derives the SNI server_name from `host`: Node only sends
+  // the extension when `servername` was passed explicitly. The host-derived
+  // servername lives one layer up, in the https Agent (calculateServerName) and
+  // in http2's client connect.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/_tls_wrap.js#L1841
+  async function serverSawSNI(connect: (port: number) => TLSSocket): Promise<string | null> {
+    const observed = Promise.withResolvers<string | null>();
+    const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+      // `socket.servername` is the server_name the client sent; it is falsy
+      // when the extension was absent from the ClientHello.
+      observed.resolve(socket.servername || null);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = connect((server.address() as AddressInfo).port);
+    client.on("error", err => observed.reject(err));
+    try {
+      return await observed.promise;
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  const ca = COMMON_CERT_.cert;
+
+  it("is omitted when servername is not given: tls.connect({ host })", async () => {
+    expect(await serverSawSNI(port => tlsConnect({ host: "localhost", port, ca }))).toBeNull();
+  });
+
+  it("is omitted when servername is not given: tls.connect(port, host)", async () => {
+    expect(await serverSawSNI(port => tlsConnect(port, "localhost", { ca }))).toBeNull();
+  });
+
+  it("is omitted for an empty servername", async () => {
+    expect(await serverSawSNI(port => tlsConnect({ host: "localhost", port, ca, servername: "" }))).toBeNull();
+  });
+
+  it("is omitted for an IP host", async () => {
+    expect(await serverSawSNI(port => tlsConnect({ host: "127.0.0.1", port, ca }))).toBeNull();
+  });
+
+  it("is sent when servername is given explicitly", async () => {
+    expect(await serverSawSNI(port => tlsConnect({ host: "127.0.0.1", port, ca, servername: "localhost" }))).toBe(
+      "localhost",
+    );
+  });
+
+  it("is still derived from host by the https Agent", async () => {
+    const observed = Promise.withResolvers<string | null>();
+    // Terminate TLS ourselves and answer a canned response, so the assertion is
+    // on the server_name the client actually put on the wire.
+    const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+      observed.resolve(socket.servername || null);
+      socket.end("HTTP/1.1 204 No Content\r\n\r\n");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const req = https.request({
+      host: "localhost",
+      port: (server.address() as AddressInfo).port,
+      ca,
+      agent: false as const,
+    });
+    req.on("error", err => observed.reject(err));
+    req.end();
+    try {
+      expect(await observed.promise).toBe("localhost");
+    } finally {
+      req.destroy();
+      server.close();
+    }
+  });
+
+  it("is still derived from the authority by http2.connect", async () => {
+    const observed = Promise.withResolvers<string | null>();
+    const server = http2.createSecureServer({ ...COMMON_CERT_ });
+    server.on("secureConnection", socket => observed.resolve(socket.servername || null));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const session = http2.connect(`https://localhost:${port}`, { ca });
+    session.on("error", err => observed.reject(err));
+    try {
+      expect(await observed.promise).toBe("localhost");
+    } finally {
+      session.destroy();
+      server.close();
+    }
+  });
 });

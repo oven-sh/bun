@@ -46,6 +46,9 @@ const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
+// Captured at module load so the uncaughtException routing below can't be
+// defeated by user code clobbering globalThis.reportError after net loads.
+const reportError = globalThis.reportError;
 
 const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
@@ -226,6 +229,25 @@ function destroyWhenAborted(err) {
     // node's stream layer (addAbortSignal) destroys the socket with an AbortError (code
     // ABORT_ERR) carrying the signal's reason as `cause`, not with the raw reason itself.
     this.destroy($makeAbortError(undefined, { cause: err?.target?.reason }));
+  }
+}
+// Runs `fn` and routes any synchronous throw to `uncaughtException` via
+// `reportError`, instead of letting it unwind back through the native socket
+// callback — which would catch it and funnel it into the socket's onError
+// handler (its 'error' event) or, on the `onOpen` path, tear the connection
+// down. Node surfaces a throw from these lifecycle listeners as
+// `uncaughtException` and leaves the socket alone.
+//
+// Use this around a *group* of consecutive `self.emit(...)` calls rather
+// than one-per-emit: Node's synchronous `emit('a'); emit('b')` short-circuits
+// — a throw from the 'a' listener prevents 'b' from firing at all. Wrapping
+// each emit individually would reorder that into "'a' threw, reported, 'b'
+// still fires", which is not what Node does.
+function safelyInvokeListeners(fn) {
+  try {
+    fn();
+  } catch (e) {
+    reportError(e);
   }
 }
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
@@ -425,8 +447,10 @@ const SocketHandlers: SocketHandler = {
       self[kBytesWritten] = socket.bytesWritten;
       // this is not actually emitted on nodejs when socket used on the connection
       // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
-      self.emit("connect", self);
-      self.emit("ready");
+      safelyInvokeListeners(() => {
+        self.emit("connect", self);
+        self.emit("ready");
+      });
     }
 
     SocketHandlers.drain(socket);
@@ -1062,11 +1086,13 @@ function onconnection(err, clientHandle) {
     });
   }
 
-  self.emit("connection", _socket);
-  // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-  if (!pauseOnConnect && !isTLS) {
-    _socket.resume();
-  }
+  safelyInvokeListeners(() => {
+    self.emit("connection", _socket);
+    // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
+    if (!pauseOnConnect && !isTLS) {
+      _socket.resume();
+    }
+  });
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
@@ -1571,7 +1597,10 @@ function Socket(options?) {
         try {
           onread.callback(buffer.length, buffer);
         } catch (e) {
-          self.emit("error", e);
+          // Node surfaces a throw from onread.callback as 'uncaughtException'
+          // (it's invoked from onStreamRead with no try/catch). Route it via
+          // reportError instead of emitting on the socket's 'error' event.
+          reportError(e);
         }
       },
     };
@@ -3118,8 +3147,10 @@ function afterConnect(status, handle, req, readable, writable) {
       self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
-    self.emit("connect");
-    self.emit("ready");
+    safelyInvokeListeners(() => {
+      self.emit("connect");
+      self.emit("ready");
+    });
 
     if (self[kPerfHooksNetConnectContext] && hasObserver("net")) {
       stopPerf(self, kPerfHooksNetConnectContext);

@@ -25,6 +25,7 @@ use bun_core::env::OperatingSystem;
 use bun_io::KeepAlive;
 use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::WorkPool;
+use bun_jsc::event_loop::EventLoop;
 use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
@@ -59,10 +60,17 @@ pub struct JSBundleCompletionTask {
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
     /// Stable identifier for the originating `ScriptExecutionContext`. The
-    /// bundle thread reaches the JS event loop via this id (under the C++
+    /// bundle thread posts the completion via this id (under the C++
     /// contexts-map lock), so it never holds a pointer into a worker VM that
     /// can be freed mid-bundle.
     pub context_id: ScriptExecutionContextIdentifier,
+    /// Direct event-loop backref for mid-build plugin dispatches
+    /// (`COMPLETION_VTABLE.enqueue_task_concurrent`). Dropping a plugin
+    /// `onLoad`/`onResolve` post when the worker is terminating would leave
+    /// `graph.pending_items` unbalanced and hang the process-wide
+    /// `BundleThread` inside `wait_for_parse`, so that path keeps the pre-PR
+    /// direct enqueue (and its pre-existing UAF on termination).
+    pub jsc_event_loop: BackRef<EventLoop>,
     pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
@@ -148,10 +156,14 @@ pub(crate) fn create_and_schedule_completion_task(
     // `'static` borrow is the lifetime erasure for the task-lifetime map.
     let env =
         bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init(unsafe { &mut *env_map })));
+    // SAFETY: `event_loop()` is non-null once `Bun.build` is reachable.
+    let jsc_event_loop =
+        BackRef::from(unsafe { NonNull::new_unchecked(global_this.bun_vm().event_loop()) });
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
         context_id: global_this.script_execution_context_identifier(),
+        jsc_event_loop,
         task: AnyTask::default(),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
@@ -789,19 +801,18 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
+        // This path carries mid-build plugin `onLoad`/`onResolve` dispatches
+        // (via `enqueue_on_js_loop_for_plugins`). Silently dropping one when
+        // the owning worker is terminating would strand `graph.pending_items`
+        // and hang the process-wide `BundleThread` inside `wait_for_parse`, so
+        // it stays on the direct enqueue (unchanged from main) rather than the
+        // `post_concurrent_task` path used by `complete_on_bundle_thread`.
         // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
-        // passed through from the bundler vtable.
-        let task = unsafe { core::ptr::NonNull::new_unchecked(task) };
-        if !from_completion_handle(c)
-            .context_id
-            .post_concurrent_task(task)
-        {
-            // Target context is gone or terminating (worker was terminated
-            // mid-bundle). The queue would never drain this task; reclaim the
-            // heap `ConcurrentTaskItem` ourselves.
-            // SAFETY: `post_concurrent_task` returned false so ownership was
-            // not transferred; `task` was `ConcurrentTask::create`-allocated.
-            drop(unsafe { bun_core::heap::take(task.as_ptr()) });
+        // passed through from the bundler vtable; the queue takes ownership.
+        unsafe {
+            from_completion_handle(c)
+                .jsc_event_loop
+                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
         }
     },
 };

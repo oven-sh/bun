@@ -908,8 +908,33 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
+    /// `server.upgrade()` detaches the response, so an error produced by the
+    /// handler after a successful upgrade can never reach `error()` or the
+    /// client. Surface it through the uncaught-exception path rather than
+    /// dropping it.
+    fn report_error_after_upgrade(&self, value: JSValue, is_rejection: bool) {
+        debug_assert!(self.did_upgrade_web_socket());
+        // `throw undefined` still threw; only an absent value has nothing to say.
+        if value.is_empty() {
+            return;
+        }
+        let Some(server) = self.server else { return };
+        // SAFETY: BACKREF
+        let server = &*server;
+        let global_this = server.global_this();
+        // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
+        // the single audited `&mut VirtualMachine` accessor.
+        let vm = server.vm().as_mut();
+        let _ = vm.uncaught_exception(global_this, value, is_rejection);
+    }
+
     fn handle_reject(ctx: &mut Self, value: JSValue) {
         if ctx.is_aborted_or_ended() {
+            // The rejection was consumed by this reaction, so the VM's
+            // unhandled-rejection reporter will never see it.
+            if ctx.did_upgrade_web_socket() {
+                ctx.report_error_after_upgrade(value, true);
+            }
             return;
         }
 
@@ -2648,6 +2673,14 @@ where
         ctx.drain_microtasks();
 
         if ctx.is_aborted_or_ended() {
+            // A handler that threw after upgrading has no response left to
+            // write, but the exception still has to be reported. A returned
+            // promise keeps its own rejection reporting, so skip those.
+            if ctx.did_upgrade_web_socket()
+                && let Some(err_value) = response_value.to_error()
+            {
+                ctx.report_error_after_upgrade(err_value, false);
+            }
             return;
         }
         // if you return a Response object or a Promise<Response>

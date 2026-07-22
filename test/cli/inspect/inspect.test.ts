@@ -359,31 +359,39 @@ describe("standalone executable", () => {
         stdout: "ignore",
         stderr: "pipe",
       });
+      try {
+        const { url, stderr } = await readInspectorUrl(compiledInspectee);
+        if (!url) {
+          throw new Error("Inspector never started; stderr: " + JSON.stringify(stderr));
+        }
+        expect({ protocol: url.protocol, hostname: url.hostname }).toEqual({
+          protocol: "ws:",
+          hostname: "127.0.0.1",
+        });
 
-      const { url, stderr } = await readInspectorUrl(compiledInspectee);
-      if (!url) {
-        throw new Error("Inspector never started; stderr: " + JSON.stringify(stderr));
+        const webSocket = new WebSocket(url);
+        await new Promise<void>((resolve, reject) => {
+          webSocket.addEventListener("open", () => resolve());
+          webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+          webSocket.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
+        });
+        webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+        const reply = await new Promise((resolve, reject) => {
+          webSocket.addEventListener("message", ({ data }) => resolve(JSON.parse(data.toString())));
+          webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+          webSocket.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
+        });
+        expect(reply).toMatchObject({
+          id: 1,
+          result: { result: { type: "number", value: 2 } },
+        });
+        webSocket.close();
+      } finally {
+        // The exe must stop before `dir` is disposed (Windows cannot remove a
+        // directory while an executable inside it is still running).
+        compiledInspectee.kill();
+        await compiledInspectee.exited;
       }
-      expect({ protocol: url.protocol, hostname: url.hostname }).toEqual({
-        protocol: "ws:",
-        hostname: "127.0.0.1",
-      });
-
-      const webSocket = new WebSocket(url);
-      await new Promise<void>((resolve, reject) => {
-        webSocket.addEventListener("open", () => resolve());
-        webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
-        webSocket.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
-      });
-      webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-      const reply = await new Promise(resolve => {
-        webSocket.addEventListener("message", ({ data }) => resolve(JSON.parse(data.toString())));
-      });
-      expect(reply).toMatchObject({
-        id: 1,
-        result: { result: { type: "number", value: 2 } },
-      });
-      webSocket.close();
     }, 60_000);
   }
 
@@ -400,21 +408,25 @@ describe("standalone executable", () => {
       stdout: "ignore",
       stderr: "pipe",
     });
+    try {
+      const { url, stderr } = await readInspectorUrl(compiledInspectee);
+      if (!url) {
+        throw new Error("Inspector never started; stderr: " + JSON.stringify(stderr));
+      }
+      // The script body must not have run before a debugger connects.
+      expect(stderr).not.toContain("ran");
+      expect(compiledInspectee.exitCode).toBeNull();
 
-    const { url, stderr } = await readInspectorUrl(compiledInspectee);
-    if (!url) {
-      throw new Error("Inspector never started; stderr: " + JSON.stringify(stderr));
+      const webSocket = new WebSocket(url);
+      await new Promise<void>((resolve, reject) => {
+        webSocket.addEventListener("open", () => resolve());
+        webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+      });
+      webSocket.close();
+    } finally {
+      compiledInspectee.kill();
+      await compiledInspectee.exited;
     }
-    // The script body must not have run before a debugger connects.
-    expect(stderr).not.toContain("ran");
-    expect(compiledInspectee.exitCode).toBeNull();
-
-    const webSocket = new WebSocket(url);
-    await new Promise<void>((resolve, reject) => {
-      webSocket.addEventListener("open", () => resolve());
-      webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
-    });
-    webSocket.close();
   }, 60_000);
 });
 

@@ -9,8 +9,32 @@ const US_PER_MS: i64 = 1000;
 pub fn from_binary(bytes: &[u8]) -> f64 {
     let microseconds =
         i64::from_be_bytes(bytes[0..8].try_into().expect("infallible: size matches"));
+    // Postgres src/include/datatype/timestamp.h: DT_NOEND / DT_NOBEGIN are the
+    // i64 endpoints. Return ±Infinity so the JS side can surface the value as a
+    // Number (see SQLClient.cpp toJS Date case); without this the arithmetic
+    // below yields ~9.224e15 ms, past JS Date's ±8.64e15 range, and timeClip
+    // collapses both signs to NaN.
+    if microseconds == i64::MAX {
+        return f64::INFINITY;
+    }
+    if microseconds == i64::MIN {
+        return f64::NEG_INFINITY;
+    }
     let double_microseconds: f64 = microseconds as f64;
     (double_microseconds / US_PER_MS as f64) + POSTGRES_EPOCH_DATE as f64
+}
+
+/// `'infinity'` / `'-infinity'` as Postgres emits them for date / timestamp /
+/// timestamptz in text format. Returns `Some(±f64::INFINITY)` for those two
+/// spellings (case-insensitive), `None` otherwise.
+pub fn parse_infinity(bytes: &[u8]) -> Option<f64> {
+    if bun_core::strings::eql_case_insensitive_ascii(bytes, b"infinity", true) {
+        return Some(f64::INFINITY);
+    }
+    if bun_core::strings::eql_case_insensitive_ascii(bytes, b"-infinity", true) {
+        return Some(f64::NEG_INFINITY);
+    }
+    None
 }
 
 /// Decode a Postgres `timestamp` (WITHOUT TIME ZONE) text value as UTC, so the

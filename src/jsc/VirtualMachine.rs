@@ -323,6 +323,15 @@ pub struct VirtualMachine {
     pub channel_ref_overridden: bool,
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
 
+    /// `util.formatWithOptions`-backed formatter for the global console. Set by
+    /// `node:util` the first time `util.inspect.defaultOptions` is mutated;
+    /// when present, `console.log`/`warn`/etc. route through it instead of the
+    /// native formatter so option changes (depth, maxArrayLength, ...) apply.
+    pub console_util_format: crate::strong::Optional,
+    /// `util.inspect`-backed formatter for global `console.dir`; installed
+    /// together with [`console_util_format`](Self::console_util_format).
+    pub console_util_dir: crate::strong::Optional,
+
     /// A set of extensions that exist in the require.extensions map.
     pub commonjs_custom_extensions:
         bun_collections::StringArrayHashMap<crate::node_module_module::CustomLoader>,
@@ -4428,6 +4437,8 @@ impl VirtualMachine {
         drop(core::mem::take(&mut self.resolved_path_dups));
 
         self.overridden_main.deinit();
+        self.console_util_format.deinit();
+        self.console_util_dir.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
         // dispatch the reclaim through the hook.

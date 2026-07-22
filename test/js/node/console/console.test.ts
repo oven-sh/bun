@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { Console } from "node:console";
 
 import { Writable } from "node:stream";
@@ -86,5 +87,71 @@ test("console._stderr", () => {
     writable: true,
     enumerable: false,
     configurable: true,
+  });
+});
+
+describe("global console honors util.inspect.defaultOptions", () => {
+  async function run(src: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("depth / maxArrayLength / numericSeparator on console.log", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const util = require("node:util");
+      util.inspect.defaultOptions.depth = 0;
+      util.inspect.defaultOptions.maxArrayLength = 2;
+      util.inspect.defaultOptions.numericSeparator = true;
+      console.log({ a: { b: { c: { d: 1 } } } });
+      console.log([1, 2, 3, 4, 5, 6]);
+      console.log(1234567);
+      console.warn("%O", { x: { y: 1 } });
+    `);
+    expect(stderr).toBe("{ x: [Object] }\n");
+    expect(stdout).toBe("{ a: [Object] }\n" + "[ 1, 2, ... 4 more items ]\n" + "1_234_567\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("setter form and console.dir", async () => {
+    const { stdout, exitCode } = await run(`
+      const util = require("node:util");
+      util.inspect.defaultOptions = { depth: 0 };
+      console.log({ a: { b: 1 } });
+      console.dir({ a: { b: { c: 1 } } }, { depth: 5 });
+      console.dir({ a: { b: 1 } });
+    `);
+    expect(stdout).toBe("{ a: [Object] }\n" + "{ a: { b: { c: 1 } } }\n" + "{ a: [Object] }\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("group indentation still applied", async () => {
+    const { stdout, exitCode } = await run(`
+      const util = require("node:util");
+      util.inspect.defaultOptions.depth = 0;
+      console.group("g");
+      console.log({ a: { b: 1 } });
+      console.groupEnd();
+    `);
+    expect(stdout).toBe("g\n  { a: [Object] }\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("defaultOptions remains sealed and stable", async () => {
+    const { stdout, exitCode } = await run(`
+      const util = require("node:util");
+      const opts = util.inspect.defaultOptions;
+      process.stdout.write(JSON.stringify({
+        sealed: Object.isSealed(opts),
+        same: opts === util.inspect.defaultOptions,
+        hasDepth: Object.prototype.hasOwnProperty.call(opts, "depth"),
+      }));
+    `);
+    expect(JSON.parse(stdout)).toEqual({ sealed: true, same: true, hasDepth: true });
+    expect(exitCode).toBe(0);
   });
 });

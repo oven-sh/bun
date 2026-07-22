@@ -97,7 +97,9 @@ const ObjectPrototypePropertyIsEnumerable = uncurryThis(Object.prototype.propert
 const ObjectPrototypeToString = uncurryThis(Object.prototype.toString);
 const ObjectSeal = Object.seal;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ReflectDefineProperty = Reflect.defineProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
+const ReflectSet = Reflect.set;
 const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 const RegExpPrototypeSymbolReplace = uncurryThis(RegExp.prototype[Symbol.replace]);
 const RegExpPrototypeSymbolSplit = uncurryThis(RegExp.prototype[Symbol.split]);
@@ -728,14 +730,46 @@ function inspect(value, opts) {
 }
 inspect.custom = customInspectSymbol;
 
+// The global console uses a native formatter that knows nothing about
+// `inspectDefaultOptions`. The first time user code mutates the defaults we
+// hand the native side a pair of JS formatters so it can switch over and the
+// global console matches `new console.Console(...)` / Node.js behavior.
+let defaultOptionsOverridden = false;
+const setDefaultInspectOptionsOverridden = $newRustFunction(
+  "node_util_binding.rs",
+  "setDefaultInspectOptionsOverridden",
+  2,
+);
+function onDefaultOptionsChanged() {
+  if (defaultOptionsOverridden) return;
+  defaultOptionsOverridden = true;
+  setDefaultInspectOptionsOverridden(
+    (colors, ...args) => formatWithOptionsInternal({ colors }, args),
+    (colors, value, options) => inspect(value, { customInspect: false, colors, ...options }),
+  );
+}
+const inspectDefaultOptionsProxy = new Proxy(inspectDefaultOptions, {
+  __proto__: null,
+  set(target, key, value) {
+    const ok = ReflectSet(target, key, value);
+    if (ok) onDefaultOptionsChanged();
+    return ok;
+  },
+  defineProperty(target, key, desc) {
+    const ok = ReflectDefineProperty(target, key, desc);
+    if (ok) onDefaultOptionsChanged();
+    return ok;
+  },
+});
+
 ObjectDefineProperty(inspect, "defaultOptions", {
   __proto__: null,
   get() {
-    return inspectDefaultOptions;
+    return inspectDefaultOptionsProxy;
   },
   set(options) {
     validateObject(options, "options");
-    return ObjectAssign(inspectDefaultOptions, options);
+    return ObjectAssign(inspectDefaultOptionsProxy, options);
   },
 });
 ObjectDefineProperty(inspect, "replDefaults", {

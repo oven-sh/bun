@@ -1637,6 +1637,16 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
+            // `dupe_with_content_type` shares the StoreRef. Snapshot a
+            // borrowed JS ArrayBuffer so the clone (a second Response, or a
+            // Request built via `new Request(url, response)`) never carries
+            // the pin outside this body.
+            if b.store().is_some_and(|s| s.bytes_borrow_js_array_buffer()) {
+                return Ok(Value::Blob(Blob::init(
+                    b.shared_view().to_vec(),
+                    global_this,
+                )));
+            }
             return Ok(Value::Blob(b.dupe_with_content_type(false)));
         }
 

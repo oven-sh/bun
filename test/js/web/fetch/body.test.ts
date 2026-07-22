@@ -819,21 +819,29 @@ describe("constructing a Response from a large ArrayBuffer borrows the storage",
     expect(out[N - 1]).toBe(0x61);
   });
 
-  test("text() on a clone re-scans the borrow after the source is mutated", async () => {
-    // r1 and r2 share the same borrowed Store; r1.text() must not cache an
-    // ASCII verdict on the shared Store that r2.text() would trust after
-    // the source bytes have changed.
+  test("Response.clone() snapshots the borrow (the clone never shares the pinned Store)", async () => {
     const buf = new Uint8Array(N).fill(0x61);
     const r1 = new Response(buf);
     const r2 = r1.clone();
-    expect((await r1.text())[0]).toBe("a");
-    for (let i = 0; i < N; i += 2) {
-      buf[i] = 0xc3;
-      buf[i + 1] = 0xa9;
-    }
-    const t2 = await r2.text();
-    expect(t2.length).toBe(N / 2);
-    expect(t2[0]).toBe("é");
+    buf.fill(0x62);
+    // r1 still borrows (sees the mutation); r2 snapshotted at clone time.
+    expect((await r1.bytes())[0]).toBe(0x62);
+    expect((await r2.bytes())[0]).toBe(0x61);
+  });
+
+  test("new Request(url, Response) snapshots the borrow", async () => {
+    const buf = new Uint8Array(N).fill(0x61);
+    const res = new Response(buf);
+    const req = new Request("http://example.com/", res);
+    buf.fill(0x62);
+    const out = await req.bytes();
+    expect(out[0]).toBe(0x61);
+    // The Request does not hold a pin; transfer() detaches with the Response
+    // also consumed.
+    await res.bytes();
+    const moved = buf.buffer.transfer();
+    expect(buf.buffer.byteLength).toBe(0);
+    expect(moved.byteLength).toBe(N);
   });
 
   describe("Response", () => {

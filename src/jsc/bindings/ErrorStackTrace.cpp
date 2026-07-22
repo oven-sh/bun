@@ -457,6 +457,8 @@ EvalOrigin evalOriginForCodeBlock(JSC::CodeBlock* codeBlock)
     auto* executable = codeBlock->ownerExecutable();
     if (!executable)
         return result;
+    if (auto* unlinked = codeBlock->unlinkedCodeBlock(); unlinked && unlinked->isBuiltinFunction())
+        return result;
 
     // For eval(), topLevelExecutable() is the EvalExecutable. For new Function(),
     // FunctionExecutable::fromGlobalCode links with a null parent, so the
@@ -472,11 +474,17 @@ EvalOrigin evalOriginForCodeBlock(JSC::CodeBlock* codeBlock)
     if (!provider)
         return result;
 
-    if (topLevel->isFunctionExecutable() && !provider->sourceURL().isEmpty()) {
+    if (topLevel->isFunctionExecutable()) {
         // A FunctionExecutable top-level with a real sourceURL is a normal
         // script function (e.g. node:vm compileFunction with a filename), not
-        // a new Function() body.
-        return result;
+        // a new Function() body. Bun's bundled builtins also link with a null
+        // parent but have a null source origin (new Function always has one
+        // from callerSourceOrigin), so use that to tell them apart when the
+        // sourceURL is empty.
+        if (!provider->sourceURL().isEmpty())
+            return result;
+        if (provider->sourceOrigin().isNull())
+            return result;
     }
 
     result.isEval = true;

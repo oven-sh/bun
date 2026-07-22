@@ -523,11 +523,18 @@ export async function replayCoordinate(opts: {
   ensureDir(opts.dir);
   const sched = join(opts.dir, "schedule.txt");
   await Bun.write(sched, opts.schedule + "\n");
+  // Private TEMP inside the run dir: test files create temp dirs and a
+  // killed/crashed run never cleans up - under the run dir that litter is
+  // reaped by the run's own retention instead of accumulating in %TEMP%.
+  const runTmp = join(opts.dir, "tmp");
+  ensureDir(runTmp);
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     WSF_LOG_DIR: opts.dir,
     WSF_MODE: "inject",
     WSF_SCHEDULE: sched,
+    TEMP: runTmp,
+    TMP: runTmp,
     BUN_DEBUG_QUIET_LOGS: "1",
   };
   const bunImage = basename(opts.bun);
@@ -644,10 +651,14 @@ export async function captureCrash(cmdline: string[], env: Record<string, string
 
 export async function runOnce(o: RunOpts): Promise<RunResult> {
   ensureDir(o.workDir);
+  const runTmp = join(o.workDir, "tmp");
+  ensureDir(runTmp);
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     WSF_LOG_DIR: o.workDir,
     WSF_MODE: o.schedule ? "inject" : "trace",
+    TEMP: runTmp,
+    TMP: runTmp,
     BUN_DEBUG_QUIET_LOGS: "1",
     ...(o.env ?? {}),
   };

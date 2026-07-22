@@ -185,7 +185,13 @@ impl PackageManager {
                     return PreinstallState::Extract;
                 }
 
-                if directories::is_folder_in_cache(self, folder_path) {
+                // `--force` means re-fetch and re-verify: the extraction cache
+                // is keyed only on name@version, so a hit proves nothing about
+                // the bytes on disk. Skipping the cache here is what lets
+                // `--force` recover from a tampered or pre-planted entry.
+                let trust_cache_hit = !self.options.enable.force_install();
+
+                if trust_cache_hit && directories::is_folder_in_cache(self, folder_path) {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
                     return PreinstallState::Done;
                 }
@@ -208,7 +214,7 @@ impl PackageManager {
                         });
                     // Owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
-                    if directories::is_folder_in_cache(self, &non_patched_path) {
+                    if trust_cache_hit && directories::is_folder_in_cache(self, &non_patched_path) {
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::ApplyPatch);
                         // yay step 1 is already done for us
                         return PreinstallState::ApplyPatch;

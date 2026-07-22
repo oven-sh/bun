@@ -329,7 +329,22 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
 
             match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
-                Ok(d) => return d,
+                Ok(d) => {
+                    if is_trusted_cache_root(d.fd()) {
+                        return d;
+                    }
+                    bun_core::pretty_errorln!(
+                        "<r><yellow>warn<r>: ignoring install cache at <b>{}<r> because it is writable by other users. Set $BUN_INSTALL_CACHE_DIR to a directory you own, or remove it.",
+                        bun_fmt::s(&cache_dir.path)
+                    );
+                    drop(d);
+                    // SAFETY: narrow `&mut enable` projection; disjoint from
+                    // any `&options.{registries,scope}` the caller may hold.
+                    unsafe { (*this).options.enable.set(Enable::CACHE, false) };
+                    // SAFETY: see fn safety contract.
+                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
+                    continue;
+                }
                 Err(_) => {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
                     // any `&options.{registries,scope}` the caller may hold.
@@ -361,6 +376,30 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             }
         }
     }
+}
+
+/// A shared install cache is trusted only when it is a real directory owned by
+/// the current user and not group/other-writable. The cache-hit path never
+/// re-verifies integrity, so a writable-by-others cache root would let any
+/// co-tenant supply the bytes that end up in node_modules. On failure the
+/// caller falls back to the per-project `node_modules/.cache`.
+#[cfg(unix)]
+fn is_trusted_cache_root(dir: Fd) -> bool {
+    match sys::fstat(dir) {
+        Ok(st) => {
+            let mode = st.st_mode as bun_sys::Mode;
+            bun_sys::S::ISDIR(mode)
+                && st.st_uid == bun_sys::c::getuid()
+                && (mode & (bun_sys::S::IWGRP | bun_sys::S::IWOTH)) == 0
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(unix))]
+#[inline(always)]
+fn is_trusted_cache_root(_dir: Fd) -> bool {
+    true
 }
 
 pub struct CacheDir {
@@ -750,7 +789,15 @@ pub fn cached_tarball_folder_name(
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
+    // A cache hit short-circuits the tarball download and its integrity check,
+    // so the entry itself must be a real directory we put there: a symlink
+    // planted under the expected name would otherwise be followed and linked
+    // into node_modules. `lstatat` (AT_SYMLINK_NOFOLLOW) answers "is this a
+    // directory", not "does this resolve to a directory".
+    match sys::lstatat(get_cache_directory(this), folder_path) {
+        Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+        Err(_) => false,
+    }
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

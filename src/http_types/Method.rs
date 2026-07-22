@@ -230,23 +230,6 @@ pub enum Optional {
 }
 
 impl Optional {
-    pub fn contains(&self, other: &Optional) -> bool {
-        if matches!(self, Optional::Any) {
-            return true;
-        }
-        if matches!(other, Optional::Any) {
-            return true;
-        }
-
-        let Optional::Method(this_set) = self else {
-            unreachable!()
-        };
-        let Optional::Method(other_set) = other else {
-            unreachable!()
-        };
-        this_set.intersection(*other_set).len() > 0
-    }
-
     pub fn insert(&mut self, method: Method) {
         match self {
             Optional::Any => {}

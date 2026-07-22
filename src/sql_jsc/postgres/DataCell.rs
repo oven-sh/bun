@@ -1015,6 +1015,10 @@ fn parse_binary_numeric<'a>(
         dscale
     );
 
+    if ndigits < 0 {
+        return Err(crate::Error::InvalidBuffer);
+    }
+
     // Handle special cases
     match sign {
         0xC000 => return Ok(PGNummericString::Static(b"NaN")),
@@ -1045,7 +1049,6 @@ fn parse_binary_numeric<'a>(
         result.push(b'0');
     } else {
         let mut idx: usize = 0;
-        let mut first_non_zero = false;
 
         while idx <= weight as usize {
             // Compare in i32 to avoid usize→i16 truncation.
@@ -1060,22 +1063,17 @@ fn parse_binary_numeric<'a>(
                 return Err(crate::Error::InvalidBuffer);
             }
             let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
-            let digit_len = 4usize;
-            if !first_non_zero {
-                // In the first digit, suppress extra leading decimal zeroes
+            if idx == 0 {
+                // First group: suppress leading zeroes but always emit the ones
+                // digit, matching Postgres get_str_from_var's unconditional final
+                // `*cp++ = dig + '0'`. Dropping it turns a zero group into "".
                 let mut start_idx: usize = 0;
-                while start_idx < digit_len && digit_str[start_idx] == b'0' {
+                while start_idx < 3 && digit_str[start_idx] == b'0' {
                     start_idx += 1;
                 }
-                if start_idx == digit_len {
-                    idx += 1;
-                    continue;
-                }
-                let digit_slice = &digit_str[start_idx..digit_len];
-                result.extend_from_slice(digit_slice);
-                first_non_zero = true;
+                result.extend_from_slice(&digit_str[start_idx..]);
             } else {
-                result.extend_from_slice(&digit_str[0..digit_len]);
+                result.extend_from_slice(&digit_str);
             }
             idx += 1;
         }

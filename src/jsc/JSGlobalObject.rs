@@ -474,14 +474,16 @@ impl JSGlobalObject {
 
     /// `validators.throwErrInvalidArgType` —
     /// `The "<name>" property must be of type <expected>, got <actual>`
-    /// where `<actual>` is the JS `typeof` (or `"array"` for arrays).
+    /// where `<actual>` is the JS `typeof` (or `"array"`/`"null"` for arrays/null).
     pub fn throw_invalid_property_type(
         &self,
         name: impl AsRef<[u8]>,
         expected_type: &str,
         value: JSValue,
     ) -> JsError {
-        let actual_type = if value.js_type().is_array() {
+        let actual_type = if value.is_null() {
+            bun_core::ZigString::static_(b"null")
+        } else if value.js_type().is_array() {
             bun_core::ZigString::static_(b"array")
         } else {
             value.js_type_string(self).get_zig_string(self)

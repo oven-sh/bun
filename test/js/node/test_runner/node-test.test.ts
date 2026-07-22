@@ -261,7 +261,7 @@ describe("node:test", () => {
 
   test("should start a subtest's body synchronously at the t.test() call like node", async () => {
     const { exitCode, stderr } = await runTests(["25-subtest-sync-start.js"]);
-    expect(stderr).toContain("7 pass");
+    expect(stderr).toContain("8 pass");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),

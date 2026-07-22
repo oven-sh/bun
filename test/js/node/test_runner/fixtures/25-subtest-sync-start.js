@@ -91,3 +91,21 @@ test("a done-callback subtest body runs before t.test() returns", async t => {
   assert.strictEqual(x, 1);
   await p;
 });
+
+test("a sibling created on the parent t from inside a subtest body is serialized after it", async t => {
+  const order = [];
+  const pA = t.test("a", async () => {
+    order.push("a:start");
+    // Parent's t, not the subtest context: a sibling of 'a' on the parent.
+    t.test("b", () => {
+      order.push("b");
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    order.push("a:end");
+  });
+  assert.deepStrictEqual(order, ["a:start"]);
+  await pA;
+  t.after(() => {
+    assert.deepStrictEqual(order, ["a:start", "a:end", "b"]);
+  });
+});

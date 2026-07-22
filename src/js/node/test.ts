@@ -1456,7 +1456,16 @@ function appendSubtestStep(owner: TestNode, step: () => Promise<void>): Promise<
   let link: Promise<void>;
   if (owner.subtestChainIdle) {
     owner.subtestChainIdle = false;
+    // Publish a pending tail before starting inline so a reentrant call on
+    // this owner during step()'s synchronous prefix (the body using the
+    // parent's captured `t`) chains behind the in-flight step instead of the
+    // stale resolved tail.
+    const gate = Promise.withResolvers<void>();
+    owner.subtestChain = gate.promise;
     link = step();
+    gate.resolve(link);
+    // A reentrant call moved the tail past the gate; keep it.
+    if (owner.subtestChain !== gate.promise) return link;
   } else {
     link = owner.subtestChain.then(step);
   }

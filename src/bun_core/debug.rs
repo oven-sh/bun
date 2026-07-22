@@ -393,11 +393,12 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                 // so `Sp` is correctly left unchanged here.
                 #[cfg(target_arch = "x86_64")]
                 {
-                    if !is_valid_memory(ctx.Rsp as usize) {
+                    if ctx.Rsp & 7 != 0 || !is_valid_memory(ctx.Rsp as usize) {
                         break;
                     }
-                    // SAFETY: is_valid_memory just confirmed the page at `Rsp`
-                    // is committed and readable (not reserved/guard/noaccess).
+                    // SAFETY: is_valid_memory confirmed the page at `Rsp` is
+                    // committed and readable (not reserved/guard/noaccess),
+                    // and `Rsp` is 8-aligned.
                     unsafe {
                         ctx.Rip = *(ctx.Rsp as *const u64);
                     }

@@ -307,6 +307,15 @@ test("#12894", () => {
   expect(new File([bunFile], "bar.txt").name).toBe("bar.txt");
 });
 
+test("File.name is always a string, even when empty", () => {
+  // https://www.w3.org/TR/FileAPI/#dfn-name — `name` is a USVString attribute.
+  expect(new File([], "").name).toBe("");
+  expect(new File(["data"], "").name).toBe("");
+  expect(new File([new Blob(["x"])], "").name).toBe("");
+  // A plain Blob has no spec'd `name`; Bun exposes it as undefined.
+  expect(new Blob(["x"]).name).toBeUndefined();
+});
+
 test("dupeWithContentType does not alias the source's allocated content_type", async () => {
   // Regression: #23015 refactored Blob to be ref-counted and moved
   // `setNotHeapAllocated()` before the `isHeapAllocated()` guard in

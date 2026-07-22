@@ -2109,6 +2109,8 @@ impl BlobExt for Blob {
     fn get_name(&self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match self.get_name_string() {
             Some(name) => name.to_js(global_this)?,
+            // File.name is always a string per the File API spec.
+            None if self.is_jsdom_file.get() => BunString::empty().to_js(global_this)?,
             None => JSValue::UNDEFINED,
         })
     }

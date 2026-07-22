@@ -143,7 +143,8 @@ impl BodyAbortListener {
         // SAFETY: `ctx` is the `Box<BodyAbortListener>` registered in
         // `attach_abort_signal`; `clean_native_bindings` removes it before the
         // box is dropped, so it is live here.
-        let (response, global) = unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
+        let (response, global) =
+            unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
         // SAFETY: `response` is the owning backref (see field doc) and
         // `ref_count >= 1` while this box exists.
         Response::ref_(response);
@@ -158,8 +159,7 @@ impl BodyAbortListener {
                 readable.value.ensure_still_alive();
                 readable.error(&global, reason);
             }
-            let err =
-                BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
+            let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
             let _ = body.to_error_instance(err, &global);
         }
         // May destroy `response` and free `*ctx`; do not touch either after.

@@ -262,26 +262,29 @@ describe("Bun.serve development options", () => {
     server.stop();
   });
 
-  test.each(["false", "0", "true", "", 0, 1, null])("non-boolean development: %p must be rejected, not coerced", value => {
-    // "false"/"0" are truthy under ToBoolean. Accepting them silently would
-    // flip on development mode (and its error page) for a server the caller
-    // configured as production via an env-var string.
-    expect(() =>
-      serve({
-        port: 0,
-        // @ts-expect-error - Testing runtime validation
-        development: value,
-        fetch() {
-          return new Response("ok");
-        },
-      }),
-    ).toThrow(
-      expect.objectContaining({
-        code: "ERR_INVALID_ARG_TYPE",
-        message: expect.stringContaining('"development"'),
-      }),
-    );
-  });
+  test.each(["false", "0", "true", "", 0, 1, null])(
+    "non-boolean development: %p must be rejected, not coerced",
+    value => {
+      // "false"/"0" are truthy under ToBoolean. Accepting them silently would
+      // flip on development mode (and its error page) for a server the caller
+      // configured as production via an env-var string.
+      expect(() =>
+        serve({
+          port: 0,
+          // @ts-expect-error - Testing runtime validation
+          development: value,
+          fetch() {
+            return new Response("ok");
+          },
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining('"development"'),
+        }),
+      );
+    },
+  );
 
   test.each([
     [true, true],

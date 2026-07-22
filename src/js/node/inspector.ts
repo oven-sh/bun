@@ -136,7 +136,9 @@ function open(port?: number, host?: string, wait?: boolean) {
   try {
     process.debugPort = Number(new URL(resolvedUrl).port);
   } catch {}
-  process.stderr.write(`Debugger listening on ${resolvedUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`);
+  process.stderr.write(
+    `Debugger listening on ${resolvedUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`,
+  );
 
   if (wait) {
     waitForNodeInspectorConnection();

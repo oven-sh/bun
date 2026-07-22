@@ -14,7 +14,7 @@
 // CRASH and HANG are the bugs. Everything is deterministic: the coordinate
 // (syscall + callsite RVA + hit) plus the program replays the finding.
 
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { ALPC_OK, DELAY_MS, F, FAULTS, type Fault, type Mode } from "./faults";
 import {
@@ -570,9 +570,9 @@ async function queueFinding(r: Result, v: Verify) {
     findings: findingsPath,
     workDir: workRoot,
   });
-  const qfile = join(queueDir, "queue.jsonl");
-  const prev = (await Bun.file(qfile).exists()) ? await Bun.file(qfile).text() : "";
-  await Bun.write(qfile, prev + line + "\n");
+  // Atomic append - never read-modify-write (concurrent sweeps + the wide
+  // pass share this file; a rewrite raced a truncation and lost history).
+  appendFileSync(join(queueDir, "queue.jsonl"), line + "\n");
   queuedCount++;
   console.log(`  -> queued: ${dedupeKey}`);
 }

@@ -13,7 +13,7 @@
 //     [--timeout 60] [--rules 3] [--jobs 4] [--iterations N] [--seed S]
 //     [--work C:\wsfchaos] [--queue C:\wsfqueue]
 
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ALPC_OK, FAULTS } from "./faults";
 import {
@@ -358,8 +358,8 @@ async function worker(w: number) {
       findings: join(dir, "minimal-schedule.txt"),
       workDir: dir,
     };
-    const prev = (await Bun.file(qfile).exists()) ? await Bun.file(qfile).text() : "";
-    await Bun.write(qfile, prev + JSON.stringify(entry) + "\n");
+    // Atomic append - never read-modify-write (see the queue-clobber fix).
+    appendFileSync(qfile, JSON.stringify(entry) + "\n");
   }
 }
 await Promise.all(Array.from({ length: jobs }, (_, w) => worker(w)));

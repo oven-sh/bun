@@ -13,7 +13,7 @@
 //     [--timeout 45] [--jobs 8] [--rules 3] [--passes N] [--seed S]
 //     [--work C:\wsfwide] [--queue C:\wsfqueue]
 
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { FAULTS } from "./faults";
 import { detectCrash, digestStacks, ensureDir, readTraceDir, replayCoordinate, stamp } from "./lib";
@@ -228,9 +228,10 @@ while (pass++ < passes) {
         findings: join(workRoot, "runs"),
         workDir: workRoot,
       };
-      const qfile = join(queueDir, "queue.jsonl");
-      const prev = (await Bun.file(qfile).exists()) ? await Bun.file(qfile).text() : "";
-      await Bun.write(qfile, prev + JSON.stringify(entry) + "\n");
+      // Atomic append (never read-modify-write): eight concurrent workers
+      // rewriting the whole file interleaved a truncated read and clobbered
+      // the queue. A single small O_APPEND-style write is atomic.
+      appendFileSync(join(queueDir, "queue.jsonl"), JSON.stringify(entry) + "\n");
       queued++;
     }
   };

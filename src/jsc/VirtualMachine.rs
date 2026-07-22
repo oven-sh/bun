@@ -5924,6 +5924,24 @@ impl VirtualMachine {
             )?;
             let longest_name = iterator.get_longest_property_name().min(10);
             let mut is_first_property = true;
+
+            struct RestoreFmt<'a, 'f> {
+                f: &'a mut crate::console_object::Formatter<'f>,
+                d: bool,
+                q: bool,
+                m: u16,
+                b: bool,
+            }
+            impl Drop for RestoreFmt<'_, '_> {
+                fn drop(&mut self) {
+                    self.f.depth -= 1;
+                    self.f.max_depth = self.m;
+                    self.f.quote_strings = self.q;
+                    self.f.disable_inspect_custom = self.d;
+                    self.f.format_buffer_as_text = self.b;
+                }
+            }
+
             while let Some(field) = iterator.next()? {
                 let value = iterator.value;
                 if field.eql_comptime(b"message")
@@ -5936,11 +5954,12 @@ impl VirtualMachine {
                     continue;
                 }
 
+                if field.eql_comptime(b"cause") {
+                    saw_cause = true;
+                }
+
                 let kind = value.js_type();
                 if kind == JSType::ErrorInstance && !prev_had_errors {
-                    if field.eql_comptime(b"cause") {
-                        saw_cause = true;
-                    }
                     value.protect();
                     errors_to_append.push(value);
                 } else if kind.is_object()
@@ -5957,23 +5976,6 @@ impl VirtualMachine {
                     formatter.max_depth = 1;
                     formatter.quote_strings = true;
                     formatter.disable_inspect_custom = true;
-                    // Hand-rolled drop guard restores the formatter state.
-                    struct RestoreFmt<'a, 'f> {
-                        f: &'a mut crate::console_object::Formatter<'f>,
-                        d: bool,
-                        q: bool,
-                        m: u16,
-                        b: bool,
-                    }
-                    impl Drop for RestoreFmt<'_, '_> {
-                        fn drop(&mut self) {
-                            self.f.depth -= 1;
-                            self.f.max_depth = self.m;
-                            self.f.quote_strings = self.q;
-                            self.f.disable_inspect_custom = self.d;
-                            self.f.format_buffer_as_text = self.b;
-                        }
-                    }
                     let restore = RestoreFmt {
                         f: formatter,
                         d: prev_disable_inspect_custom,
@@ -6026,19 +6028,68 @@ impl VirtualMachine {
                 )?;
             }
 
-            if !is_first_property {
-                writer.write_all(b"\n")?;
-            }
-
-            // "cause" is not enumerable, so the above loop won't see it.
+            // "cause" set via `new Error(msg, { cause })` is non-enumerable, so
+            // the property loop above won't have seen it.
             if !saw_cause {
                 let key = bun_core::String::static_(b"cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
                     if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
                         cause.protect();
                         errors_to_append.push(cause);
+                    } else {
+                        let prev_disable_inspect_custom = formatter.disable_inspect_custom;
+                        let prev_quote_strings = formatter.quote_strings;
+                        let prev_max_depth = formatter.max_depth;
+                        let prev_format_buffer_as_text = formatter.format_buffer_as_text;
+                        formatter.depth += 1;
+                        formatter.format_buffer_as_text = true;
+                        formatter.max_depth = 1;
+                        formatter.quote_strings = true;
+                        formatter.disable_inspect_custom = true;
+                        let restore = RestoreFmt {
+                            f: formatter,
+                            d: prev_disable_inspect_custom,
+                            q: prev_quote_strings,
+                            m: prev_max_depth,
+                            b: prev_format_buffer_as_text,
+                        };
+                        let formatter = &mut *restore.f;
+
+                        let pad_left = longest_name.saturating_sub(b"cause".len());
+                        is_first_property = false;
+                        splat_space(writer, pad_left as u64)?;
+                        pretty_write!(writer, " cause<r><d>:<r> ")?;
+
+                        if allow_side_effects && global_ref.has_exception() {
+                            global_ref.clear_exception();
+                        }
+
+                        let tag = Tag::get_advanced(
+                            cause,
+                            global_ref,
+                            TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
+                        )?;
+                        let _ = if allow_ansi_color {
+                            formatter.format::<true>(tag, writer, cause, global_ref)
+                        } else {
+                            formatter.format::<false>(tag, writer, cause, global_ref)
+                        };
+
+                        if allow_side_effects {
+                            if global_ref.has_exception() {
+                                global_ref.clear_exception();
+                            }
+                        } else if global_ref.has_exception() || formatter.failed {
+                            return Ok(());
+                        }
+
+                        pretty_write!(writer, "<r><d>,<r>\n")?;
                     }
                 }
+            }
+
+            if !is_first_property {
+                writer.write_all(b"\n")?;
             }
         } else if error_instance != JSValue::ZERO {
             // If you do `reportError([1,2,3])` we should still show something.

@@ -72,12 +72,11 @@ note: "duplicateConstDecl" was originally declared here
 });
 
 const normalizeError = str => {
-  // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
+  // remove debug-only stack trace frames like "at require (:1:21)" / "at require (51:24)"
+  if (/ \(:?\d+:\d+\)$/m.test(str)) {
     const splits = str.split("\n");
     for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
+      if (/ \(:?\d+:\d+\)$/.test(splits[i])) {
         splits.splice(i, 1);
         i--;
       }
@@ -87,6 +86,7 @@ const normalizeError = str => {
 
   return str;
 };
+
 
 test("Error inside minified file (no color) ", () => {
   try {
@@ -187,4 +187,70 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+describe("non-Error cause", () => {
+  const { bunEnv, bunExe } = require("harness");
+  // Build markers at runtime so they never appear in the source-preview lines
+  // that Bun.inspect prepends to Error output.
+  const objMark = ["OBJ", "CAUSE", "MARK"].join("_");
+  const strMark = ["STR", "CAUSE", "MARK"].join("_");
+
+  test("Bun.inspect prints an object cause", () => {
+    const out = Bun.inspect(new Error("req failed", { cause: { code: objMark, status: 503 } }));
+    expect(out).toContain("cause:");
+    expect(out).toContain(objMark);
+  });
+
+  test("Bun.inspect prints a string cause at depth 2", () => {
+    const out = Bun.inspect(new Error("L1", { cause: new Error("L2", { cause: strMark }) }));
+    expect(out).toContain("error: L1");
+    expect(out).toContain("error: L2");
+    expect(out).toContain(strMark);
+  });
+
+  test.each([
+    ["null", null],
+    ["number", 42],
+    ["undefined", undefined],
+  ])("Bun.inspect prints a %s cause", (_, cause) => {
+    const out = Bun.inspect(new Error("x", { cause }));
+    expect(out).toContain("cause: " + Bun.inspect(cause));
+  });
+
+  test("enumerable non-Error cause is printed once", () => {
+    const err = new Error("x");
+    err.cause = objMark;
+    const out = Bun.inspect(err);
+    expect((out.match(new RegExp(objMark, "g")) || []).length).toBe(1);
+  });
+
+  test.concurrent("console.error and uncaught throw include object cause", async () => {
+    const mark = ["OBJ", "CAUSE", "MARK"].join("");
+    const src = `const e = new Error("req failed", { cause: { code: "ECAUSE", tag: ["OBJ","CAUSE","MARK"].join("") } }); console.error(e); throw e;`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-addons", "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const combined = stdout + stderr;
+    expect(combined).toContain("ECAUSE");
+    expect((combined.match(new RegExp(mark, "g")) || []).length).toBe(2);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("console.error includes string cause at depth 2", async () => {
+    const src = `console.error(new Error("L1", { cause: new Error("L2", { cause: ["STR","CAUSE","MARK"].join("") }) }))`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-addons", "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain("STR" + "CAUSE" + "MARK");
+    expect(exitCode).toBe(0);
+  });
 });

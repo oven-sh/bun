@@ -51,7 +51,11 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-const EXPECTED_VERSION: u32 = 25;
+/// Version 26: `output_hash` / `sourcemap_hash` / `esm_record_hash` are seeded
+/// with `input_hash` instead of the fixed `SEED`, and a stored hash of 0 no
+/// longer skips verification. Entries written before this version have section
+/// hashes that will not match under the new seed.
+const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -336,11 +340,9 @@ impl Entry {
                     ..Default::default()
                 };
 
-                metadata.output_hash = hash(output_bytes);
-                metadata.sourcemap_hash = hash(sourcemap);
-                if !esm_record.is_empty() {
-                    metadata.esm_record_hash = hash(esm_record);
-                }
+                metadata.output_hash = Wyhash::hash(input_hash, output_bytes);
+                metadata.sourcemap_hash = Wyhash::hash(input_hash, sourcemap);
+                metadata.esm_record_hash = Wyhash::hash(input_hash, esm_record);
 
                 let mut metadata_stream = bun_io::FixedBufferStream::new_mut(&mut metadata_buf[..]);
                 metadata.encode(&mut metadata_stream)?;
@@ -432,6 +434,11 @@ impl Entry {
             return Err(crate::CrateError::MissingData);
         }
 
+        // Section hashes are keyed on the input hash so the stored value binds
+        // each payload to the source bytes that produced this entry. The caller
+        // has already verified `metadata.input_hash` against the live source.
+        let section_seed = self.metadata.input_hash;
+
         debug_assert!(
             matches!(&self.output_code, OutputCode::Utf8(b) if b.is_empty()),
             "this should be the default value"
@@ -474,7 +481,7 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
+                    if Wyhash::hash(section_seed, bytes) != self.metadata.output_hash {
                         return Err(crate::CrateError::InvalidHash);
                     }
 
@@ -503,15 +510,12 @@ impl Entry {
                     // errdefer latin1.deref() — BunString is `Copy`, so guard explicitly.
                     let errdefer = scopeguard::guard(latin1, |s| s.deref());
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-
-                    if self.metadata.output_hash != 0 {
-                        if hash(latin1.latin1()) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
-                    }
-
                     if read_bytes as u64 != self.metadata.output_byte_length {
                         return Err(crate::CrateError::MissingData);
+                    }
+
+                    if Wyhash::hash(section_seed, latin1.latin1()) != self.metadata.output_hash {
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     scopeguard::ScopeGuard::into_inner(errdefer);
@@ -537,11 +541,9 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
-                        if hash(utf16_bytes) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
+                    let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
+                    if Wyhash::hash(section_seed, utf16_bytes) != self.metadata.output_hash {
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     scopeguard::ScopeGuard::into_inner(errdefer);
@@ -557,11 +559,17 @@ impl Entry {
         let output_code_errdefer = scopeguard::guard(&mut self.output_code, |oc| oc.deinit());
 
         if self.metadata.sourcemap_byte_length > 0 {
-            self.sourcemap = pread_box(
+            let sourcemap = pread_box(
                 file,
                 self.metadata.sourcemap_byte_length as usize,
                 self.metadata.sourcemap_byte_offset,
             )?;
+
+            if Wyhash::hash(section_seed, &sourcemap) != self.metadata.sourcemap_hash {
+                return Err(crate::CrateError::InvalidHash);
+            }
+
+            self.sourcemap = sourcemap;
         }
 
         if self.metadata.esm_record_byte_length > 0 {
@@ -571,10 +579,8 @@ impl Entry {
                 self.metadata.esm_record_byte_offset,
             )?;
 
-            if self.metadata.esm_record_hash != 0 {
-                if hash(&esm_record) != self.metadata.esm_record_hash {
-                    return Err(crate::CrateError::InvalidHash);
-                }
+            if Wyhash::hash(section_seed, &esm_record) != self.metadata.esm_record_hash {
+                return Err(crate::CrateError::InvalidHash);
             }
 
             self.esm_record = esm_record;

@@ -1209,7 +1209,8 @@ const server = Bun.serve({
 });
 
 const socket = connect({ port: server.port, host: "127.0.0.1" });
-await new Promise(r => socket.once("connect", r));
+socket.on("error", () => {});
+await new Promise((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
 // Two pipelined requests in one TCP segment.
 socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
 let data = "";

@@ -187,8 +187,10 @@ public:
             }
             httpResponseData->markDone(this);
 
-            /* We need to check if we should close this socket here now */
-            if (!Super::isCorked()) {
+            /* keepCorked=true (only upgrade()) means the caller is adopting the
+             * socket right after this returns; closing here would destruct the
+             * ext block out from under it. */
+            if (!keepCorked && !Super::isCorked()) {
                 if (httpResponseData->shouldCloseConnection()) {
                     if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                         if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
@@ -253,8 +255,10 @@ public:
             if (httpResponseData->offset == totalSize) {
                 httpResponseData->markDone(this);
 
-                /* We need to check if we should close this socket here now */
-                if (!Super::isCorked()) {
+                /* keepCorked=true (only upgrade()) means the caller is adopting
+                 * the socket right after this returns; closing here would
+                 * destruct the ext block out from under it. */
+                if (!keepCorked && !Super::isCorked()) {
                     if (httpResponseData->shouldCloseConnection()) {
                         if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                             if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
@@ -366,6 +370,10 @@ public:
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
+
+        /* A pipelined request dropped behind this handshake may have paused
+         * reads; the adopted WebSocket needs them. No-op if not paused. */
+        Super::resume();
 
         /* Move any backpressure out of HttpResponse */
         auto* responseData = getHttpResponseData();

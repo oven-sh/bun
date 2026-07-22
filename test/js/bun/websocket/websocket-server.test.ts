@@ -1,7 +1,7 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc, isWindows } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
 import net, { isIP } from "node:net";
 import path from "node:path";
 
@@ -1562,3 +1562,61 @@ it.each(["server", "client"] as const)(
     await server.stop();
   },
 );
+
+// An HTTP request pipelined behind a WebSocket handshake in one TCP segment is
+// parsed while the handshake's async handler is still pending and marks the
+// connection for close. The later server.upgrade(req) must not let
+// internalEnd() act on that mark and close the socket mid-upgrade (onClose
+// destructs HttpResponseData; upgrade() would then read and destruct it
+// again). A partial third request populates the parser fallback buffer so the
+// double-destruct is an observable double-free under ASAN.
+it("async server.upgrade() survives a pipelined request behind the handshake", async () => {
+  using dir = tempDir("ws-async-upgrade-pipelined", {
+    "fixture.ts": /* ts */ `
+import { connect } from "node:net";
+
+const server = Bun.serve({
+  port: 0,
+  async fetch(req, server) {
+    await new Promise(r => setImmediate(r));
+    if (server.upgrade(req)) return;
+    return new Response("no");
+  },
+  websocket: { open(ws) { ws.send("hi"); }, message() {}, close() {} },
+});
+
+const socket = connect({ port: server.port, host: "127.0.0.1" });
+socket.on("error", () => {});
+await new Promise((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
+socket.write(
+  "GET /ws HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
+  "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n" +
+  "GET /b HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n" +
+  // Partial: lands in HttpParser::fallback so the ext block holds a heap alloc.
+  "GET /c HTTP/1.1\\r\\nHost: x\\r\\n",
+);
+let data = "";
+socket.on("data", d => { data += d.toString("latin1"); if (data.includes("\\r\\n\\r\\n")) socket.destroy(); });
+await new Promise(r => socket.once("close", r));
+
+const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+console.log(JSON.stringify({ firstLine: data.split("\\r\\n")[0], alive: res.status }));
+server.stop(true);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ out: stdout.trim(), stderr, exitCode }).toEqual({
+    out: JSON.stringify({ firstLine: "HTTP/1.1 101 Switching Protocols", alive: 200 }),
+    stderr: "",
+    exitCode: 0,
+  });
+});

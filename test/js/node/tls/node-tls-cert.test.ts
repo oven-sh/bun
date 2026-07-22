@@ -323,6 +323,20 @@ it("rejects an unverifiable client certificate by default when requestCert is tr
   }
 });
 
+it("NODE_TLS_REJECT_UNAUTHORIZED=0 does not disable the server's default client-cert enforcement", async () => {
+  // The env var is a client-only knob in Node; it must not flip the tls.Server
+  // default for rejectUnauthorized (issue #35092).
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-reject-unauthorized-env.fixture.ts")],
+    env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr carries Node's one-time NODE_TLS_REJECT_UNAUTHORIZED warning; only
+  // the verdict on stdout matters here.
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "REJECTED", exitCode: 0 });
+});
+
 it("explicit rejectUnauthorized: false still admits an unverified client certificate", async () => {
   const { promise: handledSocket, resolve: onHandledSocket } = Promise.withResolvers<TLSSocket>();
 

@@ -1142,7 +1142,9 @@ function Server(options, secureConnectionListener): void {
   this.ca = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
-  this._rejectUnauthorized = rejectUnauthorizedDefault();
+  // NODE_TLS_REJECT_UNAUTHORIZED is a client-only knob; the server-side
+  // default for client-cert verification is unconditionally true in Node.
+  this._rejectUnauthorized = true;
   this._requestCert = undefined;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
@@ -1283,7 +1285,7 @@ function Server(options, secureConnectionListener): void {
 
       if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
-      } else this._rejectUnauthorized = rejectUnauthorizedDefault();
+      } else this._rejectUnauthorized = true; // server-side default; NODE_TLS_REJECT_UNAUTHORIZED is client-only
 
       const ciphers = options.ciphers;
       if (typeof ciphers !== "undefined") {

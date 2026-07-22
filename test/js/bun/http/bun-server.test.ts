@@ -765,14 +765,11 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const out = JSON.parse(stdout.trim() || "{}");
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(out.hits).toBe(1);
-    expect(out.closed).toBe(true);
-    expect(out.statuses?.[0]).toBe("200");
-    // Second request either never reached the trampoline (socket closed) or
-    // was answered 503; never 200.
-    if (out.statuses?.[1] !== undefined) expect(out.statuses[1]).toBe("503");
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { statuses: ["200", "503"], hits: 1, closed: true },
+      exitCode: 0,
+    });
   });
 });
 
@@ -861,9 +858,8 @@ test("should be able to await server.stop(true) with keep alive", async () => {
 // cleanly (no panic). What the second request observes depends on the server
 // kind:
 //  - Bun.serve: `stop()` closes idle keep-alive sockets and refuses new
-//    requests via `js_value_for_new_request`, so the pipelined request sees
-//    either an immediate socket close (swept as idle after request #1's
-//    response) or 503 + `Connection: close` if it reaches the trampoline.
+//    requests via `js_value_for_new_request`, so the pipelined request is
+//    answered 503 + `Connection: close`.
 //  - node:http: Node's `server.close()` leaves non-idle sockets serviceable;
 //    the pipelined request dispatches on the Weak wrapper and returns 200.
 //
@@ -970,9 +966,8 @@ async function runLateKeepAlive(reqPath: string, serverSnippet: string, expected
 test("late keep-alive request to a route after stop() is refused", async () => {
   // Per-route handlers live in ServerRouteList, which is reachable from JS only
   // through the Server wrapper — exercises on_user_route_request's gate.
-  // After stop() the pipelined request must not reach the handler: the socket
-  // is swept as idle once request #1 completes (empty second response), or
-  // answered 503 if it reaches the trampoline before the sweep.
+  // After stop() the pipelined request must not reach the handler: the
+  // trampoline answers 503 + Connection: close.
   await runLateKeepAlive(
     "/r",
     `
@@ -992,7 +987,7 @@ test("late keep-alive request to a route after stop() is refused", async () => {
       const port = server.port;
       const stop = () => server.stop();
     `,
-    /^(|HTTP\/1\.1 503\b.*)$/,
+    /^HTTP\/1\.1 503\b/,
   );
 });
 
@@ -1065,11 +1060,11 @@ test("late keep-alive WebSocket upgrade after stop() is refused", async () => {
   const out = JSON.parse(stdout.trim() || "{}");
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   // First request 200 (held handler). Once it completes the listener is gone,
-  // so the pipelined upgrade never reaches fetch(): the socket is swept as
-  // idle, or answered 503 by the trampoline gate.
+  // so the pipelined upgrade is answered 503 by the trampoline gate and never
+  // reaches fetch().
   expect(out.upgraded).toBeUndefined();
   expect(out.statuses?.[0]).toMatch(/^HTTP\/1\.1 200\b/);
-  expect(out.statuses?.[1] ?? "").toMatch(/^(|HTTP\/1\.1 503\b.*)$/);
+  expect(out.statuses?.[1]).toMatch(/^HTTP\/1\.1 503\b/);
 });
 
 test("late keep-alive request to a node:http server after close() dispatches while the wrapper is Weak", async () => {

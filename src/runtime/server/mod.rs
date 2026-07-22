@@ -1750,22 +1750,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             matches!(self.js_value, jsc::JsRef::Finalized),
         );
 
-        // After a graceful stop, sweep idle keep-alive sockets as in-flight
-        // requests drain so their fds are released without waiting on the
-        // idle timeout. `TERMINATED`'s `app.close()` already tore them down.
-        // node:http owns its own idle-connection policy (Node keeps the socket
-        // serviceable after `close()` until its checking interval reaps it).
-        if !self.has_listener()
-            && self.config.on_node_http_request.is_empty()
-            && !self.flags.contains(ServerFlags::TERMINATED)
-            && !self.flags.contains(ServerFlags::DEINIT_SCHEDULED)
-        {
-            if let Some(app) = self.app {
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).close_idle_connections();
-            }
-        }
-
         if self.pending_requests == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()

@@ -419,8 +419,13 @@ pub mod zig_base64 {
         NoSpaceLeft,
     }
 
+    pub(crate) type DecoderWithIgnoreProto = fn(ignore: &[u8]) -> Base64DecoderWithIgnore;
+
     /// Base64 codecs
     pub struct Codecs {
+        pub alphabet_chars: [u8; 64],
+        pub pad_char: Option<u8>,
+        pub decoder_with_ignore: DecoderWithIgnoreProto,
         pub encoder: Base64Encoder,
         pub decoder: Base64Decoder,
     }
@@ -437,12 +442,18 @@ pub mod zig_base64 {
     /// Standard Base64 codecs, with padding
     // Const-initialized `static` (lives in `.rodata`, no `Once`).
     pub static STANDARD: Codecs = Codecs {
+        alphabet_chars: STANDARD_ALPHABET_CHARS,
+        pad_char: Some(b'='),
+        decoder_with_ignore: standard_base64_decoder_with_ignore,
         encoder: Base64Encoder::init(STANDARD_ALPHABET_CHARS, Some(b'=')),
         decoder: Base64Decoder::init(STANDARD_ALPHABET_CHARS, Some(b'=')),
     };
 
     /// Standard Base64 codecs, without padding
     pub static STANDARD_NO_PAD: Codecs = Codecs {
+        alphabet_chars: STANDARD_ALPHABET_CHARS,
+        pad_char: None,
+        decoder_with_ignore: standard_base64_decoder_with_ignore,
         encoder: Base64Encoder::init(STANDARD_ALPHABET_CHARS, None),
         decoder: Base64Decoder::init(STANDARD_ALPHABET_CHARS, None),
     };

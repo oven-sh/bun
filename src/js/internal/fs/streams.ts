@@ -593,6 +593,13 @@ function _write(data, encoding, cb) {
 }
 writeStreamPrototype._write = _write;
 
+// `bytesWritten` must reflect encoded bytes, not UTF-16 code units: `writeFast`
+// is the public `.write`, so a string reaches the fast path undecoded and must
+// be measured with `Buffer.byteLength` (oven-sh/bun#23061).
+function bytesForWrite(data: any, encoding?: BufferEncoding): number {
+  return typeof data === "string" ? Buffer.byteLength(data, encoding) : (data?.byteLength ?? data?.length ?? 0);
+}
+
 function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {
@@ -607,7 +614,9 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       this.fd = fileSink._getFd();
     }
 
+    const bytes = bytesForWrite(data, encoding);
     const maybePromise = fileSink.write(data);
+    this.bytesWritten += bytes; // see writeFast (oven-sh/bun#23061)
     if ($isPromise(maybePromise)) {
       maybePromise.then(
         () => {
@@ -654,7 +663,12 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
+    // Track bytes handed to the sink so process.stdout/stderr.bytesWritten
+    // reflects writes (oven-sh/bun#23061). Count encoded bytes, not UTF-16 code
+    // units, since a string write reaches the fast path undecoded.
+    const bytes = bytesForWrite(data, encoding);
     const maybePromise = fileSink.write(data);
+    this.bytesWritten += bytes;
     if ($isPromise(maybePromise)) {
       // Two-arg then(): a throw from the fulfillment handler must not be
       // mistaken for a write failure.
@@ -699,7 +713,9 @@ writeStreamPrototype._writev = function (data, cb) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(Buffer.concat(chunks));
+    const buffer = Buffer.concat(chunks);
+    const maybePromise = fileSink.write(buffer);
+    this.bytesWritten += buffer.length; // see writeFast (oven-sh/bun#23061)
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {

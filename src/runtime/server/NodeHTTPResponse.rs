@@ -937,6 +937,18 @@ impl NodeHTTPResponse {
                 status_message_str.latin1()
             } else {
                 let utf16 = status_message_str.utf16();
+                // The fast implicit-header path (callWriteHeadIfObservable) can
+                // reach here without going through _writeHead's
+                // checkInvalidHeaderChar, so reject > U+00FF before the
+                // narrowing below truncates it into a byte the validation
+                // loop would accept.
+                if utf16.iter().any(|&c| c > 0xff) {
+                    return err_throw(
+                        global_object,
+                        ErrorCode::ERR_INVALID_CHAR,
+                        "Invalid character in statusMessage",
+                    );
+                }
                 status_message_heap = vec![0u8; utf16.len()];
                 bun_core::strings::copy_u16_into_u8(&mut status_message_heap, utf16);
                 &status_message_heap

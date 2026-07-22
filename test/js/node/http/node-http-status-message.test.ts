@@ -38,12 +38,16 @@ describe("node:http ServerResponse statusMessage wire bytes", () => {
     expect(line).toBe("HTTP/1.1 200 ");
   });
 
-  test("statusMessage = '' without writeHead still defaults the reason phrase", async () => {
+  test.each([
+    ["end()", (res: http.ServerResponse) => res.end("x")],
+    ["write()", (res: http.ServerResponse) => (res.write("x"), res.end())],
+    ["flushHeaders()", (res: http.ServerResponse) => (res.flushHeaders(), res.end("x"))],
+  ] as const)("statusMessage = '' then %s still defaults the reason phrase", async (_, send) => {
     // Node's _implicitHeader applies `if (!statusMessage) STATUS_CODES[code]`,
     // which treats "" as unset; only an explicit writeHead(N, "") preserves it.
     const line = await rawStatusLine((req, res) => {
       res.statusMessage = "";
-      res.end("x");
+      send(res);
     });
     expect(line).toBe("HTTP/1.1 200 OK");
   });
@@ -57,5 +61,21 @@ describe("node:http ServerResponse statusMessage wire bytes", () => {
     // Node.js writes the status line with latin1 encoding (lib/_http_outgoing.js
     // _storeHeader): one byte per JS code unit, RFC 9112 obs-text.
     expect(phraseBytes).toEqual([0xdc, 0x6e, 0xef, 0x63, 0xf6, 0x64, 0xe9]);
+  });
+
+  test("statusMessage = U+0100..U+FFFF without writeHead throws ERR_INVALID_CHAR", async () => {
+    let thrown: unknown;
+    const line = await rawStatusLine((req, res) => {
+      res.statusMessage = "\u0120";
+      try {
+        res.end("x");
+      } catch (e) {
+        thrown = e;
+        res.statusMessage = "threw";
+        res.end("x");
+      }
+    });
+    expect((thrown as NodeJS.ErrnoException)?.code).toBe("ERR_INVALID_CHAR");
+    expect(line).toBe("HTTP/1.1 200 threw");
   });
 });

@@ -149,18 +149,19 @@ test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures th
   // DLL into the bun call chain (the JS host-fn dispatch is several frames
   // deep), so a short trace means the unwind stopped at the exception
   // dispatcher and the handler's own frames are all that was captured.
-  const frameAddrs = [...stderr.matchAll(/: (0x[0-9a-f]{6,}) in /gi)].map(m => m[1]);
+  const frameAddrs = [...stderr.matchAll(/: (0x[0-9a-f]{6,}) in /gi)].map(m => BigInt(m[1]));
   expect(frameAddrs.length).toBeGreaterThanOrEqual(7);
 
   // Frame 0 is the fault PC inside ntdll.dll; frames 1+ must be the bun call
-  // chain with no handler or ntdll-dispatch frames interleaved. Group by the
-  // high 32 bits (a coarse per-image proxy under Windows ASLR): when the walk
-  // is seeded from the fault CONTEXT, frames 1..6 are all inside bun's image
-  // and share one value. The old RtlCaptureStackBackTrace path left
+  // chain with no handler or ntdll-dispatch frames interleaved. Frames 1..6 all
+  // coming from one image means their address span fits inside that image's
+  // mapped range; the old RtlCaptureStackBackTrace path left
   // [handler x3][ntdll-dispatch x3] ahead of the first real caller, so frames
-  // 4-6 landed in ntdll and this set has two members.
-  const hi = (a: string) => (BigInt(a) >> 32n).toString(16);
-  expect(new Set(frameAddrs.slice(1, 7).map(hi)).size).toBe(1);
+  // 4-6 landed in ntdll and the span covered the >10 GiB gap between the EXE
+  // and system-DLL HEASLR regions.
+  const callers = frameAddrs.slice(1, 7);
+  const span = callers.reduce((a, b) => (a > b ? a : b)) - callers.reduce((a, b) => (a < b ? a : b));
+  expect(span).toBeLessThan(2n ** 31n);
 });
 
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {

@@ -14,6 +14,9 @@ pub struct KEventWatcher {
 
 const CHANGELIST_COUNT: usize = 128;
 
+/// Arbitrary non-zero ident used for the EVFILT_USER wakeup event.
+const WAKE_EVENT_IDENT: usize = 0x2307;
+
 impl KEventWatcher {
     pub fn init(&mut self, _: &[u8]) -> crate::Result<()> {
         let fd = bun_sys::kqueue()?;
@@ -21,12 +24,53 @@ impl KEventWatcher {
             return Err(crate::Error::KQueueError);
         }
         self.fd = Some(fd);
+
+        // Register a user-triggered event so `wake()` can unblock `kevent()`
+        // during shutdown without closing the kqueue fd from another thread.
+        // SAFETY: all-zero is a valid kevent (#[repr(C)] POD); fd is the
+        // kqueue we just created.
+        let mut ev: libc::kevent = bun_core::ffi::zeroed();
+        ev.ident = WAKE_EVENT_IDENT;
+        ev.filter = libc::EVFILT_USER;
+        ev.flags = libc::EV_ADD | libc::EV_CLEAR;
+        unsafe {
+            let _ = bun_sys::c::kevent(
+                fd.native(),
+                &ev,
+                1,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null(),
+            );
+        }
         Ok(())
     }
 
     pub fn stop(&mut self) {
         if let Some(fd) = self.fd.take() {
             let _ = bun_sys::close(fd);
+        }
+    }
+
+    /// Wake the watcher thread from a blocking `kevent()` so it can observe
+    /// `Watcher.running == false` and exit.
+    pub fn wake(&self) {
+        let Some(fd) = self.fd else { return };
+        // SAFETY: all-zero is a valid kevent (#[repr(C)] POD); fd is a live
+        // kqueue. NOTE_TRIGGER fires the EVFILT_USER registered in init().
+        let mut ev: libc::kevent = bun_core::ffi::zeroed();
+        ev.ident = WAKE_EVENT_IDENT;
+        ev.filter = libc::EVFILT_USER;
+        ev.fflags = libc::NOTE_TRIGGER;
+        unsafe {
+            let _ = bun_sys::c::kevent(
+                fd.native(),
+                &ev,
+                1,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null(),
+            );
         }
     }
 }
@@ -106,21 +150,25 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // borrows of `this`.
     let watchevents = &mut this.watch_events[0..changes_len];
     let mut out_len: usize = 0;
-    if changes_len > 0 {
-        watchevents[0] = watch_event_from_kevent(&changes[0]);
-        out_len = 1;
-        let mut prev_event = changes[0];
-        for event in &changes[1..] {
-            if prev_event.udata == event.udata {
-                let new = watch_event_from_kevent(event);
-                watchevents[out_len - 1].merge(new);
+    let mut prev_event: Option<libc::kevent> = None;
+    for event in changes {
+        // Skip the EVFILT_USER wakeup event posted by `wake()`; only
+        // VNODE events map to watch items.
+        if event.filter != libc::EVFILT_VNODE {
+            continue;
+        }
+
+        if let Some(prev) = prev_event {
+            if prev.udata == event.udata {
+                watchevents[out_len - 1].merge(watch_event_from_kevent(event));
+                prev_event = Some(*event);
                 continue;
             }
-
-            watchevents[out_len] = watch_event_from_kevent(event);
-            prev_event = *event;
-            out_len += 1;
         }
+
+        watchevents[out_len] = watch_event_from_kevent(event);
+        prev_event = Some(*event);
+        out_len += 1;
     }
 
     // RAII: `MutexGuard` holds the mutex by raw pointer (no borrow of `this`)

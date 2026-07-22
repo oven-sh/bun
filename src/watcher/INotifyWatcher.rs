@@ -3,7 +3,7 @@
 
 use core::ffi::c_int;
 use core::mem::{align_of, size_of};
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_core::{ZStr, env_var, output as Output};
 use bun_paths::MAX_PATH_BYTES;
@@ -53,6 +53,10 @@ pub struct INotifyWatcher {
     read_ptr: Option<ReadPtr>,
 
     pub watch_count: AtomicU32,
+    /// Set by `wake()` so the watcher thread can exit its read loop without
+    /// blocking in the inotify `read()` syscall. Checked immediately after
+    /// `Futex::wait_forever` returns.
+    pub shutdown_requested: AtomicBool,
     /// nanoseconds
     pub coalesce_interval: isize,
 }
@@ -66,6 +70,7 @@ impl Default for INotifyWatcher {
             eventlist_ptrs: [core::ptr::null(); max_count],
             read_ptr: None,
             watch_count: AtomicU32::new(0),
+            shutdown_requested: AtomicBool::new(false),
             coalesce_interval: 100_000,
         }
     }
@@ -223,11 +228,17 @@ impl INotifyWatcher {
         // of self.eventlist_bytes across the whole function.
         let read_len: usize = if let Some(ptr) = self.read_ptr {
             Futex::wait_forever(&self.watch_count, 0);
+            if self.shutdown_requested.load(Ordering::Acquire) {
+                return Ok(&[]);
+            }
             i = ptr.i;
             ptr.len as usize
         } else {
             'outer: loop {
                 Futex::wait_forever(&self.watch_count, 0);
+                if self.shutdown_requested.load(Ordering::Acquire) {
+                    return Ok(&[]);
+                }
 
                 // SAFETY: fd is a valid inotify fd; buffer is valid for eventlist_bytes.len() bytes.
                 let rc = unsafe {
@@ -365,6 +376,20 @@ impl INotifyWatcher {
             let _ = bun_sys::close(self.fd);
             self.fd = Fd::INVALID;
         }
+        // `eventlist_bytes` is a `Box` and is freed by `Drop` on the
+        // Watcher — no explicit free here (unlike the Zig version).
+    }
+
+    /// Wake the watcher thread from `Futex::wait_forever` so it can observe
+    /// `Watcher.running == false` and exit instead of blocking forever on an
+    /// inotify fd with nothing to watch. Best-effort: if the thread is
+    /// already inside the blocking `read()` (i.e. there are active watches),
+    /// it will not be woken until the next filesystem event — no worse than
+    /// before.
+    pub fn wake(&self) {
+        self.shutdown_requested.store(true, Ordering::Release);
+        let _ = self.watch_count.fetch_add(1, Ordering::Release);
+        Futex::wake(&self.watch_count, u32::MAX);
     }
 }
 

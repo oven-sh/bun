@@ -108,11 +108,11 @@ pub struct Watcher {
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
-    /// Whether `thread_main` is running. Written by the watcher thread, read
-    /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
-    /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
-    pub watchloop_handle: bun_core::AtomicCell<bool>,
     pub cwd: &'static [u8],
+    /// Written synchronously by `start()`, so `shutdown()` can tell whether a
+    /// watcher thread owns `self` without racing the spawned thread. The
+    /// handle is never joined (the thread frees `self` and exits); it exists
+    /// only for this check.
     pub thread: Option<std::thread::JoinHandle<()>>,
     /// Main thread clears this in `shutdown`; watcher thread polls it in
     /// `watch_loop` and the platform `watch_loop_cycle`.
@@ -192,7 +192,6 @@ impl Watcher {
             platform: Platform::default(),
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
-            watchloop_handle: bun_core::AtomicCell::new(false),
             thread: None,
             running: bun_core::AtomicCell::new(true),
             close_descriptors: bun_core::AtomicCell::new(false),
@@ -216,12 +215,17 @@ impl Watcher {
     }
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
-        debug_assert!(!self.watchloop_handle.load());
+        debug_assert!(self.thread.is_none());
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
         // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
         // via `running`/`close_descriptors` and the thread frees the Box.
+        //
+        // The thread self-destructs the Watcher and is never joined; the
+        // `JoinHandle` in `self.thread` is kept purely as a "has start()
+        // been called" flag for shutdown() — dropping it without joining
+        // detaches the thread.
         self.thread = Some(
             std::thread::Builder::new()
                 .name("FileWatcher".into())
@@ -245,19 +249,37 @@ impl Watcher {
     pub unsafe fn shutdown(this: *mut Self, close_descriptors: bool) {
         // SAFETY: caller passes the unique heap pointer returned from init()
         let me = unsafe { &mut *this };
-        if me.watchloop_handle.load() {
+        if me.thread.is_some() {
+            // A watcher thread has been spawned; it owns cleanup, so we must
+            // not free `this` here even if it hasn't begun running yet. This
+            // check must use state written by `start()`, not by the spawned
+            // thread: keying it off a thread-written flag raced with
+            // `start()` and freed the Watcher under `thread_main` when the
+            // dev server was torn down right after creation (e.g. listen
+            // failure). See #21017.
             me.mutex.lock();
             me.close_descriptors.store(close_descriptors);
             me.running.store(false);
+            // Wake the thread out of its blocking wait so it can observe
+            // `running == false` and exit. Without this, the thread (and
+            // this Watcher) leak until the next filesystem event — which
+            // may never come if nothing is being watched yet.
+            me.platform.wake();
             me.mutex.unlock();
+            // `this` may be freed by the watcher thread any time after
+            // this point — thread_main takes/releases the mutex as a
+            // barrier before `heap::take(this)`, so it cannot proceed
+            // until the unlock above.
         } else {
+            // start() was never called; no thread can be using `this`.
+            me.platform.stop();
             if close_descriptors && me.running.load() {
                 let fds = me.watchlist.items_fd();
                 for &fd in fds {
                     let _ = bun_sys::close(fd);
                 }
             }
-            // watchlist freed by Drop on Box
+            // watchlist / watch_events freed by Drop on Box
             // SAFETY: this was heap-allocated by caller of init()
             drop(unsafe { bun_core::heap::take(this) });
         }
@@ -283,7 +305,6 @@ impl Watcher {
             // SAFETY: caller contract — `this` is a valid, exclusively-accessed
             // heap allocation for the duration of this scope.
             let me = unsafe { &mut *this };
-            me.watchloop_handle.store(true);
             me.thread_lock.lock();
             Output::Source::configure_named_thread(zstr!("File Watcher"));
 
@@ -292,14 +313,29 @@ impl Watcher {
 
             match me.watch_loop() {
                 Err(err) => {
-                    me.watchloop_handle.store(false);
-                    me.platform.stop();
                     if me.running.load() {
                         (me.on_error)(me.ctx, err);
                     }
                 }
                 Ok(()) => {}
             }
+
+            // Barrier: `shutdown()` holds `self.mutex` across
+            // `running.store(false)` and `platform.wake()`. This thread can
+            // observe `running == false` at the unlocked `while` check
+            // without ever blocking (e.g. it was just spawned), so without
+            // this lock/unlock pair `platform.stop()` below could run while
+            // `wake()` is still reading the same platform state (kqueue's
+            // non-atomic `fd`), and `heap::take(this)` could free `self.mutex`
+            // out from under `shutdown()`'s pending unlock.
+            me.mutex.lock();
+            me.mutex.unlock();
+
+            // Release platform resources. The wake path exits via `Ok` on
+            // Linux/macOS, so skipping stop() here would trade the former
+            // thread leak for an fd leak. On Windows `stop()` guards itself
+            // via `armed` (see `WindowsWatcher::stop`).
+            me.platform.stop();
 
             // deinit and close descriptors if needed
             if me.close_descriptors.load() {
@@ -308,7 +344,7 @@ impl Watcher {
                     let _ = bun_sys::close(fd);
                 }
             }
-            // watchlist freed by Drop below
+            // watchlist / watch_events freed by Drop below
         }
 
         // Close trace file if open

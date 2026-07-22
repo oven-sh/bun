@@ -440,7 +440,11 @@ test/bake/dev/hot.test.ts
 test/bake/dev/react-spa.test.ts
 test/bake/dev/sourcemap.test.ts
 test/bake/dev/ssg-pages-router.test.ts
-test/bake/dev/deinitialization.test.ts
+# NewServer ↔ HTMLBundle::Route back-pointer cycle survives
+# `server.stop()`; the server Box is only dropped on JS finalizer,
+# which last-chance finalization doesn't always reach before LSan runs.
+# (was `test/bake/dev/deinitialization.test.ts` — that path doesn't exist)
+test/bake/deinitialization.test.ts
 
 # Need to terminate HTTP thread.
 test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts

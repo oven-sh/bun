@@ -942,7 +942,12 @@ impl CAresNameInfo {
         let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
         // SAFETY: see fn contract — `this` is a live node.
         let global_this = unsafe { (*this).global_this() };
-        let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+        // An empty `result` means the caller's JS-result conversion threw
+        // (JSC termination during worker teardown). Resolving with it would
+        // trip `ASSERT(!target.isEmpty())` in `JSC__JSPromise__resolve`.
+        if !result.is_empty() {
+            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+        }
         // SAFETY: see fn contract.
         unsafe { Self::destroy(this) };
     }
@@ -1561,6 +1566,37 @@ impl GetAddrInfoRequest {
         }
     }
 
+    /// Shutdown-time reclaim for a queued-but-never-dispatched completion
+    /// (`__bun_release_task_at_shutdown`'s `GetAddrInfoRequestTask` arm).
+    /// Frees the request box and every `DNSLookup` in its chain so their
+    /// `JSPromiseStrong` handles drop while the JSC VM is still live; does not
+    /// run JS. The resolver's pending-native-cache slot (if any) is popped so
+    /// nothing is left pointing at the freed request.
+    ///
+    /// # Safety
+    /// `this` must be the live heap `GetAddrInfoRequest` whose `run` already
+    /// completed; consumed (freed) here.
+    #[cfg(not(windows))]
+    pub unsafe fn release_for_shutdown(this: *mut Self) {
+        // SAFETY: per fn contract — `this` is the live heap request.
+        unsafe {
+            if let Some(resolver) = (*this).resolver_for_caching {
+                if (*this).cache.pending_cache() {
+                    let _ = (*resolver).get_key_host(
+                        (*this).cache.pos_in_pending(),
+                        PendingCacheField::PendingHostCacheNative,
+                    );
+                }
+            }
+            let mut next = (*this).head.next.take();
+            while let Some(n) = next {
+                next = (*n.as_ptr()).next.take();
+                DNSLookup::destroy(n.as_ptr());
+            }
+            drop(bun_core::heap::take(this));
+        }
+    }
+
     #[cfg(windows)]
     pub fn on_libuv_complete(uv_info: *mut libuv::uv_getaddrinfo_t) {
         unsafe {
@@ -1731,7 +1767,12 @@ impl CAresReverse {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            // An empty `result` means the caller's JS-result conversion threw
+            // (JSC termination during worker teardown). Resolving with it would
+            // trip `ASSERT(!target.isEmpty())` in `JSC__JSPromise__resolve`.
+            if !result.is_empty() {
+                let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            }
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1881,7 +1922,12 @@ impl<T: CAresRecordType> CAresLookup<T> {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            // An empty `result` means the caller's JS-result conversion threw
+            // (JSC termination during worker teardown). Resolving with it would
+            // trip `ASSERT(!target.isEmpty())` in `JSC__JSPromise__resolve`.
+            if !result.is_empty() {
+                let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            }
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -2059,7 +2105,12 @@ impl DNSLookup {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            // An empty `result` means the caller's JS-result conversion threw
+            // (JSC termination during worker teardown). Resolving with it would
+            // trip `ASSERT(!target.isEmpty())` in `JSC__JSPromise__resolve`.
+            if !result.is_empty() {
+                let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            }
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -4526,8 +4577,9 @@ impl Resolver {
                 pending = (*value.as_ptr()).next;
                 if !core::ptr::eq(prev_global, new_global) {
                     array = super::options_jsc::result_any_to_js(result, new_global)
-                        .unwrap_or(None)
-                        .unwrap(); // TODO: properly propagate exception upwards
+                        .ok()
+                        .flatten()
+                        .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
 

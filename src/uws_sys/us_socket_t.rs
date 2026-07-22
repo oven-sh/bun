@@ -122,6 +122,12 @@ impl us_socket_t {
         c::us_socket_is_shut_down(self) > 0
     }
 
+    /// The last write was partial and the poll is armed for a writable retry;
+    /// the uv_write_t-in-active_reqs analogue for the loop-alive computation.
+    pub fn write_pending(&self) -> bool {
+        c::us_socket_write_pending(self) > 0
+    }
+
     pub fn is_tls(&self) -> bool {
         c::us_socket_is_tls(self) > 0
     }
@@ -571,6 +577,7 @@ mod c {
         ) -> i32;
         pub(super) safe fn us_socket_shutdown_read(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_write_pending(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
         pub(super) safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
         pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;

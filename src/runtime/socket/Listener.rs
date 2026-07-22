@@ -574,10 +574,8 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
-        // Each accepted socket holds the loop via its own poll_ref so
-        // node:net's per-socket unref() is meaningful. Balanced in
-        // mark_inactive, or in on_client_connect's accept-failure branch.
-        s.recompute_poll_ref();
+        // poll_ref is ref'd in on_open once the pipe is live (recompute bails
+        // on Detached); balanced in mark_inactive.
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
@@ -1112,8 +1110,8 @@ impl Listener {
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
                         ));
-                        // Clears per-connection flags (READ_EOF/IS_PAUSED); the socket
-                        // is already Detached so the rest is a no-op.
+                        // Clears per-connection READ_EOF; the socket is already
+                        // Detached so the rest is a no-op.
                         prev.detach_for_reconnect();
                         // Free old resources before reassignment to prevent memory leaks
                         // when sockets are reused for reconnection (common with MongoDB driver)
@@ -1206,8 +1204,8 @@ impl Listener {
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
                         ));
-                        // Clears per-connection flags (READ_EOF/IS_PAUSED); the socket
-                        // is already Detached so the rest is a no-op.
+                        // Clears per-connection READ_EOF; the socket is already
+                        // Detached so the rest is a no-op.
                         prev.detach_for_reconnect();
                         // Adopt `connection` (heap-owned for .unix) so the socket's
                         // deinit frees it; matches the TLS arm above and the
@@ -1648,14 +1646,9 @@ impl WindowsNamedPipeListeningContext {
                 .get_accepted_by(&mut this_ref.uv_pipe, this_ref.ctx.map(|p| p.as_ptr()))
         };
         if result.is_err() {
-            // connection dropped
-            // on_open will never dispatch, so balance on_name_pipe_created's poll_ref
-            // ref here; mark_inactive (the normal release) is unreachable.
-            match socket {
-                PipeSocketType::Tls(s) => s.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx())),
-                PipeSocketType::Tcp(s) => s.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx())),
-                PipeSocketType::None => {}
-            }
+            // connection dropped; on_open will never dispatch. The socket's
+            // poll_ref was never ref'd (recompute bails on Detached) so
+            // nothing to balance; mark_inactive (the normal release) is unreachable.
             // Release the only ref, which goes 1→0 → schedule_deinit → next-tick free. The
             // deferred path is required because `get_accepted_by` may have already `uv_pipe_init`'d
             // the client's inner handle on the loop; freeing the backing storage in-callback

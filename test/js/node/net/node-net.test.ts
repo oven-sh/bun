@@ -1150,6 +1150,7 @@ it("net.Socket readableFlowing starts null and buffers bytes arriving before a '
     'B got "paused-bytes"',
     "C flowing null len 15",
     'C got "server-greeting"',
+    "E connect fired, paused true",
     "D readableEnded false len 13",
     'D got "final-payload" ended true',
   ]);

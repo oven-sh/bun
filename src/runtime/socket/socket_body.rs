@@ -427,21 +427,31 @@ impl<const SSL: bool> NewSocket<SSL> {
             // user called socket.unref(); never re-ref on their behalf
             return;
         }
+        let socket = self.socket.get();
         // A TLS engine over a JS stream has no fd-backed I/O of its own; its
         // poll_ref is intentionally never Active (see js_upgrade_duplex_to_tls).
+        // A Detached socket has no I/O to track: either not yet connected
+        // (connect_finish will recompute) or already closed (mark_inactive
+        // already unref'd); never re-ref from a post-callback recompute.
         if matches!(
-            self.socket.get().socket,
-            uws::InternalSocket::UpgradedDuplex(_)
+            socket.socket,
+            uws::InternalSocket::UpgradedDuplex(_) | uws::InternalSocket::Detached
         ) {
             return;
         }
         let flags = self.flags.get();
         let reading = !flags.intersects(Flags::IS_PAUSED | Flags::READ_EOF);
-        let write_pending = self.buffered_data_for_node_net.get().len() > 0;
+        // node:net's buffered tail plus uSockets' own partial-write retry flag:
+        // a raw Bun.connect() `write()` does not touch the node:net buffer, so
+        // `last_write_failed` is the only signal a half-open raw socket left
+        // something queued from its `end`/`drain` handler.
+        let write_pending =
+            self.buffered_data_for_node_net.get().len() > 0 || socket.write_pending();
         // A pending connect is an active request (libuv's uv_connect_t counts
-        // toward active_reqs), so a paused-before-connect socket still holds
-        // the loop until on_open/connect_error runs.
-        let connecting = matches!(self.socket.get().socket, uws::InternalSocket::Connecting(_));
+        // toward active_reqs). An IP-literal connect stores the EINPROGRESS
+        // semi-socket as `Connected`, not `Connecting`, so test the semantic
+        // "on_open hasn't fired" (IS_ACTIVE is set there) instead of the enum.
+        let connecting = !flags.contains(Flags::IS_ACTIVE);
         self.poll_ref.with_mut(|p| {
             if reading || write_pending || connecting {
                 p.ref_(js_loop_ctx());
@@ -991,10 +1001,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        // The native write queue is empty: re-evaluate the loop hold now that
-        // write_pending has dropped to false.
-        this.recompute_poll_ref();
-
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         let scope = handlers.enter();
@@ -1004,6 +1010,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
+        // The native write queue drained; the drain callback may have written
+        // more (re-arming uSockets' write-pending flag), so re-evaluate after.
+        this.recompute_poll_ref();
         this.exit_scope(scope);
     }
 
@@ -1531,9 +1540,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             let paused = this.socket.get().pause_stream();
             this.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
         }
-        // The connect request has settled; re-evaluate now that `connecting` is
-        // false so a paused socket no longer holds the loop.
-        this.recompute_poll_ref();
 
         let handlers = this.get_handlers();
         let callback = handlers.on_open();
@@ -1543,6 +1549,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let this_value = this.get_this_value(&global);
 
         this.mark_active();
+        // The connect request has settled; recompute after IS_ACTIVE is set so
+        // `connecting` reads false and a paused socket drops its loop hold.
+        this.recompute_poll_ref();
         // TODO: properly propagate exception upwards
         let _ = handlers.resolve_promise(this_value);
 
@@ -1671,7 +1680,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let _keepalive = this.ref_guard();
 
         this.update_flags(|f| f.insert(Flags::READ_EOF));
-        this.recompute_poll_ref();
 
         let callback = handlers.on_end();
         let vm = handlers.vm;
@@ -1692,6 +1700,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
+        // Re-evaluate after the callback so a raw-API write() issued from the
+        // end handler is visible via the uSockets write-pending flag.
+        this.recompute_poll_ref();
         this.exit_scope(scope);
     }
 
@@ -3607,8 +3618,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         let raw_handlers = this.take_handlers();
         // Preserve `socket.unref()` across the upgrade — node:tls callers
         // that unref the underlying TCP socket before upgrading must not
-        // suddenly hold the loop open via the TLS wrapper.
-        let was_reffed = this.poll_ref.get().is_active();
+        // suddenly hold the loop open via the TLS wrapper. `poll_ref` now
+        // reflects the computed reading/write-pending state, not the user's
+        // intent; `ref_pollref_on_connect` is the user's ref()/unref() choice.
+        let was_reffed = this.ref_pollref_on_connect.get();
         // Capture before downgrade so the cached `data` (net.ts stores
         // `{self: net.Socket}` there) survives onto the raw twin.
         let original_data: JSValue =
@@ -3677,13 +3690,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         TLSSocket::data_set_cached(raw_js_value, global, original_data);
 
         tls.mark_active();
-        if was_reffed {
-            tls.poll_ref.with_mut(|p| {
-                p.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
-            });
-        }
+        // on_open's recompute_poll_ref below refs (or skips) based on this.
+        tls.ref_pollref_on_connect.set(was_reffed);
 
         // Fire onOpen with the right `this`, then send ClientHello. Doing
         // it before ext was repointed would have ALPN/onOpen land in the

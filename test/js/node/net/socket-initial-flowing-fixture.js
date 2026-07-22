@@ -94,6 +94,24 @@ function onceConnect(socket) {
     server.close();
   }
 
+  // E: pause() before connect on an IP literal still reaches 'connect'.
+  // The EINPROGRESS semi-socket is stored as Connected, not Connecting, so
+  // the pending-connect loop hold must cover it too. With nothing else
+  // ref'd, a broken build exits here and D never runs.
+  {
+    const server = net.createServer(s => {
+      s.on("error", () => {});
+      s.unref();
+    });
+    const port = await onceListening(server);
+    server.unref();
+    const c = net.connect(port, "127.0.0.1").pause();
+    await new Promise(r => c.once("connect", r));
+    console.log("E connect fired, paused", c.isPaused());
+    c.destroy();
+    server.close();
+  }
+
   // D: peer FINs with an unread payload; late 'data' listener still gets it
   {
     let acc;

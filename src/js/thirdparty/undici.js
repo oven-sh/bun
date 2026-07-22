@@ -311,7 +311,10 @@ class Dispatcher extends EventEmitter {
     }
     const p = request(url, { ...opts, dispatcher: this });
     if (typeof callback === "function") {
-      p.then(data => callback(null, data), err => callback(err, null));
+      p.then(
+        data => callback(null, data),
+        err => callback(err, null),
+      );
       return;
     }
     return p;
@@ -399,7 +402,10 @@ class EnvHttpProxyAgent extends Dispatcher {
     const noProxy = opts.noProxy ?? env.no_proxy ?? env.NO_PROXY;
     this.#noProxy =
       typeof noProxy === "string" && noProxy.length > 0
-        ? noProxy.split(",").map(s => s.trim().toLowerCase()).filter(Boolean)
+        ? noProxy
+            .split(",")
+            .map(s => s.trim().toLowerCase())
+            .filter(Boolean)
         : [];
   }
 

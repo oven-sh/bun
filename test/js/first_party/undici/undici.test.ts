@@ -1,16 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { once } from "node:events";
+import net from "node:net";
 import {
   Agent,
   EnvHttpProxyAgent,
-  fetch as undiciFetch,
   getGlobalDispatcher,
   ProxyAgent,
   request,
   RetryAgent,
   setGlobalDispatcher,
+  fetch as undiciFetch,
 } from "undici";
-import { once } from "node:events";
-import net from "node:net";
 
 import { createServer } from "../../../http-test-server";
 

@@ -127,8 +127,16 @@ function Assert(options?) {
   }
 }
 // Builtin functions do not automatically get a .prototype; install one so
-// Assert.prototype method assignments below have a target.
-Assert.prototype = { constructor: Assert };
+// Assert.prototype method assignments below have a target. `constructor` is
+// non-enumerable, matching a normal function.prototype.
+Assert.prototype = {};
+Object.defineProperty(Assert.prototype, "constructor", {
+  __proto__: null,
+  value: Assert,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 
 // All of the following functions must throw an AssertionError
 // when a corresponding condition is not met, with a message that

@@ -158,6 +158,11 @@ describe("assert.Assert class", () => {
     expect(e.code).toBe("ERR_CONSTRUCT_CALL_REQUIRED");
   });
 
+  test("prototype.constructor is non-enumerable like a normal function prototype", () => {
+    const d = Object.getOwnPropertyDescriptor(assert.Assert.prototype, "constructor");
+    expect(d).toEqual({ value: assert.Assert, writable: true, enumerable: false, configurable: true });
+  });
+
   test("prototype carries all assertion methods, shared with module exports", () => {
     const protoKeys = Object.getOwnPropertyNames(assert.Assert.prototype).sort();
     expect(protoKeys).toEqual(

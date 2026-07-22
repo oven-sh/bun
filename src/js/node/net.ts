@@ -213,6 +213,37 @@ function endNT(socket, callback, err) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
+// The native layer reported the connection closed. The socket is built with
+// `autoDestroy: true`, but autoDestroy only runs `_destroy` (which emits
+// `'close'`) once *both* halves of the Duplex finish. When the fd is gone but
+// the writable still holds backpressure that can never reach the dead peer,
+// that half never finishes: the socket lingers as a zombie (`destroyed`
+// false), `'close'` never fires, `server._connections` never decrements so
+// `server.close()` hangs, and a peer that keeps the fd hot spins the loop.
+//
+// Force the teardown only when there is nothing left to read
+// (`readableLength === 0`): a reader that is intentionally deferring
+// `read()` with data still buffered (test-net-socket-close-after-end.js) must
+// be allowed to consume it and emit `'end'` before `'close'`, as Node does.
+// Defer via `setImmediate` so everything already scheduled on the nextTick
+// queue runs first — the pending `'end'` from `push(null)`+`read(0)`, and the
+// "write EBADF" `_write` delivers via nextTick for a write that races the
+// close (test-net-socket-write-after-close.js). In the common clean case the
+// socket has auto-destroyed by then and this is a no-op. No error is passed:
+// real read errors already surface through the dedicated error paths, and
+// the passive peer close that lands here is benign.
+function destroyAfterClose(self) {
+  if (!self.destroyed && self.readableLength === 0) {
+    setImmediate(() => {
+      // Re-check `kclosed`: a user can call `socket.connect()` from inside
+      // `'close'` (which on the detached-handle path drains on nextTick
+      // before this setImmediate), and `initSocketHandle` clears `kclosed`
+      // — without this guard the fallback would tear down the fresh
+      // connection.
+      if (!self.destroyed && self[kclosed]) self.destroy();
+    });
+  }
+}
 function detachSocket(self) {
   if (!self) self = this;
   self._handle = null;
@@ -314,6 +345,7 @@ const SocketHandlers: SocketHandler = {
     detachSocket(self);
     SocketEmitEndNT(self, err);
     self.data = null;
+    destroyAfterClose(self);
   },
   data(socket, buffer) {
     const { data: self } = socket;
@@ -582,6 +614,11 @@ function SocketEmitEndNT(self, _err?) {
     }
     self[kended] = true;
     self.push(null);
+    // Kick the readable so a paused stream with nothing buffered still
+    // schedules `'end'` (matching the `push(null); read(0)` pair
+    // `SocketHandlers2.close` already does); without this a paused socket
+    // whose peer cleanly closed stalls before autoDestroy.
+    self.read(0);
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
@@ -591,8 +628,13 @@ function SocketEmitEndNT(self, _err?) {
   }
   // A write that was waiting on the native drain can never complete once the
   // socket is gone - fail it so 'finish'/destroy are not stuck behind it.
+  // Gate on `kclosed` (set by the close handlers before reaching here) as
+  // well, so a clean close that lands with no error still flushes — otherwise
+  // a paused reader with buffered data plus a backpressured write leaves
+  // `kWriting` set and autoDestroy can never fire even after the reader
+  // drains.
   const pendingWrite = self[kwriteCallback];
-  if (pendingWrite && (self.destroyed || _err)) {
+  if (pendingWrite && (self.destroyed || _err || self[kclosed])) {
     self[kwriteCallback] = null;
     pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
   }
@@ -768,6 +810,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         SocketEmitEndNT(data, err);
         data.data = null;
         socket[owner_symbol] = null;
+        destroyAfterClose(data);
       }
     }
   },
@@ -1212,6 +1255,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       self[kwriteCallback] = null;
       pendingWrite($ERR_SOCKET_CLOSED());
     }
+    destroyAfterClose(self);
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");

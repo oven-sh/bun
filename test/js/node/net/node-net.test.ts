@@ -803,6 +803,106 @@ it("should not hang after destroy", async () => {
   }
 }, 120_000);
 
+it.skipIf(isWindows)(
+  "should emit 'close' exactly once when a backpressured UDS peer is killed",
+  async () => {
+    // Regression: a node:net socket with pending write-backpressure toward a
+    // peer that is SIGKILLed never emitted 'close' and the process spun /
+    // hung forever on the half-closed fd. Both sides talk over a Unix domain
+    // socket; the survivor floods the peer (backpressure), we kill the peer,
+    // and the survivor must get a single 'close' and exit 0.
+    const udsPath = join(tmpdirSync(), `hup-${randomUUID()}.sock`);
+
+    // Reads stdout until `needle` appears; rejects if the stream ends first.
+    const waitForLine = async (proc: Bun.Subprocess<"ignore", "pipe", "inherit">, needle: string) => {
+      const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (value) buf += decoder.decode(value, { stream: true });
+          if (buf.includes(needle)) return;
+          if (done) throw new Error(`process exited before printing "${needle}" (saw: ${JSON.stringify(buf)})`);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    };
+
+    await using survivor = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-hup-backpressure-survivor-fixture.js")],
+      env: { ...bunEnv, UDS_PATH: udsPath },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    await waitForLine(survivor, "LISTENING");
+
+    await using peer = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-hup-backpressure-peer-fixture.js")],
+      env: { ...bunEnv, UDS_PATH: udsPath },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    // Survivor prints ACCEPTED once it has a connected socket and has begun
+    // flooding the peer, i.e. backpressure is building.
+    await waitForLine(survivor, "ACCEPTED");
+
+    // Kill the peer hard, mid-backpressure. This is the race the bug hit.
+    peer.kill("SIGKILL");
+
+    // Fail loudly on a hang instead of letting the test time out with no info.
+    const watchdog = setTimeout(() => survivor.kill("SIGKILL"), 20_000);
+    const exitCode = await survivor.exited;
+    clearTimeout(watchdog);
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
+
+it.skipIf(isWindows)(
+  "emits 'close' and lets server.close() complete when a paused socket's peer ends",
+  async () => {
+    // A paused (or never-read) server socket never consumes the EOF its peer's
+    // FIN pushes, so autoDestroy never runs: the socket lingers as a zombie,
+    // 'close' never fires, and server.close() hangs because _connections never
+    // decrements. Same root cause as the backpressure case, different stuck half.
+    const udsPath = join(tmpdirSync(), `hup-paused-${randomUUID()}.sock`);
+
+    const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+    const { promise: paused, resolve: onPaused } = Promise.withResolvers<void>();
+
+    const server = createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("close", () => onServerSocketClose());
+      socket.on("data", () => {
+        socket.pause(); // stop reading — the peer's FIN/EOF will never be consumed
+        onPaused();
+      });
+    });
+
+    try {
+      await new Promise<void>(resolve => server.listen(udsPath, () => resolve()));
+
+      const client = connect(udsPath, () => client.write("hello"));
+      client.on("error", () => {});
+
+      await paused;
+      client.end(); // peer FIN arrives while the server socket is paused
+
+      // The server socket must transition to closed...
+      await serverSocketClosed;
+      // ...and server.close() must complete rather than hang on a zombie.
+      await new Promise<void>((resolve, reject) => server.close(err => (err ? reject(err) : resolve())));
+    } finally {
+      server.close();
+    }
+  },
+  30_000,
+);
+
 it("should trigger error when aborted even if connection failed #13126", async () => {
   const signal = AbortSignal.timeout(100);
   const socket = createConnection({

@@ -56,7 +56,7 @@ private:
     FunctionTemplate(JSC::VM& vm, JSC::Structure* structure, FunctionCallback callback, JSC::JSValue data)
         : Base(vm, structure, functionCall, JSC::callHostFunctionAsConstructor)
         , m_callback(callback)
-        , m_data(vm, this, data)
+        , m_data(data, JSC::WriteBarrierEarlyInit)
     {
     }
 };

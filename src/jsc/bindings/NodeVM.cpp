@@ -822,8 +822,8 @@ JSC::Structure* NodeVMSpecialSandbox::createStructure(JSC::VM& vm, JSC::JSGlobal
 
 NodeVMSpecialSandbox::NodeVMSpecialSandbox(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject)
     : Base(vm, structure)
+    , m_parentGlobal(globalObject, JSC::WriteBarrierEarlyInit)
 {
-    m_parentGlobal.set(vm, this, globalObject);
 }
 
 void NodeVMSpecialSandbox::finishCreation(VM& vm)
@@ -847,7 +847,7 @@ DEFINE_VISIT_CHILDREN(NodeVMSpecialSandbox);
 
 NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions, JSValue importer)
     : Base(vm, structure, &globalObjectMethodTable())
-    , m_dynamicImportCallback(vm, this, importer)
+    , m_dynamicImportCallback(importer, JSC::WriteBarrierEarlyInit)
     , m_contextOptions(contextOptions)
 {
 }

@@ -154,6 +154,7 @@ const kUserUnrefed = Symbol("kUserUnrefed");
 // only restore a hold they actually removed - re-refing a handle that never
 // held the loop (a wrapped duplex with no fd) would pin the process.
 const kPausedUnref = Symbol("kPausedUnref");
+const kupgradedToTLS = Symbol("kupgradedToTLS");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
@@ -321,6 +322,10 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // After `tls.connect({ socket })` the raw half still sees the post-upgrade
+    // ciphertext. This socket is the transport, so keep its idle timer and byte
+    // count live, but don't re-emit those bytes as cleartext `data`.
+    if (self[kupgradedToTLS]) return;
     if (!self.push(buffer)) {
       socket.pause();
     }
@@ -660,6 +665,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // Server-side `new tls.TLSSocket(accepted, { isServer: true })` upgrades the
+    // accepted socket via bunUpgradeServerTLS; the raw half still sees the
+    // post-upgrade ciphertext. This socket is the transport, so keep its idle
+    // timer and byte count live, but don't re-emit those bytes as cleartext.
+    if (self[kupgradedToTLS]) return;
     if (!self.push(buffer)) {
       socket.pause();
     }
@@ -1104,6 +1114,10 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // After `tls.connect({ socket })` the raw half still sees the post-upgrade
+    // ciphertext. This socket is the transport, so keep its idle timer and byte
+    // count live, but don't re-emit those bytes as cleartext `data`.
+    if (self[kupgradedToTLS]) return;
     if (!self.push(buffer)) socket.pause();
   },
   drain(socket) {
@@ -1472,6 +1486,7 @@ function Socket(options?) {
   this._parentWrap = null;
   this[kpendingRead] = undefined;
   this[kupgraded] = null;
+  this[kupgradedToTLS] = false;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -1568,6 +1583,9 @@ function Socket(options?) {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
+        // Post-upgrade ciphertext belongs to the TLS layer. Keep the idle timer
+        // live (this socket is the transport) but don't surface the bytes.
+        if (self[kupgradedToTLS]) return;
         try {
           onread.callback(buffer.length, buffer);
         } catch (e) {
@@ -1846,6 +1864,11 @@ Socket.prototype.connect = function connect(...args) {
               const [raw, tls] = result;
               // replace socket
               connection._handle = raw;
+              // The raw half keeps delivering post-upgrade bytes (ciphertext)
+              // to the original socket's handlers. Once TLS owns the stream,
+              // those bytes belong to the TLS layer, so stop surfacing them as
+              // cleartext `data` on the original socket (matches Node).
+              connection[kupgradedToTLS] = true;
               this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
               this._handle = tls;
@@ -1892,6 +1915,8 @@ Socket.prototype.connect = function connect(...args) {
                   const [raw, tls] = result;
                   // replace socket
                   connection._handle = raw;
+                  // See the comment on the synchronous branch above.
+                  connection[kupgradedToTLS] = true;
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
                   this._handle = tls;
@@ -2157,14 +2182,30 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   // pulled off the fd into the connection's readable buffer; hand them to the
   // TLS engine so the handshake doesn't stall.
   const pending = connection.read();
-  const result = socket.upgradeTLS({
-    data: this,
-    tls,
-    socket: serverHandlersFor(this),
-    isServer: true,
-    initialData: pending || undefined,
-  });
+  // Set before upgradeTLS: with non-empty initialData the native side enables
+  // the ciphertext tap and synchronously feeds those bytes inside this call,
+  // firing ServerHandlers.data on the original accepted socket before it returns.
+  // The flag must already be set so the guard suppresses that re-emission; once
+  // TLS owns the stream those bytes belong to the TLS layer, not this socket.
+  connection[kupgradedToTLS] = true;
+  let result;
+  try {
+    result = socket.upgradeTLS({
+      data: this,
+      tls,
+      socket: serverHandlersFor(this),
+      isServer: true,
+      initialData: pending || undefined,
+    });
+  } catch (error) {
+    // A thrown upgrade (e.g. bad cert/key/cipher) must not leave the accepted
+    // socket latched, or its data handlers stay silent for a socket that was
+    // never actually wrapped.
+    connection[kupgradedToTLS] = false;
+    throw error;
+  }
   if (!result) {
+    connection[kupgradedToTLS] = false;
     this._handle = null;
     throw new Error("Invalid socket");
   }
@@ -3827,6 +3868,9 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  // A reused socket may have been adopted by a TLS wrapper on a prior connect;
+  // clear the latch so its data handlers aren't silenced on the new connection.
+  self[kupgradedToTLS] = false;
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;

@@ -179,11 +179,6 @@ unsafe extern "C" {
     // safe: by-value `pid_t`/`c_int` only; bad pid → `ESRCH`, bad sig →
     // `EINVAL`, never UB. Async-signal-safe.
     safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
-    // safe: out-param is `&mut c_int` (non-null, valid for write); kernel only
-    // writes the slot and reports failure via the return value — bad pid →
-    // `ECHILD`, never UB. Async-signal-safe.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    safe fn waitpid(pid: libc::pid_t, status: &mut c_int, options: c_int) -> libc::pid_t;
 }
 
 // `should_default_spawn_pdeathsig` moved down to `bun_spawn_sys::pdeathsig::
@@ -570,12 +565,7 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
                 killed_any = true;
             }
             // Reap what we just killed so their children (if any raced) reparent.
-            loop {
-                let mut st: c_int = 0;
-                if waitpid(-1, &mut st, libc::WNOHANG) <= 0 {
-                    break;
-                }
-            }
+            reap_nohang();
             if !killed_any {
                 return;
             }

@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -60,7 +60,7 @@ function pidAlive(pid: number): boolean {
 // previous generation stay parented to the watcher. Without cleanup every
 // restart leaks one child forever (and the first one to bind a port blocks
 // every later generation with EADDRINUSE).
-it.skipIf(!isPosix)("--watch kills the previous generation's child processes on restart", async () => {
+it.skipIf(!(isLinux || isMacOS))("--watch kills the previous generation's child processes on restart", async () => {
   using dir = tempDir("watch-subprocess-leak", {
     "dep.ts": "export const v = 0;\n",
     "entry.ts": `

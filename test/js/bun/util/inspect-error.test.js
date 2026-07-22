@@ -72,7 +72,8 @@ note: "duplicateConstDecl" was originally declared here
 });
 
 const normalizeError = str => {
-  // remove debug-only stack trace frames like "at require (:1:21)" / "at require (51:24)"
+  // remove debug-only stack trace frames
+  // like "at require (:1:21)" / "at require (51:24)"
   if (/ \(:?\d+:\d+\)$/m.test(str)) {
     const splits = str.split("\n");
     for (let i = 0; i < splits.length; i++) {

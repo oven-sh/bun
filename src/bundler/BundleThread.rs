@@ -57,6 +57,13 @@ pub struct BundleThread<C: Node> {
 /// The trait accessors keep the generic `BundleThread<C>`
 /// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
 pub trait CompletionStruct: Node + Send + 'static {
+    /// Whether the JS context that scheduled this build is still alive. When
+    /// `false`, the bundle thread must not run `generate_in_new_thread`: the
+    /// task borrows worker-owned resources (env loader, event loop) that may
+    /// already be freed. Defaults to `true` so non-worker callers stay no-op.
+    fn is_owner_alive(&self) -> bool {
+        true
+    }
     /// `bump` is the per-build mimalloc heap that backs `transpiler`, so the
     /// two share lifetime `'a` (option fields like `optimize_imports: &'a
     /// StringSet` borrow from `bump`).
@@ -221,6 +228,16 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
                 // until complete_on_bundle_thread() signals completion.
                 let completion = unsafe { &mut *completion };
+                if !completion.is_owner_alive() {
+                    // The worker that scheduled this build has begun shutdown.
+                    // `create_and_configure_transpiler` would dereference
+                    // worker-owned state (env loader) that is already freed.
+                    // `complete_on_bundle_thread` observes the same dead
+                    // context and drops the post.
+                    completion.complete_on_bundle_thread();
+                    has_bundled = true;
+                    continue;
+                }
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
                 let generation = unsafe { (*instance).generation };
                 // `panic = "abort"` → a Rust panic on this thread enters the

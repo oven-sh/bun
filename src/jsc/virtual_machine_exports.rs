@@ -141,6 +141,25 @@ pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_ta
     }
 }
 
+/// Called from `ScriptExecutionContext__postConcurrentTask` with the contexts
+/// map lock held, so `global`'s VM and its `EventLoop` are guaranteed live for
+/// the duration of this call (worker `markTerminating()` serializes on the
+/// same lock before any dealloc). `task` is a heap `ConcurrentTaskItem` the
+/// caller has already allocated.
+// HOST_EXPORT(Bun__EventLoop__enqueueConcurrentTask, c)
+pub fn event_loop_enqueue_concurrent_task(
+    global: &JSGlobalObject,
+    task: *mut crate::event_loop::ConcurrentTaskItem,
+) {
+    crate::mark_binding!();
+    // SAFETY: see fn doc — VM/EventLoop live under the held contexts-map lock;
+    // `task` is a non-null heap allocation handed over from the Rust caller.
+    unsafe {
+        (*(*global.bun_vm_concurrently()).event_loop())
+            .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task));
+    }
+}
+
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
 pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise) {
     crate::mark_binding!();

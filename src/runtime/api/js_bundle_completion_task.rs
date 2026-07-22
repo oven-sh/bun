@@ -26,6 +26,7 @@ use bun_io::KeepAlive;
 use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::WorkPool;
 use bun_jsc::event_loop::EventLoop;
+use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
@@ -61,6 +62,11 @@ pub struct JSBundleCompletionTask {
     // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
     // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
     pub jsc_event_loop: BackRef<EventLoop>,
+    /// Stable identifier for the originating `ScriptExecutionContext`. The
+    /// bundle thread posts completions via this id (under the C++ contexts-map
+    /// lock) instead of dereferencing `jsc_event_loop`, which dangles once a
+    /// worker owning the build is terminated mid-bundle.
+    pub context_id: ScriptExecutionContextIdentifier,
     pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
@@ -125,6 +131,7 @@ pub(crate) fn create_and_schedule_completion_task(
         // `event_loop` is the live JS-thread loop (caller derives it from
         // `vm.event_loop()`); never null once `Bun.build` is reachable.
         jsc_event_loop: BackRef::from(core::ptr::NonNull::new(event_loop).expect("event_loop")),
+        context_id: global_this.script_execution_context_identifier(),
         task: AnyTask::default(),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
@@ -761,13 +768,16 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
         // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
-        // passed through from the bundler vtable; the queue takes ownership.
-        unsafe {
-            from_completion_handle(c)
-                .jsc_event_loop
-                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
+        // passed through from the bundler vtable.
+        let task = unsafe { core::ptr::NonNull::new_unchecked(task) };
+        if !from_completion_handle(c).context_id.post_concurrent_task(task) {
+            // Target context is gone or terminating (worker was terminated
+            // mid-bundle). The queue would never drain this task; reclaim the
+            // heap `ConcurrentTaskItem` ourselves.
+            // SAFETY: `post_concurrent_task` returned false so ownership was
+            // not transferred; `task` was `ConcurrentTask::create`-allocated.
+            drop(unsafe { bun_core::heap::take(task.as_ptr()) });
         }
     },
 };
@@ -784,6 +794,10 @@ unsafe impl bun_threading::Linked for JSBundleCompletionTask {
 }
 
 impl CompletionStruct for JSBundleCompletionTask {
+    fn is_owner_alive(&self) -> bool {
+        self.context_id.is_alive()
+    }
+
     /// Port of `JSBundleCompletionTask.configureBundler` — the post-init half
     /// (everything after `transpiler.* = try Transpiler.init(...)`).
     /// `Transpiler::init` itself is called by `create_and_configure_transpiler`
@@ -980,11 +994,21 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // `ConcurrentTask::create` heap-allocates a fresh task; the
-        // queue takes ownership of it.
-        self.jsc_event_loop
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
+        // Post by stable context id so a worker terminated mid-bundle cannot
+        // leave `jsc_event_loop` dangling under us: `post_concurrent_task`
+        // serializes with `markTerminating()` on the C++ contexts-map lock and
+        // only dereferences the target VM while that lock is held.
+        let task = jsc::ConcurrentTask::create(self.task.task());
+        if !self.context_id.post_concurrent_task(task) {
+            // Target context is gone or terminating. `on_complete_anytask`
+            // will never run; reclaim the heap `ConcurrentTaskItem`. The
+            // `JSBundleCompletionTask` itself is deliberately leaked: its
+            // `deinit` touches JS-thread-owned state (`JSPromiseStrong`,
+            // `Plugin::destroy`, `KeepAlive`) that is already freed.
+            // SAFETY: `post_concurrent_task` returned false so ownership was
+            // not transferred; `task` was `ConcurrentTask::create`-allocated.
+            drop(unsafe { bun_core::heap::take(task.as_ptr()) });
+        }
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;

@@ -1513,3 +1513,61 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+// Regression: terminating a worker with an in-flight Bun.build() would crash
+// the whole process. The bundler runs on its own thread and posted the
+// completion back into the terminated worker's freed EventLoop/VM
+// (JSBundleCompletionTask::complete_on_bundle_thread -> enqueue_task_concurrent
+// -> heap-use-after-free, or SIGSEGV on release builds). A second queued
+// build then dereferenced the worker's freed env loader in Transpiler::init.
+// Under ASAN (the gate's default build) this was deterministic; on release it
+// SIGSEGV'd in a few rounds.
+test(
+  "terminating a worker mid-Bun.build() does not crash the process",
+  async () => {
+    // ASAN catches the UAF on the first round; release needs the terminate to
+    // land mid-bundle, so scale the module graph / round count by build speed.
+    const slow = isDebug || isASAN;
+    const modules = slow ? 100 : 400;
+    const rounds = slow ? 4 : 12;
+
+    const files: Record<string, string> = {};
+    const lines: string[] = [];
+    for (let i = 0; i < modules; i++) {
+      files[`m${i}.ts`] =
+        `export const v${i}: number = ${i};\n` +
+        `export function f${i}(x: number) { return x + ${i}; }\n`;
+      lines.push(`import * as m${i} from "./m${i}.ts"; globalThis.k${i} = m${i};`);
+    }
+    files["entry.ts"] = lines.join("\n");
+    files["run.ts"] = `
+      const { Worker } = require("node:worker_threads");
+      const entry = process.argv[2];
+      const src = \`const { parentPort, workerData } = require("node:worker_threads");
+        const lanes = (n, f) => { for (let i = 0; i < n; i++) (async () => { for (;;) { try { await f(i); } catch {} } })(); };
+        lanes(2, () => Bun.build({ entrypoints: [workerData.entry], target: "bun", minify: true }));
+        parentPort.postMessage("up");\`;
+      for (let r = 0; r < ${rounds}; r++) {
+        const w = new Worker(src, { eval: true, workerData: { entry } });
+        await new Promise(res => w.once("message", res));
+        await Bun.sleep(60 + (r * 41) % 220);
+        await w.terminate();
+      }
+      console.log("OK " + ${rounds});
+    `;
+    using dir = tempDir("bun-build-worker-terminate", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "run.ts"), join(String(dir), "entry.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("use-after-free");
+    expect(stderr).not.toContain("Segmentation fault");
+    expect(stdout.trim()).toBe("OK " + rounds);
+    expect(exitCode).toBe(0);
+  },
+  isDebug || isASAN ? 120_000 : 45_000,
+);

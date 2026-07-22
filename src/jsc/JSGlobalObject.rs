@@ -191,7 +191,7 @@ impl JSGlobalObject {
         )
     }
 
-    fn ms_to_gregorian_date_time_impl(&self, ms: f64, local: bool) -> GregorianDateTime {
+    pub fn ms_to_gregorian_date_time(&self, ms: f64) -> GregorianDateTime {
         crate::mark_binding();
         let mut dt = GregorianDateTime::default();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
@@ -200,7 +200,7 @@ impl JSGlobalObject {
             crate::cpp::raw::Bun__msToGregorianDateTime(
                 self.as_ptr(),
                 ms,
-                local,
+                true,
                 &raw mut dt.year,
                 &raw mut dt.month,
                 &raw mut dt.day,
@@ -211,14 +211,6 @@ impl JSGlobalObject {
             );
         }
         dt
-    }
-
-    pub fn ms_to_gregorian_date_time_utc(&self, ms: f64) -> GregorianDateTime {
-        self.ms_to_gregorian_date_time_impl(ms, false)
-    }
-
-    pub fn ms_to_gregorian_date_time(&self, ms: f64) -> GregorianDateTime {
-        self.ms_to_gregorian_date_time_impl(ms, true)
     }
 
     pub fn throw_todo(&self, msg: &[u8]) -> JsError {

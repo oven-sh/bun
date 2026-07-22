@@ -8,35 +8,34 @@ import { bunEnv, bunExe } from "harness";
 // Each test spawns a subprocess with a fixed TZ so the assertions are
 // independent of the host's zone.
 
-async function parseInTZ(tz: string, expr: string, fromISO: string): Promise<string> {
+async function evalInTZ(tz: string, src: string): Promise<string> {
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `process.stdout.write(Bun.cron.parse(${JSON.stringify(expr)}, new Date(${JSON.stringify(fromISO)})).toISOString())`,
-    ],
+    cmd: [bunExe(), "-e", src],
     env: { ...bunEnv, TZ: tz },
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   return stdout;
 }
 
+async function parseInTZ(tz: string, expr: string, fromISO: string): Promise<string> {
+  return evalInTZ(
+    tz,
+    `process.stdout.write(Bun.cron.parse(${JSON.stringify(expr)}, new Date(${JSON.stringify(fromISO)})).toISOString())`,
+  );
+}
+
 async function chainInTZ(tz: string, expr: string, fromISO: string, steps: number): Promise<string[]> {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `let t = new Date(${JSON.stringify(fromISO)});
-       const seq = [];
-       for (let i = 0; i < ${steps}; i++) { t = Bun.cron.parse(${JSON.stringify(expr)}, t); seq.push(t.toISOString()); }
-       process.stdout.write(JSON.stringify(seq))`,
-    ],
-    env: { ...bunEnv, TZ: tz },
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(exitCode).toBe(0);
-  return JSON.parse(stdout);
+  const out = await evalInTZ(
+    tz,
+    `let t = new Date(${JSON.stringify(fromISO)});
+     const seq = [];
+     for (let i = 0; i < ${steps}; i++) { t = Bun.cron.parse(${JSON.stringify(expr)}, t); seq.push(t.toISOString()); }
+     process.stdout.write(JSON.stringify(seq))`,
+  );
+  return JSON.parse(out);
 }
 
 describe.concurrent("Bun.cron.parse — local time zone", () => {

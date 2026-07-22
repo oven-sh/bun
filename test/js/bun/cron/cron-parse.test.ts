@@ -16,8 +16,10 @@ async function parseUTC(expr: string, fromISO: string): Promise<string> {
       `process.stdout.write(String(Bun.cron.parse(${JSON.stringify(expr)}, new Date(${JSON.stringify(fromISO)}))?.toISOString() ?? "null"))`,
     ],
     env: { ...bunEnv, TZ: "UTC" },
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   return stdout;
 }

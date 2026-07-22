@@ -151,22 +151,10 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file_maybe_async(global, value, true, true)
     }
 
-    pub fn from_js_with_encoding_value(
-        global: &JSGlobalObject,
-        value: JSValue,
-        encoding_value: JSValue,
-    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_with_encoding_value_allow_request_response(
-            global,
-            value,
-            encoding_value,
-            false,
-        )
-    }
-
-    /// Like [`from_js_with_encoding_value`] but takes an already-parsed
-    /// [`Encoding`], so callers that must inspect the encoding first (e.g. to
-    /// validate odd-length hex) don't coerce `encoding_value` twice.
+    /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
+    /// already-parsed [`Encoding`], so callers that must inspect the encoding
+    /// first (e.g. to validate odd-length hex) don't coerce `encoding_value`
+    /// twice.
     pub fn from_js_with_encoding(
         global: &JSGlobalObject,
         value: JSValue,

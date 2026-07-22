@@ -139,6 +139,35 @@ describe("global console honors util.inspect.defaultOptions", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("console.timeLog extra args", async () => {
+    const { stderr, exitCode } = await run(`
+      const util = require("node:util");
+      util.inspect.defaultOptions.depth = 0;
+      console.time("t");
+      console.timeLog("t", { a: { b: { c: 1 } } });
+    `);
+    expect(stderr).toContain("{ a: [Object] }");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--console-depth still applies when an unrelated default is changed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--console-depth=5",
+        "-e",
+        `require("util").inspect.defaultOptions.maxArrayLength = 5;` +
+          `console.log({ a: { b: { c: { d: { e: 1 } } } } });`,
+      ],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("e: 1");
+    expect(stdout).not.toContain("[Object]");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("group indentation still applied", async () => {
     const { stdout, exitCode } = await run(`
       const util = require("node:util");

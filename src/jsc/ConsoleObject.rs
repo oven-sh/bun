@@ -6015,6 +6015,34 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     }
     Output::flush();
 
+    let colors = Output::enable_ansi_colors_stderr();
+    let console = vm_console(global);
+    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
+    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
+    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
+    // across the `fmt.format(...)` calls below, which can re-enter JS.
+    let mut writer = unsafe { (*console).error_writer() };
+
+    // SAFETY: caller passes a valid (args, args_len) pair.
+    let args_slice = unsafe { bun_core::ffi::slice(args, args_len) };
+
+    if args_len >= 1 {
+        if let Some(func) = global.bun_vm().console_util_format.get() {
+            let mut call_args: Vec<JSValue> = Vec::with_capacity(1 + args_len);
+            call_args.push(JSValue::js_boolean(colors));
+            call_args.extend_from_slice(args_slice);
+            if let Ok(formatted) = func.call_with_global_this(global, &call_args) {
+                if let Ok(text) = formatted.to_slice(global) {
+                    let _ = bun_io::Write::write_all(&mut writer, b" ");
+                    let _ = bun_io::Write::write_all(&mut writer, text.slice());
+                }
+            }
+            let _ = bun_io::Write::write_all(&mut writer, b"\n");
+            let _ = bun_io::Write::flush(&mut writer);
+            return;
+        }
+    }
+
     // print the arguments
     // `Formatter` has a `Drop` impl, so struct-update from a
     // temporary is rejected (E0509). Construct via `new()` then mutate.
@@ -6024,19 +6052,12 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
-    let console = vm_console(global);
-    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
-    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
-    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
-    // across the `fmt.format(...)` calls below, which can re-enter JS.
-    let mut writer = unsafe { (*console).error_writer() };
-    // SAFETY: caller passes a valid (args, args_len) pair.
-    for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
+    for &arg in args_slice {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
             return;
         };
         let _ = bun_io::Write::write_all(&mut writer, b" ");
-        if Output::enable_ansi_colors_stderr() {
+        if colors {
             let _ = fmt.format::<true>(tag, &mut writer, arg, global);
         } else {
             let _ = fmt.format::<false>(tag, &mut writer, arg, global);

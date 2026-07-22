@@ -362,7 +362,7 @@ const ERROR_STACK_OVERFLOW_MSG = "Maximum call stack size exceeded.";
 // be added or removed, `getUserOptions` must also be updated accordingly.
 const inspectDefaultOptions = ObjectSeal({
   showHidden: false,
-  depth: 2,
+  depth: $newRustFunction("node_util_binding.rs", "getConsoleDepth", 0)() ?? 2,
   colors: false,
   customInspect: true,
   showProxy: false,

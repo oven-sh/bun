@@ -162,6 +162,22 @@ impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
     }
 }
 
+/// Returns the `--console-depth` / bunfig `console.depth` value, or
+/// `undefined` when unset, so `inspect.js` can seed `defaultOptions.depth`.
+#[bun_jsc::host_fn]
+pub(crate) fn get_console_depth(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(
+        match bun_options_types::context::try_get().and_then(|ctx| ctx.runtime_options.console_depth)
+        {
+            Some(depth) => JSValue::js_number_from_int32(i32::from(depth)),
+            None => JSValue::UNDEFINED,
+        },
+    )
+}
+
 /// Stores the `(colors, ...args)` and `(colors, value, opts)` JS formatters on
 /// the VM so the global console honors mutated `util.inspect.defaultOptions`.
 #[bun_jsc::host_fn]

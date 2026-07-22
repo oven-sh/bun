@@ -4070,6 +4070,7 @@ static const uint8_t NtTerminateProcess_dirs[] = {0, 0};
 static ULONG_PTR (NTAPI *Real_NtTerminateProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtTerminateProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   LogTerminateStack((uintptr_t)_ReturnAddress());
+  LogLeakedHandles();
   LogEntryOnly(SYS_NtTerminateProcess, (uintptr_t)_ReturnAddress());
   return Real_NtTerminateProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }

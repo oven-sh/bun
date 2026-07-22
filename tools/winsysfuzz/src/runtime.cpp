@@ -522,6 +522,31 @@ void LogTerminateStack(uintptr_t retAddr) {
   SetDepth(0);
 }
 
+// The leak oracle: at process termination the handle table holds every
+// handle this process opened and never closed. Named entries (files,
+// pipes, sockets, keys - not anonymous events/threads, which the process
+// exit reaps by design and which flood the count) are the leak set.
+// One 'L' record per leaked named handle: kind + name tail. The driver
+// diffs the leak set against baseline - a fault that makes bun leak a
+// file/pipe/socket handle it normally closes is a real, quiet bug that no
+// crash or hang would ever reveal.
+void LogLeakedHandles() {
+  intptr_t d = Depth();
+  if (!g_ready || d != 0) return;
+  SetDepth(1);
+  int emitted = 0;
+  for (int i = 0; i < kHandleSlots && emitted < 400; i++) {
+    const HandleEnt& e = g_handles[i];
+    if (!e.h) continue;
+    if (e.own) continue;              // bun's own installation files: never a leak
+    if (!e.tail[0]) continue;          // anonymous object: reaped by process exit
+    if (e.kind != 'f' && e.kind != 'p' && e.kind != 's' && e.kind != 'k') continue;
+    LogLine("L %c %llx %s\n", e.kind, (unsigned long long)e.h, e.tail);
+    emitted++;
+  }
+  SetDepth(0);
+}
+
 // --- CallCtx ---------------------------------------------------------------
 
 CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, ULONG_PTR* args, int argc)

@@ -169,6 +169,7 @@ export interface Trace {
   attached: number;
   modules: { base: bigint; size: bigint; name: string }[]; // '# mod' map for o:-key naming
   termStacks: string[][]; // one 'T' record per traced process: terminating thread's bun.exe frame RVAs
+  leaks: string[]; // 'L' records: named handles still open at process exit ("<kind> <name-tail>")
 }
 
 // Name the module an absolute address (an 'o:' key or a frame) falls in.
@@ -194,7 +195,7 @@ export function keyName(t: Trace, key: string): string {
 // counting all). Injection runs need "did it fire, and where" - not a
 // 200k-record array for a 20MB trace of a big test file.
 export function parseTrace(text: string, faultsOnly = false): Trace {
-  const t: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: false, attached: 0, modules: [], termStacks: [] };
+  const t: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: false, attached: 0, modules: [], termStacks: [], leaks: [] };
   const bySeq = new Map<number, Rec>();
   for (const line of text.split("\n")) {
     if (!line) continue;
@@ -242,6 +243,10 @@ export function parseTrace(text: string, faultsOnly = false): Trace {
       // 'T <tid> <key> <rva,rva,...>': the terminating thread's stack. Even
       // when parsing faults-only we keep it - it is the crash's why.
       if (p[3] && p[3] !== "0") t.termStacks.push(p[3].split(","));
+    } else if (p[0] === "L") {
+      // 'L <kind> <handle> <name-tail>': a named handle still open at exit
+      // - the leak set. Kept even under faultsOnly (it IS the leak oracle).
+      if (p.length >= 4) t.leaks.push(`${p[1]} ${unescapePath(p.slice(3).join(" "))}`);
     } else if (p[0] === "E") {
       t.recCount++;
       if (faultsOnly) continue;
@@ -362,7 +367,7 @@ export async function readTraceDir(dir: string, opts: { faultsOnly?: boolean } =
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir).filter(f => f.startsWith("wsf-") && f.endsWith(".log"));
   if (!files.length) return null;
-  const merged: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: true, attached: 0, modules: [], termStacks: [] };
+  const merged: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: true, attached: 0, modules: [], termStacks: [], leaks: [] };
   for (const f of files) {
     let t: Trace;
     try {
@@ -380,6 +385,7 @@ export async function readTraceDir(dir: string, opts: { faultsOnly?: boolean } =
     merged.recCount += t.recCount;
     for (const m of t.modules) merged.modules.push(m);
     for (const ts of t.termStacks) merged.termStacks.push(ts);
+    for (const l of t.leaks) merged.leaks.push(l);
     if (merged.bunBase === "0") merged.bunBase = t.bunBase;
     merged.cleanEnd = merged.cleanEnd && t.cleanEnd;
     merged.attached = Math.max(merged.attached, t.attached);

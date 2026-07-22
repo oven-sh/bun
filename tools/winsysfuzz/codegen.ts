@@ -185,8 +185,10 @@ for (const s of syscalls) {
     // Does not return: entry record only, no context spanning the call.
     // NtTerminateProcess additionally records the terminating thread's stack:
     // the abort/crash chain is still on it, so the crash names itself.
-    if (s.name === "NtTerminateProcess")
+    if (s.name === "NtTerminateProcess") {
       C.push(`  LogTerminateStack((uintptr_t)_ReturnAddress());`);
+      C.push(`  LogLeakedHandles();`);
+    }
     C.push(`  LogEntryOnly(SYS_${s.name}, (uintptr_t)_ReturnAddress());`);
     C.push(`  return Real_${s.name}(${callDirect});`);
   } else {

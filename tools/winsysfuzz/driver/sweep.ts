@@ -121,6 +121,12 @@ if (!baseTrace) {
   process.exit(1);
 }
 
+// Baseline leak set: named handles the program legitimately holds to exit.
+// A run's leaks are only interesting where they EXCEED this set. Normalize
+// away the volatile handle value (name+kind is the identity).
+const baseLeakSet = new Set((baseTrace.leaks ?? []).map(l => l.trim()));
+const newLeaks = (leaks: string[]): string[] => [...new Set(leaks.map(l => l.trim()))].filter(l => !baseLeakSet.has(l));
+
 // --- coordinates --------------------------------------------------------------
 // A coordinate = (syscall, key). The KEY is the syscall's immediate return
 // address, module-tagged ("b:rva" bun / "k:rva" kernelbase / "n:rva"
@@ -266,6 +272,7 @@ interface Result {
   ms: number;
   stdoutDiffers: boolean;
   crashSig: import("./lib").CrashSig | null;
+  leaked: string[]; // named handles leaked beyond the baseline set ('leak' outcome)
 }
 const results: Result[] = [];
 let next = 0;
@@ -303,6 +310,7 @@ async function worker(w: number) {
     let rr: Awaited<ReturnType<typeof runOnce>>;
     let fired = 0;
     let outcome: string;
+    let leaked: string[] = [];
     try {
       rr = await runOnce({ bun, args: progArgs, workDir: dir, timeoutMs, schedule: sched });
       // faultsOnly: injection runs need "did it fire and where", not every
@@ -325,6 +333,10 @@ async function worker(w: number) {
         else if (rr.crashSig?.boundary === "system-module") outcome = "system-crash";
         else outcome = "CRASH";
       } else if (fired === 0) outcome = "no-fire";
+      // The leak oracle: named handles (file/pipe/socket/key) still open at
+      // exit that the baseline closed. A quiet resource-leak bug no crash or
+      // hang would ever reveal; the leaked names ride onto the finding.
+      else if ((leaked = newLeaks(tr?.leaks ?? [])).length) outcome = "leak";
       // A run that got slow because a test TIMED OUT is the hang class in
       // disguise: some awaited operation never completed and the runner's
       // per-test timeout rescued it. That is a finding ('stalled'). A run
@@ -340,7 +352,7 @@ async function worker(w: number) {
       console.log(`  !! driver-error on job ${job.id}: ${String(err).slice(0, 120)}`);
     }
 
-    const res: Result = { job, outcome, exitCode: rr.exitCode, fired, ms: rr.ms, stdoutDiffers: rr.stdout !== base.stdout, crashSig: rr.crashSig ?? null };
+    const res: Result = { job, outcome, exitCode: rr.exitCode, fired, ms: rr.ms, stdoutDiffers: rr.stdout !== base.stdout, crashSig: rr.crashSig ?? null, leaked };
     results.push(res);
     // Retention: a run that found nothing is not a test case. Its outcome
     // and the fired count are already recorded in the report, so the run
@@ -396,6 +408,7 @@ const rank: Record<string, number> = {
   CRASH: 1,
   stalled: 2, // an awaited op never completed (a test timed out) - hang class
   slow: 3,
+  leak: 2.5, // named-handle leak beyond baseline: a quiet real bug
   "known-crash": 4, // signature already triaged/queued: nothing new to learn
   "expected-abort": 4,
   "error-exit": 5,
@@ -414,7 +427,9 @@ for (const k of ["HANG", "CRASH", "slow", "expected-abort", "error-exit", "diver
   if (counts.has(k)) console.log(`  ${k.padEnd(15)} ${counts.get(k)}`);
 
 const findingsPath = join(workRoot, "findings.md");
-const rawFindings = results.filter(r => r.outcome === "CRASH" || r.outcome === "HANG" || r.outcome === "stalled");
+const rawFindings = results.filter(
+  r => r.outcome === "CRASH" || r.outcome === "HANG" || r.outcome === "stalled" || r.outcome === "leak",
+);
 // Verification budget with clustering: 46 near-identical HANGs must not
 // cost 46 x 3 replays. Cluster findings by (outcome, syscall, mode, crash
 // signature) and verify one REPRESENTATIVE per cluster - crashes first,
@@ -431,7 +446,7 @@ for (const r of rawFindings) {
   arr.push(r);
   byCluster.set(k, arr);
 }
-const classPri: Record<string, number> = { CRASH: 0, stalled: 1, HANG: 2 };
+const classPri: Record<string, number> = { CRASH: 0, leak: 1, stalled: 2, HANG: 3 };
 const reps = [...byCluster.values()]
   .map(g => g[0])
   .sort((a, b) => (classPri[a.outcome] ?? 9) - (classPri[b.outcome] ?? 9))
@@ -492,7 +507,9 @@ async function queueFinding(r: Result, v: Verify) {
   if ((r.outcome === "stalled" || r.outcome === "slow") && r.job.coord.key.startsWith("n:")) return;
   const dedupeKey = r.crashSig
     ? `crash: ${r.crashSig.signature}`
-    : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;
+    : r.outcome === "leak"
+      ? `leak ${[...r.leaked].sort().join(",")}`
+      : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;
   if (knownKeys.has(dedupeKey)) return; // already triaged or already queued
   knownKeys.add(dedupeKey);
   const line = JSON.stringify({
@@ -513,6 +530,7 @@ async function queueFinding(r: Result, v: Verify) {
     termChain: v.termChain,
     panicChain: v.panicChain,
     stacks: v.stacks.slice(0, 12),
+    leaked: r.leaked.slice(0, 20),
     findings: findingsPath,
     workDir: workRoot,
   });
@@ -542,7 +560,13 @@ if (findings.length) {
         // first replay: the single most useful fact about a finding.
         capture: n === 1,
       });
-      outcomes.push(rr.outcome);
+      // A leak finding's replay reproduces when it, too, leaks named
+      // handles beyond the baseline set (the replay tool has no baseline
+      // to know that, so the verdict is computed here from its trace).
+      if (f.outcome === "leak") {
+        const vt = await readTraceDir(rr.dir, { faultsOnly: true }).catch(() => null);
+        outcomes.push(newLeaks(vt?.leaks ?? []).length ? "leak" : rr.outcome === "exit" ? "clean" : rr.outcome);
+      } else outcomes.push(rr.outcome);
       if (n === 1) {
         stage = lastStage(rr.stdout);
         const raw = rr.hangStacks ?? rr.crashDump ?? "";
@@ -572,7 +596,11 @@ if (findings.length) {
     }
     // For a stalled finding, stalling again standalone (a slow replay =
     // the test timed out again) IS the reproduction.
-    const bad = outcomes.filter(o => o === "CRASH" || o === "HANG" || (f.outcome === "stalled" && o === "slow")).length;
+    // A leak replay counts as bad when it leaks named handles the
+    // baseline does not (the verify replays log 'leak' via the same rule).
+    const bad = outcomes.filter(
+      o => o === "CRASH" || o === "HANG" || o === "leak" || (f.outcome === "stalled" && o === "slow"),
+    ).length;
     const slow = outcomes.filter(o => o === "slow").length;
     const fired = outcomes.filter(o => o !== "no-fire").length;
     // "crawls twice, hangs once" is bad EVERY time (borderline on the

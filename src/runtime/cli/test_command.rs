@@ -3307,13 +3307,20 @@ pub(crate) fn on_process_exit_during_tests(vm: &mut VirtualMachine, requested: u
         .saturating_sub(reporter.jest.summary.files);
 
     // `process.exit()` during the last file's top-level module evaluation
-    // with no later files queued is the Node test harness re-spawn pattern
-    // (`test/js/node/test/common/index.js` exec-with-Flags then
-    // `process.exit(child.status)`): pass the requested code through
-    // unchanged. `module_load_in_progress` is only set for the synchronous
-    // `load_entry_point_for_test_runner` window; a `describe()` callback
-    // (still `Phase::Collection` but after module load) does not qualify.
-    if not_run == 0 && reporter.jest.module_load_in_progress {
+    // with no later files queued and nothing already failed is the Node test
+    // harness re-spawn pattern (`test/js/node/test/common/index.js`
+    // exec-with-Flags then `process.exit(child.status)`): pass the requested
+    // code through unchanged. `module_load_in_progress` is only set for the
+    // synchronous `load_entry_point_for_test_runner` window; a `describe()`
+    // callback (still `Phase::Collection` but after module load) does not
+    // qualify. `fail`/`unhandled_errors` gate the multi-file case where an
+    // earlier file recorded a failure and the last file's top-level
+    // `process.exit(0)` would otherwise mask it.
+    if not_run == 0
+        && reporter.jest.module_load_in_progress
+        && reporter.jest.summary.fail == 0
+        && reporter.jest.unhandled_errors_between_tests == 0
+    {
         return;
     }
 

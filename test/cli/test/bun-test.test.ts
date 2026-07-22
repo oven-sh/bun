@@ -1549,6 +1549,27 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    test.concurrent("does not mask an earlier failure when the last file exits at top level", async () => {
+      using dir = tempDir("bun-test-process-exit-mask", {
+        "a.test.ts": `
+          import { test, expect } from "bun:test";
+          test("fails", () => { expect(1).toBe(2); });
+        `,
+        "b.test.ts": `process.exit(0);`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("process.exit(0) was called during bun test");
+      expect(stderr).toContain("1 fail");
+      expect(exitCode).toBe(1);
+    });
+
     // Node's test/parallel common/index.js re-spawns the current file with
     // `// Flags:` applied and then `process.exit(child.status)` from the
     // parent's module top level. That is the only file in the run and no

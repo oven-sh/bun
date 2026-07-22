@@ -144,10 +144,13 @@ static int noPasswordCallback(char*, int, int, void*)
     return 0;
 }
 
-// One input slot for the PEM parse pass. `owned` holds the UTF-8 bytes for
-// string inputs (CString keeps them alive); for ArrayBufferViews `owned` is
-// empty and `bytes` points into the view (kept alive by the
-// MarkedArgumentBuffer below).
+// One input slot for the PEM parse pass. `owned` holds the bytes (UTF-8 for
+// string inputs, a copy of the view's backing store for ArrayBufferViews) and
+// `bytes` points into `owned`. Views are copied because forEachInIterable
+// drives the iterator protocol: a tampered %ArrayIteratorPrototype%.next can
+// detach an earlier element's buffer between callbacks, and a raw span into
+// the view would then dangle (MarkedArgumentBuffer roots the JSValue against
+// GC but does not prevent detach).
 struct CACertInput {
     WTF::CString owned;
     std::span<const uint8_t> bytes;
@@ -165,17 +168,13 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     }
 
     // Pass 1: collect bytes. All JS type checks / coercions happen here with
-    // no BoringSSL resources live, so RETURN_IF_EXCEPTION cannot leak.
-    JSC::MarkedArgumentBuffer keepAlive;
+    // no BoringSSL resources live, so RETURN_IF_EXCEPTION cannot leak. Both
+    // branches copy into CACertInput::owned, so nothing in pass 2 depends on a
+    // JS value staying alive or attached.
     WTF::Vector<CACertInput, 8> inputs;
 
     forEachInIterable(globalObject, certs, [&](VM&, JSGlobalObject* g, JSValue element) {
         auto innerScope = DECLARE_THROW_SCOPE(vm);
-        keepAlive.append(element);
-        if (keepAlive.hasOverflowed()) {
-            throwOutOfMemoryError(g, innerScope);
-            return;
-        }
         if (element.isString()) {
             auto string = element.toWTFString(g);
             RETURN_IF_EXCEPTION(innerScope, );
@@ -189,7 +188,9 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
                 throwVMTypeError(g, innerScope, "certificate buffer is detached"_s);
                 return;
             }
-            inputs.append({ {}, std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() } });
+            WTF::CString owned { std::span { reinterpret_cast<const char*>(view->vector()), view->byteLength() } };
+            auto span = std::span { reinterpret_cast<const uint8_t*>(owned.data()), owned.length() };
+            inputs.append({ WTF::move(owned), span });
             return;
         }
         throwVMTypeError(g, innerScope, "expected a string or ArrayBufferView"_s);

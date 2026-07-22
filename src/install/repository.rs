@@ -358,6 +358,10 @@ pub trait RepositoryExt: Sized {
         name: &[u8],
         url: &[u8],
         resolved: &[u8],
+        // When the resolution is `Github` (e.g. a github dep that fell back to
+        // `git clone` after its tarball errored, #19618), check out into the
+        // `@GH@` cache folder so it matches how a github resolution installs.
+        is_github: bool,
     ) -> Result<ExtractData, Error>;
 }
 
@@ -832,6 +836,7 @@ impl RepositoryExt for Repository {
         name: &[u8],
         url: &[u8],
         resolved: &[u8],
+        is_github: bool,
     ) -> Result<ExtractData, Error> {
         // `cache_dir`/`repo_dir` are borrowed views; only `package_dir` is owned.
         bun_analytics::features::git_dependencies
@@ -851,11 +856,19 @@ impl RepositoryExt for Repository {
         }
 
         let folder_name_buf = TlBufs::folder_name_buf();
-        let folder_name = crate::package_manager_real::cached_git_folder_name_print(
-            &mut folder_name_buf[..],
-            resolved,
-            None,
-        )
+        let folder_name = if is_github {
+            crate::package_manager_real::cached_github_folder_name_print(
+                &mut folder_name_buf[..],
+                resolved,
+                None,
+            )
+        } else {
+            crate::package_manager_real::cached_git_folder_name_print(
+                &mut folder_name_buf[..],
+                resolved,
+                None,
+            )
+        }
         .as_bytes();
 
         let package_dir = match bun_sys::Dir::borrow(&cache_dir)

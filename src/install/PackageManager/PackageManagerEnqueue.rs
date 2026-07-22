@@ -649,6 +649,64 @@ pub unsafe fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut Patch
     let _ = this.pending_pre_calc_hashes.fetch_add(1, Ordering::Relaxed);
 }
 
+fn checkout_from_git_clone(
+    this: &mut PackageManager,
+    repo_fd: Fd,
+    clone_id: Task::Id,
+    git_url: &[u8],
+    dep: &Repository,
+    res: Resolution,
+    dependency: &Dependency,
+    id: u32,
+    is_root: bool,
+    install_peer: bool,
+) -> Result<(), bun_core::Error> {
+    let alias = this.lockfile.str_detached(&dependency.name);
+    let resolved = Repository::find_commit(
+        this.env_mut(),
+        this.log_mut(),
+        repo_fd,
+        alias,
+        this.lockfile.str(&dep.committish),
+        clone_id,
+    )?;
+    let checkout_id = Task::Id::for_git_checkout(&git_url, &resolved);
+    let needs_ctx = this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
+    let entry = this
+        .task_queue
+        .get_or_put_context(checkout_id, ())
+        .expect("unreachable");
+
+    if !entry.found_existing {
+        *entry.value_ptr = TaskCallbackList::default();
+    }
+
+    if needs_ctx {
+        let ctx = if is_root {
+            TaskCallbackContext::RootDependency(id)
+        } else {
+            TaskCallbackContext::Dependency(id)
+        };
+
+        entry.value_ptr.push(ctx);
+    }
+
+    if dependency.behavior.is_peer() && !install_peer {
+        this.peer_dependencies.write_item(id)?;
+        return Ok(());
+    }
+
+    if this.has_created_network_task(checkout_id, dependency.behavior.is_required()) {
+        return Ok(());
+    }
+
+    let task = enqueue_git_checkout(this, checkout_id, repo_fd, id, alias, &res, &resolved, None);
+
+    this.task_batch.push(ThreadPool::Batch::from(task));
+
+    Ok(())
+}
+
 /// Q: "What do we do with a dependency in a package.json?"
 /// A: "We enqueue it!"
 pub fn enqueue_dependency_with_main_and_success_fn(
@@ -1199,7 +1257,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
         }
         dependency::version::Tag::Git => {
-            let dep: Repository = *version.git();
+            let dep = *version.git();
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
             // First: see if we already loaded the git package in-memory
@@ -1236,66 +1294,32 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-                let resolved = Repository::find_commit(
-                    this.env_mut(),
-                    this.log_mut(),
-                    repo_fd,
-                    alias,
-                    this.lockfile.str(&dep.committish),
-                    clone_id,
-                )?;
-                let checkout_id = Task::Id::for_git_checkout(url, &resolved);
-
-                let needs_ctx =
-                    this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(checkout_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                if needs_ctx {
-                    entry.value_ptr.push(ctx);
-                }
-
-                if dependency.behavior.is_peer() {
-                    if !install_peer {
-                        this.peer_dependencies.write_item(id)?;
-                        return Ok(());
-                    }
-                }
-
-                if this.has_created_network_task(checkout_id, dependency.behavior.is_required()) {
-                    return Ok(());
-                }
-
-                let task = enqueue_git_checkout(
+                return checkout_from_git_clone(
                     this,
-                    checkout_id,
                     repo_fd,
+                    clone_id,
+                    url,
+                    &dep,
+                    res,
+                    dependency,
                     id,
-                    alias,
-                    &res,
-                    &resolved,
-                    None,
+                    is_root,
+                    install_peer,
                 );
-                this.task_batch.push(ThreadPool::Batch::from(task));
             } else {
                 let entry = this
                     .task_queue
                     .get_or_put_context(clone_id, ())
                     .expect("unreachable");
+
                 if !entry.found_existing {
                     *entry.value_ptr = TaskCallbackList::default();
                 }
                 entry.value_ptr.push(ctx);
 
-                if dependency.behavior.is_peer() {
-                    if !install_peer {
-                        this.peer_dependencies.write_item(id)?;
-                        return Ok(());
-                    }
+                if dependency.behavior.is_peer() && !install_peer {
+                    this.peer_dependencies.write_item(id)?;
+                    return Ok(());
                 }
 
                 if this.has_created_network_task(clone_id, dependency.behavior.is_required()) {
@@ -1304,18 +1328,41 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
                 let task =
                     enqueue_git_clone(this, clone_id, alias, &dep, id, dependency, &res, None);
+
                 this.task_batch.push(ThreadPool::Batch::from(task));
             }
+
             Ok(())
         }
         dependency::version::Tag::Github => {
-            let dep: &Repository = version.github();
+            let dep = version.github();
             let res = Resolution::init(ResolutionTagged::Github(*dep));
 
             // First: see if we already loaded the github package in-memory
             if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
                 success_fn(this, id, pkg_id);
                 return Ok(());
+            }
+
+            // For private repositories, the tarball may fail and fallback to a git clone.
+            // If there is a clone, resolve it via checkout but keeping the Github resolution.
+            {
+                let git_url = run_tasks::alloc_github_git_clone_url(this, dep);
+                let clone_id = Task::Id::for_git_clone(&git_url);
+                if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
+                    return checkout_from_git_clone(
+                        this,
+                        repo_fd,
+                        clone_id,
+                        &git_url,
+                        dep,
+                        res,
+                        dependency,
+                        id,
+                        is_root,
+                        install_peer,
+                    );
+                }
             }
 
             let url = this.alloc_github_url(dep);
@@ -1353,11 +1400,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 entry.value_ptr.push(ctx);
             }
 
-            if dependency.behavior.is_peer() {
-                if !install_peer {
-                    this.peer_dependencies.write_item(id)?;
-                    return Ok(());
-                }
+            if dependency.behavior.is_peer() && !install_peer {
+                this.peer_dependencies.write_item(id)?;
+                return Ok(());
             }
 
             if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
@@ -1379,6 +1424,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let nt: *mut NetworkTask = network_task;
                 enqueue_network_task(this, nt);
             }
+
             Ok(())
         }
         dependency::version::Tag::Symlink | dependency::version::Tag::Workspace => {
@@ -1676,7 +1722,7 @@ pub fn create_extract_task_for_streaming(
     init_extract_task(this, tarball, network_task)
 }
 
-fn enqueue_git_clone(
+pub fn enqueue_git_clone(
     this: &mut PackageManager,
     task_id: Task::Id,
     name: &[u8],
@@ -1805,8 +1851,10 @@ pub fn enqueue_git_checkout(
                     )
                     .expect("unreachable"),
                     url: StringOrTinyString::init_append_if_needed(
-                        // `resolution.tag == Git` for the git-checkout path.
-                        this.lockfile.str(&resolution.git().repo),
+                        // `.repository()` handles both Git and Github resolutions —
+                        // a github dep that fell back to clone (#19618) keeps its
+                        // Github resolution but checks out via this path.
+                        this.lockfile.str(&resolution.repository().repo),
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),

@@ -484,6 +484,7 @@ impl<'a> Task<'a> {
                         git_checkout.name.slice(),
                         git_checkout.url.slice(),
                         git_checkout.resolved.slice(),
+                        git_checkout.resolution.tag == bun_install::ResolutionTag::Github,
                     ) {
                         Ok(v) => v,
                         Err(err) => {

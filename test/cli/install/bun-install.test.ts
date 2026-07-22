@@ -64,6 +64,76 @@ async function withContext(
   }
 }
 
+// Helper function to mock a private repository. Works by creating the repo locally and
+// using a binstub to rewrite arguments to git. Requires passing the returned env to bun.
+const mockGitClone = async (ctx, { privateRepository, repositoryUrl }) => {
+  const gitPath = Bun.which("git") ?? "/usr/bin/git";
+
+  // create a mock private repository fixture
+
+  const packageVersion = "9.9.9";
+
+  const privateRepositorityFixturePath = join(ctx.package_dir, privateRepository);
+  await mkdir(privateRepositorityFixturePath);
+
+  await writeFile(
+    join(privateRepositorityFixturePath, "package.json"),
+    JSON.stringify({ name: privateRepository, version: packageVersion }),
+  );
+  await writeFile(join(privateRepositorityFixturePath, "index.js"), `module.exports = "privateGitPackage";`);
+
+  const gitFix = async (...args: string[]) => {
+    await using p = Bun.spawn({
+      cmd: [gitPath, "-c", "user.email=t@bun.sh", "-c", "user.name=bun-test", ...args],
+      cwd: privateRepositorityFixturePath,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if ((await p.exited) !== 0) throw new Error(await p.stderr.text());
+  };
+  await gitFix("init", "-b", "main");
+  await gitFix("add", "-A");
+  await gitFix("commit", "-m", "init");
+
+  // create a git binstub to rewrite our private repo git string
+  // before passing to actual git
+
+  const binariesPath = join(ctx.package_dir, "bin");
+  await mkdir(binariesPath);
+
+  const gitBinstubPath = join(binariesPath, "git");
+
+  await writeFile(
+    gitBinstubPath,
+    `#!/bin/sh
+
+      args=
+
+      # capture any github strings and replace with our mocked repository.
+      for a in "$@"; do
+        if [ "$a" = ${repositoryUrl} ]; then
+          a="${privateRepositorityFixturePath}"
+        fi;
+
+        args="$args $a";
+      done
+
+      # call actual git
+      exec "${gitPath}" $args
+    `,
+  );
+
+  Bun.spawnSync({ cmd: ["chmod", "755", gitBinstubPath], env: bunEnv });
+
+  const env = {
+    ...bunEnv,
+    PATH: `${binariesPath}:${bunEnv.PATH ?? process.env.PATH}`,
+  };
+
+  return { env, packageVersion };
+};
+
 // Default context options for most tests
 const defaultOpts = { linker: "hoisted" as const };
 
@@ -8848,6 +8918,89 @@ describe.concurrent("bun-install", () => {
       expect(err).toContain("warn: InvalidURL");
 
       expect(await exited).toBe(0);
+    });
+  });
+
+  // skip test on windows to avoid writing separate windows-specific shim for `mockGitClone`.
+  // behavior is OS-agnostic so doesn't need platform-specific testing.
+  describe.skipIf(isWindows)("private git repositories", () => {
+    it("falls back to git clone when the tarball 4xxs", async () => {
+      const privateRepository = `private-${Math.random().toString(36).slice(2)}`;
+      const repositoryUrl = `https://github.com/${privateRepository}/repo.git`;
+
+      await withContext(defaultOpts, async ctx => {
+        let urls: string[] = [];
+
+        setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+
+        const { env, packageVersion } = await mockGitClone(ctx, { privateRepository, repositoryUrl });
+
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "app",
+            version: "1.0.0",
+            dependencies: {
+              privateGitPackage: `git+${repositoryUrl}`,
+            },
+          }),
+        );
+
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+
+        // Resolving dependencies
+        // Resolved, downloaded and extracted [3]
+        // Saved lockfile
+        let err = await stderr.text();
+        expect(err).toContain("Saved lockfile");
+
+        // bun install v1.4.0 (9278a1d35)
+        //
+        // + privateGitPackage@github:private-fpnib1pvev/repo#0f2edc4e2f080edea1ad3997477f3c6fa7612fa0
+        //
+        // 1 package installed [507.00ms]
+        let out = await stdout.text();
+        out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+        out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+        expect(out.split(/\r?\n/)).toEqual([
+          expect.stringContaining("bun install v1."),
+          "",
+          `+ privateGitPackage@github:${privateRepository}/repo`,
+          "",
+          "1 package installed",
+        ]);
+
+        expect(await exited).toBe(0);
+
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules", "privateGitPackage"))).toContain(
+          "package.json",
+        );
+        const package_json = await file(
+          join(ctx.package_dir, "node_modules", "privateGitPackage", "package.json"),
+        ).json();
+        expect(package_json.name).toBe(privateRepository);
+        expect(package_json.version).toBe(packageVersion);
+
+        // ensure resolution matches despite using the fallback clone method
+        const { stderr: frozenErr } = spawn({
+          cmd: [bunExe(), "install", "--frozen-lockfile"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+
+        err = await frozenErr.text();
+        expect(err).not.toContain("lockfile had changes, but lockfile is frozen");
+      });
     });
   });
 

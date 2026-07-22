@@ -2027,7 +2027,6 @@ fn note_compile_cache_parse_failure(
     }
 }
 
-
 /// `ModuleLoader.transpileSourceCode(...)` — the runtime-transpiler path:
 /// read file → `Transpiler::parse`
 /// → `js_printer::print` → `ResolvedSource`.

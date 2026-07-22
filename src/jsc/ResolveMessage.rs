@@ -267,8 +267,7 @@ impl ResolveMessage {
         // cases.
         let node_message = self.node_message();
         let message: &[u8] = node_message.as_deref().unwrap_or(&self.msg.data.text);
-        if write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(message)).is_err()
-        {
+        if write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(message)).is_err() {
             return global.throw_out_of_memory_value();
         }
         let mut str = ZigString::init(&text);

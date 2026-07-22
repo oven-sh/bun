@@ -583,14 +583,26 @@ bool CallCtx::PreFault() {
         sys_ == SYS_NtDeviceIoControlFile) {
       int8_t xi = kHooks[sys_].ioctlIndex;
       int8_t ii = kHooks[sys_].iosbIndex;
-      int8_t bi = kHooks[sys_].bufIndex;
-      if (xi >= 0 && ii >= 0 && bi >= 0 && xi < argc_ && ii < argc_ && bi < argc_ &&
+      // The AFD_RECV_INFO lives in InputBuffer (argument 6), an IN param -
+      // NOT the codegen bufIndex, which targets the transfer OUTPUT buffer
+      // and is -1 for ioctls (that misdirection silently skipped the arm).
+      const int kAfdInfoArg = 6;
+      if (xi >= 0 && ii >= 0 && xi < argc_ && ii < argc_ && kAfdInfoArg < argc_ &&
           ((ULONG)args_[xi] == 0x12017 || (ULONG)args_[xi] == 0x1201B)) {
         __try {
-          auto* info = (ULONG_PTR*)args_[bi]; // AFD_RECV_INFO{WSABUF* arr; ULONG cnt;...}
+          auto* info = (ULONG_PTR*)args_[kAfdInfoArg]; // AFD_RECV_INFO{WSABUF* arr; ULONG cnt;...}
           if (info && info[0]) {
             RememberRecv(args_[ii], info[0], (ULONG)info[1], (ULONG)injected_);
             deferredRecv_ = true; // poison happens at completion time
+            if (g_logArgs) {
+              char note[96];
+              _snprintf_s(note, sizeof note, _TRUNCATE,
+                          "# recv-arm iosb=%llx apcarg=%llx bufs=%lu\n",
+                          (unsigned long long)args_[ii],
+                          (unsigned long long)args_[kHooks[sys_].apcIndex >= 0 ? kHooks[sys_].apcIndex : ii],
+                          (unsigned long)info[1]);
+              LogNote(note);
+            }
           }
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
       }
@@ -614,9 +626,9 @@ bool CallCtx::PreFault() {
         // NB: for ANY ioctl the info-struct length is never shrunk (a
         // malformed call the OS never makes) - only the AFD_SEND payload
         // is followed. Non-AFD ioctls therefore never get a Short mangle.
-        if (code == 0x1201F /* AFD_SEND */ && kHooks[sys_].bufIndex >= 0) {
+        if (code == 0x1201F /* AFD_SEND */ && argc_ > 6) {
           __try {
-            auto* info = (ULONG_PTR*)args_[kHooks[sys_].bufIndex]; // AFD_SEND_INFO
+            auto* info = (ULONG_PTR*)args_[6]; // AFD_SEND_INFO (InputBuffer, arg 6)
             if (info && info[0]) {
               ULONG* wsabuf = (ULONG*)info[0]; // WSABUF{ ULONG len; CHAR* buf; }
               if (wsabuf[0] > 1) {
@@ -777,11 +789,11 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
                            ((ULONG)args_[xi] == 0x12017 /* AFD_RECV */ ||
                             (ULONG)args_[xi] == 0x1201B /* AFD_RECV_DATAGRAM */);
             if (afdRecv) skip = false; // peer data, always in scope
-            if (!skip && afdRecv && bi >= 0 && bi < argc_ && args_[bi] && n > 0) {
+            if (!skip && afdRecv && argc_ > 6 && args_[6] && n > 0) {
               applied = true;
               uint32_t st = (uint32_t)injected_ * 2654435761u + (uint32_t)n;
               __try {
-                auto* info = (ULONG_PTR*)args_[bi];        // AFD_RECV_INFO
+                auto* info = (ULONG_PTR*)args_[6];        // AFD_RECV_INFO (InputBuffer, arg 6)
                 auto* wsa = (unsigned char*)info[0];         // WSABUF array
                 ULONG count = (ULONG)info[1];               // BufferCount
                 size_t left = n;
@@ -837,8 +849,24 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
         ULONG n = args_[3] ? *(ULONG*)args_[3] : 0;
         if (n > 512) n = 512;
         for (ULONG i = 0; arr && i < n; i++) {
+          ULONG_PTR key = *(ULONG_PTR*)(arr + i * 32 + 0);
           ULONG_PTR apc = *(ULONG_PTR*)(arr + i * 32 + 8);
+          ULONG_PTR st = *(ULONG_PTR*)(arr + i * 32 + 16);
           ULONG_PTR info = *(ULONG_PTR*)(arr + i * 32 + 24);
+          // Diagnostic: which field carries the recv's IOSB? Log each
+          // completion's raw fields and whether ANY field matches a
+          // pending recv, so the layout is read from data, not assumed.
+          if (g_logArgs) {
+            int hit = -1;
+            if (g_pending[PendingSlot(key)].iosb == key) hit = 0;
+            else if (g_pending[PendingSlot(apc)].iosb == apc) hit = 1;
+            char note[128];
+            _snprintf_s(note, sizeof note, _TRUNCATE,
+                        "# cq-entry key=%llx apc=%llx st=%llx info=%llx match=%d\n",
+                        (unsigned long long)key, (unsigned long long)apc,
+                        (unsigned long long)st, (unsigned long long)info, hit);
+            LogNote(note);
+          }
           if (apc && PoisonCompletedRecv(apc, info)) LogNote("# recv completion poisoned at dequeue\n");
         }
       } __except (EXCEPTION_EXECUTE_HANDLER) {}

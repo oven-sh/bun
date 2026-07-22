@@ -235,10 +235,11 @@ exactly our levers. Deprioritize UAF/ordering signatures.
 Rules can key socket ioctls by decoded AFD code (`afd:SEND`, `afd:RECV`) at
 any callsite, and the runtime follows the WSABUF indirection.
 
-- `afd:SEND` + `mangle:short` (halve the first WSABUF.len pre-call): FIRES
-  and is a genuine partial send. Verified clean 3/3 at several depths against
-  the http-load workload - bun's socket writer retries the remainder
-  correctly. Partial sends on the fetch/HTTP write path: swept clean.
+- `afd:SEND` + `mangle:short`: WITHDRAWN result. The earlier 'fired, verified
+  clean' probes were reading the AFD_SEND_INFO through the codegen bufIndex,
+  which is -1 for ioctls, so the WSABUF.len shrink never ran - `fired=1`
+  meant only that the rule matched, not that the payload changed. Partial
+  sends were NOT actually tested. (Root cause below; retest required.)
 - `afd:RECV` + `mangle:garbage`: does NOT fire, and correctly so - overlapped
   WSARecv returns STATUS_PENDING and the data lands LATER via the IOCP
   completion, so an exit-time mangle finds no synchronous success to

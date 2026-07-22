@@ -497,8 +497,11 @@ function nodeGetValidStdio(stdio, sync?) {
       acc.push({ type: "pipe", handle: ipc, ipc: true });
     } else if (stdio === "inherit") {
       acc.push({ type: "inherit", fd: i });
-    } else if (typeof stdio === "number" || typeof stdio.fd === "number") {
-      acc.push({ type: "fd", fd: typeof stdio === "number" ? stdio : stdio.fd });
+    } else if (typeof stdio === "number") {
+      acc.push({ type: "fd", fd: stdio });
+    } else if (typeof stdio.fd === "number") {
+      const { fd } = stdio;
+      acc.push({ type: "fd", fd });
     } else if (isArrayBufferView(stdio) || typeof stdio === "string") {
       if (!sync) {
         cleanup();

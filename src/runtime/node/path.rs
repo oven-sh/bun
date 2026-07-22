@@ -970,7 +970,7 @@ pub(crate) fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     &path[_start_dot.._end]
 }
 
-pub use bun_paths::is_sep_posix_t;
+pub use bun_paths::resolve_path::is_sep_posix_t;
 // Node `path.win32.isPathSeparator` accepts BOTH `/` and `\` — semantically
 // `is_sep_any_t`, NOT `is_sep_win32_t` (which is `\`-only). Keep the Node name.
 pub use bun_paths::is_sep_any_t as is_sep_windows_t;
@@ -1085,10 +1085,10 @@ fn _format_t<'a, T: PathCharCwd>(
     //     `${pathObject.name || ''}${formatExt(pathObject.ext)}`;
     let mut base_len = base.len();
     // Borrowck: track range into buf instead of slice.
-    let base_or_name_ext_range: (usize, usize);
-    if base_len > 0 {
+
+    let base_or_name_ext_range: (usize, usize) = if base_len > 0 {
         memmove(&mut buf[0..base_len], base);
-        base_or_name_ext_range = (0, base_len);
+        (0, base_len)
     } else {
         let formatted_ext_len = {
             // Borrowck: inline format_ext_t to avoid overlapping &mut.
@@ -1116,12 +1116,12 @@ fn _format_t<'a, T: PathCharCwd>(
         if name_len > 0 {
             memmove(&mut buf[0..name_len], _name);
         }
-        base_or_name_ext_range = if buf_size > 0 {
+        if buf_size > 0 {
             (0, buf_size)
         } else {
             (0, base_len)
-        };
-    }
+        }
+    };
 
     // Translated from the following JS code:
     //   if (!dir) {

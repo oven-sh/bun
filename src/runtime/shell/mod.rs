@@ -116,12 +116,8 @@ pub mod builtins {
 }
 
 // ─── re-exports ──────────────────────────────────────────────────────────────
-pub use env_map::EnvMap;
 pub use env_str::EnvStr;
-pub use interpreter::{ExitCode, Interpreter, Node, NodeId, ShellExecEnv};
-pub use io::IO;
-pub use io_writer as IOWriter;
-pub use ref_counted_str::RefCountedStr;
+pub use interpreter::{ExitCode, Interpreter};
 pub use yield_::Yield;
 
 /// Forward-decl task payloads for `runtime::dispatch::run_task` arms whose
@@ -136,10 +132,7 @@ pub mod subproc;
 
 // ─── shell escaping (canonical impl lives in bun_shell_parser) ───────────────
 // Re-export so `crate::shell::*` callers resolve without duplicating the table.
-pub use bun_shell_parser::{
-    BACKSLASHABLE_CHARS, SPECIAL_CHARS, SPECIAL_CHARS_TABLE, escape_8bit,
-    needs_escape_utf8_ascii_latin1, needs_escape_utf16,
-};
+pub use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
 // ─── AST surface (lifetime-erased aliases over `bun_shell_parser::ast`) ──────
 // State nodes hold `*const ast::*` raw pointers into the bumpalo-allocated AST
@@ -153,7 +146,7 @@ pub use bun_shell_parser::{
 pub mod ast {
     pub use bun_shell_parser::parse::SmolList;
     use bun_shell_parser::parse::ast as p;
-    pub use p::{BinaryOp, CondExprOp, IoKind, JSBuf, RedirectFlags};
+    pub use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
 
     pub type Script = p::Script<'static>;
     pub type Stmt = p::Stmt<'static>;
@@ -169,8 +162,6 @@ pub mod ast {
     pub type Assign = p::Assign<'static>;
     pub type Atom = p::Atom<'static>;
     pub type SimpleAtom = p::SimpleAtom<'static>;
-    pub type CompoundAtom = p::CompoundAtom<'static>;
-    pub type CmdOrAssigns = p::CmdOrAssigns<'static>;
 }
 
 // Canonical 4-variant shell error enum. Defined in

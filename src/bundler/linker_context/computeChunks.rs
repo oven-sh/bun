@@ -687,10 +687,6 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
     Ok(sorted_chunks.to_owned_slice())
 }
 
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;
-
 // Local type aliases referenced above.
 use crate::chunk;
 use crate::options::{Loader, Target};

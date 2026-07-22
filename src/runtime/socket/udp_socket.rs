@@ -7,8 +7,8 @@ use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, Ref as JscRef,
-    StringJsc, SysErrorJsc, SystemError,
+    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
+    SysErrorJsc, SystemError,
 };
 use bun_ptr::BackRef;
 
@@ -534,7 +534,6 @@ pub struct UDPSocket {
     pub global_this: BackRef<JSGlobalObject>,
     pub this_value: JsCell<JsRef>,
 
-    pub jsc_ref: JscRef,
     pub poll_ref: JsCell<KeepAlive>,
     /// if marked as closed the socket pointer may be stale
     pub closed: Cell<bool>,
@@ -544,7 +543,6 @@ pub struct UDPSocket {
     /// replaces the config. POSIX-only, like the registry itself.
     #[cfg(not(windows))]
     registered_fd: Cell<Option<c_int>>,
-    pub vm: *mut VirtualMachine,
 }
 
 impl UDPSocket {
@@ -571,15 +569,12 @@ impl UDPSocket {
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
-        let vm = global_this.bun_vm_ptr();
         let this_ptr = Self::new(Self {
             socket: Cell::new(None),
             config: JsCell::new(UDPSocketConfig::default()),
             global_this: BackRef::new(global_this),
             loop_: uws::Loop::get(),
-            vm,
             this_value: JsCell::new(JsRef::empty()),
-            jsc_ref: JscRef::init(),
             poll_ref: JsCell::new(KeepAlive::init()),
             closed: Cell::new(false),
             connect_info: Cell::new(None),
@@ -2311,7 +2306,7 @@ pub fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
 
         // Numeric literals only — the JS layer resolves names before calling.
         let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
-        let socklen: libc::socklen_t;
+
         // SAFETY: storage is large enough for sockaddr_in; src is NUL-terminated.
         let addr4 = unsafe { &mut *std::ptr::from_mut(&mut storage).cast::<sockaddr_in>() };
         // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in_addr-sized storage.
@@ -2322,10 +2317,10 @@ pub fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
                 (&raw mut addr4.addr).cast::<c_void>(),
             )
         };
-        if parsed_v4 == 1 {
+        let socklen: libc::socklen_t = if parsed_v4 == 1 {
             addr4.family = inet::AF_INET as inet::sa_family_t;
             addr4.port = htons(port);
-            socklen = size_of::<sockaddr_in>() as libc::socklen_t;
+            size_of::<sockaddr_in>() as libc::socklen_t
         } else {
             // SAFETY: storage is large enough for sockaddr_in6.
             let addr6 = unsafe { &mut *std::ptr::from_mut(&mut storage).cast::<sockaddr_in6>() };
@@ -2348,8 +2343,8 @@ pub fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
             }
             addr6.family = inet::AF_INET6 as inet::sa_family_t;
             addr6.port = htons(port);
-            socklen = size_of::<sockaddr_in6>() as libc::socklen_t;
-        }
+            size_of::<sockaddr_in6>() as libc::socklen_t
+        };
 
         // IPV6_V6ONLY, SO_REUSEADDR/SO_REUSEPORT and bind(2) go through bsd.c
         // so this doesn't fork its platform gate.

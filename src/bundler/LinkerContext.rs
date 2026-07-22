@@ -148,9 +148,6 @@ pub use crate::linker_context::prepare_css_asts_for_chunk::{
 pub use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 pub use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ParseTask;
-
 pub struct LinkerContext<'a> {
     pub parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,

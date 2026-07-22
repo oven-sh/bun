@@ -12,7 +12,6 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Mv {
-    pub opts: Opts,
     pub args: MvArgs,
     pub state: MvState,
 }
@@ -350,7 +349,7 @@ impl Mv {
         let mut idx = 0usize;
         while idx < argc {
             let flag = Builtin::of(interp, cmd).arg_bytes(idx);
-            match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
+            match Self::parse_flag(flag) {
                 MvFlag::Done => {
                     let filepath_args = argc - idx;
                     if filepath_args < 2 {
@@ -369,29 +368,13 @@ impl Mv {
         Err(MvParseError::ShowUsage)
     }
 
-    fn parse_flag(opts: &mut Opts, flag: &[u8]) -> MvFlag {
+    fn parse_flag(flag: &[u8]) -> MvFlag {
         if flag.is_empty() || flag[0] != b'-' {
             return MvFlag::Done;
         }
         for &ch in &flag[1..] {
             match ch {
-                b'f' => {
-                    opts.force_overwrite = true;
-                    opts.interactive_mode = false;
-                    opts.no_overwrite = false;
-                }
-                b'h' => opts.no_dereference = true,
-                b'i' => {
-                    opts.interactive_mode = true;
-                    opts.force_overwrite = false;
-                    opts.no_overwrite = false;
-                }
-                b'n' => {
-                    opts.no_overwrite = true;
-                    opts.force_overwrite = false;
-                    opts.interactive_mode = false;
-                }
-                b'v' => opts.verbose_output = true,
+                b'f' | b'h' | b'i' | b'n' | b'v' => {}
                 _ => return MvFlag::IllegalOption(b"-"),
             }
         }
@@ -588,31 +571,5 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
         // is a live `ShellMvBatchedTask` held in `MvState::Executing::tasks`.
         let this = unsafe { this.as_ref() }.unwrap();
         Mv::batched_move_task_done(interp, this.cmd, this.idx);
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct Opts {
-    /// `-f` — do not prompt before overwriting (default).
-    pub force_overwrite: bool,
-    /// `-h` — if target is a symlink to a directory, do not follow it.
-    pub no_dereference: bool,
-    /// `-i` — prompt before overwriting.
-    pub interactive_mode: bool,
-    /// `-n` — do not overwrite an existing file.
-    pub no_overwrite: bool,
-    /// `-v` — verbose.
-    pub verbose_output: bool,
-}
-
-impl Default for Opts {
-    fn default() -> Self {
-        Self {
-            force_overwrite: true,
-            no_dereference: false,
-            interactive_mode: false,
-            no_overwrite: false,
-            verbose_output: false,
-        }
     }
 }

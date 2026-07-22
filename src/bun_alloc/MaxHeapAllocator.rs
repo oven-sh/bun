@@ -50,16 +50,6 @@ impl MaxHeapAllocator {
         Some(self.ptr?.as_ptr())
     }
 
-    pub fn resize(
-        &mut self,
-        _buf: &mut [u8],
-        _alignment: Alignment,
-        _new_len: usize,
-        _ret_addr: usize,
-    ) -> bool {
-        panic!("not implemented");
-    }
-
     /// No-op (single owned buffer freed on Drop).
     pub fn free(&mut self, _buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {}
 
@@ -81,10 +71,6 @@ impl MaxHeapAllocator {
             capacity: 0,
             len: 0,
         }
-    }
-
-    pub fn is_instance(alloc: &dyn Allocator) -> bool {
-        alloc.is::<Self>()
     }
 }
 
@@ -120,8 +106,8 @@ impl Drop for MaxHeapScope<'_> {
     }
 }
 
-// `Allocator` is a marker trait carrying `type_id()`; the vtable methods above
-// are inherent (no dynamic dispatch needed for a single-allocation arena).
+// `Allocator` is a marker trait; the vtable methods above are inherent (no
+// dynamic dispatch needed for a single-allocation arena).
 impl Allocator for MaxHeapAllocator {}
 
 impl Drop for MaxHeapAllocator {

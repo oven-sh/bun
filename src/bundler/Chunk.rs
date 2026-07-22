@@ -1251,30 +1251,10 @@ impl EntryPoint {
     }
 
     #[inline]
-    pub fn is_html(self) -> bool {
-        (self.0 >> 63) & 1 != 0
-    }
-
-    #[inline]
-    pub fn set_source_index(&mut self, v: u32) {
-        self.0 = (self.0 & !0xFFFF_FFFF) | (v as u64);
-    }
-
-    #[inline]
     pub fn set_entry_point_id(&mut self, v: EntryPointId) {
         debug_assert!((v as u64) <= Self::ENTRY_POINT_ID_MASK);
         self.0 = (self.0 & !(Self::ENTRY_POINT_ID_MASK << 32))
             | (((v as u64) & Self::ENTRY_POINT_ID_MASK) << 32);
-    }
-
-    #[inline]
-    pub fn set_is_entry_point(&mut self, v: bool) {
-        self.0 = (self.0 & !(1 << 62)) | ((v as u64) << 62);
-    }
-
-    #[inline]
-    pub fn set_is_html(&mut self, v: bool) {
-        self.0 = (self.0 & !(1 << 63)) | ((v as u64) << 63);
     }
 }
 
@@ -1329,10 +1309,6 @@ impl Drop for CssChunk {
         unsafe { asts.set_len(0) };
     }
 }
-
-/// Alias for `CssImportOrderKind`; callers that switch on `css_import.kind`
-/// reference it via this name, so re-export it here.
-pub type CssImportKind = CssImportOrderKind;
 
 pub struct CssImportOrder {
     pub conditions: Vec<bun_css::ImportConditions>,
@@ -1532,17 +1508,7 @@ pub mod cross_chunk_import {
     pub(crate) type ItemList = super::CrossChunkImportItemList;
 }
 
-impl CrossChunkImportItem {
-    pub fn less_than(_: (), a: &CrossChunkImportItem, b: &CrossChunkImportItem) -> bool {
-        strings::order(&a.export_alias, &b.export_alias) == core::cmp::Ordering::Less
-    }
-}
-
 impl CrossChunkImport {
-    pub fn less_than(_: (), a: &CrossChunkImport, b: &CrossChunkImport) -> bool {
-        a.chunk_index < b.chunk_index
-    }
-
     pub fn sorted_cross_chunk_imports(
         list: &mut Vec<CrossChunkImport>,
         chunks: &mut [Chunk],
@@ -1594,10 +1560,6 @@ impl Content {
     pub fn is_css(&self) -> bool {
         matches!(self, Content::Css(_))
     }
-    #[inline]
-    pub fn is_html(&self) -> bool {
-        matches!(self, Content::Html)
-    }
     bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
     bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk);
 
@@ -1625,11 +1587,6 @@ impl Content {
         }
     }
 }
-
-// Re-exports
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;
 
 pub mod bun_renamer {
     pub use bun_js_printer::renamer::*;

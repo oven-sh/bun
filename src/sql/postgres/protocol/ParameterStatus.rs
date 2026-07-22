@@ -21,10 +21,4 @@ impl ParameterStatus {
             value: reader.read_z()?,
         })
     }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(NewReader { wrapped: context })
-    }
 }

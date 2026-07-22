@@ -174,6 +174,22 @@ static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 
+// When one of the side-effecting env vars is assigned, drop DontEnum on its
+// accessor so {...process.env} / Object.keys pick it up. Calls the static
+// JSObject::deleteProperty to avoid re-entering JSProcessEnv::deleteProperty,
+// which would reinstall the accessor as DontEnum mid-setter.
+static void promoteSideEffectingAccessorToEnumerable(VM& vm, JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
+{
+    unsigned attributes = 0;
+    JSValue existing = object->getDirect(vm, propertyName, attributes);
+    if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum))
+        return;
+    DeletePropertySlot deleteSlot;
+    JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot);
+    object->putDirectCustomAccessor(vm, propertyName, existing,
+        attributes & ~JSC::PropertyAttribute::DontEnum);
+}
+
 // In Node.js, the "TZ" environment variable is special.
 // Setting it automatically updates the timezone.
 // We also expose an explicit setTimeZone function in bun:jsc
@@ -194,10 +210,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
     auto* builtinNames = &clientData->builtinNames();
     auto privateName = builtinNames->dataPrivateName();
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
-
-    // TODO: this is an assertion failure
-    // Recreate this because the property visibility needs to be set correctly
-    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    promoteSideEffectingAccessorToEnumerable(vm, globalObject, object, propertyName);
     return true;
 }
 
@@ -265,10 +278,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * gl
 
     const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
-
-    // TODO: this is an assertion failure
-    // Recreate this because the property visibility needs to be set correctly
-    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    promoteSideEffectingAccessorToEnumerable(vm, globalObject, object, propertyName);
     return true;
 }
 
@@ -313,10 +323,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
 
     const auto& privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
-
-    // TODO: this is an assertion failure
-    // Recreate this because the property visibility needs to be set correctly
-    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    promoteSideEffectingAccessorToEnumerable(vm, globalObject, object, propertyName);
     return true;
 }
 
@@ -843,6 +850,11 @@ private:
 };
 
 const JSC::ClassInfo JSProcessEnv::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnv) };
+
+bool isProcessEnvClassInfo(const JSC::ClassInfo* info)
+{
+    return info == JSProcessEnv::info() || info == JSSharedEnvMap::info();
+}
 
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {

@@ -281,13 +281,13 @@ it("process.env.TZ reverts on delete / empty / invalid instead of staying stuck"
     const target = initial.zone === "Asia/Tokyo" ? "America/Los_Angeles" : "Asia/Tokyo";
 
     process.env.TZ = target;
-    const afterSet = snap();
+    const afterSet = { ...snap(), enumerable: Object.keys(process.env).includes("TZ") };
 
     delete process.env.TZ;
     const afterDelete = { ...snap(), value: process.env.TZ };
 
     process.env.TZ = target;
-    const afterReSet = snap();
+    const afterReSet = { ...snap(), spread: { ...process.env }.TZ };
 
     process.env.TZ = "Not/A/Real/Zone";
     const afterInvalid = snap();
@@ -296,7 +296,9 @@ it("process.env.TZ reverts on delete / empty / invalid instead of staying stuck"
     process.env.TZ = "";
     const afterEmpty = snap();
 
-    process.stdout.write(JSON.stringify({ initial, target, afterSet, afterDelete, afterReSet, afterInvalid, afterEmpty }));
+    const cloned = structuredClone(process.env);
+
+    process.stdout.write(JSON.stringify({ initial, target, afterSet, afterDelete, afterReSet, afterInvalid, afterEmpty, cloneIsPlainObject: Object.getPrototypeOf(cloned) === Object.prototype }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
@@ -309,16 +311,18 @@ it("process.env.TZ reverts on delete / empty / invalid instead of staying stuck"
   expect({ ...out, exitCode }).toEqual({
     initial: out.initial,
     target: out.target,
-    afterSet: { zone: out.target, offset: expect.any(Number) },
+    afterSet: { zone: out.target, offset: expect.any(Number), enumerable: true },
     // Previously stayed at `target`: the accessor was removed and the WTF
     // override never cleared.
     afterDelete: { ...out.initial, value: undefined },
     // Previously a plain data write; the setter never fired again after delete.
-    afterReSet: { zone: out.target, offset: out.afterSet?.offset },
+    // The var stays enumerable after re-set so {...process.env} carries it.
+    afterReSet: { zone: out.target, offset: out.afterSet?.offset, spread: out.target },
     // Unresolvable and empty both drop the override rather than keeping the
     // previous zone.
     afterInvalid: out.initial,
     afterEmpty: out.initial,
+    cloneIsPlainObject: true,
     exitCode: 0,
   });
   expect(out.afterSet.zone).not.toBe(out.initial.zone);

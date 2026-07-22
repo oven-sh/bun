@@ -1282,8 +1282,17 @@ test.skipIf(!isLinux)(
     }
     expect(loadEnd).toBeGreaterThan(4096);
 
+    // `ulimit -c 0` keeps the intentionally-crashing deep-truncation case from
+    // leaving a core file that the CI runner would flag; test is Linux-only so
+    // `/bin/sh` is always available.
     async function run(path: string) {
-      await using proc = Bun.spawn({ cmd: [path], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -c 0 && exec "$0"`, path],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode, signalCode: proc.signalCode };
     }

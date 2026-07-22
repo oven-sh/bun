@@ -336,7 +336,7 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 /// to `AnyServerTag` here.
 #[inline]
 fn any_server_from_packed(packed: u64) -> AnyServer {
-    let repr = bun_ptr::TaggedPointer::from(packed);
+    let repr = bun_ptr::TaggedPtr::from(packed);
     let tag = match repr.data() {
         1024 => AnyServerTag::HTTPServer,
         1023 => AnyServerTag::HTTPSServer,
@@ -1354,8 +1354,15 @@ impl NodeHTTPResponse {
         {
             return Ok(JSValue::FALSE);
         }
-        self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
-        raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+        // Body already delivered: nothing to buffer, and re-arming onData would
+        // overwrite a pipelined request's userData on the shared HttpResponseData.
+        // pause_socket() still runs so pausePipelineReads can gate the fd.
+        if self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
+            self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
+            raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+        }
 
         // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
         #[cfg(not(windows))]
@@ -1419,8 +1426,15 @@ impl NodeHTTPResponse {
         {
             return JSValue::FALSE;
         }
-        self.set_on_aborted_handler();
-        raw.on_data(on_data_shim, self.as_ctx_ptr());
+        // Body already delivered: re-arming onData/onTimeout would overwrite a
+        // pipelined request's userData on the shared HttpResponseData. The drain
+        // below still runs so a body buffered-while-paused reaches its own caller.
+        if self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
+            self.set_on_aborted_handler();
+            raw.on_data(on_data_shim, self.as_ctx_ptr());
+        }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
         let mut result: JSValue = JSValue::TRUE;
 
@@ -1806,11 +1820,25 @@ impl NodeHTTPResponse {
             return false;
         }
 
-        // Finish any zero-copy write before telling JS we're drained.
+        // Partial pinned progress: return false so onWritable's close gate
+        // waits (bufferedAmount does not count the pinned tail). Zero progress
+        // after the peer's FIN is handed to the buffered path (spill) so the
+        // sibling `flushed == 0 && RECEIVED_FIN` close in HttpContext::
+        // onWritable decides; without FIN (SSL WANT_READ, ENOBUFS) retries.
+        let pinned_before = self.pending_pinned_write.get().remaining.len();
         if self.drain_pending_pinned_write(response) {
+            if self.pending_pinned_write.get().remaining.len() < pinned_before {
+                return false;
+            }
+            if response.state().is_node_received_fin() {
+                self.spill_pending_pinned_write(self.server.global_this());
+            }
             return true;
         }
 
+        // Drained: disarm so onEnd's `onWritable != nullptr` probe does not see
+        // a stale shim (callOnWritable would restore it); writes re-arm.
+        response.clear_on_writable();
         response.corked(|| self.on_drain_corked(offset));
         // return true means we may have something to drain
         true
@@ -2045,33 +2073,42 @@ impl NodeHTTPResponse {
                     bytes_len
                 );
                 // For buffers, pin so `transfer()` copies instead of detaching.
+                // Resizable (non-shared) buffers are spilled: `resize()` mprotect()s
+                // trimmed pages PROT_NONE and `pin()` doesn't prevent it.
                 let pinned_value = if is_buffer && input_value.is_cell() {
-                    if input_value.as_pinned_arraybuffer(global_object).is_some() {
-                        input_value
-                    } else {
-                        JSValue::ZERO
+                    match input_value.as_pinned_arraybuffer(global_object) {
+                        Some(ab) if ab.resizable && !ab.shared => {
+                            input_value.unpin_array_buffer();
+                            None
+                        }
+                        Some(_) => Some(input_value),
+                        None => Some(JSValue::ZERO),
                     }
                 } else {
-                    JSValue::ZERO
+                    Some(JSValue::ZERO)
                 };
-                let remaining = ptr::slice_from_raw_parts(
-                    // SAFETY: consumed < bytes_len, so the add is in-bounds.
-                    unsafe { bytes.as_ptr().add(consumed) },
-                    bytes_len - consumed,
-                );
-                // `string_or_buffer` owns the bytes (WTFStringImpl ref /
-                // borrowed ArrayBuffer / encoded Vec); move it so it outlives
-                // the write.
-                drop(
-                    self.pending_pinned_write_owner
-                        .replace(core::mem::take(&mut string_or_buffer)),
-                );
-                self.pending_pinned_write.set(PendingPinnedWrite {
-                    remaining,
-                    pinned_value,
-                });
-                if input_value.is_cell() {
-                    js::pending_write_buffer_set_cached(js_this, global_object, input_value);
+                if let Some(pinned_value) = pinned_value {
+                    let remaining = ptr::slice_from_raw_parts(
+                        // SAFETY: consumed < bytes_len, so the add is in-bounds.
+                        unsafe { bytes.as_ptr().add(consumed) },
+                        bytes_len - consumed,
+                    );
+                    // `string_or_buffer` owns the bytes (WTFStringImpl ref /
+                    // borrowed ArrayBuffer / encoded Vec); move it so it
+                    // outlives the write.
+                    drop(
+                        self.pending_pinned_write_owner
+                            .replace(core::mem::take(&mut string_or_buffer)),
+                    );
+                    self.pending_pinned_write.set(PendingPinnedWrite {
+                        remaining,
+                        pinned_value,
+                    });
+                    if input_value.is_cell() {
+                        js::pending_write_buffer_set_cached(js_this, global_object, input_value);
+                    }
+                } else {
+                    raw_response.spill_body(&bytes[consumed..]);
                 }
                 js::on_writable_set_cached(
                     js_this,

@@ -19,6 +19,7 @@ use bun_sys::{self, Fd, FdExt, Mode, SystemError};
 use bun_sys_jsc::ErrorJsc as _;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::c_int;
+#[cfg(windows)]
 use core::ffi::c_void;
 use core::marker::ConstParamTy;
 
@@ -68,10 +69,6 @@ pub struct CopyFile<'a> {
     pub mkdirp_if_not_exists: bool,
     pub destination_mode: Option<Mode>,
 }
-
-pub type ResultType = Result<SizeType, crate::Error>;
-
-pub type Callback = fn(ctx: *mut c_void, len: ResultType);
 
 impl MkdirpTarget for CopyFile<'_> {
     fn mkdirp_if_not_exists(&self) -> bool {
@@ -1331,7 +1328,7 @@ impl<'a> CopyFileWindows<'a> {
                 if is_reading {
                     bun_sys::O::RDONLY
                 } else {
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT
+                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC
                 },
                 0,
             ) {
@@ -1872,4 +1869,3 @@ fn unsupported_non_regular_file_error() -> SystemError {
 
 pub type CopyFilePromiseTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;
-pub type CopyFilePromiseTaskEventLoopTask = jsc::EventLoopTask;

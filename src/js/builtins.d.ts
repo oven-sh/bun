@@ -476,6 +476,15 @@ declare interface UnderlyingSource {
   $stream?: ReadableStream;
 }
 
+declare interface AddEventListenerOptions {
+  /**
+   * Private symbol read by the native EventTarget. A listener registered with it still
+   * runs after another listener called `stopImmediatePropagation()`. Mirrors Node.js's
+   * internal `kResistStopPropagation`.
+   */
+  $kResistStopPropagation?: boolean;
+}
+
 declare class OutOfMemoryError {
   constructor();
 }

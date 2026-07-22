@@ -118,7 +118,6 @@ pub mod js_bundler {
     pub struct Config {
         pub target: Target,
         pub entry_points: StringSet,
-        pub hot: bool,
         pub react_fast_refresh: bool,
         pub react_compiler: bun_ast::runtime::ReactCompilerMode,
         pub react_compiler_parse_test_pragmas: bool,
@@ -128,7 +127,6 @@ pub mod js_bundler {
         pub dir: OwnedString,
         pub outdir: OwnedString,
         pub rootdir: OwnedString,
-        pub serve: Serve,
         pub jsx: api::Jsx,
         pub force_node_env: options::ForceNodeEnv,
         pub code_splitting: bool,
@@ -155,7 +153,6 @@ pub mod js_bundler {
         pub css_chunking: bool,
         pub drop: StringSet,
         pub features: StringSet,
-        pub has_any_on_before_parse: bool,
         pub throw_on_error: bool,
         pub env_behavior: api::DotEnvBehavior,
         pub env_prefix: OwnedString,
@@ -177,7 +174,6 @@ pub mod js_bundler {
             Self {
                 target: Target::Browser,
                 entry_points: StringSet::default(),
-                hot: false,
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
@@ -187,7 +183,6 @@ pub mod js_bundler {
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
-                serve: Serve::default(),
                 jsx: api::Jsx {
                     factory: Box::default(),
                     fragment: Box::default(),
@@ -219,7 +214,6 @@ pub mod js_bundler {
                 css_chunking: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
-                has_any_on_before_parse: false,
                 throw_on_error: true,
                 env_behavior: api::DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
@@ -1319,12 +1313,6 @@ pub mod js_bundler {
         pub keep_names: bool,
     }
 
-    #[derive(Default)]
-    pub struct Serve {
-        pub handler_path: OwnedString,
-        pub prefix: OwnedString,
-    }
-
     fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
         if arguments.is_empty() || !arguments[0].is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1861,7 +1849,8 @@ pub use js_bundler::Plugin;
 pub use js_bundler::PluginJscExt;
 
 /// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
-/// `loader/path/hash/output_kind/sourcemap`.
+/// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper
+/// (`m_sourcemap` WriteBarrier from `cache: true`), not here.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct BuildArtifact {
     pub blob: Blob,
@@ -1869,7 +1858,6 @@ pub struct BuildArtifact {
     pub path: Box<[u8]>,
     pub hash: u64,
     pub output_kind: OutputKind,
-    pub sourcemap: bun_jsc::StrongOptional,
 }
 
 /// `BuildArtifact.kind` — what role an output file plays. Single canonical
@@ -1934,11 +1922,6 @@ impl BuildArtifact {
         this.blob.get_slice(global_this, callframe)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_type(this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        BlobExt::get_type(&this.blob, global_this)
-    }
-
     /// `callframe.this()` is a `JSBuildArtifact`, not a `JSBlob`, so the
     /// cached-stream slot must be BuildArtifact's own (`values: ["stream"]` in
     /// JSBundler.classes.ts); `Blob::get_stream` would poke `JSBlob::m_stream`.
@@ -2000,12 +1983,16 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_source_map(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        this.sourcemap.get().unwrap_or(JSValue::NULL)
+    pub fn get_source_map(_this: &Self, _global: &JSGlobalObject) -> JSValue {
+        // The value lives in the wrapper's `m_sourcemap` WriteBarrier (seeded
+        // by `on_complete`); the C++ getter returns that slot before calling
+        // here, so reaching this means no sourcemap was assigned.
+        JSValue::NULL
     }
 
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
+        this_value: JSValue,
         formatter: &mut F,
         writer: &mut W,
     ) -> core::fmt::Result
@@ -2103,13 +2090,16 @@ impl BuildArtifact {
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>sourcemap<r>: "),
                 )?;
 
-                if let Some(sourcemap) = self.sourcemap.get().and_then(|v| v.as_::<BuildArtifact>())
+                let sourcemap_value =
+                    crate::generated_classes::js_BuildArtifact::sourcemap_get_cached(this_value);
+                if let Some((sm_value, sm_ptr)) =
+                    sourcemap_value.and_then(|v| v.as_::<BuildArtifact>().map(|p| (v, p)))
                 {
                     // SAFETY: `as_` returned a non-null wrapper-owned pointer;
-                    // `write_format` is `&self` so a shared borrow is sound
-                    // even if `sourcemap` aliases `self`.
-                    unsafe { &*sourcemap }
-                        .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+                    // `write_format` is `&self` so a shared borrow of `sm_ptr`
+                    // is sound even if it aliases `self`.
+                    unsafe { &*sm_ptr }
+                        .write_format::<F, W, ENABLE_ANSI_COLORS>(sm_value, formatter, writer)?;
                 } else {
                     write!(
                         writer,

@@ -4,10 +4,9 @@
 //! `parent: NodeId` and the `*mut ShellExecEnv` (which may be owned or
 //! borrowed — see field doc) are stored here.
 
-use crate::shell::interpreter::{NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{NodeId, ShellExecEnv};
 
 pub struct Base {
-    pub kind: StateKind,
     /// Index of the parent node in `Interpreter::nodes`, or
     /// `NodeId::INTERPRETER` if the parent is the interpreter itself.
     pub parent: NodeId,
@@ -22,12 +21,8 @@ pub struct Base {
 }
 
 impl Base {
-    pub fn new(kind: StateKind, parent: NodeId, shell: *mut ShellExecEnv) -> Self {
-        Self {
-            kind,
-            parent,
-            shell,
-        }
+    pub fn new(parent: NodeId, shell: *mut ShellExecEnv) -> Self {
+        Self { parent, shell }
     }
 
     /// No-op kept for call-site parity.
@@ -49,11 +44,4 @@ impl Base {
         // time.
         unsafe { &mut *self.shell }
     }
-}
-
-/// `error{Sys}` — see `Interpreter::try_`.
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum TryError {
-    #[error("Sys")]
-    Sys,
 }

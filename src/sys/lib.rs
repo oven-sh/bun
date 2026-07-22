@@ -16,10 +16,7 @@ pub extern crate bun_core as bun_str;
 #[cfg(windows)]
 pub extern crate bun_libuv_sys;
 pub mod fd;
-pub use fd::{
-    ErrorCase, FdExt, FdOptionalExt, FdT, HashMapContext, MakeLibUvOwnedError, MovableIfWindowsFd,
-    RawFd, UvFile,
-};
+pub use fd::{ErrorCase, FdExt, MakeLibUvOwnedError, RawFd};
 #[path = "Error.rs"]
 mod error;
 pub use error::Error;
@@ -838,7 +835,6 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
             path,
             WindowsOpenDirOptions {
                 iterable: true,
-                read_only: true,
                 ..Default::default()
             },
         )
@@ -979,11 +975,6 @@ pub(crate) mod linux_syscall;
 pub fn is_regular_file(mode: Mode) -> bool {
     kind_from_mode(mode) == FileKind::File
 }
-/// Native socket type — `c_int` on POSIX, `SOCKET` (`usize`) on Windows.
-#[cfg(not(windows))]
-pub type SocketT = core::ffi::c_int;
-#[cfg(windows)]
-pub type SocketT = usize;
 #[cfg(windows)]
 pub use bun_errno::Win32ErrorExt;
 pub use bun_errno::{E, GetErrno, S, SystemErrno, e_from_negated, get_errno};
@@ -1245,8 +1236,6 @@ pub mod O {
     pub const NOCTTY: i32 = libc::O_NOCTTY;
     #[cfg(windows)]
     pub const NOCTTY: i32 = 0;
-    #[cfg(unix)]
-    pub const ACCMODE: i32 = libc::O_ACCMODE;
     #[cfg(windows)]
     pub const ACCMODE: i32 = 3;
     #[cfg(target_os = "macos")]
@@ -1272,12 +1261,6 @@ pub use file::{File, ReadToEndResult};
 pub mod dir;
 pub use dir::*;
 
-/// `bun_sys::cwd()` returns the process cwd `Dir`.
-#[inline]
-pub fn cwd() -> Dir {
-    Dir::cwd()
-}
-
 #[cfg(unix)]
 pub type Stat = libc::stat;
 /// On Windows `bun.Stat` is libuv's `uv_stat_t`.
@@ -1297,18 +1280,6 @@ use bun_core::ZStr;
 #[inline]
 pub fn last_errno() -> i32 {
     bun_core::ffi::errno()
-}
-
-/// Pointer to thread-local errno. Prefer `last_errno()`
-/// for the value; this exists for callers that want the `*_errno()` API
-/// shape (`unsafe { *bun_sys::errno() }`).
-#[cfg(unix)]
-#[inline]
-pub fn errno() -> *mut i32 {
-    // `errno_ptr()` is a `safe fn` (its `__errno_location`/`__error`/`_errno`
-    // extern is declared `safe fn` — no args, never null); obtaining the
-    // pointer has no preconditions. The deref obligation lives at the call site.
-    bun_core::ffi::errno_ptr()
 }
 
 /// Copy `path` into a NUL-terminated buffer.
@@ -1364,7 +1335,6 @@ impl Tag {
     pub const lutime: Tag = Tag(28);
     pub const mkdir: Tag = Tag(29);
     pub const mkdtemp: Tag = Tag(30);
-    pub const fnctl: Tag = Tag(31);
     pub const memfd_create: Tag = Tag(32);
     pub const mmap: Tag = Tag(33);
     pub const munmap: Tag = Tag(34);
@@ -1383,13 +1353,11 @@ impl Tag {
     pub const utimensat: Tag = Tag(47);
     pub const write: Tag = Tag(48);
     pub const getcwd: Tag = Tag(49);
-    pub const getenv: Tag = Tag(50);
     pub const chdir: Tag = Tag(51);
     pub const fcopyfile: Tag = Tag(52);
     pub const recv: Tag = Tag(53);
     pub const send: Tag = Tag(54);
     pub const sendfile: Tag = Tag(55);
-    pub const sendmmsg: Tag = Tag(56);
     pub const splice: Tag = Tag(57);
     pub const rmdir: Tag = Tag(58);
     pub const truncate: Tag = Tag(59);
@@ -1397,7 +1365,6 @@ impl Tag {
     pub const futime: Tag = Tag(61);
     pub const pidfd_open: Tag = Tag(62);
     pub const poll: Tag = Tag(63);
-    pub const ppoll: Tag = Tag(64);
     pub const watch: Tag = Tag(65);
     pub const scandir: Tag = Tag(66);
     pub const kevent: Tag = Tag(67);
@@ -1406,7 +1373,6 @@ impl Tag {
     pub const kill: Tag = Tag(70);
     pub const waitpid: Tag = Tag(71);
     pub const posix_spawn: Tag = Tag(72);
-    pub const getaddrinfo: Tag = Tag(73);
     pub const writev: Tag = Tag(74);
     pub const pwritev: Tag = Tag(75);
     pub const readv: Tag = Tag(76);
@@ -1420,12 +1386,10 @@ impl Tag {
     pub const try_write: Tag = Tag(84);
     pub const socketpair: Tag = Tag(85);
     pub const setsockopt: Tag = Tag(86);
-    pub const statx: Tag = Tag(87);
     pub const rm: Tag = Tag(88);
     pub const uv_spawn: Tag = Tag(89);
     pub const uv_pipe: Tag = Tag(90);
     pub const uv_tty_set_mode: Tag = Tag(91);
-    pub const uv_open_osfhandle: Tag = Tag(92);
     pub const uv_os_homedir: Tag = Tag(93);
     pub const WriteFile: Tag = Tag(94);
     pub const NtQueryDirectoryFile: Tag = Tag(95);
@@ -1445,7 +1409,6 @@ impl Tag {
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
-    pub const inotify: Tag = Tag::watch;
 
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
@@ -1597,6 +1560,9 @@ pub const MAX_COUNT: usize = u32::MAX as usize;
 #[cfg(unix)]
 pub(crate) mod safe_libc {
     use core::ffi::c_int;
+    // `close` is a libc symbol std relies on; this is an FFI import (not a
+    // competing definition) with the canonical signature.
+    #[allow(suspicious_runtime_symbol_definitions)]
     unsafe extern "C" {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub(crate) safe fn close(fd: c_int) -> c_int;
@@ -2884,17 +2850,6 @@ mod posix_impl {
         );
         Ok(())
     }
-    pub fn fchownat(dir: impl AsFd, path: &ZStr, uid: u32, gid: u32, flags: i32) -> Maybe<()> {
-        let dir = dir.as_fd();
-        check_p!(
-            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-            // valid NUL-terminated C string.
-            unsafe { libc::fchownat(dir.native(), path.as_ptr(), uid, gid, flags) },
-            Tag::fchownat,
-            path
-        );
-        Ok(())
-    }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
         let fd = fd.as_fd();
         let dirfd = if fd.is_valid() {
@@ -3380,14 +3335,15 @@ mod posix_impl {
     }
 
     /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
-    /// Returns a process-lifetime mmap slice; caller is responsible for
-    /// `munmap`.
+    /// Returns `(map, delta)` where `map` is the full page-aligned mapping and
+    /// `delta = offset % page_size` is the byte offset into `map` at which the
+    /// requested `offset` begins. Caller is responsible for `munmap(map)`.
     pub fn mmap_file(
         path: &ZStr,
         flags: libc::c_int,
         wanted_size: Option<usize>,
         offset: usize,
-    ) -> Maybe<&'static mut [u8]> {
+    ) -> Maybe<(&'static mut [u8], usize)> {
         let fd = open(path, O::RDWR, 0)?;
         // close fd regardless of mmap outcome (the mapping outlives the fd).
         let _close = CloseOnDrop::new(fd);
@@ -3396,22 +3352,36 @@ mod posix_impl {
             let result = fstat(fd)?;
             usize::try_from(result.st_size).unwrap_or(0)
         };
+
+        // mmap requires a page-aligned file offset. Map from the aligned
+        // offset and report the delta so the caller can slice to the
+        // requested byte.
+        let page = bun_alloc::page_size();
+        let delta = offset % page;
+        let aligned_offset = offset - delta;
+
         let mut size = stat_size.saturating_sub(offset);
         if let Some(size_) = wanted_size {
             size = size.min(size_);
         }
+        // When size == 0 (offset at/past EOF or size: 0) pass 0 so mmap
+        // returns EINVAL instead of mapping the leading delta bytes.
+        let map_len = if size == 0 { 0 } else { size + delta };
 
         match mmap(
             core::ptr::null_mut(),
-            size,
+            map_len,
             libc::PROT_READ | libc::PROT_WRITE,
             flags,
             fd,
-            offset as i64,
+            aligned_offset as i64,
         ) {
             Ok(ptr) => {
-                // SAFETY: mmap returned a valid mapping of `size` bytes.
-                Ok(unsafe { core::slice::from_raw_parts_mut(ptr, size) })
+                // SAFETY: mmap returned a valid mapping of `map_len` bytes.
+                Ok((
+                    unsafe { core::slice::from_raw_parts_mut(ptr, map_len) },
+                    delta,
+                ))
             }
             Err(err) => Err(err),
         }
@@ -3548,14 +3518,6 @@ pub struct TimeLike {
     pub nsec: i64,
 }
 impl TimeLike {
-    pub const NOW: Self = Self {
-        sec: 0,
-        nsec: UTIME_NOW,
-    };
-    pub const OMIT: Self = Self {
-        sec: 0,
-        nsec: UTIME_OMIT,
-    };
     #[inline]
     pub fn to_timespec(self) -> libc::timespec {
         libc::timespec {
@@ -4264,11 +4226,6 @@ mod windows_impl {
     pub fn lchown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
         // Windows has no ownership model; libuv uv_fs_lchown is a no-op success.
         sys_uv::lchown(path, uid as _, gid as _)
-    }
-    pub fn fchownat(_dir: impl AsFd, _path: &ZStr, _uid: u32, _gid: u32, _flags: i32) -> Maybe<()> {
-        let _dir = _dir.as_fd();
-        // See `lchown` — no-op on Windows.
-        Ok(())
     }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
         let fd = fd.as_fd();
@@ -5005,7 +4962,7 @@ pub mod posix_stat;
 pub use posix_stat::PosixStat;
 pub use posix_stat::{stat_atime, stat_birthtime, stat_ctime, stat_mtime};
 
-/// `std::io::Write` adapter for `Fd` (used by `File::writer`/`buffered_writer`).
+/// `std::io::Write` adapter for `Fd` (used by `File::buffered_writer`).
 /// Port of `File.Writer = std.Io.GenericWriter(File, anyerror, stdIoWrite)`.
 pub struct FileWriter(pub Fd);
 impl std::io::Write for FileWriter {
@@ -5014,14 +4971,6 @@ impl std::io::Write for FileWriter {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
-    }
-}
-/// `std::io::Read` adapter for `Fd` (used by `File::reader`).
-/// Port of `File.Reader = std.Io.GenericReader(File, anyerror, stdIoRead)`.
-pub struct FileReader(pub Fd);
-impl std::io::Read for FileReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        read(self.0, buf).map_err(|e| std::io::Error::from_raw_os_error(e.errno as i32))
     }
 }
 
@@ -5098,12 +5047,13 @@ macro_rules! syslog {
 
 // ── `bun.c` — raw libc surface (no `Maybe` wrapping). ──
 pub mod c {
-    use core::ffi::{c_char, c_int, c_void};
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    use core::ffi::c_int;
+    #[cfg(unix)]
+    use core::ffi::{c_char, c_void};
     #[cfg(unix)]
     pub use libc::fchmod;
-    pub use libc::memcmp;
-    pub use libc::stat as Stat;
-    // `getuid`/`getgid`/`geteuid`/`getegid` take no args and read kernel
+    // `getuid`/`getgid` take no args and read kernel
     // process state — no preconditions, never fail. Declared locally as
     // `safe fn` (instead of re-exporting the `libc` crate's raw decls) so
     // callers need no per-site proof.
@@ -5111,8 +5061,6 @@ pub mod c {
     unsafe extern "C" {
         pub safe fn getuid() -> libc::uid_t;
         pub safe fn getgid() -> libc::gid_t;
-        pub safe fn geteuid() -> libc::uid_t;
-        pub safe fn getegid() -> libc::gid_t;
     }
     #[cfg(unix)]
     pub use super::{UTIME_NOW, UTIME_OMIT};
@@ -5125,18 +5073,9 @@ pub mod c {
         target_os = "openbsd"
     ))]
     pub use libc::{getloadavg, sockaddr_dl, sysctlbyname};
-    /// Native fd backing int (c_int on POSIX,
-    /// HANDLE on Windows). Use `bun_sys::Fd` everywhere else; this raw alias
-    /// exists only for direct libc FFI (e.g. `socketpair`).
-    #[cfg(unix)]
-    #[allow(non_camel_case_types)]
-    pub type fd_t = c_int;
     #[cfg(windows)]
     #[allow(non_camel_case_types)]
     pub type fd_t = bun_core::FdNative;
-    /// `bun.c.struct_statfs` — raw `struct statfs` (POSIX) / `uv_statfs_t` (Windows).
-    /// Aliased here so `bun.StatFS` resolves through `bun_sys::c`.
-    pub use super::StatFS as struct_statfs;
 
     /// libc `dlsym` (RTLD_DEFAULT when `handle` is null).
     #[cfg(unix)]
@@ -5144,17 +5083,6 @@ pub mod c {
         // SAFETY: caller contract — `handle` is null/RTLD_DEFAULT or a live
         // `dlopen` handle; `name` is a valid NUL-terminated C string.
         unsafe { libc::dlsym(handle, name) }
-    }
-    #[cfg(unix)]
-    pub use libc::memmem;
-    /// libc `__errno_location()` / `__error()` / CRT `_errno()` — pointer to
-    /// thread-local errno. Canonical cfg-ladder lives in `bun_core::ffi`.
-    #[inline]
-    pub fn errno_location() -> *mut c_int {
-        // `errno_ptr()` is a `safe fn` (its per-libc TLS-accessor extern is
-        // declared `safe fn` — no args, never null); obtaining the pointer has
-        // no caller precondition (dereferencing it is what requires care).
-        bun_core::ffi::errno_ptr()
     }
     // Win32 file APIs frequently spelled `bun.C.*` (the namespace flattens
     // a slice of `kernel32` into `bun.C`). Re-export the handful node_fs.rs
@@ -5365,22 +5293,6 @@ pub mod c {
         unsafe { libc::sendfile(fd, s, off, nbytes, hdtr.cast(), sbytes, flags) }
     }
 
-    /// `bun.c.dlsymWithHandle` — see macro `dlsym_with_handle!` for the cached
-    /// per-symbol form. This is the uncached runtime variant.
-    pub unsafe fn dlsym_with_handle(handle: *mut c_void, name: *const c_char) -> *mut c_void {
-        #[cfg(unix)]
-        {
-            // SAFETY: caller contract — `name` is NUL-terminated and live for
-            // the call; `handle` is a live `dlopen` handle or null/RTLD_DEFAULT.
-            unsafe { libc::dlsym(handle, name) }
-        }
-        #[cfg(windows)]
-        {
-            let _ = (handle, name);
-            core::ptr::null_mut() /* GetProcAddress in windows mod */
-        }
-    }
-
     /// `fork(2)` — POSIX only.
     #[cfg(unix)]
     #[inline]
@@ -5520,8 +5432,7 @@ pub mod linux {
     }
 
     // ── epoll ──
-    /// epoll flag/op constants. Exposed both as a module
-    /// (`linux::EPOLL::IN`) and flat (`linux::EPOLL_IN`) since callers use both.
+    /// epoll flag/op constants.
     pub mod EPOLL {
         pub const IN: u32 = libc::EPOLLIN as u32;
         pub const OUT: u32 = libc::EPOLLOUT as u32;
@@ -5535,17 +5446,6 @@ pub mod linux {
         pub const CTL_MOD: i32 = libc::EPOLL_CTL_MOD;
         pub const CTL_DEL: i32 = libc::EPOLL_CTL_DEL;
     }
-    pub const EPOLL_IN: u32 = EPOLL::IN;
-    pub const EPOLL_OUT: u32 = EPOLL::OUT;
-    pub const EPOLL_ERR: u32 = EPOLL::ERR;
-    pub const EPOLL_HUP: u32 = EPOLL::HUP;
-    pub const EPOLL_RDHUP: u32 = EPOLL::RDHUP;
-    pub const EPOLL_ET: u32 = EPOLL::ET;
-    pub const EPOLL_ONESHOT: u32 = EPOLL::ONESHOT;
-    pub const EPOLL_CTL_ADD: i32 = EPOLL::CTL_ADD;
-    pub const EPOLL_CTL_MOD: i32 = EPOLL::CTL_MOD;
-    pub const EPOLL_CTL_DEL: i32 = EPOLL::CTL_DEL;
-
     // ── futex ──
     /// futex op (cmd + private flag), packed.
     #[derive(Clone, Copy)]
@@ -6127,10 +6027,6 @@ pub mod macho {
         pub fn cmd(&self) -> u32 {
             self.hdr.cmd
         }
-        #[inline]
-        pub fn cmdsize(&self) -> u32 {
-            self.hdr.cmdsize
-        }
         /// Reinterpret the command bytes
         /// as `T` if large enough. Returns an owned `Copy` value (via
         /// `read_unaligned`) rather than `&T`: the backing buffer may be a
@@ -6268,8 +6164,6 @@ impl DynLib {
 #[cfg(unix)]
 pub mod RTLD {
     pub const LAZY: i32 = libc::RTLD_LAZY;
-    pub const NOW: i32 = libc::RTLD_NOW;
-    pub const GLOBAL: i32 = libc::RTLD_GLOBAL;
     pub const LOCAL: i32 = libc::RTLD_LOCAL;
 }
 #[cfg(windows)]
@@ -6277,8 +6171,6 @@ pub mod RTLD {
     // Windows `LoadLibrary` ignores these; provided so cross-platform call
     // sites compile. Values match POSIX so any bitmask logic stays inert.
     pub const LAZY: i32 = 0x1;
-    pub const NOW: i32 = 0x2;
-    pub const GLOBAL: i32 = 0x100;
     pub const LOCAL: i32 = 0;
 }
 
@@ -6468,18 +6360,9 @@ pub fn open_dir_no_renaming_or_deleting_windows(dir: Fd, path: &[u8]) -> Maybe<F
         WindowsOpenDirOptions {
             iterable: true,
             can_rename_or_delete: false,
-            read_only: true,
             ..Default::default()
         },
     )
-}
-/// `openFileReadOnly` — `open(path, O_RDONLY|O_CLOEXEC)`.
-pub fn open_file_read_only(path: &[u8]) -> Maybe<Fd> {
-    open_a(path, O::RDONLY | O::CLOEXEC, 0)
-}
-/// `openatReadOnly` — `openat(dir, path, O_RDONLY|O_CLOEXEC)`.
-pub fn openat_read_only(dir: Fd, path: &[u8]) -> Maybe<Fd> {
-    openat_a(dir, path, O::RDONLY | O::CLOEXEC, 0)
 }
 // ──────────────────────────────────────────────────────────────────────────
 // `openatWindows` family. Maps POSIX-style `O::*` flags
@@ -6499,7 +6382,6 @@ pub struct WindowsOpenDirOptions {
     pub no_follow: bool,
     pub can_rename_or_delete: bool,
     pub op: WindowsOpenDirOp,
-    pub read_only: bool,
 }
 #[cfg(windows)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -6941,6 +6823,9 @@ pub fn open_dir_at_windows_nt_path(
     options: WindowsOpenDirOptions,
 ) -> Maybe<Fd> {
     use bun_windows_sys::externs as w;
+    // No FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY: child creates via RootDirectory
+    // check the directory's ACL, not this handle's access mask, so requesting
+    // them only narrows where this open is admitted.
     let base_flags = w::STANDARD_RIGHTS_READ
         | w::FILE_READ_ATTRIBUTES
         | w::FILE_READ_EA
@@ -6956,12 +6841,7 @@ pub fn open_dir_at_windows_nt_path(
     } else {
         0
     };
-    let read_only_flag: u32 = if options.read_only {
-        0
-    } else {
-        w::FILE_ADD_FILE | w::FILE_ADD_SUBDIRECTORY
-    };
-    let flags = iterable_flag | base_flags | rename_flag | read_only_flag;
+    let flags = iterable_flag | base_flags | rename_flag;
     let open_reparse: u32 = if options.no_follow {
         w::FILE_OPEN_REPARSE_POINT
     } else {
@@ -7227,9 +7107,11 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     }
 
     let nonblock = (flags & O::NONBLOCK) != 0;
-    let overwrite = (flags & O::WRONLY) != 0 && (flags & O::APPEND) == 0;
 
-    let mut access_mask: u32 = w::READ_CONTROL | w::FILE_WRITE_ATTRIBUTES | w::SYNCHRONIZE;
+    // Matches libuv fs__open: O_RDONLY asks for read access only. GENERIC_WRITE
+    // already includes FILE_WRITE_ATTRIBUTES for the write-mode branches; the
+    // fs.futimes path goes through uv_fs_futime which ReOpenFiles for it.
+    let mut access_mask: u32 = w::READ_CONTROL | w::SYNCHRONIZE;
     if (flags & O::RDWR) != 0 {
         access_mask |= w::GENERIC_READ | w::GENERIC_WRITE;
     } else if (flags & O::APPEND) != 0 {
@@ -7240,22 +7122,17 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         access_mask |= w::GENERIC_READ;
     }
 
-    let disposition: u32 = 'blk: {
-        if (flags & O::CREAT) != 0 {
-            if (flags & O::EXCL) != 0 {
-                break 'blk w::FILE_CREATE;
-            }
-            break 'blk if overwrite {
-                w::FILE_OVERWRITE_IF
-            } else {
-                w::FILE_OPEN_IF
-            };
-        }
-        if overwrite {
-            w::FILE_OVERWRITE
-        } else {
-            w::FILE_OPEN
-        }
+    // Create disposition is derived from O_CREAT/O_EXCL/O_TRUNC alone; the
+    // read/write access mode only affects `access_mask` above.
+    let creat = (flags & O::CREAT) != 0;
+    let excl = (flags & O::EXCL) != 0;
+    let truncate = (flags & O::TRUNC) != 0;
+    let disposition: u32 = match (creat, excl, truncate) {
+        (true, true, _) => w::FILE_CREATE,
+        (true, false, true) => w::FILE_OVERWRITE_IF,
+        (true, false, false) => w::FILE_OPEN_IF,
+        (false, _, true) => w::FILE_OVERWRITE,
+        (false, _, false) => w::FILE_OPEN,
     };
 
     let blocking_flag: u32 = if !nonblock {
@@ -7369,7 +7246,22 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
             return false;
         }
         if (attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
-            // Check if the underlying file exists by opening it.
+            // Only name-surrogate reparse points (symlinks, mount points) stand in for
+            // another path. Non-surrogate tags such as IO_REPARSE_TAG_APPEXECLINK are
+            // opaque: the entry exists as-is and following it can fail spuriously.
+            let mut fd: w::WIN32_FIND_DATAW = bun_core::ffi::zeroed();
+            // SAFETY: path is NUL-terminated UTF-16; fd is valid for write.
+            let find = unsafe { w::FindFirstFileW(path.as_ptr(), &mut fd) };
+            if find != bun_windows_sys::INVALID_HANDLE_VALUE {
+                // SAFETY: valid find handle from FindFirstFileW.
+                unsafe {
+                    let _ = w::FindClose(find);
+                }
+                if !w::is_reparse_tag_name_surrogate(fd.dwReserved0) {
+                    return true;
+                }
+            }
+            // Name surrogate (or no tag available): follow it by opening the target.
             // SAFETY: path is NUL-terminated; null security/template handles.
             let rc = unsafe {
                 w::CreateFileW(
@@ -7548,21 +7440,6 @@ pub fn update_nonblocking(fd: Fd, nonblocking: bool) -> Maybe<()> {
 #[inline]
 pub fn dup_with_flags(fd: Fd, _flags: i32) -> Maybe<Fd> {
     dup(fd)
-}
-
-unsafe extern "C" {
-    // Defined in src/jsc/bindings/c-bindings.cpp — sets SO_LINGER {1,0} so
-    // closing a listen socket sends RST instead of entering TIME_WAIT.
-    // By-value fd/handle; setsockopt failure is silently ignored — no UB.
-    #[cfg(windows)]
-    safe fn Bun__disableSOLinger(fd: windows::HANDLE);
-    #[cfg(not(windows))]
-    safe fn Bun__disableSOLinger(fd: i32);
-}
-/// `disableLinger` — set `SO_LINGER {1,0}` so close sends RST.
-#[inline]
-pub fn disable_linger(fd: Fd) {
-    Bun__disableSOLinger(fd.native());
 }
 
 /// `lseek(fd, offset, SEEK_SET)`; result discarded.
@@ -8076,7 +7953,14 @@ pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
 pub mod posix {
     pub use bun_errno::posix::*;
     use core::ffi::c_int;
-    #[cfg(not(windows))]
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
     use core::ffi::c_void;
 
     // ── BSD sysctl(3) family ──
@@ -8234,10 +8118,6 @@ pub mod posix {
         #[cfg(windows)]
         pub const INET6: c_int = bun_windows_sys::ws2_32::AF_INET6;
         #[cfg(unix)]
-        pub const UNSPEC: c_int = libc::AF_UNSPEC;
-        #[cfg(unix)]
-        pub const UNIX: c_int = libc::AF_UNIX;
-        #[cfg(unix)]
         pub const INET: c_int = libc::AF_INET;
         #[cfg(unix)]
         pub const INET6: c_int = libc::AF_INET6;
@@ -8280,11 +8160,6 @@ pub mod posix {
     #[inline]
     pub const fn s_isdir(m: u32) -> bool {
         (m & libc::S_IFMT as u32) == libc::S_IFDIR as u32
-    }
-    #[cfg(unix)]
-    #[inline]
-    pub const fn s_isreg(m: u32) -> bool {
-        (m & libc::S_IFMT as u32) == libc::S_IFREG as u32
     }
 
     // ── signals ──
@@ -8469,19 +8344,6 @@ pub mod posix {
         }
         Ok(())
     }
-
-    // ── dynamic loading (Linux/FreeBSD) ──
-    /// `dl_iterate_phdr` — iterate loaded ELF objects.
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    #[inline]
-    pub unsafe fn dl_iterate_phdr(
-        callback: unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int,
-        data: *mut c_void,
-    ) -> c_int {
-        // SAFETY: caller contract — `callback` upholds the C ABI; `data` is
-        // opaque and only forwarded to `callback`, never dereferenced here.
-        unsafe { libc::dl_iterate_phdr(Some(callback), data) }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -8662,14 +8524,6 @@ pub mod net {
                 None
             }
         }
-        #[inline]
-        pub fn sock_len(&self) -> u32 {
-            match self.family() {
-                AF_INET => core::mem::size_of::<sockaddr_in>() as u32,
-                AF_INET6 => core::mem::size_of::<sockaddr_in6>() as u32,
-                _ => core::mem::size_of::<sockaddr_storage>() as u32,
-            }
-        }
     }
     impl Default for Address {
         // SAFETY: POD, zero-valid — sockaddr union of integer fields.
@@ -8731,14 +8585,8 @@ pub mod net {
 
 /// `std.elf` constants (just what `bun_exe_format`/`bun_crash` need).
 pub mod elf {
-    pub const PT_NULL: u32 = 0;
     pub const PT_LOAD: u32 = 1;
-    pub const PT_DYNAMIC: u32 = 2;
     pub const PT_INTERP: u32 = 3;
-    pub const PT_NOTE: u32 = 4;
-    pub const PT_PHDR: u32 = 6;
-    pub const PT_TLS: u32 = 7;
-    pub const PT_GNU_STACK: u32 = 0x6474e551;
 
     /// Result of [`find_loaded_module`]: the loaded ELF object whose `PT_LOAD`
     /// segment spans a given address.
@@ -8911,11 +8759,6 @@ impl CloseOnDrop {
     #[inline]
     pub fn new(fd: Fd) -> Self {
         Self(fd)
-    }
-    /// Disarm the guard and return the fd without closing it.
-    #[inline]
-    pub fn into_inner(self) -> Fd {
-        core::mem::ManuallyDrop::new(self).0
     }
 }
 impl Drop for CloseOnDrop {
@@ -9448,13 +9291,6 @@ pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
         return Err(err_with(Tag::open));
     }
     Ok(Fd::from_native(rc))
-}
-
-/// `bun.Output.stderrWriter()` — `std::io::Write` over stderr fd. Used by
-/// callers that want a borrowed writer without going through `bun_core::Output`.
-#[inline]
-pub fn stderr_writer() -> FileWriter {
-    FileWriter(Fd::stderr())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

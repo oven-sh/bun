@@ -32,15 +32,10 @@ impl Default for Semaphore {
 impl Semaphore {
     /// Const-init with zero permits.
     pub const fn new() -> Self {
-        Self::with_permits(0)
-    }
-
-    /// Const-init with `permits` available.
-    pub const fn with_permits(permits: usize) -> Self {
         Self {
             mutex: Mutex::new(),
             cond: Condition::new(),
-            permits: UnsafeCell::new(permits),
+            permits: UnsafeCell::new(0),
         }
     }
 

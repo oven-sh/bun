@@ -62,8 +62,6 @@ impl SocketAddress {
 bun_opaque::opaque_ffi! {
     /// Opaque uWS WebSocket socket handle (forward-decl; concrete type lives in `bun_uws`).
     pub struct Socket;
-    /// Opaque per-socket userdata blob (forward-decl; concrete type lives in `bun_uws`).
-    pub(crate) struct SocketData;
     /// Opaque uWS WebSocket upgrade context (forward-decl; concrete type lives in `bun_uws`).
     pub struct WebSocketUpgradeContext;
 }
@@ -135,10 +133,6 @@ impl<const SSL: bool> Response<SSL> {
                 close_,
             )
         }
-    }
-
-    pub fn get_socket_data(&mut self) -> *mut c_void {
-        c::uws_res_get_socket_data(Self::ssl_flag(), self.as_raw()).cast()
     }
 
     pub fn is_connect_request(&mut self) -> bool {
@@ -301,10 +295,6 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub fn get_write_offset(&mut self) -> u64 {
-        c::uws_res_get_write_offset(Self::ssl_flag(), self.as_raw())
-    }
-
     pub fn override_write_offset<T>(&mut self, offset: T)
     where
         u64: TryFrom<T>,
@@ -323,6 +313,10 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn mark_wrote_content_length_header(&mut self) {
         c::uws_res_mark_wrote_content_length_header(Self::ssl_flag(), self.as_raw())
+    }
+
+    pub fn mark_wrote_date_header(&mut self) {
+        c::uws_res_mark_wrote_date_header(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn write_mark(&mut self) {
@@ -348,17 +342,6 @@ impl<const SSL: bool> Response<SSL> {
                 )
                 .unwrap(),
             )
-        }
-    }
-
-    pub fn get_remote_address_as_text(&mut self) -> Option<&[u8]> {
-        let mut buf: *const u8 = core::ptr::null();
-        let size = c::uws_res_get_remote_address_as_text(Self::ssl_flag(), self.as_raw(), &mut buf);
-        if size > 0 {
-            // SAFETY: uws populated `buf` with `size` bytes valid while the response lives.
-            Some(unsafe { bun_core::ffi::slice(buf, size) })
-        } else {
-            None
         }
     }
 
@@ -731,6 +714,10 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.mark_wrote_content_length_header())
     }
 
+    pub fn mark_wrote_date_header(self) {
+        any_dispatch!(self, |r| r.mark_wrote_date_header())
+    }
+
     pub fn write_mark(self) {
         any_dispatch!(self, |r| r.write_mark())
     }
@@ -747,10 +734,6 @@ impl AnyResponse {
         }
     }
 
-    pub fn get_socket_data(self) -> *mut c_void {
-        any_dispatch!(self, |r| r.get_socket_data())
-    }
-
     pub fn get_remote_socket_info(self) -> Option<SocketAddress> {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
@@ -765,10 +748,6 @@ impl AnyResponse {
 
     pub fn uncork(self) {
         any_dispatch!(self, |r| r.uncork())
-    }
-
-    pub fn get_write_offset(self) -> u64 {
-        any_dispatch!(self, |r| r.get_write_offset())
     }
 
     pub fn get_buffered_amount(self) -> u64 {
@@ -1026,6 +1005,7 @@ bitflags::bitflags! {
         const HTTP_RESPONSE_PENDING            = 8;
         const HTTP_CONNECTION_CLOSE            = 16;
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
+        const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
     }
 }
 
@@ -1059,6 +1039,11 @@ impl State {
     pub fn is_http_connection_close(self) -> bool {
         self.bits() & State::HTTP_CONNECTION_CLOSE.bits() != 0
     }
+
+    #[inline]
+    pub fn is_node_received_fin(self) -> bool {
+        self.bits() & State::HTTP_NODE_RECEIVED_FIN.bits() != 0
+    }
 }
 
 pub enum WriteResult {
@@ -1083,6 +1068,7 @@ pub mod c {
     // unsafe.
     unsafe extern "C" {
         pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_mark_wrote_date_header(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
@@ -1109,7 +1095,6 @@ pub mod c {
             flush_immediately: bool,
         );
         pub(crate) safe fn uws_res_is_corked(ssl: i32, res: &mut uws_res) -> bool;
-        pub(crate) safe fn uws_res_get_socket_data(ssl: i32, res: &mut uws_res) -> *mut SocketData;
         pub(crate) safe fn uws_res_pause(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_resume(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_continue(ssl: i32, res: &mut uws_res);
@@ -1173,7 +1158,6 @@ pub mod c {
             data: *const u8,
             length: usize,
         );
-        pub(crate) safe fn uws_res_get_write_offset(ssl: i32, res: &mut uws_res) -> u64;
         pub(crate) safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
         pub(crate) safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;
         // safe: `&mut uws_res` is ABI-identical to a non-null `*mut uws_res`;
@@ -1209,11 +1193,6 @@ pub mod c {
         pub(crate) safe fn uws_res_end_stream(ssl: i32, res: &mut uws_res, close_connection: bool);
         pub(crate) safe fn uws_res_prepare_for_sendfile(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_get_native_handle(ssl: i32, res: &mut uws_res) -> *mut Socket;
-        pub(crate) safe fn uws_res_get_remote_address_as_text(
-            ssl: i32,
-            res: &mut uws_res,
-            dest: &mut *const u8,
-        ) -> usize;
         pub(crate) safe fn uws_res_on_data(
             ssl: i32,
             res: &mut uws_res,

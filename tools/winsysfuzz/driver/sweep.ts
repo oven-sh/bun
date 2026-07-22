@@ -409,7 +409,9 @@ if (findings.length) {
         // In-process terminating stacks ('T' records) - the abort/crash
         // chain with no debugger. Every traced process (parent + injected
         // children) leaves one; symbolize each and keep the fatal-looking one.
-        const trace = await readTraceDir(rr.dir, { faultsOnly: true });
+        // Only a CRASH leaves a meaningful terminating stack; on normal exits
+        // the exit-time scrape is unrelated leftovers (symbol soup).
+        const trace = rr.outcome === "CRASH" || rr.crashSig ? await readTraceDir(rr.dir, { faultsOnly: true }) : null;
         const cands = trace?.termStacks ?? [];
         if (cands.length) {
           const allSyms = await symbolize(bun, cands.flat());

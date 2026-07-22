@@ -80,13 +80,20 @@ const sweepScript = join(here, "sweep.ts");
 async function sweep(s: Scenario) {
   const t0 = performance.now();
   console.log(`  start  ${s.name}`);
-  const proc = Bun.spawn(
-    ["bun", sweepScript, "--bun", bun, "--program", ...s.progArgs, "--timeout", timeout, "--jobs", jobs, "--work", s.workDir],
-    { stdout: Bun.file(join(outRoot, `${s.name}.console.log`)), stderr: Bun.file(join(outRoot, `${s.name}.err.log`)) },
-  );
-  await proc.exited;
-  s.ok = proc.exitCode === 0;
-  console.log(`  done   ${s.name} (${Math.round((performance.now() - t0) / 1000)}s, exit=${proc.exitCode})`);
+  // One scenario's failure (a spawn hiccup, a bad path) is logged and the
+  // circuit continues - the feeder must never die on a single target.
+  try {
+    const proc = Bun.spawn(
+      ["bun", sweepScript, "--bun", bun, "--program", ...s.progArgs, "--timeout", timeout, "--jobs", jobs, "--work", s.workDir],
+      { stdout: Bun.file(join(outRoot, `${s.name}.console.log`)), stderr: Bun.file(join(outRoot, `${s.name}.err.log`)) },
+    );
+    await proc.exited;
+    s.ok = proc.exitCode === 0;
+    console.log(`  done   ${s.name} (${Math.round((performance.now() - t0) / 1000)}s, exit=${proc.exitCode})`);
+  } catch (err) {
+    s.ok = false;
+    console.log(`  FAILED ${s.name}: ${String(err).slice(0, 200)}`);
+  }
 }
 
 // Bounded-parallel over scenarios. With --loop the circuit repeats forever

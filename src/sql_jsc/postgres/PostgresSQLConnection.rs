@@ -3062,9 +3062,7 @@ impl PostgresSQLConnection {
                                 // pointer the request holds (same provenance
                                 // discipline as `do_run`), not a
                                 // `&mut`-derived one.
-                                unsafe {
-                                    *slot = request.statement.get().expect("statement set")
-                                };
+                                unsafe { *slot = request.statement.get().expect("statement set") };
                             }
                             request.status.set(QueryStatus::Pending);
                             request.update_flags(|f| {

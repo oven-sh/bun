@@ -1,7 +1,8 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
+import { constants as fsConstants, closeSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("FileSink", () => {
@@ -432,4 +433,101 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+});
+
+// A regular file can't be polled for writability, so the streaming writer has
+// no way to re-drive an EAGAIN. If the fd is left O_NONBLOCK, a short write on
+// a filesystem that honors it (FUSE, NFS, overlay, cgroup writes) strands the
+// unwritten tail in the writer's buffer and the stream closes truncated with no
+// error. The open flags carry O_NONBLOCK only so open() itself never blocks on
+// a FIFO target; once fstat says "regular file" the flag must be cleared.
+describe.skipIf(!isPosix)("FileSink regular-file fd is kept blocking", () => {
+  // F_SETFL acts on the open file description, so the sink's dup() and the
+  // caller's fd share the flag. /proc/self/fdinfo is Linux-only; on macOS the
+  // behavioural test below covers it.
+  it.skipIf(!isLinux)("Bun.file(fd).writer() does not set O_NONBLOCK on a regular file", async () => {
+    const flagsOf = (fd: number) =>
+      parseInt(/flags:\s*([0-7]+)/.exec(readFileSync(`/proc/self/fdinfo/${fd}`, "utf8"))![1], 8);
+
+    const path = join(tmpdirSync(), "out.txt");
+    const fd = openSync(path, "w");
+    try {
+      expect(flagsOf(fd) & fsConstants.O_NONBLOCK).toBe(0);
+
+      const sink = Bun.file(fd).writer();
+      sink.write("a");
+      const nonblockAfter = flagsOf(fd) & fsConstants.O_NONBLOCK;
+      await sink.end();
+
+      expect(nonblockAfter).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it.skipIf(!isLinux)("Bun.file(path).writer() does not leave O_NONBLOCK on a regular file", async () => {
+    // The sink opens the path itself; spawn so we can read fdinfo while the
+    // sink still owns the fd (the test process can't see the child's fd, but
+    // the child can read its own /proc/self).
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const path = process.argv[1];
+          const sink = Bun.file(path).writer();
+          sink.write("a");
+          sink.flush();
+          let found = -1;
+          for (const name of fs.readdirSync("/proc/self/fd")) {
+            const n = Number(name);
+            if (!Number.isFinite(n)) continue;
+            try {
+              if (fs.realpathSync("/proc/self/fd/" + name) === path) { found = n; break; }
+            } catch {}
+          }
+          if (found < 0) throw new Error("fd not found");
+          const flags = parseInt(
+            /flags:\\s*([0-7]+)/.exec(fs.readFileSync("/proc/self/fdinfo/" + found, "utf8"))[1],
+            8,
+          );
+          process.stdout.write(String(flags & fs.constants.O_NONBLOCK));
+          await sink.end();
+        `,
+        join(tmpdirSync(), "out.txt"),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0", stderr: "", exitCode: 0 });
+  });
+
+  it("fs.createWriteStream writes every byte of a many-chunk payload", async () => {
+    // 4234 bytes = 33 x 128-byte chunks + a 10-byte tail; crosses the 4 KiB
+    // CHUNK_SIZE boundary so both the buffered and flushed paths are exercised.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const path = process.argv[1];
+          const ws = fs.createWriteStream(path);
+          const chunk = Buffer.alloc(128, 0x61);
+          for (let i = 0; i < 33; i++) ws.write(chunk);
+          ws.write(Buffer.alloc(10, 0x62));
+          ws.end();
+          ws.on("finish", () => process.stdout.write(String(fs.statSync(path).size)));
+          ws.on("error", e => { console.error(e); process.exit(1); });
+        `,
+        join(tmpdirSync(), "out.txt"),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "4234", stderr: "", exitCode: 0 });
+  });
 });

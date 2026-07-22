@@ -601,7 +601,11 @@ impl<Op: PasswordOp> PasswordJob<Op> {
         // SAFETY: `result` was just heap-allocated and is not yet shared
         // (enqueue happens after this write).
         unsafe {
-            (*result).task = AnyTask::from_typed(result, PasswordResult::<Op>::run_from_js_erased);
+            (*result).task = AnyTask::from_typed_with_dispose(
+                result,
+                PasswordResult::<Op>::run_from_js_erased,
+                PasswordResult::<Op>::release_unrun,
+            );
         }
         // SAFETY: `event_loop` was stored from the JS-thread VM and is kept
         // alive by the gate guest held above; ownership of `result` transfers
@@ -626,6 +630,13 @@ struct PasswordResult<Op: PasswordOp> {
 }
 
 impl<Op: PasswordOp> PasswordResult<Op> {
+    /// Release a queued-but-unrun completion during the worker-terminate
+    /// drain (JS thread, VM alive): plain drop releases everything.
+    fn release_unrun(p: *mut Self) {
+        // SAFETY: queue-owned heap result popped by the drain; sole owner.
+        drop(unsafe { bun_core::heap::take(p) });
+    }
+
     fn run_from_js_erased(p: *mut Self) -> AnyTaskJsResult<()> {
         Self::run_from_js(p)
             .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)

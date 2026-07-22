@@ -749,6 +749,23 @@ impl EventLoop {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
+            // A queue-owned `AnyTask` completion is released via the fn its
+            // producer registered (plain drop; runs here with the VM alive).
+            if task.tag == bun_event_loop::task_tag::AnyTask {
+                // SAFETY: `ptr` is the `*mut AnyTask` registered by
+                // `AnyTask::task()`. Copy the fields out before calling
+                // `dispose`: it may free the allocation embedding the AnyTask.
+                let (dispose, ctx) = unsafe {
+                    let any = &*task.ptr.cast::<bun_event_loop::AnyTask::AnyTask>();
+                    (any.dispose, any.ctx)
+                };
+                if let (Some(dispose), Some(ctx)) = (dispose, ctx) {
+                    dispose(ctx.as_ptr());
+                    continue;
+                }
+                requeue.push(task);
+                continue;
+            }
             // SAFETY: tag-specific release (drops JSC handles while the VM is
             // still live); definer in `bun_runtime::dispatch` matches the same
             // tag set `tick_queue_with_count` does. `false` ⇒ not handled.

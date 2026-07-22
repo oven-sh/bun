@@ -1688,7 +1688,7 @@ pub mod fs {
                         }
                     }
                     // Check if /tmp is actually writable.
-                    if unsafe { libc::access(b"/tmp\0" as *const u8 as *const i8, libc::W_OK) } == 0
+                    if unsafe { libc::access(b"/tmp\0".as_ptr() as *const libc::c_char, libc::W_OK) } == 0
                     {
                         return b"/tmp";
                     }
@@ -1699,14 +1699,14 @@ pub mod fs {
                         buf[..len].copy_from_slice(&home[..len]);
                         buf[len..len + 4].copy_from_slice(b"/tmp");
                         buf[len + 4] = 0;
-                        if unsafe { libc::access(buf.as_ptr() as *const i8, libc::W_OK) } == 0 {
+                        if unsafe { libc::access(buf.as_ptr() as *const libc::c_char, libc::W_OK) } == 0 {
                             let tmp = &buf[..len + 4];
                             let leaked = tmp.to_vec().leak();
                             return &leaked[..];
                         }
                     }
                     let candidate = b"/data/storage/el2/base/tmp\0";
-                    if unsafe { libc::access(candidate.as_ptr() as *const i8, libc::W_OK) } == 0 {
+                    if unsafe { libc::access(candidate.as_ptr() as *const libc::c_char, libc::W_OK) } == 0 {
                         return b"/data/storage/el2/base/tmp";
                     }
                     // Last resort: return /tmp even if read-only.

@@ -1,5 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { request } from "undici";
+import {
+  Agent,
+  EnvHttpProxyAgent,
+  fetch as undiciFetch,
+  getGlobalDispatcher,
+  ProxyAgent,
+  request,
+  RetryAgent,
+  setGlobalDispatcher,
+} from "undici";
+import { once } from "node:events";
+import net from "node:net";
 
 import { createServer } from "../../../http-test-server";
 
@@ -205,5 +216,218 @@ describe("undici.request maxRedirections", () => {
     } finally {
       server.stop(true);
     }
+  });
+});
+
+// A minimal HTTP proxy that records every request line it sees. Supports both
+// absolute-form GET (for http:// targets) and CONNECT (for tunneled targets).
+async function recordingProxy() {
+  const seen: string[] = [];
+  const seenAuth: string[] = [];
+  const server = net.createServer(socket => {
+    socket.once("data", data => {
+      const head = data.toString("latin1");
+      const [line, ...rest] = head.split("\r\n");
+      seen.push(line);
+      const auth = rest.find(h => /^proxy-authorization:/i.test(h));
+      if (auth) seenAuth.push(auth.slice(auth.indexOf(":") + 1).trim());
+      const [method, target] = line.split(" ");
+      if (method === "CONNECT") {
+        const [host, port] = target.split(":");
+        const upstream = net.connect({ host, port: Number(port) }, () => {
+          socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          upstream.pipe(socket);
+          socket.pipe(upstream);
+        });
+        upstream.on("error", () => socket.destroy());
+        socket.on("error", () => upstream.destroy());
+        socket.on("close", () => upstream.end());
+      } else {
+        const body = "PROXIED";
+        socket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);
+      }
+    });
+    socket.on("error", () => {});
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const addr = server.address() as net.AddressInfo;
+  return {
+    seen,
+    seenAuth,
+    url: `http://127.0.0.1:${addr.port}`,
+    [Symbol.asyncDispose]: () => new Promise<void>(r => server.close(() => r())),
+  };
+}
+
+describe("undici ProxyAgent / dispatcher", () => {
+  // These tests call undici.fetch()/request() in-process against a localhost
+  // proxy. An ambient NO_PROXY/HTTP_PROXY in the environment would route
+  // localhost requests differently. Clear them for this block; assign "" rather
+  // than `delete` so the native getenv cache is updated.
+  const savedProxyEnv: Record<string, string | undefined> = {};
+  const PROXY_ENV_KEYS = ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"];
+  beforeAll(() => {
+    for (const key of PROXY_ENV_KEYS) {
+      savedProxyEnv[key] = process.env[key];
+      process.env[key] = "";
+    }
+  });
+  afterAll(() => {
+    for (const key of PROXY_ENV_KEYS) {
+      if (savedProxyEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedProxyEnv[key];
+    }
+  });
+
+  it("routes fetch() through the proxy when a ProxyAgent dispatcher is provided", async () => {
+    const originSeen: string[] = [];
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: req => {
+        originSeen.push(new URL(req.url).pathname);
+        return new Response("ORIGIN");
+      },
+    });
+    await using proxy = await recordingProxy();
+
+    const agent = new ProxyAgent(proxy.url);
+    // ProxyAgent must not be an empty stub: dispatch/close/request exist.
+    expect(typeof agent.dispatch).toBe("function");
+    expect(typeof agent.close).toBe("function");
+
+    const res = await undiciFetch(`http://127.0.0.1:${origin.port}/via-dispatcher`, { dispatcher: agent });
+    expect(await res.text()).toBe("PROXIED");
+
+    // The egress-policy contract: the request must have reached the proxy, not
+    // the origin directly. A silent direct connection here is a proxy bypass.
+    expect(proxy.seen.length).toBe(1);
+    expect(proxy.seen[0]).toContain("/via-dispatcher");
+    expect(originSeen).toEqual([]);
+    await agent.close();
+  });
+
+  it("routes request() through a ProxyAgent dispatcher and forwards token as proxy-authorization", async () => {
+    const originSeen: string[] = [];
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: req => {
+        originSeen.push(new URL(req.url).pathname);
+        return new Response("ORIGIN");
+      },
+    });
+    await using proxy = await recordingProxy();
+
+    const agent = new ProxyAgent({ uri: proxy.url, token: "Bearer secret-token" });
+    const { statusCode, body } = await request(`http://127.0.0.1:${origin.port}/req`, { dispatcher: agent });
+    expect(statusCode).toBe(200);
+    expect(await body!.text()).toBe("PROXIED");
+
+    expect(proxy.seen.length).toBe(1);
+    expect(proxy.seen[0]).toContain("/req");
+    expect(proxy.seenAuth).toEqual(["Bearer secret-token"]);
+    expect(originSeen).toEqual([]);
+  });
+
+  it("setGlobalDispatcher(ProxyAgent) applies to undici.fetch and undici.request without an explicit dispatcher", async () => {
+    const originSeen: string[] = [];
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: req => {
+        originSeen.push(new URL(req.url).pathname);
+        return new Response("ORIGIN");
+      },
+    });
+    await using proxy = await recordingProxy();
+
+    const previous = getGlobalDispatcher();
+    try {
+      setGlobalDispatcher(new ProxyAgent(proxy.url));
+
+      const res = await undiciFetch(`http://127.0.0.1:${origin.port}/global-fetch`);
+      expect(await res.text()).toBe("PROXIED");
+
+      const { body } = await request(`http://127.0.0.1:${origin.port}/global-request`);
+      expect(await body!.text()).toBe("PROXIED");
+
+      expect(proxy.seen.length).toBe(2);
+      expect(originSeen).toEqual([]);
+    } finally {
+      setGlobalDispatcher(previous);
+    }
+  });
+
+  it("RetryAgent wrapping a ProxyAgent still proxies", async () => {
+    await using origin = Bun.serve({ port: 0, fetch: () => new Response("ORIGIN") });
+    await using proxy = await recordingProxy();
+
+    const agent = new RetryAgent(new ProxyAgent(proxy.url));
+    const res = await undiciFetch(`http://127.0.0.1:${origin.port}/retry`, { dispatcher: agent });
+    expect(await res.text()).toBe("PROXIED");
+    expect(proxy.seen.length).toBe(1);
+  });
+
+  it("dispatcher.request() on a ProxyAgent proxies", async () => {
+    await using origin = Bun.serve({ port: 0, fetch: () => new Response("ORIGIN") });
+    await using proxy = await recordingProxy();
+
+    const agent = new ProxyAgent(proxy.url);
+    const { body } = await agent.request({ origin: `http://127.0.0.1:${origin.port}`, path: "/self", method: "GET" });
+    expect(await body!.text()).toBe("PROXIED");
+    expect(proxy.seen.length).toBe(1);
+  });
+
+  it("EnvHttpProxyAgent selects proxy by protocol and honours noProxy", async () => {
+    await using origin = Bun.serve({ port: 0, fetch: () => new Response("ORIGIN") });
+    await using proxy = await recordingProxy();
+
+    const agent = new EnvHttpProxyAgent({ httpProxy: proxy.url, httpsProxy: proxy.url, noProxy: "example.com" });
+    const res = await undiciFetch(`http://127.0.0.1:${origin.port}/env`, { dispatcher: agent });
+    expect(await res.text()).toBe("PROXIED");
+    expect(proxy.seen.length).toBe(1);
+
+    // noProxy match goes direct.
+    await using origin2 = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("DIRECT"),
+    });
+    const agent2 = new EnvHttpProxyAgent({
+      httpProxy: proxy.url,
+      noProxy: `127.0.0.1:${origin2.port}`,
+    });
+    const res2 = await undiciFetch(`http://127.0.0.1:${origin2.port}/noproxy`, { dispatcher: agent2 });
+    expect(await res2.text()).toBe("DIRECT");
+    // Proxy must not have seen the noProxy request.
+    expect(proxy.seen.length).toBe(1);
+  });
+
+  it("Agent dispatcher means direct (no proxy) even when a global ProxyAgent is set", async () => {
+    const originSeen: string[] = [];
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: req => {
+        originSeen.push(new URL(req.url).pathname);
+        return new Response("ORIGIN");
+      },
+    });
+    await using proxy = await recordingProxy();
+
+    const previous = getGlobalDispatcher();
+    try {
+      setGlobalDispatcher(new ProxyAgent(proxy.url));
+      const res = await undiciFetch(`http://127.0.0.1:${origin.port}/direct`, { dispatcher: new Agent() });
+      expect(await res.text()).toBe("ORIGIN");
+      expect(originSeen).toEqual(["/direct"]);
+      expect(proxy.seen).toEqual([]);
+    } finally {
+      setGlobalDispatcher(previous);
+    }
+  });
+
+  it("ProxyAgent rejects invalid constructor arguments", () => {
+    expect(() => new (ProxyAgent as any)()).toThrow();
+    expect(() => new (ProxyAgent as any)({})).toThrow();
+    expect(() => new (ProxyAgent as any)(123)).toThrow();
   });
 });

@@ -6,7 +6,7 @@ const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapt
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
-var fetch = Bun.fetch;
+const nativeFetch = Bun.fetch;
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
 const Response = bindings[0];
 const Request = bindings[1];
@@ -34,6 +34,35 @@ class FileReader extends EventTarget {
 function notImplemented() {
   throw new Error("This function is not yet implemented in Bun");
 }
+
+// Dispatchers in Bun's undici shim translate to the native fetch `proxy` option.
+// A dispatcher that can express itself as a proxy exposes this method; it
+// receives the target URL and returns the value to pass as `proxy` (string,
+// URL, `{url, headers}` object, "" for forced-direct) or `undefined` to defer.
+const kProxyFor = Symbol("kProxyFor");
+
+function resolveProxy(dispatcher, url) {
+  if (dispatcher == null) dispatcher = getGlobalDispatcher();
+  if (dispatcher != null && typeof dispatcher[kProxyFor] === "function") {
+    return dispatcher[kProxyFor](url);
+  }
+  return undefined;
+}
+
+function applyDispatcher(url, options) {
+  const dispatcher = options?.dispatcher;
+  const proxy = resolveProxy(dispatcher, url);
+  if (proxy === undefined) return options;
+  if (options == null) return { proxy };
+  // Don't clobber a caller-provided Bun proxy option.
+  if (options.proxy !== undefined) return options;
+  return { ...options, proxy };
+}
+
+function fetch(input, init) {
+  return nativeFetch(input, applyDispatcher(input, init));
+}
+fetch.preconnect = nativeFetch.preconnect;
 
 /**
  * An object representing a URL.
@@ -168,7 +197,7 @@ async function request(
     throwOnError = false,
     body: inputBody,
     maxRedirections,
-    // dispatcher,
+    dispatcher,
   } = options;
 
   // TODO: More validations
@@ -212,9 +241,10 @@ async function request(
   }
 
   const followRedirects = maxRedirections != null && maxRedirections > 0;
+  const proxy = resolveProxy(dispatcher, url);
 
   /** @type {Response} */
-  const resp = await fetch(url, {
+  const resp = await nativeFetch(url, {
     signal,
     mode: "cors",
     method,
@@ -223,6 +253,7 @@ async function request(
     redirect: followRedirects ? "follow" : "manual",
     maxRedirects: followRedirects ? maxRedirections : undefined,
     keepalive: !reset,
+    proxy,
   });
 
   const { status: statusCode, headers, trailers } = resp;
@@ -262,33 +293,154 @@ class MockAgent {
 
 function mockErrors() {}
 
-class Dispatcher extends EventEmitter {}
-class Agent extends Dispatcher {}
-class Pool extends Dispatcher {
-  request() {}
-}
-class BalancedPool extends Dispatcher {}
-class Client extends Dispatcher {
-  request() {}
-}
+class Dispatcher extends EventEmitter {
+  dispatch() {
+    throw new Error(
+      "Dispatcher.dispatch() is not implemented in Bun's builtin undici. " +
+        "Use fetch()/request() with a ProxyAgent dispatcher, or install undici from npm.",
+    );
+  }
 
-class DispatcherBase extends EventEmitter {}
+  request(options, callback) {
+    let url = options;
+    let opts;
+    if (options != null && typeof options === "object" && !(options instanceof URL)) {
+      const { origin, path, ...rest } = options;
+      url = origin != null ? String(origin) + (path ?? "") : path;
+      opts = rest;
+    }
+    const p = request(url, { ...opts, dispatcher: this });
+    if (typeof callback === "function") {
+      p.then(data => callback(null, data), err => callback(err, null));
+      return;
+    }
+    return p;
+  }
 
-class ProxyAgent extends DispatcherBase {
-  constructor() {
-    super();
+  close(callback) {
+    if (typeof callback === "function") {
+      queueMicrotask(callback);
+      return;
+    }
+    return Promise.resolve();
+  }
+
+  destroy(err, callback) {
+    if (typeof err === "function") {
+      callback = err;
+    }
+    if (typeof callback === "function") {
+      queueMicrotask(callback);
+      return;
+    }
+    return Promise.resolve();
+  }
+
+  get closed() {
+    return false;
+  }
+
+  get destroyed() {
+    return false;
+  }
+
+  [kProxyFor](_url) {
+    return undefined;
   }
 }
 
-class EnvHttpProxyAgent extends DispatcherBase {
-  constructor() {
+class Agent extends Dispatcher {}
+class Pool extends Dispatcher {}
+class BalancedPool extends Dispatcher {}
+class Client extends Dispatcher {}
+
+class ProxyAgent extends Dispatcher {
+  #proxy;
+
+  constructor(opts) {
     super();
+    if (typeof opts === "string" || opts instanceof URL) {
+      opts = { uri: opts };
+    }
+    if (opts == null || typeof opts !== "object") {
+      throw new InvalidArgumentError("Proxy uri is mandatory");
+    }
+    const { uri, token, auth } = opts;
+    if (uri == null || (typeof uri !== "string" && !(uri instanceof URL))) {
+      throw new InvalidArgumentError("Proxy uri is mandatory");
+    }
+    if (token != null && auth != null) {
+      throw new InvalidArgumentError("opts.auth cannot be used in combination with opts.token");
+    }
+    let headers;
+    if (typeof token === "string") {
+      headers = { "proxy-authorization": token };
+    } else if (typeof auth === "string") {
+      headers = { "proxy-authorization": `Basic ${auth}` };
+    }
+    this.#proxy = headers ? { url: String(uri), headers } : String(uri);
+  }
+
+  [kProxyFor](_url) {
+    return this.#proxy;
+  }
+}
+
+class EnvHttpProxyAgent extends Dispatcher {
+  #httpProxy;
+  #httpsProxy;
+  #noProxy;
+
+  constructor(opts = kEmptyObject) {
+    super();
+    const env = process.env;
+    this.#httpProxy = opts.httpProxy ?? env.http_proxy ?? env.HTTP_PROXY;
+    this.#httpsProxy = opts.httpsProxy ?? env.https_proxy ?? env.HTTPS_PROXY;
+    const noProxy = opts.noProxy ?? env.no_proxy ?? env.NO_PROXY;
+    this.#noProxy =
+      typeof noProxy === "string" && noProxy.length > 0
+        ? noProxy.split(",").map(s => s.trim().toLowerCase()).filter(Boolean)
+        : [];
+  }
+
+  #isNoProxy(url) {
+    const list = this.#noProxy;
+    if (list.length === 0) return false;
+    if (list.includes("*")) return true;
+    let hostname, port;
+    try {
+      ({ hostname, port } = new URL(url));
+    } catch {
+      return false;
+    }
+    hostname = hostname.toLowerCase();
+    const hostport = port ? `${hostname}:${port}` : hostname;
+    for (let entry of list) {
+      if (entry === hostname || entry === hostport) return true;
+      if (entry[0] === ".") entry = entry.slice(1);
+      if (hostname.endsWith("." + entry)) return true;
+    }
+    return false;
+  }
+
+  [kProxyFor](url) {
+    if (this.#isNoProxy(url)) return "";
+    const https = typeof url === "string" ? url.startsWith("https:") : url?.protocol === "https:";
+    const proxy = https ? (this.#httpsProxy ?? this.#httpProxy) : this.#httpProxy;
+    return proxy ?? "";
   }
 }
 
 class RetryAgent extends Dispatcher {
-  constructor() {
+  #inner;
+
+  constructor(dispatcher, _options) {
     super();
+    this.#inner = dispatcher;
+  }
+
+  [kProxyFor](url) {
+    return resolveProxy(this.#inner, url);
   }
 }
 
@@ -410,13 +562,15 @@ function serializeAMimeType() {
 
 let globalDispatcher;
 
-// Add missing dispatcher functions
 function setGlobalDispatcher(dispatcher) {
+  if (dispatcher == null || typeof dispatcher.dispatch !== "function") {
+    throw new InvalidArgumentError("Argument agent must implement Agent");
+  }
   globalDispatcher = dispatcher;
 }
 
 function getGlobalDispatcher() {
-  return (globalDispatcher ??= new Dispatcher());
+  return (globalDispatcher ??= new Agent());
 }
 
 // Add missing origin functions

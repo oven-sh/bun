@@ -241,7 +241,7 @@ describe("does not send a request when", () => {
     "verbose",
   ];
 
-  test(`ReadableStream body throws`, async () => {
+  test(`body on GET`, async () => {
     const prevCount = requestCount;
     expect(
       async () =>
@@ -250,7 +250,7 @@ describe("does not send a request when", () => {
             throw new Error("boom");
           },
         }),
-    ).toThrow();
+    ).toThrow("cannot have body");
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);

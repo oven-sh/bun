@@ -30,7 +30,7 @@
 use crate::mal_prelude::*;
 use crate::options::{self, Format, Loader, OutputFile};
 use crate::{Chunk, LinkerContext};
-pub struct OutputFileList {
+pub(crate) struct OutputFileList {
     pub(crate) output_files: Vec<options::OutputFile>,
     pub(crate) index_for_chunk: u32,
     pub(crate) index_for_sourcemaps_and_bytecode: Option<u32>,

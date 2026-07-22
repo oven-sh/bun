@@ -247,6 +247,9 @@ struct Rule {
   bool anyCallsite; // '*' key
   char keyTag;      // 'b' 'k' 'n' 'o' - which module the return address is in
   uintptr_t keyRva; // module-relative return address (the stable identity)
+  ULONG ioctlCode;  // "afd:RECV|SEND|<hex>" key: match NtDeviceIoControlFile
+                    // by its decoded control code at ANY callsite (payload
+                    // faults need "the Nth AFD_RECV", not a return address).
   LONG hitIndex; // 0 => every match
   Fault mode;
   MangleKind mangle;
@@ -352,9 +355,20 @@ void LoadSchedule(const char* path) {
     memset(&r, 0, sizeof r);
     r.sys = sys;
     r.anyCallsite = rvaTok[0] == '*';
+    // "afd:RECV" / "afd:SEND" / "afd:<hex>": match the ioctl by its decoded
+    // AFD control code at any callsite - socket payloads travel through
+    // varying stubs, so payload faults key on the code, not the address.
+    if (_strnicmp(rvaTok, "afd:", 4) == 0) {
+      const char* c = rvaTok + 4;
+      r.anyCallsite = true;
+      if (_stricmp(c, "RECV") == 0) r.ioctlCode = 0x12017;
+      else if (_stricmp(c, "SEND") == 0) r.ioctlCode = 0x1201F;
+      else if (_stricmp(c, "RECVDG") == 0) r.ioctlCode = 0x1201B;
+      else r.ioctlCode = (ULONG)strtoul(c, nullptr, 16);
+    }
     // Key format "<tag>:<hexrva>", e.g. b:1a2b3c (bun), k:4a77 (kernelbase).
     // A bare hex value is accepted as a bun key for hand-written schedules.
-    if (!r.anyCallsite) {
+    else if (!r.anyCallsite) {
       if (rvaTok[1] == ':') {
         r.keyTag = rvaTok[0];
         r.keyRva = (uintptr_t)strtoull(rvaTok + 2, nullptr, 16);
@@ -502,6 +516,12 @@ bool CallCtx::PreFault() {
   for (int i = start; i < g_ruleEnd[sys_]; i++) {
     Rule& r = g_rules[i];
     if (!r.anyCallsite && (r.keyTag != k.tag || r.keyRva != k.rva)) continue;
+    if (r.ioctlCode != 0) {
+      int8_t xi = kHooks[sys_].ioctlIndex;
+      if (!(sys_ == SYS_NtDeviceIoControlFile && xi >= 0 && xi < argc_ &&
+            (ULONG)args_[xi] == r.ioctlCode))
+        continue;
+    }
     LONG hit = InterlockedIncrement(&r.hits);
     if (r.hitIndex != 0 && hit != r.hitIndex) continue;
     fault_ = r.mode;

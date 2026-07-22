@@ -103,7 +103,9 @@ function Assert(options?) {
     throw $ERR_CONSTRUCT_CALL_REQUIRED("Class constructor Assert cannot be invoked without `new`");
   }
 
-  options = ObjectAssign({ __proto__: null, strict: true, skipPrototype: false }, options);
+  // Node 26 also defaults `skipPrototype: false` here; Bun's deep-equal
+  // implementation does not yet consume it, so it is accepted but ignored.
+  options = ObjectAssign({ __proto__: null, strict: true }, options);
 
   const { diff } = options;
   if (diff !== undefined) {

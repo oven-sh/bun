@@ -325,6 +325,13 @@ function validateSecureContextOptions(options) {
     dhparam,
     secureProtocol,
   } = options;
+  // A legacy secureProtocol method pins both version bounds, so pairing it with
+  // min/maxVersion is contradictory: honoring one silently drops the other.
+  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/common.js#L78
+  if (secureProtocol) {
+    if (minVersion != null) throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(minVersion, secureProtocol);
+    if (maxVersion != null) throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(maxVersion, secureProtocol);
+  }
   validateSecureProtocol(secureProtocol);
   if (ciphers !== undefined && ciphers !== null) validateString(ciphers, "options.ciphers");
   if (passphrase !== undefined && passphrase !== null) validateString(passphrase, "options.passphrase");

@@ -12,6 +12,7 @@
 #include "helpers.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/Symbol.h"
@@ -2242,11 +2243,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     }
 
     case Bun::ErrorCode::ERR_TLS_PROTOCOL_VERSION_CONFLICT: {
-        auto arg0 = callFrame->argument(1);
-        auto str0 = arg0.toWTFString(globalObject);
+        // Node formats both values with %j, i.e. JSON.stringify.
+        auto str0 = JSC::JSONStringify(globalObject, callFrame->argument(1), 0);
         RETURN_IF_EXCEPTION(scope, {});
-        auto arg1 = callFrame->argument(2);
-        auto str1 = arg1.toWTFString(globalObject);
+        auto str1 = JSC::JSONStringify(globalObject, callFrame->argument(2), 0);
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString("TLS protocol version "_s, str0, " conflicts with secureProtocol "_s, str1);
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_PROTOCOL_VERSION_CONFLICT, message));

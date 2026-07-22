@@ -3433,6 +3433,29 @@ impl VirtualMachine {
         }
     }
 
+    /// Adds a file loaded through a `Bun.plugin` `onLoad` callback to the file
+    /// watcher when watch mode is enabled. Plugin results never reach the
+    /// transpiler's file read, which is where other modules get registered.
+    pub fn add_plugin_loaded_file_to_watcher_if_needed(&self, specifier: &[u8]) {
+        if !self.is_watcher_enabled() {
+            return;
+        }
+        if !bun_paths::is_absolute(specifier)
+            || bun_core::strings::contains(specifier, b"node_modules")
+        {
+            return;
+        }
+        let ext = bun_paths::extension(specifier);
+        let loader = self.transpiler.options.loader(ext);
+        let watcher = self.bun_watcher_ptr();
+        if !watcher.is_null() {
+            // SAFETY: same contract as `add_main_to_watcher_if_needed` above;
+            // `add_file_by_path_slow` serializes the watchlist write via
+            // `Watcher.mutex`. Borrow is scoped to this single call.
+            let _ = unsafe { (*watcher).add_file_by_path_slow(specifier, loader) };
+        }
+    }
+
     /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot
     /// depend on `bun_install`). `bun_jsc` *can*, so cast the opaque back to
     /// the concrete `bun_install::PackageManager` here — the resolver's

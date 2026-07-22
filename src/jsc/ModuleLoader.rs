@@ -588,7 +588,15 @@ pub(crate) unsafe extern "C" fn Bun__runVirtualModule(
         bun_core::String::init(bun_core::ZigString::init(after_namespace)),
         crate::BunPluginTarget::Bun,
     ) {
-        Ok(Some(v)) => v,
+        Ok(Some(v)) => {
+            // An `onLoad` filter matched, so the plugin (not the transpiler's
+            // own file read) produces this module. Register the on-disk path
+            // with the watcher here or editing the file never reloads.
+            global
+                .bun_vm()
+                .add_plugin_loaded_file_to_watcher_if_needed(specifier);
+            v
+        }
         Ok(None) | Err(_) => JSValue::ZERO,
     }
 }

@@ -48,14 +48,16 @@ export default class SharedHandle {
   }
 
   remove(worker) {
-    if (!this.workers.has(worker.id)) return false;
+    const workers = this.workers;
+    if (!workers.has(worker.id)) return false;
 
-    this.workers.delete(worker.id);
+    workers.delete(worker.id);
 
-    if (this.workers.size !== 0) return false;
+    if (workers.size !== 0) return false;
 
-    if (this.handle) {
-      const { fd, path } = this.handle;
+    const handle = this.handle;
+    if (handle) {
+      const { fd, path } = handle;
       closeRawHandle(fd);
       if (path) {
         try {

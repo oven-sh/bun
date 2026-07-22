@@ -51,17 +51,16 @@ false positive.
 
 ## Which builds run this
 
-`.buildkite/ci.mjs:592` — `needsBaselineVerification()`:
+See `needsBaselineVerification()` in `.buildkite/ci.mjs`:
 
-| Target                                          | Allowlist file              |
-| ----------------------------------------------- | --------------------------- |
-| `linux-x64-baseline`, `linux-x64-musl-baseline` | `allowlist-x64.txt`         |
-| `windows-x64-baseline`                          | `allowlist-x64-windows.txt` |
-| `linux-aarch64`, `linux-aarch64-musl`           | `allowlist-aarch64.txt`     |
+| Target                                                         | Allowlist file              |
+| -------------------------------------------------------------- | --------------------------- |
+| `linux-x64`, `linux-x64-musl`                                  | `allowlist-x64.txt`         |
+| `windows-x64`                                                  | `allowlist-x64-windows.txt` |
+| `linux-aarch64`, `linux-aarch64-musl`, `linux-aarch64-android` | `allowlist-aarch64.txt`     |
 
-x64 baseline = Nehalem (`-march=nehalem`, `cmake/CompilerFlags.cmake:33`).
-aarch64 baseline = `armv8-a+crc` (`cmake/CompilerFlags.cmake:27-29`). aarch64
-has no separate "baseline" build — the regular build _is_ the baseline.
+x64 baseline = Nehalem (`-march=nehalem`). aarch64 baseline = `armv8-a+crc`.
+Every x64 build is baseline (there is no separate `-baseline` variant).
 
 ## Reproduce a CI failure locally
 
@@ -70,8 +69,8 @@ building locally unless you build with the exact baseline toolchain. Download
 the artifact instead.
 
 1. Get `<triplet>-profile.zip` from the failing build's `build-bun` step
-   (Artifacts tab in Buildkite). Triplets look like `bun-linux-x64-baseline`,
-   `bun-linux-aarch64-musl`, `bun-windows-x64-baseline`.
+   (Artifacts tab in Buildkite). Triplets look like `bun-linux-x64`,
+   `bun-linux-aarch64-musl`, `bun-windows-x64`.
 
 2. Build and run the scanner (host arch is irrelevant — the scanner reads the
    binary's headers, it doesn't execute it):
@@ -81,7 +80,7 @@ the artifact instead.
 
    # Linux x64 baseline
    ./scripts/verify-baseline-static/target/release/verify-baseline-static \
-     --binary bun-linux-x64-baseline-profile/bun-profile \
+     --binary bun-linux-x64-profile/bun-profile \
      --allowlist scripts/verify-baseline-static/allowlist-x64.txt
 
    # Linux aarch64
@@ -91,7 +90,7 @@ the artifact instead.
 
    # Windows x64 baseline (PDB auto-discovered at <binary>.pdb)
    ./scripts/verify-baseline-static/target/release/verify-baseline-static \
-     --binary bun-windows-x64-baseline-profile/bun-profile.exe \
+     --binary bun-windows-x64-profile/bun-profile.exe \
      --allowlist scripts/verify-baseline-static/allowlist-x64-windows.txt
    ```
 
@@ -164,10 +163,10 @@ table, an HWCAP test. Known patterns:
 | Rust `memchr`                         | `is_x86_feature_detected!()`                                | (via lolhtml dep)                          |
 | compiler-rt outline-atomics (aarch64) | `__aarch64_have_lse_atomics` (= `AT_HWCAP & HWCAP_ATOMICS`) | compiler-rt builtin                        |
 
-**If no gate exists:** (B). Usually a subbuild that ignored
-`ENABLE_BASELINE` and picked up host `-march=native`. Fix the
-`cmake/targets/Build*.cmake` for that dep. Confirm with the emulator (the
-ground-truth check):
+**If no gate exists:** (B). Usually a subbuild that picked up host
+`-march=native` instead of the pinned `-march=nehalem` / `-mcpu=cortex-a53`.
+Fix that dep's compile flags in `scripts/build/deps/`. Confirm with the
+emulator (the ground-truth check):
 
 ```sh
 qemu-x86_64 -cpu Nehalem ./bun-profile <code path that hits it>   # x64 → SIGILL = bug

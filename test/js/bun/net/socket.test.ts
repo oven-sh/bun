@@ -592,6 +592,64 @@ describe.concurrent("socket", () => {
     await promise;
     expect(socket.authorized).toBe(true);
   });
+  // A server-side upgradeTLS handed only a SecureContext has no parsed tls
+  // options to take requestCert/rejectUnauthorized from, so the per-socket
+  // verify mode has to come from the context. Clearing it there would silently
+  // stop the server from sending a CertificateRequest.
+  it("upgradeTLS with only a secureContext keeps the context's verify mode", async () => {
+    const secureContext = createSecureContext({
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.cert,
+      requestCert: true,
+      rejectUnauthorized: true,
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.upgradeTLS({
+            tls: true,
+            secureContext: (secureContext as any).context,
+            isServer: true,
+            data: {},
+            socket: {
+              handshake(tlsSocket) {
+                const peer = tlsSocket.getPeerCertificate();
+                resolve(!!peer && Object.keys(peer).length > 0);
+              },
+              data() {},
+              close() {},
+              error(_s, err) {
+                reject(err);
+              },
+            },
+          });
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+    try {
+      // The client only sends its certificate if the server asked for one.
+      const client = tlsConnect({
+        port: server.port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        cert: tls.cert,
+        key: tls.key,
+      });
+      client.on("error", () => {});
+      expect(await promise).toBe(true);
+      client.destroy();
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("upgradeTLS handles errors", async () => {
     using server = Bun.serve({
       port: 0,

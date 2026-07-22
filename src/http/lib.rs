@@ -45,8 +45,6 @@ pub mod signals;
 pub mod thread_safe_stream_buffer;
 #[path = "websocket.rs"]
 pub mod websocket;
-#[path = "zlib.rs"]
-pub mod zlib;
 
 // ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
@@ -70,7 +68,6 @@ pub use ssl_config::SSLConfig;
 // SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
 // `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
 pub use bun_uws::ssl_wrapper;
-pub use bun_uws::ssl_wrapper::SSLWrapper;
 
 // ── naming aliases ──
 // Submodules use both `HTTPClient`/`HttpClient` and the older name
@@ -110,9 +107,6 @@ pub enum Protocol {
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::HeaderValueIterator;
 pub use init_error::InitError;
-
-/// Compile-time verbosity switch.
-pub const EXTREMELY_VERBOSE: bool = false;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
 /// the user once the headers phase completes.
@@ -154,7 +148,7 @@ impl Drop for HTTPResponseMetadata {
         self.response.status = b"";
     }
 }
-pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
+pub use bun_http_types::{ETag, MimeType};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Standalone items with no deps on HTTPClient/HTTPContext/ssl_*.
@@ -310,11 +304,6 @@ const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;
 pub const MAX_H2_RETRIES: u8 = 5;
 
 const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
-
-#[inline]
-pub fn cleanup(_force: bool) {
-    // No-op: nothing thread-local to clean up.
-}
 
 /// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
 /// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
@@ -1689,7 +1678,6 @@ impl<'a> HTTPClient<'a> {
     pub fn check_server_identity<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
-        cert_error: HTTPCertError,
         ssl: &mut boringssl::c::SSL,
         allow_proxy_url: bool,
     ) -> bool {
@@ -1727,7 +1715,6 @@ impl<'a> HTTPClient<'a> {
                         self.state.certificate_info = Some(CertificateInfo {
                             cert,
                             hostname: Box::<[u8]>::from(hostname),
-                            cert_error,
                         });
 
                         // Park the connection until the JS-side
@@ -2084,29 +2071,14 @@ impl<'a> HTTPClient<'a> {
             self.do_redirect::<IS_SSL>(ctx, socket);
             return;
         }
-        if in_progress {
-            if self.state.is_chunked_encoding() {
-                // Match the spec exactly: only the two trailer states mean
-                // "all chunks consumed"; CHUNKED_IN_CHUNK_SIZE/EXT/CRLF mean
-                // the body was truncated mid-stream and must fail.
-                // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
-                if matches!(self.state.chunked_decoder._state, 4 | 5) {
-                    // ignore failure if we are in the middle of trailer headers, since we processed all the chunks and trailers are ignored
-                    self.state.flags.received_last_chunk = true;
-                    let ctx = self.get_ssl_ctx::<IS_SSL>();
-                    self.progress_update::<IS_SSL>(ctx, socket);
-                    return;
-                }
-                // here we are in the middle of a chunk so ECONNRESET is expected
-            } else if self.state.content_length.is_none()
-                && self.state.response_stage == ResponseStage::Body
-            {
-                // no content length informed so we are done here
-                self.state.flags.received_last_chunk = true;
-                let ctx = self.get_ssl_ctx::<IS_SSL>();
-                self.progress_update::<IS_SSL>(ctx, socket);
+        if in_progress && self.state.is_body_complete_on_close() {
+            if let Err(err) = self.state.finalize_body_on_eof() {
+                self.fail(err);
                 return;
             }
+            let ctx = self.get_ssl_ctx::<IS_SSL>();
+            self.progress_update::<IS_SSL>(ctx, socket);
+            return;
         }
 
         // `in_progress` also keeps a client whose final result was already
@@ -3789,8 +3761,6 @@ impl<'a> HTTPClient<'a> {
                 }
                 // special case for websocket upgrade
                 self.flags.upgrade_state = HTTPUpgradeState::Upgraded;
-                self.signals
-                    .store(signals::Field::Upgraded, true, Ordering::Relaxed);
                 // start draining the request body
                 self.flush_stream::<IS_SSL>(socket);
                 break;
@@ -4636,29 +4606,26 @@ impl<'a> HTTPClient<'a> {
             self.state.cloned_metadata = None;
         }
 
-        let mut certificate_info: Option<CertificateInfo> = None;
-        if let Some(info) = self.state.certificate_info.take() {
-            // transfer owner ship of the certificate info here
-            certificate_info = Some(info);
-        } else if let Some(metadata) = self.state.cloned_metadata.take() {
-            // transfer owner ship of the metadata here
-            return HTTPClientResult {
-                metadata: Some(metadata),
-                body: body_out::opt_mut(self.state.body_out_str),
-                redirected: self.flags.redirected,
-                fail: self.state.fail,
-                dns_error: self.state.dns_error,
-                dns_hostname: self.state.dns_hostname.take(),
-                // check if we are reporting cert errors, do not have a fail state and we are not done
-                has_more: certificate_info.is_some()
-                    || (self.state.fail.is_none() && !self.state.is_done()),
-                body_size,
-                certificate_info: None,
-                can_stream: (self.state.request_stage == RequestStage::Body
-                    || self.state.request_stage == RequestStage::ProxyBody)
-                    && self.flags.is_streaming_request_body,
-                is_http2: self.flags.protocol != Protocol::Http1_1,
-            };
+        let certificate_info = self.state.certificate_info.take();
+        if certificate_info.is_none() {
+            if let Some(metadata) = self.state.cloned_metadata.take() {
+                // transfer ownership of the metadata here
+                return HTTPClientResult {
+                    metadata: Some(metadata),
+                    body: body_out::opt_mut(self.state.body_out_str),
+                    redirected: self.flags.redirected,
+                    fail: self.state.fail,
+                    dns_error: self.state.dns_error,
+                    dns_hostname: self.state.dns_hostname.take(),
+                    has_more: self.state.fail.is_none() && !self.state.is_done(),
+                    body_size,
+                    certificate_info: None,
+                    can_stream: (self.state.request_stage == RequestStage::Body
+                        || self.state.request_stage == RequestStage::ProxyBody)
+                        && self.flags.is_streaming_request_body,
+                    is_http2: self.flags.protocol != Protocol::Http1_1,
+                };
+            }
         }
         HTTPClientResult {
             body: body_out::opt_mut(self.state.body_out_str),

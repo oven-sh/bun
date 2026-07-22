@@ -568,13 +568,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── TLS ─────────────────────────────────────────────────────────────────
 
-    /// Kick TLS open (ClientHello / accept) on an already-connected socket.
-    pub fn start_tls(&self, is_client: bool) {
-        if let InternalSocket::Connected(s) = self.socket {
-            sock(s).open(is_client, None);
-        }
-    }
-
     /// `SSL*` if this is a TLS socket, else `None`.
     #[inline]
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
@@ -939,26 +932,11 @@ macro_rules! any_socket_forward {
 
 impl AnySocket {
     #[inline]
-    pub fn is_ssl(&self) -> bool {
-        matches!(self, AnySocket::SocketTls(_))
-    }
-    #[inline]
     pub fn socket(&self) -> &InternalSocket {
         match self {
             AnySocket::SocketTcp(s) => &s.socket,
             AnySocket::SocketTls(s) => &s.socket,
         }
-    }
-    #[inline]
-    pub fn ext<T>(&self) -> Option<*mut T> {
-        match self {
-            AnySocket::SocketTcp(s) => s.ext::<T>(),
-            AnySocket::SocketTls(s) => s.ext::<T>(),
-        }
-    }
-    #[inline]
-    pub fn terminate(&self) {
-        self.close(CloseCode::failure)
     }
     #[inline]
     pub fn group(&self) -> *mut SocketGroup {

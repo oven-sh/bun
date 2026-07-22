@@ -119,61 +119,6 @@ bitflags::bitflags! {
         /// Renaming can also break any identifier used inside a "with" statement.
         const MUST_NOT_BE_RENAMED = 1 << 2;
 
-        /// --- Not actually used yet -----------------------------------------------
-        /// Sometimes we lower private symbols even if they are supported. For example,
-        /// consider the following TypeScript code:
-        ///
-        ///   class Foo {
-        ///     #foo = 123
-        ///     bar = this.#foo
-        ///   }
-        ///
-        /// If "useDefineForClassFields: false" is set in "tsconfig.json", then "bar"
-        /// must use assignment semantics instead of define semantics. We can compile
-        /// that to this code:
-        ///
-        ///   class Foo {
-        ///     constructor() {
-        ///       this.#foo = 123;
-        ///       this.bar = this.#foo;
-        ///     }
-        ///     #foo;
-        ///   }
-        ///
-        /// However, we can't do the same for static fields:
-        ///
-        ///   class Foo {
-        ///     static #foo = 123
-        ///     static bar = this.#foo
-        ///   }
-        ///
-        /// Compiling these static fields to something like this would be invalid:
-        ///
-        ///   class Foo {
-        ///     static #foo;
-        ///   }
-        ///   Foo.#foo = 123;
-        ///   Foo.bar = Foo.#foo;
-        ///
-        /// Thus "#foo" must be lowered even though it's supported. Another case is
-        /// when we're converting top-level class declarations to class expressions
-        /// to avoid the TDZ and the class shadowing symbol is referenced within the
-        /// class body:
-        ///
-        ///   class Foo {
-        ///     static #foo = Foo
-        ///   }
-        ///
-        /// This cannot be converted into something like this:
-        ///
-        ///   var Foo = class {
-        ///     static #foo;
-        ///   };
-        ///   Foo.#foo = Foo;
-        ///
-        /// --- Not actually used yet -----------------------------------------------
-        const PRIVATE_SYMBOL_MUST_BE_LOWERED = 1 << 3;
-
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
         /// Used in HMR to decide when live binding code is needed.
@@ -199,10 +144,8 @@ macro_rules! symbol_flag_accessors {
 }
 
 symbol_flag_accessors! {
-    did_keep_name, set_did_keep_name => DID_KEEP_NAME;
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
-    private_symbol_must_be_lowered, set_private_symbol_must_be_lowered => PRIVATE_SYMBOL_MUST_BE_LOWERED;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
 }
@@ -638,17 +581,6 @@ impl Map {
         let src = ref_.source_index() as usize;
         let idx = ref_.inner_index() as usize;
         self.symbols_for_source.get_mut(src)?.get_mut(idx)
-    }
-
-    pub fn get_with_link(&self, ref_: Ref) -> Option<*mut Symbol> {
-        let symbol_ptr = self.get(ref_)?;
-        // Read `link` through the safe shared accessor (same indices as `get`);
-        // the raw `*mut` is only forwarded to the caller, never derefed here.
-        let symbol = self.get_const(ref_)?;
-        if symbol.has_link() {
-            return Some(self.get(symbol.link.get()).unwrap_or(symbol_ptr));
-        }
-        Some(symbol_ptr)
     }
 
     pub fn get_with_link_const(&self, ref_: Ref) -> Option<&Symbol> {

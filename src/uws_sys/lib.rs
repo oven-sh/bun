@@ -108,6 +108,7 @@ pub enum create_bun_socket_error_t {
     invalid_ca_file,
     invalid_ca,
     invalid_ciphers,
+    invalid_crl,
 }
 
 impl create_bun_socket_error_t {
@@ -118,6 +119,7 @@ impl create_bun_socket_error_t {
             Self::invalid_ca_file => Some(b"Invalid CA file"),
             Self::invalid_ca => Some(b"Invalid CA"),
             Self::invalid_ciphers => Some(b"Invalid ciphers"),
+            Self::invalid_crl => Some(b"Invalid CRL"),
         }
     }
 }
@@ -133,7 +135,6 @@ impl create_bun_socket_error_t {
 pub struct Opcode(pub i32);
 
 impl Opcode {
-    pub const Continuation: Opcode = Opcode(0);
     pub const Text: Opcode = Opcode(1);
     pub const Binary: Opcode = Opcode(2);
     pub const Close: Opcode = Opcode(8);
@@ -142,12 +143,7 @@ impl Opcode {
     // Upper-case aliases for callers that use the screaming-snake names
     // (`uWS::OpCode::TEXT` etc.). Same bit values; both spellings are accepted
     // so the merge of `bun_uws::Opcode` into this type doesn't ripple.
-    pub const CONTINUATION: Opcode = Opcode(0);
-    pub const TEXT: Opcode = Opcode(1);
     pub const BINARY: Opcode = Opcode(2);
-    pub const CLOSE: Opcode = Opcode(8);
-    pub const PING: Opcode = Opcode(9);
-    pub const PONG: Opcode = Opcode(10);
 }
 
 /// `uWS::WebSocket::SendStatus`.
@@ -431,12 +427,14 @@ pub mod fault_inject {
     pub const RECVMSG: c_int = 4;
     pub const CONNECT: c_int = 5;
     pub const ACCEPT: c_int = 6;
-    pub const SOCKET: c_int = 7;
-    pub const CLOSE: c_int = 8;
     pub const SHUTDOWN: c_int = 9;
     /// Not a syscall: the per-loop TLS plaintext buffer allocation in
     /// `us_internal_init_loop_ssl_data`.
     pub const SSL_LOOP_BUFFER: c_int = 10;
+    /// Not a syscall: poll registration in `us_poll_start_rc`
+    /// (`uv_poll_init_socket` on Windows, `EPOLL_CTL_ADD` / `kevent` on
+    /// epoll/kqueue).
+    pub const POLL_START: c_int = 11;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;
@@ -492,4 +490,3 @@ pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 pub type NewApp<const SSL: bool> = app::App<SSL>;
 pub type NewAppResponse<const SSL: bool> = response::Response<SSL>;
 pub type Socket = us_socket::us_socket_t;
-pub type SocketContext = us_socket_context_t;

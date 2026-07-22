@@ -1738,7 +1738,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
+        if let Err(err) =
+            Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy)
+        {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
@@ -1752,7 +1754,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // Note: see stdout arm above — avoid aliased &mut.
-        if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
+        if let Err(err) =
+            Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy)
+        {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);

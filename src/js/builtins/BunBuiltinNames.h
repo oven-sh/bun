@@ -120,6 +120,7 @@ using namespace JSC;
     macro(isUntransferable) \
     macro(join) \
     macro(json) \
+    macro(kResistStopPropagation) \
     macro(key) \
     macro(lazy) \
     macro(lineText) \

@@ -84,7 +84,6 @@ macro_rules! uws_app_route_methods {
 }
 
 impl<const SSL: bool> App<SSL> {
-    pub const IS_SSL: bool = SSL;
     const SSL_FLAG: i32 = SSL as i32;
 
     /// `&mut uws_app_s` view of self for `safe fn` shims. Both types are
@@ -199,13 +198,6 @@ impl<const SSL: bool> App<SSL> {
         connect => uws_app_connect,
         trace   => uws_app_trace,
         any     => uws_app_any,
-    }
-
-    /// Alias matching uWS C++ `del()` naming (Rust `delete` is not reserved, but callers
-    /// porting from uWS expect `del`).
-    #[inline]
-    pub fn del(&mut self, pattern: &[u8], handler: c::uws_method_handler, user_data: *mut c_void) {
-        self.delete(pattern, handler, user_data)
     }
 
     pub fn method(
@@ -333,10 +325,6 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
-    pub fn constructor_failed(&mut self) -> bool {
-        c::uws_constructor_failed(Self::SSL_FLAG, self.as_raw())
-    }
-
     pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
         // SAFETY: self is a valid app; topic valid for the call.
         unsafe {
@@ -371,32 +359,6 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
-    pub fn get_native_handle(&mut self) -> *mut c_void {
-        c::uws_get_native_handle(Self::SSL_FLAG, self.as_raw())
-    }
-
-    pub fn remove_server_name(&mut self, hostname_pattern: &core::ffi::CStr) {
-        // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
-        unsafe {
-            c::uws_remove_server_name(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                hostname_pattern.as_ptr(),
-            )
-        }
-    }
-
-    pub fn add_server_name(&mut self, hostname_pattern: &core::ffi::CStr) {
-        // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
-        unsafe {
-            c::uws_add_server_name(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                hostname_pattern.as_ptr(),
-            )
-        }
-    }
-
     pub fn add_server_name_with_options(
         &mut self,
         hostname_pattern: &core::ffi::CStr,
@@ -415,14 +377,6 @@ impl<const SSL: bool> App<SSL> {
             return Err(AddServerNameError::FailedToAddServerName);
         }
         Ok(())
-    }
-
-    pub fn missing_server_name(
-        &mut self,
-        handler: c::uws_missing_server_handler,
-        user_data: *mut c_void,
-    ) {
-        c::uws_missing_server_name(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
     /// Register a connection filter: `handler` is invoked with the raw
@@ -529,7 +483,6 @@ pub mod c {
     // sockets is the raw us_socket_t* — typed as such so callers outside this
     // crate can name the handler signature.
     pub(crate) type uws_filter_handler = Option<extern "C" fn(*mut us_socket_t, i32, *mut c_void)>;
-    pub(crate) type uws_missing_server_handler = Option<extern "C" fn(*const c_char, *mut c_void)>;
 
     unsafe extern "C" {
         pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
@@ -666,7 +619,6 @@ pub mod c {
             handler: uws_listen_handler,
             user_data: *mut c_void,
         );
-        pub(crate) safe fn uws_constructor_failed(ssl: i32, app: &mut uws_app_t) -> bool;
         pub(crate) fn uws_num_subscribers(
             ssl: i32,
             app: *mut uws_app_t,
@@ -683,33 +635,12 @@ pub mod c {
             opcode: Opcode,
             compress: bool,
         ) -> SendStatus;
-        // safe: `uws_app_s` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
-        // `&mut uws_app_s` is ABI-identical to the C `uws_app_t*` (non-null,
-        // no `noalias`/`readonly`). The C++ body only reads `app->getNativeHandle()`
-        // — no preconditions beyond a live handle.
-        pub(crate) safe fn uws_get_native_handle(ssl: i32, app: &mut uws_app_s) -> *mut c_void;
-        pub(crate) fn uws_remove_server_name(
-            ssl: i32,
-            app: *mut uws_app_t,
-            hostname_pattern: *const c_char,
-        );
-        pub(crate) fn uws_add_server_name(
-            ssl: i32,
-            app: *mut uws_app_t,
-            hostname_pattern: *const c_char,
-        );
         pub(crate) fn uws_add_server_name_with_options(
             ssl: i32,
             app: *mut uws_app_t,
             hostname_pattern: *const c_char,
             options: BunSocketContextOptions,
         ) -> i32;
-        pub(crate) safe fn uws_missing_server_name(
-            ssl: i32,
-            app: &mut uws_app_t,
-            handler: uws_missing_server_handler,
-            user_data: *mut c_void,
-        );
         pub(crate) safe fn uws_filter(
             ssl: i32,
             app: &mut uws_app_t,

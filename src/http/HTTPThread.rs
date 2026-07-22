@@ -249,9 +249,7 @@ impl RequestBodyBuffer {
         // A `Vec` cannot adopt a foreign allocator+buffer, so this
         // allocates a fresh Vec of the same capacity.
         // Callers that can should write into allocated_slice() directly instead.
-        let mut arraylist = Vec::with_capacity(self.allocated_slice().len());
-        arraylist.clear();
-        arraylist
+        Vec::with_capacity(self.allocated_slice().len())
     }
 }
 
@@ -314,7 +312,6 @@ pub struct InitOpts {
     // copied into the spawned thread and only read there (see the Send SAFETY note).
     pub ca: Vec<*const c_void>, // *const [*:0]const u8
     pub abs_ca_file_name: &'static [u8],
-    pub for_install: bool,
 
     pub on_init_error: fn(err: InitError, opts: &InitOpts) -> !,
 }
@@ -329,7 +326,6 @@ impl Default for InitOpts {
         Self {
             ca: Vec::new(),
             abs_ca_file_name: b"",
-            for_install: false,
             on_init_error: on_init_error_noop,
         }
     }
@@ -370,6 +366,9 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
         }
         InitError::InvalidCA => {
             Output::err("HTTPThread", "the provided CA is invalid", ());
+        }
+        InitError::InvalidCRL => {
+            Output::err("HTTPThread", "the provided CRL is invalid", ());
         }
         InitError::FailedToOpenSocket => {
             bun_core::err_generic!("failed to start HTTP client thread");
@@ -543,6 +542,7 @@ impl HttpThread {
                     });
 
                     return Err(match err {
+                        InitError::InvalidCRL => crate::Error::InvalidCRL,
                         InitError::FailedToOpenSocket
                         | InitError::InvalidCA
                         | InitError::InvalidCAFile

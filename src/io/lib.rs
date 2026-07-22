@@ -331,11 +331,6 @@ impl EventLoopCtx {
         // body itself needs no extra `unsafe`.
         self.loop_mut()
     }
-    /// SAFETY: same aliasing hazard as [`platform_event_loop`].
-    #[inline]
-    pub unsafe fn file_polls(&self) -> &'static mut Store {
-        self.file_polls_mut()
-    }
 
     // ── safe leaf wrappers (nonnull-asref) ──────────────────────────────
     // The platform loop / poll store are per-thread, set-once back-pointers
@@ -403,10 +398,6 @@ impl EventLoopCtx {
         self.loop_mut().unref();
     }
     #[inline]
-    pub fn loop_inc(&self) {
-        self.loop_mut().inc();
-    }
-    #[inline]
     pub fn loop_dec(&self) {
         self.loop_mut().dec();
     }
@@ -439,10 +430,6 @@ impl EventLoopCtx {
         uws_to_native(self.platform_event_loop_ptr())
     }
     #[inline]
-    pub fn init(h: EventLoopCtx) -> EventLoopCtx {
-        h
-    }
-    #[inline]
     pub fn as_event_loop_ctx(self) -> EventLoopCtx {
         self
     }
@@ -459,9 +446,8 @@ pub use posix_event_loop::Flags as PollKind;
 
 /// `file_poll` module — real one lives in {posix,windows}_event_loop.rs.
 pub mod file_poll {
-    pub use super::FilePoll;
     pub use super::Store;
-    pub use super::posix_event_loop::{Flags, Flags as Flag, FlagsSet};
+    pub use super::posix_event_loop::{Flags, FlagsSet};
     /// Kqueue/epoll watch kind passed to `FilePoll::register`.
     #[allow(dead_code)]
     pub(crate) type Pollable = Flags;
@@ -491,12 +477,9 @@ pub mod write;
 
 // ── re-exports for higher tiers ─────────────────────────────────────────────
 // Byte-level `Write` trait + helpers. Downstream
-// crates name these as `bun_io::Write` / `bun_io::BufWriter` /
-// `bun_io::FmtAdapter` / `bun_io::Result`.
-pub use bun_core::fmt::SliceCursor;
-pub use write::{
-    AsFmt, BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntBe, IntLe, Result, Write,
-};
+// crates name these as `bun_io::Write` / `bun_io::FmtAdapter` /
+// `bun_io::Result`.
+pub use write::{AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, Result, Write};
 
 pub use max_buf as MaxBuf;
 pub use pipes::{FileType, ReadState};
@@ -687,17 +670,6 @@ pub(crate) static io_loop: bun_core::output::ScopedLogger =
 #[cfg(not(windows))]
 bun_core::define_scoped_log!(log, io_loop); // hand-declared static above (tagname "loop" is a keyword)
 
-#[cfg(windows)]
-mod windows_ffi {
-    // Bun C++ shim over `QueryPerformanceCounter` (src/bun.js/bindings/
-    // c-bindings.cpp). Infallible on Windows XP+.
-    unsafe extern "C" {
-        // safe: out-params are `&mut i64` (non-null, valid for write); C++ side
-        // only writes the slots — no preconditions.
-        pub(super) safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64);
-    }
-}
-
 // ── libc shims with no preconditions ────────────────────────────────────────
 // By-value scalar args only; the kernel validates and reports failure via the
 // return value / errno — never UB. Local `safe fn` decls (vs. routing through
@@ -712,11 +684,6 @@ mod safe_c {
         pub(super) safe fn kqueue() -> c_int;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
-        // Out-param `tp` is `&mut timespec` (non-null, valid for write); libc
-        // only writes the slot and reports failure via the return value —
-        // bad `clk_id` → `EINVAL`, never UB.
-        pub(super) safe fn clock_gettime(clk_id: libc::clockid_t, tp: &mut libc::timespec)
-        -> c_int;
     }
 }
 
@@ -737,11 +704,6 @@ mod linux {
     pub(crate) const EPOLL_CTL_MOD: i32 = libc::EPOLL_CTL_MOD;
     pub(crate) const EPOLL_CTL_DEL: i32 = libc::EPOLL_CTL_DEL;
 }
-
-/// The value (0x8000) is the
-/// same on Darwin and FreeBSD (sys/event.h: `#define EV_EOF 0x8000`).
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
-const EV_EOF: u16 = 0x8000;
 
 /// Kqueue event struct. Darwin's kevent64_s carries a 2-slot ext[] used for
 /// the optional generation-number assertion; FreeBSD's plain `struct kevent`
@@ -801,18 +763,6 @@ pub struct IoRequestLoop {
     /// eventfd on it, mirroring how Linux registers the eventfd on epoll_fd.
     #[cfg(target_os = "freebsd")]
     pub kqueue_fd: Fd,
-
-    /// IO-thread-only scratch state. Wrapped in `Cell` so the tick loop can
-    /// run on `&self` (see [`on_spawn_io_thread`]): we must never hold a
-    /// process-lifetime `&mut IoRequestLoop`, because cross-thread
-    /// `schedule()` callers concurrently touch `pending`/`waker` through a
-    /// sibling raw pointer, and a live `&mut` over the whole struct would
-    /// assert `noalias` on those bytes too — UB under Stacked Borrows even
-    /// though the queue itself is lock-free. `Cell` is sound here because the
-    /// `ThreadCell` owner latch (debug-asserted in `LOOP.get()`) confines all
-    /// `tick`-side access to the IO thread.
-    pub cached_now: core::cell::Cell<libc::timespec>,
-    pub active: core::cell::Cell<usize>,
 }
 
 // §Concurrency: `OnceLock` for init gate; the singleton itself stays raw because
@@ -844,11 +794,6 @@ impl IoRequestLoop {
             epoll_fd: Fd::INVALID,
             #[cfg(target_os = "freebsd")]
             kqueue_fd: Fd::INVALID,
-            cached_now: core::cell::Cell::new(libc::timespec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            }),
-            active: core::cell::Cell::new(0),
         };
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1006,8 +951,6 @@ impl IoRequestLoop {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn tick_epoll(&self) {
-        self.update_now();
-
         loop {
             // Process pending requests
             {
@@ -1034,9 +977,7 @@ impl IoRequestLoop {
                                 Err(err) => {
                                     (readable.on_error)(readable.ctx, &err);
                                 }
-                                Ok(()) => {
-                                    self.active.set(self.active.get() + 1);
-                                }
+                                Ok(()) => {}
                             }
                         }
                         Action::Writable(writable) => {
@@ -1050,9 +991,7 @@ impl IoRequestLoop {
                                 Err(err) => {
                                     (writable.on_error)(writable.ctx, &err);
                                 }
-                                Ok(()) => {
-                                    self.active.set(self.active.get() + 1);
-                                }
+                                Ok(()) => {}
                             }
                         }
                         Action::Close(close) => {
@@ -1066,7 +1005,6 @@ impl IoRequestLoop {
                             // This state can happen if polling for readable/writable previously failed.
                             if close.poll.flags.contains(Flags::WasEverRegistered) {
                                 close.poll.unregister_with_fd(watcher_fd, close.fd);
-                                self.active.set(self.active.get() - 1);
                             }
                             (close.on_done)(close.ctx);
                         }
@@ -1093,8 +1031,6 @@ impl IoRequestLoop {
                 E::SUCCESS => {}
                 e => bun_core::Output::panic(format_args!("epoll_wait: {:?}", e)),
             }
-
-            self.update_now();
 
             let current_events = &events[..rc as usize];
             if rc != 0 {
@@ -1143,15 +1079,8 @@ impl IoRequestLoop {
         }
     }
 
-    #[cfg(not(windows))]
-    pub fn fd(&self) -> Fd {
-        self.waker.get_fd()
-    }
-
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn tick_kqueue(&self) {
-        self.update_now();
-
         loop {
             let mut events_list: Vec<EventType> = Vec::with_capacity(256);
 
@@ -1237,8 +1166,6 @@ impl IoRequestLoop {
                 )),
             }
 
-            self.update_now();
-
             let rc_len = usize::try_from(rc).expect("int cast");
             debug_assert!(rc_len <= capacity);
             // SAFETY: kernel wrote `rc_len` valid `KEvent`s into the Vec's
@@ -1247,42 +1174,6 @@ impl IoRequestLoop {
 
             for event in &events_list {
                 Poll::on_update_kqueue(*event);
-            }
-        }
-    }
-
-    #[cfg(not(windows))]
-    fn update_now(&self) {
-        let mut ts = self.cached_now.get();
-        Self::update_timespec(&mut ts);
-        self.cached_now.set(ts);
-    }
-
-    // The `extern "C" fn clock_gettime_monotonic` decl lives in `windows_ffi`
-    // at module scope (Rust forbids `extern` blocks inside `impl`).
-
-    pub fn update_timespec(timespec: &mut libc::timespec) {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            let rc = safe_c::clock_gettime(libc::CLOCK_MONOTONIC, timespec);
-            debug_assert!(rc == 0);
-        }
-        #[cfg(windows)]
-        {
-            // `clock_gettime_monotonic` is a Bun C++ shim (src/bun.js/bindings/
-            // c-bindings.cpp) over `QueryPerformanceCounter`; declared at module
-            // scope in `windows_ffi` since `extern` blocks can't live in `impl`.
-            let mut sec: i64 = 0;
-            let mut nsec: i64 = 0;
-            windows_ffi::clock_gettime_monotonic(&mut sec, &mut nsec);
-            timespec.tv_sec = sec.try_into().expect("infallible: size matches");
-            timespec.tv_nsec = nsec.try_into().expect("infallible: size matches");
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
-        {
-            let rc = safe_c::clock_gettime(libc::CLOCK_MONOTONIC, timespec);
-            if rc != 0 {
-                return;
             }
         }
     }
@@ -1575,32 +1466,14 @@ pub enum Flags {
     /// Poll for process-related events
     PollProcess,
 
-    /// Poll for machport events
-    PollMachport,
-
     // What did the event loop tell us?
-    Readable,
-    Writable,
     Process,
-    Eof,
-    Hup,
-    Machport,
-
-    // What is the type of file descriptor?
-    Fifo,
-    Tty,
 
     OneShot,
     NeedsRearm,
 
-    Closed,
-
-    Nonblocking,
-
     WasEverRegistered,
-    IgnoreUpdates,
 
-    Cancelled,
     Registered,
 }
 
@@ -1617,60 +1490,6 @@ pub enum ApplyAction {
     Readable,
     Writable,
     Cancel,
-}
-
-impl Flags {
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub fn from_kqueue_event(kqueue_event: &KEvent) -> FlagsSet {
-        let mut flags = FlagsSet::empty();
-        if kqueue_event.filter == libc::EVFILT_READ {
-            flags.insert(Flags::Readable);
-            log!("readable");
-            if kqueue_event.flags & EV_EOF != 0 {
-                flags.insert(Flags::Hup);
-                log!("hup");
-            }
-        } else if kqueue_event.filter == libc::EVFILT_WRITE {
-            flags.insert(Flags::Writable);
-            log!("writable");
-            if kqueue_event.flags & EV_EOF != 0 {
-                flags.insert(Flags::Hup);
-                log!("hup");
-            }
-        } else if kqueue_event.filter == libc::EVFILT_PROC {
-            log!("proc");
-            flags.insert(Flags::Process);
-        } else {
-            #[cfg(target_os = "macos")]
-            if kqueue_event.filter == libc::EVFILT_MACHPORT {
-                log!("machport");
-                flags.insert(Flags::Machport);
-            }
-        }
-        flags
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn from_epoll_event(epoll: linux::epoll_event) -> FlagsSet {
-        let mut flags = FlagsSet::empty();
-        if epoll.events & linux::EPOLL_IN != 0 {
-            flags.insert(Flags::Readable);
-            log!("readable");
-        }
-        if epoll.events & linux::EPOLL_OUT != 0 {
-            flags.insert(Flags::Writable);
-            log!("writable");
-        }
-        if epoll.events & linux::EPOLL_ERR != 0 {
-            flags.insert(Flags::Eof);
-            log!("eof");
-        }
-        if epoll.events & linux::EPOLL_HUP != 0 {
-            flags.insert(Flags::Hup);
-            log!("hup");
-        }
-        flags
-    }
 }
 
 impl Poll {
@@ -1983,17 +1802,6 @@ impl FilePollRef {
         // SAFETY: type invariant — see doc comment above.
         unsafe { &mut *self.0.as_ptr() }
     }
-    /// SAFETY: caller must not hold another live `&mut` to this slot (the event
-    /// loop is single-threaded, so the only hazard is re-entrancy through a
-    /// poll callback that touches the same slot).
-    #[inline]
-    pub unsafe fn get(self) -> &'static mut FilePoll {
-        self.inner()
-    }
-    #[inline]
-    pub fn as_ptr(self) -> *mut FilePoll {
-        self.0.as_ptr()
-    }
     #[inline]
     pub fn fd(self) -> Fd {
         self.inner().fd
@@ -2099,21 +1907,6 @@ impl FilePollRef {
         self.inner().is_active()
     }
     #[inline]
-    pub fn can_enable_keeping_process_alive(self) -> bool {
-        #[cfg(not(windows))]
-        {
-            self.inner().can_enable_keeping_process_alive()
-        }
-        #[cfg(windows)]
-        {
-            // `canEnableKeepingProcessAlive` is POSIX-only. The previous synthesized expression
-            // `!closed && can_ref()` reduced to `!has_incremented_poll_count` — the OPPOSITE
-            // polarity of the POSIX semantics (`keeps_event_loop_alive && has_incremented_poll_count`).
-            // All callers (PipeWriter PosixWriter, process.rs PollerPosix) are POSIX-only.
-            unreachable!("FilePoll::canEnableKeepingProcessAlive is POSIX-only")
-        }
-    }
-    #[inline]
     pub fn enable_keeping_process_alive(self, ev: EventLoopHandle) {
         self.inner().enable_keeping_process_alive(ev);
     }
@@ -2217,7 +2010,6 @@ pub mod waker {
         pub kq: i32,
         pub machport: bun_core::mach_port,
         pub machport_buf: Box<[u8]>,
-        pub has_pending_wake: bool,
     }
 
     #[cfg(target_os = "macos")]
@@ -2244,16 +2036,11 @@ pub mod waker {
                 kq: -1,
                 machport: 0,
                 machport_buf: Box::default(),
-                has_pending_wake: false,
             }
         }
 
         pub fn wake(&mut self) {
-            if io_darwin_schedule_wakeup(self.machport) {
-                self.has_pending_wake = false;
-                return;
-            }
-            self.has_pending_wake = true;
+            let _ = io_darwin_schedule_wakeup(self.machport);
         }
 
         #[inline]
@@ -2307,7 +2094,6 @@ pub mod waker {
                 kq,
                 machport,
                 machport_buf,
-                has_pending_wake: false,
             })
         }
     }

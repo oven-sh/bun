@@ -9,7 +9,6 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Touch {
-    pub opts: Opts,
     pub state: State,
 }
 
@@ -60,7 +59,6 @@ impl Touch {
                 }
             }
         };
-        Self::state_mut(interp, cmd).opts = opts;
         Self::state_mut(interp, cmd).state = State::Exec(ExecState {
             started: false,
             tasks_count: 0,
@@ -110,14 +108,12 @@ impl Touch {
                 if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                     exec.tasks_count = argc - args_start;
                 }
-                let opts = Self::state_mut(interp, cmd).opts;
                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
                 let evtloop = Builtin::event_loop(interp, cmd);
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 for i in args_start..argc {
                     let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
-                    let task =
-                        ShellTouchTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
+                    let task = ShellTouchTask::create(cmd, path, cwd.clone(), evtloop, interp_ptr);
                     // SAFETY: freshly heap-allocated.
                     unsafe { ShellTask::schedule(task) };
                 }
@@ -243,7 +239,6 @@ impl OutputTaskVTable for Touch {
 /// utimes() the path (creating it on ENOENT) on a worker thread.
 pub struct ShellTouchTask {
     pub cmd: NodeId,
-    pub opts: Opts,
     pub filepath: Vec<u8>,
     pub cwd_path: Vec<u8>,
     pub err: Option<bun_sys::Error>,
@@ -253,7 +248,6 @@ pub struct ShellTouchTask {
 impl ShellTouchTask {
     pub fn create(
         cmd: NodeId,
-        opts: Opts,
         filepath: Vec<u8>,
         cwd_path: Vec<u8>,
         evtloop: EventLoopHandle,
@@ -261,7 +255,6 @@ impl ShellTouchTask {
     ) -> *mut ShellTouchTask {
         let mut task = Box::new(ShellTouchTask {
             cmd,
-            opts,
             filepath,
             cwd_path,
             err: None,
@@ -347,17 +340,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {
-    /// `-a` — change only the access time
-    pub access_time_only: bool,
-    /// `-c`, `--no-create` — do not create any files
-    pub no_create: bool,
-    /// `-h`, `--no-dereference` — affect each symbolic link instead of any
-    /// referenced file
-    pub no_dereference: bool,
-    /// `-m` — change only the modification time
-    pub modification_time_only: bool,
-}
+pub struct Opts {}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult> {

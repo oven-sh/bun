@@ -16,6 +16,7 @@
  */
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #include "libusockets.h"
 #include <stdlib.h>
 
@@ -126,6 +127,18 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
           sock->group->loop->data.fin_deferred_count++;
         }
       }
+    } else if (kind == POLL_TYPE_SOCKET &&
+               !(us_poll_events(wp) & LIBUS_SOCKET_READABLE)) {
+      /* A half-open data socket whose end was already delivered: the EOF path
+       * moved its poll to WRITABLE-only (loop.c), and us_poll_change re-adds
+       * UV_DISCONNECT unconditionally, so AFD keeps reporting it. Re-adding
+       * READABLE here made recv() rediscover the same EOF, which re-armed
+       * WRITABLE+DISCONNECT again - on_end busy-looped once per iteration per
+       * half-open socket, and every subsequent event-loop turn paid that cost.
+       * The re-arm at the top of this branch (uv_poll_start(p, us_poll_events))
+       * already dropped DISCONNECT, so a socket at 0-event polling quiesces.
+       * Non-SOCKET kinds keep the unconditional READABLE below: SEMI_SOCKET
+       * checks error/eof (set from status) and listen polls READABLE only. */
     } else {
       events |= UV_READABLE;
     }
@@ -195,13 +208,48 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
   }
 }
 
-void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  if(!p->uv_p) return;
+int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(!p->uv_p) return 0;
   p->poll_type = us_internal_poll_type(p) |
                  ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
                  ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
-  uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  /* uv_poll_init_socket (win/poll.c) can fail either before uv__handle_init
+   * (ioctlsocket FIONBIO) or after it (getsockopt SO_PROTOCOL_INFOW). The
+   * latter leaves the handle linked into loop->handle_queue with
+   * submitted_events_* still unset. Zero first so, on failure, ->type
+   * distinguishes the two states and the fields uv__poll_close reads are 0
+   * rather than garbage. */
+  memset(p->uv_p, 0, sizeof(uv_poll_t));
+  p->uv_p->data = p;
+
+  int rc;
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+  ssize_t injected = 0;
+  int unused = 0;
+  if (US_FAULT_CHECK(US_FAULT_POLL_START, p->fd, injected, unused)) {
+    rc = (int) injected;
+  } else
+#endif
+  rc = uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  if (rc < 0) {
+    int saved = LIBUS_ERR;
+    if (p->uv_p->type == UV_POLL) {
+      /* uv__handle_init ran: the handle is in loop->handle_queue. Close it
+       * through libuv so it is unlinked; the caller's us_poll_free sees
+       * uv_is_closing and hands ownership to close_cb_free_poll. */
+      p->uv_p->data = 0;
+      uv_close((uv_handle_t *)p->uv_p, close_cb_free_poll);
+    } else {
+      /* Never reached uv__handle_init: uv_p is still our raw block. Free it
+       * here and null the pointer so the caller's us_poll_free takes the
+       * !uv_p fast path (its uv_is_closing check would read garbage). */
+      us_free(p->uv_p);
+      p->uv_p = NULL;
+    }
+    errno = saved ? saved : -rc;
+    return rc;
+  }
   // This unref is okay in the context of Bun's event loop, because sockets have
   // a `Async.KeepAlive` associated with them, which is used instead of the
   // usockets internals. usockets doesnt have a notion of ref-counted handles.
@@ -210,22 +258,11 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
    * writable-only at that moment (a half-closed connection whose reads are
    * paused is exactly the state that otherwise hangs; see poll_cb). */
   uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
+  return 0;
 }
 
-int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  if (!p->uv_p) return -1;
-  p->poll_type = us_internal_poll_type(p) |
-                 ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
-                 ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
-
-  int rc = uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
-  if (rc != 0) {
-    us_free(p->uv_p);
-    p->uv_p = NULL;
-    return rc;
-  }
-  uv_unref((uv_handle_t *)p->uv_p);
-  return uv_poll_start(p->uv_p, events, poll_cb);
+void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  us_poll_start_rc(p, loop, events);
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {

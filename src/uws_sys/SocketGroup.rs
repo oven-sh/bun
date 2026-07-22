@@ -133,14 +133,6 @@ impl SocketGroup {
         unsafe { us_socket_group_close_all(self) }
     }
 
-    /// Non-null after `init`. The fields stay nullable raw pointers only because
-    /// the struct is zero-init'd by default and read directly by C; these
-    /// accessors encode the post-init invariant.
-    pub fn get_loop(&self) -> *mut Loop {
-        debug_assert!(!self.loop_.is_null());
-        self.loop_
-    }
-
     /// Recover the embedding owner. Only valid for groups whose `init` passed a
     /// non-null owner (Listener, uWS App/Context). Per-kind VM groups in
     /// `RareData` pass null, so callers must know which they have.
@@ -328,12 +320,6 @@ impl SocketGroup {
     ) -> *mut us_socket_t {
         // SAFETY: forwarding to C; `fds` is a valid 2-element array.
         unsafe { us_socket_pair(self, kind as u8, ext_size, fds.as_mut_ptr().cast()) }
-    }
-
-    pub fn next_in_loop(&mut self) -> *mut SocketGroup {
-        // `us_socket_group_next` is `return group->next` (context.c:165); this
-        // struct is a full `#[repr(C)]` mirror, so read the field directly.
-        self.next
     }
 }
 

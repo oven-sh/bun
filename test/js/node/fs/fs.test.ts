@@ -3617,10 +3617,9 @@ describe("createWriteStream", () => {
   it.each([false, true])(
     "destroy() in the same tick as an accepted write() persists the in-flight bytes (destroy with error: %p)",
     async withErr => {
-      // In Node the first write() after 'open' is dispatched to _write
-      // synchronously, so a same-tick destroy() must wait for that I/O to
-      // finish before closing the fd. The bytes reach disk and the write
-      // callback receives ERR_STREAM_DESTROYED (not the destroy error).
+      // Node dispatches the first post-'open' write() to _write synchronously, so
+      // a same-tick destroy() waits for that I/O: bytes reach disk and the write
+      // callback gets ERR_STREAM_DESTROYED, not the destroy error.
       const p = join(tmpdirSync(), "write-then-destroy.bin");
       const ws = createWriteStream(p);
       const { promise: opened, resolve: onOpen } = Promise.withResolvers<void>();

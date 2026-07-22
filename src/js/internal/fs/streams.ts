@@ -241,9 +241,8 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
       if (deferred !== null) {
         deferred.push(args);
       } else if (args[0] === "open") {
-        // Defer "open" (and anything the patched open() emits synchronously
-        // after it, typically "ready") to the same nextTick batch as
-        // onConstruct; see emitOpenReady below.
+        // Defer "open" (and anything emitted synchronously after it, typically
+        // "ready") to onConstruct's nextTick batch; see emitOpenReady below.
         deferred = [args];
         const self = this;
         process.nextTick(() => {
@@ -296,17 +295,9 @@ readStreamPrototype.open = streamNoop;
 
 readStreamPrototype._construct = streamConstruct;
 
-// _construct's callback schedules the `constructed` flag flip via
-// process.nextTick. Node drains nextTick before microtasks after an I/O
-// callback, so `await once(stream, "open")` resumes with the stream already
-// constructed. Bun drains microtasks first, so emitting "open" synchronously
-// let the awaited continuation observe `constructed === false`; the next
-// write() buffered instead of dispatching, and a same-tick destroy() discarded
-// it (node persists those bytes). Queue "open"/"ready" before the _construct
-// callback so both land in the same nextTick batch as `onConstruct`, with
-// "open" first: "open" still precedes "finish"/"data", and microtasks scheduled
-// from the "open" listener run after `onConstruct` has marked the stream
-// constructed.
+// Bun drains microtasks before nextTick after I/O (Node is the reverse), so
+// queue "open"/"ready" ahead of callback()'s nextTick(onConstruct): "open"
+// still precedes "finish"/"data", and `await once(s, "open")` resumes constructed.
 function emitOpenReady(stream) {
   stream.emit("open", stream.fd);
   stream.emit("ready");

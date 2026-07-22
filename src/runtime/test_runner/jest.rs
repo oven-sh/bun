@@ -576,7 +576,7 @@ pub(crate) fn js_node_test_late_report(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let [name_arg, error_arg] = callframe.arguments_as_array::<2>();
+    let [name_arg, error_arg, mode_arg] = callframe.arguments_as_array::<3>();
     let Some(buntest_strong) = bun_test::clone_active_strong() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -590,7 +590,9 @@ pub(crate) fn js_node_test_late_report(
     let name_str = name_arg.to_bun_string(global)?;
     let name = name_str.to_utf8();
     let name_bytes = bstr::BStr::new(name.slice());
-    let passed = error_arg.is_undefined_or_null();
+    let failed = !error_arg.is_undefined_or_null();
+    // 0 = normal (pass/fail by error), 1 = skip, 2 = todo.
+    let mode = mode_arg.to_int32();
 
     // Re-derive the BunTestRoot backref before printing; `on_before_print`
     // must not observe a `&mut BunTest` held across it (stacked-borrows).
@@ -598,10 +600,14 @@ pub(crate) fn js_node_test_late_report(
 
     let colors = Output::enable_ansi_colors_stderr();
     let mut line: Vec<u8> = Vec::new();
-    if passed {
-        let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>(pass)<r> {}\n", name_bytes);
-    } else {
+    if mode == 1 {
+        let _ = bun_core::write_pretty!(&mut line, colors, "<r><yellow>(skip)<d> {}<r>\n", name_bytes);
+    } else if mode == 2 {
+        let _ = bun_core::write_pretty!(&mut line, colors, "<r><magenta>(todo)<r> {}\n", name_bytes);
+    } else if failed {
         let _ = bun_core::write_pretty!(&mut line, colors, "<r><red>(fail)<r> {}\n", name_bytes);
+    } else {
+        let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>(pass)<r> {}\n", name_bytes);
     }
     let _ = Output::error_writer().write_all(&line);
 
@@ -609,12 +615,18 @@ pub(crate) fn js_node_test_late_report(
     // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
     // every BunTest.
     let reporter: &mut CommandLineReporter = unsafe { &mut *reporter.as_ptr() };
-    if passed {
-        reporter.summary().pass += 1;
-    } else {
+    if mode == 1 {
+        reporter.summary().skip += 1;
+        reporter.skips_to_repeat_buf.extend_from_slice(&line);
+    } else if mode == 2 {
+        reporter.summary().todo += 1;
+        reporter.todos_to_repeat_buf.extend_from_slice(&line);
+    } else if failed {
         reporter.summary().fail += 1;
         reporter.failures_to_repeat_buf.extend_from_slice(&line);
         global.bun_vm().as_mut().run_error_handler(error_arg, None);
+    } else {
+        reporter.summary().pass += 1;
     }
     Output::flush();
     Ok(JSValue::UNDEFINED)

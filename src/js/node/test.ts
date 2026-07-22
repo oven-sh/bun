@@ -927,7 +927,7 @@ const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2)
 // past collection so the shim runs the late test inline instead of registering.
 const wantDrainAndIsPastCollection = $newRustFunction("jest.rs", "jsNodeTestWantDrain", 0);
 const lateBegin = $newRustFunction("jest.rs", "jsNodeTestLateBegin", 0);
-const lateReport = $newRustFunction("jest.rs", "jsNodeTestLateReport", 2);
+const lateReport = $newRustFunction("jest.rs", "jsNodeTestLateReport", 3);
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -1703,19 +1703,35 @@ function bunTest() {
 // through one promise so overlapping late registrations do not interleave.
 let lateChain: Promise<void> = Promise.resolve();
 
-function runLateTopLevel(node: TestNode, fn: TestFn, skipped: boolean): Promise<undefined> {
+// lateReport's third argument: matches the summary counter the native hook
+// bumps. "pass" is implicit (mode 0 with failure undefined).
+const kLateModeSkip = 1;
+const kLateModeTodo = 2;
+
+function runLateTopLevel(node: TestNode, fn: TestFn, declaredMode: "skip" | "todo" | undefined): Promise<undefined> {
   lateBegin();
   const run = async () => {
     let failure: unknown;
-    try {
-      if (!skipped) failure = await executeTestNode(node, fn);
-    } catch (err) {
-      failure = err ?? makeTestFailure("test failed");
+    // Node runs todo bodies (and the collection-phase path hands them to
+    // test.todo so --todo runs them); a declared skip never runs the body.
+    if (declaredMode !== "skip") {
+      try {
+        failure = await executeTestNode(node, fn);
+      } catch (err) {
+        failure = err ?? makeTestFailure("test failed");
+      }
     }
-    if (node.skipped || node.todoFlag || skipped) {
+    // Runtime t.skip()/t.todo() override the outcome the same way the
+    // collection-phase path does via markCurrentResult.
+    let mode = 0;
+    if (node.skipped || declaredMode === "skip") {
+      mode = kLateModeSkip;
+      failure = undefined;
+    } else if (node.todoFlag || declaredMode === "todo") {
+      mode = kLateModeTodo;
       failure = undefined;
     }
-    lateReport(node.fullName, failure);
+    lateReport(node.fullName, failure, mode);
   };
   // executeTestNode never rejects (it returns the failure); guard anyway so a
   // thrown value cannot poison the chain and strand a later late test.
@@ -1811,8 +1827,8 @@ function addTest(
   // reaches here (no ALS context), but bun:test would throw "inside a test" /
   // "after the test run has completed". Node runs it as a root subtest.
   if (wantDrainAndIsPastCollection()) {
-    const skipped = mode === "skip" || mode === "todo" || !!options.skip || !!options.todo;
-    return runLateTopLevel(node, fn, skipped);
+    const declaredMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+    return runLateTopLevel(node, fn, declaredMode);
   }
 
   const { test } = bunTest();
@@ -1905,18 +1921,34 @@ function addSuite(
   // A late top-level describe() is built and run inline like a suite subtest
   // of the root so its children's failures reach the summary.
   if (wantDrainAndIsPastCollection()) {
-    if (mode === "skip" || options.skip) return Promise.resolve(undefined);
-    if (mode === "todo") suiteNode.todoFlag = true;
+    const declaredMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+    if (declaredMode === "skip") {
+      lateBegin();
+      lateReport(suiteNode.fullName, undefined, kLateModeSkip);
+      return Promise.resolve(undefined);
+    }
+    if (declaredMode === "todo") suiteNode.todoFlag = true;
     suiteNode.isExecutionPhase = true;
     lateBegin();
+    // Seed the suite's own chain on lateChain so children collected by the
+    // callback queue behind earlier late tests (same gating as the inline-suite
+    // path's `suite.subtestChain = runningNode.subtestChain.then(...)` above).
+    const gate = Promise.withResolvers<void>();
+    suiteNode.subtestChain = lateChain.then(() => gate.promise);
     let build: unknown;
     try {
       build = runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
     } catch (err) {
       recordSuiteFailure(suiteNode, err);
     }
+    if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
+      (build as Promise<unknown>).then(gate.resolve, gate.resolve);
+    } else {
+      gate.resolve();
+      build = undefined;
+    }
     const run = async () => {
-      if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
+      if (build !== undefined) {
         try {
           await build;
         } catch (err) {
@@ -1931,8 +1963,12 @@ function addSuite(
           recordSuiteFailure(suiteNode, err);
         }
       }
-      const failure = suiteNode.failedSubtests > 0 && !suiteNode.todoFlag ? suiteNode.firstSubtestError : undefined;
-      lateReport(suiteNode.fullName, failure);
+      const failed = suiteNode.failedSubtests > 0 && !suiteNode.todoFlag;
+      lateReport(
+        suiteNode.fullName,
+        failed ? suiteNode.firstSubtestError : undefined,
+        suiteNode.todoFlag ? kLateModeTodo : 0,
+      );
     };
     lateChain = lateChain.then(run, run);
     return lateChain.then(() => undefined);

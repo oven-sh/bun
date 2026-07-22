@@ -270,7 +270,16 @@ describe("node:test", () => {
     expect(stderr).toContain("(pass) late async passing");
     expect(stderr).toContain("(fail) late suite");
     expect(stderr).toContain("late test is red");
-    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("(skip) late skipped");
+    expect(stderr).toContain("(todo) late todo");
+    expect(stderr).toContain("(skip) late runtime skip");
+    // Late tests run in registration order; a late describe()'s children queue
+    // behind earlier late tests (Node's root serializes subtests). Node runs
+    // todo bodies and never runs a declared skip's body.
+    expect(stderr).toContain("ORDER=fail,pass,async-start,async-end,suite-child,todo-body,runtime-skip");
+    expect(stderr).toContain("4 pass");
+    expect(stderr).toContain("2 skip");
+    expect(stderr).toContain("1 todo");
     expect(stderr).toContain("2 fail");
     expect(exitCode).toBe(1);
   });

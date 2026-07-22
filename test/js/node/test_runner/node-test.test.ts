@@ -263,7 +263,7 @@ describe("node:test", () => {
     // Node keeps the root alive while a ref'd timer is pending and accepts late
     // registrations; without the event-loop drain the setTimeout never fires and
     // the late failing tests are silently dropped (run would be 1 pass / exit 0).
-    const { exitCode, stderr } = await runTests(["25-late-top-level.js"]);
+    const { exitCode, stderr } = await runTests(["30-late-top-level.js"]);
     expect(stderr).toContain("(pass) sync-registered");
     expect(stderr).toContain("(fail) late failing");
     expect(stderr).toContain("(pass) late passing");

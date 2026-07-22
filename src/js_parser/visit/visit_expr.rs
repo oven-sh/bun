@@ -323,6 +323,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // An unbound reference to a strict-mode reserved word is printed
+        // verbatim (the renamer only remaps declared symbols via
+        // `strict_mode_reserved_word_remap`), so it would make the
+        // always-strict ESM output unparsable. Fail the build instead.
+        // Deliberate deviation from the Zig/esbuild reference, which emits
+        // the broken output silently.
+        if !p.is_strict_mode()
+            && p.is_strict_mode_output_format()
+            && p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
+            && js_lexer::is_strict_mode_reserved_word(name)
+        {
+            p.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(p.source, expr.loc),
+                name,
+            )
+            .expect("unreachable");
+        }
+
         *e = p.handle_identifier(
             expr.loc,
             e_,

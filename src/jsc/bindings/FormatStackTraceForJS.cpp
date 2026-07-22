@@ -391,13 +391,11 @@ WTF::String formatStackTrace(
                 loc.append("), "_s);
             }
             loc.append("<anonymous>"_s);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+            if (frame.hasLineAndColumnInfo()) {
                 loc.append(':');
                 loc.append(displayLine.oneBasedInt());
-                if (displayColumn.zeroBasedInt() > 0) {
-                    loc.append(':');
-                    loc.append(displayColumn.oneBasedInt());
-                }
+                loc.append(':');
+                loc.append(displayColumn.oneBasedInt());
             }
         } else if (!sourceURLForFrame.isEmpty()) {
             loc.append(sourceURLForFrame);

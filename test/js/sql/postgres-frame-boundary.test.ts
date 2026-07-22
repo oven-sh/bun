@@ -142,10 +142,7 @@ const malformed: { name: string; frame: Buffer }[] = [
     // ErrorResponse whose last field value has no NUL (so the list terminator
     // is missing too); the value scan must not spill into CommandComplete.
     name: "ErrorResponse whose last field value has no NUL terminator",
-    frame: pgRaw(
-      "E",
-      Buffer.concat([Buffer.from("S"), pgCString("ERROR"), Buffer.from("M"), Buffer.from("msg")]),
-    ),
+    frame: pgRaw("E", Buffer.concat([Buffer.from("S"), pgCString("ERROR"), Buffer.from("M"), Buffer.from("msg")])),
   },
   {
     // DataRow whose declared frame is longer than its body: the decoder reads

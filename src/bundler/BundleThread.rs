@@ -173,31 +173,16 @@ impl<C: CompletionStruct> BundleThread<C> {
         Ok(thread)
     }
 
-    /// # Safety
-    /// `instance` must point to a live `BundleThread` whose bundle thread has been
-    /// spawned (so `waker` is initialized). Called concurrently with `thread_main`.
-    pub unsafe fn enqueue(instance: *mut Self, completion: *mut C) {
-        // SAFETY: `completion` is a live, caller-owned task node (non-null).
-        let completion = unsafe { core::ptr::NonNull::new_unchecked(completion) };
-        // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
-        // accesses the same struct concurrently, so we never materialize `&mut Self`.
-        // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
-        // `&self` on all platforms (LinuxWaker/Windows/KEventWaker — the latter uses
-        // `AtomicBool` for `has_pending_wake`), so this autorefs to `&Waker` and is
-        // safe to call concurrently with `wait(&self)` in `thread_main` and with
-        // other `enqueue` callers.
-        unsafe {
-            (*instance).queue.push(completion);
-            (*instance).waker.wake();
-        }
-    }
-
-    /// [`Self::enqueue`], except when another build is already scheduled: then
-    /// this build runs on its own short-lived thread instead of sitting in
-    /// `queue` behind it. See [`singleton::enqueue`] for why.
+    /// Schedule one completion. When no other build is outstanding this queues
+    /// onto the singleton thread; otherwise the build runs on its own
+    /// short-lived overflow thread. See [`singleton::enqueue`] for why.
     ///
     /// # Safety
-    /// Same as [`Self::enqueue`].
+    /// `instance` must point to a live `BundleThread` whose bundle thread has
+    /// been spawned (so `waker` is initialized). Called concurrently with
+    /// `thread_main`. `completion` is a live, caller-owned task node
+    /// (non-null); the caller transfers it here and must not touch it again
+    /// until `complete_on_bundle_thread` fires.
     pub unsafe fn enqueue_or_spawn(instance: *mut Self, completion: *mut C) {
         // SAFETY: `completion` is a live, caller-owned task node (non-null).
         let completion = unsafe { core::ptr::NonNull::new_unchecked(completion) };
@@ -238,7 +223,14 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
             }
         }
-        // SAFETY: see `Self::enqueue`.
+        // SAFETY: field projections via raw ptr — `thread_main` on the bundle
+        // thread accesses the same struct concurrently, so we never materialize
+        // `&mut Self`. `UnboundedQueue::push` takes `&self` (lock-free MPSC).
+        // `Waker::wake` takes `&self` on all platforms (LinuxWaker / Windows /
+        // KEventWaker — the latter uses `AtomicBool` for `has_pending_wake`),
+        // so this autorefs to `&Waker` and is safe to call concurrently with
+        // `wait(&self)` in `thread_main` and with other `enqueue_or_spawn`
+        // callers.
         unsafe {
             (*instance).queue.push(completion);
             (*instance).waker.wake();
@@ -334,7 +326,8 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// instead of deadlocking or head-of-line blocking behind it.
     ///
     /// # Safety
-    /// `instance` is the live singleton (same contract as [`Self::enqueue`]).
+    /// `instance` is the live singleton (same contract as
+    /// [`Self::enqueue_or_spawn`]).
     /// `completion` is a live owner-held task; the caller transfers it to the
     /// spawned thread and must not touch it again until
     /// `complete_on_bundle_thread` fires.
@@ -491,11 +484,12 @@ pub mod singleton {
     /// only ever project fields via raw-pointer access.
     struct Instance(NonNull<()>);
     // SAFETY: the allocation is a leaked `Box<BundleThread<C>>` valid for
-    // `'static`; cross-thread access is mediated entirely through
-    // `UnboundedQueue` / `ResetEvent` atomics inside `BundleThread::enqueue`.
+    // `'static`; cross-thread access is mediated entirely through the
+    // `UnboundedQueue` / `ResetEvent` / `scheduled` atomics inside
+    // `BundleThread::enqueue_or_spawn`.
     unsafe impl Send for Instance {}
     // SAFETY: `&Instance` only exposes the raw pointer; every dereference path
-    // goes through `BundleThread::enqueue`'s atomic queue/waker primitives, so
+    // goes through `BundleThread::enqueue_or_spawn`'s atomic primitives, so
     // sharing the pointer across threads is sound.
     unsafe impl Sync for Instance {}
 
@@ -522,7 +516,7 @@ pub mod singleton {
     /// Returns the raw singleton pointer. The bundle thread runs `thread_main`
     /// against this allocation for the process lifetime, so callers MUST NOT
     /// materialize `&mut BundleThread` from it.
-    /// Use `BundleThread::enqueue(get(), ...)` instead.
+    /// Use `BundleThread::enqueue_or_spawn(get(), ...)` instead.
     ///
     /// # Safety
     /// All calls (across the process) must use the same `C`; the static is

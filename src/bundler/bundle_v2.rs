@@ -4689,7 +4689,22 @@ pub mod bv2_impl {
                             drop(result.namespace);
                             drop(result.path);
                         }
-                    } else if resolve.import_record.kind != ImportKind::EntryPointBuild {
+                    } else if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                        let log = this.log_for_resolution_failures(
+                            &resolve.import_record.source_file,
+                            resolve.import_record.original_target.bake_graph(),
+                        );
+                        let _ = log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "The entry point {} cannot be marked as external",
+                                bun_core::fmt::quote(&resolve.import_record.specifier),
+                            ),
+                        );
+                        drop(result.namespace);
+                        drop(result.path);
+                    } else {
                         // `{ path, external: true }` from an onResolve plugin: rewrite the
                         // import record's path so the emitted external import uses the
                         // plugin-returned specifier (esbuild parity).
@@ -4713,9 +4728,6 @@ pub mod bv2_impl {
                             drop(result.namespace);
                             drop(result.path);
                         }
-                    } else {
-                        drop(result.namespace);
-                        drop(result.path);
                     }
 
                     if let Some(source_index) = out_source_index {

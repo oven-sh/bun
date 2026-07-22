@@ -469,6 +469,21 @@ describe("bundler", () => {
       expect(contents).toContain(`from "lodash"`);
     },
   });
+  itBundled("plugin/ResolveExternalEntryPointErrors", {
+    files: {
+      "index.ts": /* ts */ `
+        console.log("hi");
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, args => {
+        return { path: args.path, external: true };
+      });
+    },
+    bundleErrors: {
+      "<bun>": [`cannot be marked as external`],
+    },
+  });
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
       files: {

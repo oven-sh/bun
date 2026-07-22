@@ -58,6 +58,41 @@ test("fetch(url, RequestSubclass)", async () => {
   expect(headers.get("hello")).toBe("world");
 });
 
+// Regression: Request exposes a `keepalive` getter (default false) per the
+// Fetch spec. Bun's fetch() has a same-named `keepalive` option that controls
+// HTTP connection pooling — that name collision is exactly why the guard
+// below exists. When a Request (direct instance, subclass, or
+// structure-mutated instance) is passed as the second fetch argument, the
+// extractor must NOT treat the spec accessor as "turn off pooling" —
+// same-origin requests should still reuse the TCP connection. The guard uses
+// `.as_::<Request>()` (not `.as_direct::<Request>()`) so all three shapes are
+// skipped.
+test.each([
+  ["direct", (url: string) => new Request(url)],
+  ["subclass", (url: string) => new (class extends Request {})(url)],
+  ["structure-mutated", (url: string) => Object.assign(new Request(url), { _mut: 1 })],
+])("fetch(url, %s Request) preserves HTTP connection pooling", async (_label, make) => {
+  using srv = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req, server) {
+      return new Response(String(server.requestIP(req)?.port ?? 0));
+    },
+  });
+  const url = `http://127.0.0.1:${srv.port}/`;
+  const init = make(url);
+
+  const ports: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    const res = await fetch(url, init);
+    ports.push(parseInt(await res.text(), 10));
+  }
+
+  // Pooling on → connections reuse → at most 2 unique source ports
+  // (one reconnect allowed). Pooling off (the bug) → 6 distinct ports.
+  expect(new Set(ports).size).toBeLessThanOrEqual(2);
+});
+
 test("fetch({toString throwing}, {headers} isn't accessed)", async () => {
   const obj = {
     headers: null,

@@ -96,7 +96,6 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
   );
 });
 
-
 // uSockets' TLS low-priority handshake queue (loop->data.low_prio_head)
 // shares its prev/next links with group->head_sockets. A socket already
 // parked in the queue used to be parked a SECOND time whenever a writable

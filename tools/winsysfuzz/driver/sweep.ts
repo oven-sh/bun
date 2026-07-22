@@ -48,7 +48,8 @@ const progArgs: string[] = [];
 for (let i = progIdx + 1; i < argv.length && !argv[i].startsWith("--"); i++) progArgs.push(argv[i]);
 const timeoutMs = 1000 * +(flag("--timeout", "30") as string);
 const jobs = Math.max(1, +(flag("--jobs", "6") as string));
-const maxHits = Math.max(1, +(flag("--hits", "1") as string));
+// Points sampled across each coordinate's lifetime (first, deep-mid..., last).
+const maxHits = Math.max(1, +(flag("--hits", "3") as string));
 const modFilter = flag("--modules")?.split(",");
 const sysFilter = flag("--syscalls")?.split(",");
 // Never-reused timestamped root: nothing is ever deleted; old sweeps accumulate.
@@ -188,6 +189,14 @@ for (const r of baseTrace.recs) {
   }
 }
 
+// Startup mask: the coordinates an EMPTY program produces are process
+// startup infrastructure (loader, JSC init, event-loop bring-up). They get
+// exactly one injection each - they can hide real bugs, so not zero - but
+// no more, so the budget goes to what THIS program does.
+const maskRun = await runOnce({ bun, args: ["-e", "0"], workDir: join(runsDir, "startup-mask"), timeoutMs });
+const maskTrace = await readTraceDir(maskRun.dir);
+const startupMask = new Set((maskTrace?.recs ?? []).filter(r => !r.entryOnly).map(r => `${r.sys}:${r.key}`));
+
 const syms = await symbolize(bun, [...coords.values()].flatMap(c => c.repRvas));
 const coordModule = (c: Coord) => moduleOf({ rvas: c.repRvas } as any, syms);
 const symText = (rva: string) => syms.get(rva)?.sym ?? "?";
@@ -217,15 +226,41 @@ interface Job {
   expect: NonNullable<Fault["expect"]>;
   hit: number;
 }
+// Depth sampling: hit #1 of most call sites lands in process startup, so
+// faulting only first hits makes bun exit before the program's meat runs.
+// Instead sample each coordinate ACROSS ITS LIFETIME - up to --hits points
+// spread first..last (1, then a geometric mid-spread, always the last hit,
+// which is the deepest occurrence). Hit indices are still deterministic
+// coordinates, so every deep injection replays exactly.
+const spreadHits = (n: number, k: number): number[] => {
+  if (n <= 1 || k <= 1) return [1];
+  const out = new Set<number>([1, n]);
+  // geometric interior points: bias toward deep hits (where the meat is)
+  for (let i = 1; i < k - 1 && out.size < k; i++) {
+    const frac = 1 - Math.pow(0.5, i); // 0.5, 0.75, 0.875, ...
+    out.add(Math.max(1, Math.min(n, Math.round(1 + frac * (n - 1)))));
+  }
+  return [...out].sort((a, b) => a - b);
+};
 const plan: Job[] = [];
-for (const c of candidates)
+let startupCoords = 0;
+for (const c of candidates) {
+  if (startupMask.has(c.id)) {
+    // startup infrastructure: one representative injection, no more
+    startupCoords++;
+    const f = FAULTS[c.sysName][0];
+    plan.push({ id: plan.length, coord: c, status: f.status, mode: f.mode, expect: f.expect ?? "must-handle", hit: 1 });
+    continue;
+  }
   for (const f of FAULTS[c.sysName])
-    for (let hit = 1; hit <= Math.min(c.hits, maxHits); hit++)
+    for (const hit of spreadHits(c.hits, maxHits))
       plan.push({ id: plan.length, coord: c, status: f.status, mode: f.mode, expect: f.expect ?? "must-handle", hit });
+}
 
 const estSec = Math.round(((plan.length * base.ms) / jobs / 1000) * 1.3);
 console.log(
-  `\n${coords.size} injectable coordinates from ${baseTrace.recs.length} baseline records; ` +
+  `\n${coords.size} injectable coordinates from ${baseTrace.recs.length} baseline records ` +
+    `(${startupCoords} startup-masked to one injection each); ` +
     `${plan.length} injection runs planned across ${jobs} workers (~${estSec}s est).\n`,
 );
 if (planOnly) {

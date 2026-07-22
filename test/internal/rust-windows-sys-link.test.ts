@@ -29,7 +29,7 @@ test.skipIf(isWindows || !cargo || !workspaceResolvable)(
   "cargo test -p bun_windows_sys links on non-Windows hosts",
   async () => {
     await using proc = Bun.spawn({
-      cmd: [cargo!, "test", "-p", "bun_windows_sys", "--no-run", "--quiet"],
+      cmd: [cargo!, "test", "--locked", "-p", "bun_windows_sys", "--no-run", "--quiet"],
       cwd: repoRoot,
       env: { ...process.env, CARGO_TERM_COLOR: "never" },
       stdout: "pipe",

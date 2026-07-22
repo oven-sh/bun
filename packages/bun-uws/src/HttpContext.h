@@ -762,10 +762,10 @@ private:
             /* An accepted Upgrade whose body never completed is not a tunnel yet:
              * Node's UpgradeStream wraps a socket that still has socketOnEnd
              * attached, so a mid-body FIN ends the raw socket and the
-             * UpgradeStream destroys with it. Staying half-open here stranded
-             * the response's body-read ref and the server's pending-request
-             * count. onClose() runs the tunnel-after-body cleanup (socketData
-             * last=true + inStream last=true). */
+             * UpgradeStream destroys with it. Staying half-open here would
+             * strand the response's body-read ref and the server's
+             * pending-request count. onClose() runs the tunnel-after-body
+             * cleanup (socketData last=true + inStream last=true). */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) {
                 asyncSocket->uncorkWithoutSending();
                 return asyncSocket->close();

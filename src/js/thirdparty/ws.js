@@ -491,6 +491,9 @@ class BunWebSocket extends EventEmitter {
       if (data === undefined) this.#ws.ping();
       else this.#ws.ping(data);
     } catch (error) {
+      // npm ws throws RangeError synchronously from Sender.prototype.ping for a
+      // >125-byte payload; it never reaches cb or an 'error' event.
+      if (error instanceof RangeError) throw error;
       if (typeof cb === "function") {
         cb(error);
         return;
@@ -521,6 +524,7 @@ class BunWebSocket extends EventEmitter {
       if (data === undefined) this.#ws.pong();
       else this.#ws.pong(data);
     } catch (error) {
+      if (error instanceof RangeError) throw error;
       if (typeof cb === "function") {
         cb(error);
         return;
@@ -922,6 +926,7 @@ class BunWebSocketMocked extends EventEmitter {
       if (data === undefined) this.#ws.ping();
       else this.#ws.ping(data);
     } catch (error) {
+      if (error instanceof RangeError) throw error;
       if (typeof cb === "function") cb(error);
       return;
     }
@@ -948,6 +953,7 @@ class BunWebSocketMocked extends EventEmitter {
       if (data === undefined) this.#ws.pong();
       else this.#ws.pong(data);
     } catch (error) {
+      if (error instanceof RangeError) throw error;
       if (typeof cb === "function") cb(error);
       return;
     }

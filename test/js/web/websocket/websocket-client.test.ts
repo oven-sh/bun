@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import * as path from "node:path";
+import { WebSocket as NodeWS } from "ws";
 function test(
   label: string,
   fn: (ws: WebSocket, done: (err?: unknown) => void) => void,
@@ -280,14 +281,31 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
 
   type Frame = { opcode: number; payloadLen: number; extendedLen: boolean };
 
+  // events.once() only auto-rejects on 'error' for EventEmitters; WebSocket is an
+  // EventTarget, so wire error/close explicitly to surface handshake failures.
+  function openOrFail(ws: WebSocket) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    ws.addEventListener("open", () => resolve(), { once: true });
+    ws.addEventListener("error", e => reject((e as ErrorEvent).error ?? new Error((e as ErrorEvent).message)), {
+      once: true,
+    });
+    ws.addEventListener("close", e => reject(new Error(`closed ${e.code} before open`)), { once: true });
+    return promise;
+  }
+
   async function rawHandshakeServer() {
     const frames: Frame[] = [];
-    const { promise: onFrames, resolve: gotFrames } = Promise.withResolvers<void>();
+    const { promise: onFrames, resolve: gotFrames, reject: failFrames } = Promise.withResolvers<void>();
+    onFrames.catch(() => {});
     let want = Infinity;
+    let closing = false;
     const sockets = new Set<import("node:net").Socket>();
     const server = createServer(sock => {
       sockets.add(sock);
-      sock.on("close", () => sockets.delete(sock));
+      sock.on("close", () => {
+        sockets.delete(sock);
+        if (!closing && frames.length < want) failFrames(new Error(`socket closed after ${frames.length} frames`));
+      });
       sock.on("error", () => {});
       let buf = Buffer.alloc(0);
       let shaken = false;
@@ -341,6 +359,7 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
       },
       close: () =>
         new Promise<void>(r => {
+          closing = true;
           for (const s of sockets) s.destroy();
           server.close(() => r());
         }),
@@ -363,7 +382,7 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
     const srv = await rawHandshakeServer();
     const ws = new WebSocket(`ws://127.0.0.1:${srv.port}/`);
     try {
-      await once(ws, "open");
+      await openOrFail(ws);
 
       const s125 = Buffer.alloc(125, "a").toString();
       const s126 = Buffer.alloc(126, "b").toString();
@@ -410,7 +429,8 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
   });
 
   it("a 125-byte ping round-trips through Bun.serve without a protocol error", async () => {
-    const { promise: gotPing, resolve: onPing } = Promise.withResolvers<Buffer>();
+    const { promise: gotPing, resolve: onPing, reject: failPing } = Promise.withResolvers<Buffer>();
+    gotPing.catch(() => {});
     await using server = Bun.serve({
       port: 0,
       fetch(req, server) {
@@ -422,22 +442,115 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
         ping(_ws, data) {
           onPing(Buffer.from(data));
         },
+        close(_ws, code) {
+          failPing(new Error(`server ws closed ${code} before ping`));
+        },
       },
     });
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
-    const { promise: closed, resolve: onClose } = Promise.withResolvers<CloseEvent>();
-    ws.addEventListener("close", onClose);
-    await once(ws, "open");
+    try {
+      const { promise: closed, resolve: onClose } = Promise.withResolvers<CloseEvent>();
+      ws.addEventListener("close", onClose);
+      await openOrFail(ws);
 
-    const payload = Buffer.alloc(125, "z");
-    ws.ping(payload);
-    const received = await gotPing;
-    expect(received.equals(payload)).toBe(true);
+      const payload = Buffer.alloc(125, "z");
+      ws.ping(payload);
+      const received = await gotPing;
+      expect(received.equals(payload)).toBe(true);
 
-    ws.close();
-    const ev = await closed;
-    expect(ev.code).toBe(1000);
+      ws.close();
+      const ev = await closed;
+      expect(ev.code).toBe(1000);
+    } finally {
+      ws.terminate();
+    }
+  });
+
+  it("require('ws') client throws RangeError synchronously for oversized ping/pong", async () => {
+    const srv = await rawHandshakeServer();
+    const ws = new NodeWS(`ws://127.0.0.1:${srv.port}/`);
+    try {
+      await once(ws, "open");
+      ws.on("error", (e: unknown) => {
+        throw new Error("unexpected 'error' event: " + e);
+      });
+
+      // 125 is the boundary: cb invoked with no error.
+      let cbErr: unknown = "not called";
+      ws.ping(new Uint8Array(125), true, (e: unknown) => (cbErr = e));
+      expect(cbErr).toBeUndefined();
+
+      // > 125: npm ws throws synchronously from Sender.prototype.ping; cb is never invoked.
+      const big = new Uint8Array(200);
+      let pingCb = 0;
+      expectRangeError(() => ws.ping(big, true, () => pingCb++), 200);
+      expectRangeError(() => ws.pong(big, true, () => pingCb++), 200);
+      expect(pingCb).toBe(0);
+
+      await srv.waitForFrames(1);
+      expect(srv.frames).toEqual([{ opcode: 0x9, payloadLen: 125, extendedLen: false }]);
+    } finally {
+      ws.terminate();
+      await srv.close();
+    }
+  });
+
+  it("Bun.serve ServerWebSocket.ping()/pong() throws RangeError for payloads > 125 bytes", async () => {
+    const { promise: result, resolve } = Promise.withResolvers<{ errs: unknown[]; ok125: number }>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          const errs: unknown[] = [];
+          for (const fn of [
+            () => ws.ping(new Uint8Array(126)),
+            () => ws.ping(Buffer.alloc(300, "c").toString()),
+            () => ws.pong(new Uint8Array(200)),
+            () => ws.pong(Buffer.alloc(126, "d").toString()),
+          ]) {
+            try {
+              fn();
+              errs.push(undefined);
+            } catch (e) {
+              errs.push(e);
+            }
+          }
+          const ok125 = ws.ping(new Uint8Array(125));
+          resolve({ errs, ok125 });
+        },
+        message() {},
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    try {
+      const { promise: gotPing, resolve: onServerPing, reject: failPing } = Promise.withResolvers<Buffer>();
+      gotPing.catch(() => {});
+      ws.binaryType = "nodebuffer";
+      ws.addEventListener("ping", e => onServerPing(e.data as Buffer));
+      ws.addEventListener("close", e => failPing(new Error(`closed ${e.code} before ping`)));
+      await openOrFail(ws);
+
+      const { errs, ok125 } = await result;
+      expect(errs).toHaveLength(4);
+      for (const e of errs) {
+        expect(e).toBeInstanceOf(RangeError);
+        expect((e as Error).message).toContain("must not be greater than 125 bytes");
+      }
+      expect(ok125).toBe(125);
+
+      // the server's 125-byte ping reaches the client intact; no protocol error
+      const ping = await gotPing;
+      expect(ping.length).toBe(125);
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      ws.terminate();
+    }
   });
 });
 

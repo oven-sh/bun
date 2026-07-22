@@ -800,10 +800,12 @@ it("Server should be able to send empty pings", async () => {
   }
 
   {
-    // should not be equal because is bigger than 125 bytes
+    // > 125 bytes throws RangeError synchronously, matching npm ws
     const pingPayload = Buffer.alloc(126, "b").toString();
-    const pingMessage = await checkPing("Hello, World", pingPayload);
-    expect(pingMessage).not.toBe(pingPayload);
+    let err: unknown;
+    await checkPing("Hello, World", pingPayload).catch(e => (err = e));
+    expect(err).toBeInstanceOf(RangeError);
+    expect((err as Error).message).toContain("must not be greater than 125 bytes");
   }
 });
 

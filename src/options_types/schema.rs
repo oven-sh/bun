@@ -18,16 +18,16 @@ impl<'a> Writer<'a> {
         Self { writable }
     }
     #[inline]
-    pub fn write(&mut self, bytes: &[u8]) {
+    pub(crate) fn write(&mut self, bytes: &[u8]) {
         self.writable.extend_from_slice(bytes);
     }
     #[inline]
-    pub fn write_byte(&mut self, byte: u8) {
+    pub(crate) fn write_byte(&mut self, byte: u8) {
         self.writable.push(byte);
     }
     /// Writes the int's native-endian raw bytes.
     #[inline]
-    pub fn write_int<I: Copy>(&mut self, int: I) {
+    pub(crate) fn write_int<I: Copy>(&mut self, int: I) {
         // SAFETY: `int` is a live stack local, so `&raw const int` is valid for reads of
         // `size_of::<I>()` initialized bytes; `u8` has align 1 so the cast pointer is always
         // aligned; the slice is consumed by `extend_from_slice` before `int` leaves scope.
@@ -37,21 +37,21 @@ impl<'a> Writer<'a> {
         self.writable.extend_from_slice(bytes);
     }
     #[inline]
-    pub fn write_field_id(&mut self, id: u8) {
+    pub(crate) fn write_field_id(&mut self, id: u8) {
         self.write_byte(id);
     }
     #[inline]
-    pub fn write_enum<E: Copy>(&mut self, val: E) {
+    pub(crate) fn write_enum<E: Copy>(&mut self, val: E) {
         self.write_int(val);
     }
     /// Length-prefixed byte slice.
     #[inline]
-    pub fn write_array_u8(&mut self, slice: &[u8]) {
+    pub(crate) fn write_array_u8(&mut self, slice: &[u8]) {
         self.write_int(u32::try_from(slice.len()).unwrap());
         self.write(slice);
     }
     #[inline]
-    pub fn end_message(&mut self) {
+    pub(crate) fn end_message(&mut self) {
         self.write_byte(0);
     }
 }
@@ -295,8 +295,6 @@ pub mod api {
         pub production: Option<bool>,
         /// save_yarn_lockfile
         pub save_yarn_lockfile: Option<bool>,
-        /// native_bin_links
-        pub native_bin_links: Vec<Box<[u8]>>,
         /// disable_cache
         pub disable_cache: Option<bool>,
         /// disable_manifest_cache
@@ -447,8 +445,7 @@ pub mod api {
     }
 
     // ─── peechy batch 2: hand-expanded for downstream wfs ────────────────
-    // Jsx / JsxRuntime / StringMap / EnvConfig / LoadedEnvConfig /
-    // LoadedRouteConfig / RouteConfig / FrameworkEntryPoint{,Type,Map,Message} /
+    // Jsx / JsxRuntime / StringMap / LoadedEnvConfig /
     // PackagesMode / CssInJsBehavior / LoaderMap / LoadedFramework.
     //
     // String mapping (matches Context.rs convention — proc-lifetime borrows
@@ -505,14 +502,8 @@ pub mod api {
         pub loaders: Vec<Loader>,
     }
 
-    /// peechy `message` (all fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct EnvConfig {
-        pub prefix: Option<Box<[u8]>>,
-        pub defaults: Option<StringMap>,
-    }
 
-    /// Fully-resolved env configuration ([`EnvConfig`] with defaults applied).
+    /// Fully-resolved env configuration (prefix + defaults applied).
     #[derive(Clone, Debug, Default)]
     pub struct LoadedEnvConfig {
         pub dotenv: DotEnvBehavior,
@@ -520,60 +511,6 @@ pub mod api {
         pub prefix: Box<[u8]>,
     }
 
-    /// Open `enum(u8)` in the wire schema. Kept closed.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum FrameworkEntryPointType {
-        #[default]
-        _none = 0,
-        Client = 1,
-        Server = 2,
-        Fallback = 3,
-    }
-
-    /// One resolved framework entry point (client/server/fallback) with its
-    /// path and env config.
-    #[derive(Clone, Debug, Default)]
-    pub struct FrameworkEntryPoint {
-        pub kind: FrameworkEntryPointType,
-        pub path: Box<[u8]>,
-        pub env: LoadedEnvConfig,
-    }
-
-    /// peechy `message` (all fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct FrameworkEntryPointMap {
-        pub client: Option<FrameworkEntryPoint>,
-        pub server: Option<FrameworkEntryPoint>,
-        pub fallback: Option<FrameworkEntryPoint>,
-    }
-
-    /// peechy `message` (all fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct FrameworkEntryPointMessage {
-        pub path: Option<Box<[u8]>>,
-        pub env: Option<EnvConfig>,
-    }
-
-    /// Fully-resolved router configuration (dir, extensions, static dir,
-    /// asset prefix).
-    #[derive(Clone, Debug, Default)]
-    pub struct LoadedRouteConfig {
-        pub dir: Box<[u8]>,
-        pub extensions: Box<[Box<[u8]>]>,
-        pub static_dir: Box<[u8]>,
-        pub asset_prefix: Box<[u8]>,
-    }
-
-    /// peechy `message` (array fields default empty,
-    /// scalar fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct RouteConfig {
-        pub dir: Box<[Box<[u8]>]>,
-        pub extensions: Box<[Box<[u8]>]>,
-        pub static_dir: Option<Box<[u8]>>,
-        pub asset_prefix: Option<Box<[u8]>>,
-    }
 
     /// Open `enum(u8)` in the wire schema. Kept closed.
     #[repr(u8)]
@@ -616,12 +553,12 @@ pub mod api {
     /// peechy `struct Router`.
     #[derive(Clone, Debug, Default)]
     pub struct Router {
-        pub routes: StringMap,
-        pub route: i32,
-        pub params: StringMap,
+        pub(crate) routes: StringMap,
+        pub(crate) route: i32,
+        pub(crate) params: StringMap,
     }
     impl Router {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             self.routes.encode(w);
             w.write_int(self.route);
             self.params.encode(w);
@@ -637,7 +574,7 @@ pub mod api {
         pub build: Log,
     }
     impl Problems {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             w.write_int(self.code);
             w.write_array_u8(&self.name);
             w.write_int(u32::try_from(self.exceptions.len()).unwrap());
@@ -658,7 +595,7 @@ pub mod api {
         // `stack: ?StackTrace` — omitted until StackTrace is ported.
     }
     impl JsException {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             if let Some(ref v) = self.name {
                 w.write_field_id(1);
                 w.write_array_u8(v);
@@ -680,7 +617,7 @@ pub mod api {
     }
 
     impl StringMap {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             w.write_int(u32::try_from(self.keys.len()).unwrap());
             for k in &self.keys {
                 w.write_array_u8(k);
@@ -700,7 +637,7 @@ pub mod api {
         // `msgs: []Message` — omitted until `Message` is ported.
     }
     impl Log {
-        pub fn encode(self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(self, w: &mut super::Writer<'_>) {
             w.write_int(self.warnings);
             w.write_int(self.errors);
             w.write_int(0u32); // msgs.len

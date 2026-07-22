@@ -38,7 +38,7 @@ impl TriState {
 
 static ENABLED: AtomicU8 = AtomicU8::new(TriState::Unknown as u8);
 
-pub(crate) fn enabled() -> TriState {
+fn enabled() -> TriState {
     TriState::from_u8(ENABLED.load(Ordering::Relaxed))
 }
 pub fn set_enabled(v: TriState) {
@@ -93,7 +93,7 @@ pub mod features {
     // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
     // PERF: BTreeSet is O(log n) insert — fine for ≤~80 entries written once
     // each at module-load time.
-    pub(crate) static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
+    static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
         bun_core::Mutex::new(std::collections::BTreeSet::new());
 
     /// Record a builtin-module load.
@@ -314,7 +314,7 @@ pub use features::{
 
 /// Enforced at the macro definition site; kept as a `const fn`
 /// for documentation / debug assertions.
-pub(crate) const fn validate_feature_name(name: &[u8]) -> bool {
+const fn validate_feature_name(name: &[u8]) -> bool {
     if name.len() > 64 {
         return false;
     }
@@ -478,7 +478,7 @@ pub mod generate_header {
         }
 
         #[unsafe(no_mangle)]
-        pub(crate) extern "C" fn Bun__doesMacOSVersionSupportSendRecvMsgX() -> i32 {
+        extern "C" fn Bun__doesMacOSVersionSupportSendRecvMsgX() -> i32 {
             #[cfg(not(target_os = "macos"))]
             {
                 // this should not be used on non-mac platforms.
@@ -517,7 +517,7 @@ pub mod generate_header {
         }
 
         #[unsafe(no_mangle)]
-        pub(crate) extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
+        extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
             // Android's per-app seccomp policy does not whitelist
             // epoll_pwait2 (bionic SYSCALLS.TXT only lists epoll_pwait).
             // https://github.com/oven-sh/bun/issues/32489

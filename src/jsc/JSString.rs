@@ -34,7 +34,7 @@ impl JSString {
         JSValue::from_cell(self)
     }
 
-    pub fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {
+    pub(crate) fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {
         JSC__JSString__toZigString(self, global, zig_str)
     }
 

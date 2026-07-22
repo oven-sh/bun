@@ -1428,7 +1428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    pub fn parse_suffix(
+    pub(crate) fn parse_suffix(
         &mut self,
         left: &mut Expr,
         level: Level,

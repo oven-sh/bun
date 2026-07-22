@@ -26,7 +26,7 @@ const EMPTY_HASH: u64 = u64::MAX;
 pub struct Entry<K, V> {
     pub hash: u64,
     pub key: K,
-    pub value: V,
+    pub(crate) value: V,
 }
 
 impl<K, V> Entry<K, V> {

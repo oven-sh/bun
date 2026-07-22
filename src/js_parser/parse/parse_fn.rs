@@ -16,7 +16,7 @@ type Error = crate::Error;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// This assumes the "function" token has already been parsed
-    pub fn parse_fn_stmt(
+    pub(crate) fn parse_fn_stmt(
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
@@ -161,7 +161,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Function { func }, loc))
     }
 
-    pub fn parse_fn(
+    pub(crate) fn parse_fn(
         &mut self,
         name: Option<js_ast::LocRef>,
         opts: FnOrArrowDataParse,
@@ -416,7 +416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(func)
     }
 
-    pub fn parse_fn_expr(
+    pub(crate) fn parse_fn_expr(
         &mut self,
         loc: bun_ast::Loc,
         is_async: bool,
@@ -488,7 +488,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Function { func }, loc))
     }
 
-    pub fn parse_fn_body(&mut self, data: &mut FnOrArrowDataParse) -> Result<G::FnBody, Error> {
+    pub(crate) fn parse_fn_body(&mut self, data: &mut FnOrArrowDataParse) -> Result<G::FnBody, Error> {
         let p = self;
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         let old_allow_in = p.allow_in;
@@ -520,7 +520,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_arrow_body(
+    pub(crate) fn parse_arrow_body(
         &mut self,
         args: &'a mut [G::Arg],
         data: &mut FnOrArrowDataParse,

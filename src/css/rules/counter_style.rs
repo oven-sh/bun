@@ -5,13 +5,13 @@ use crate::{DeclarationBlock, PrintErr, Printer};
 /// A [@counter-style](https://drafts.csswg.org/css-counter-styles/#the-counter-style-rule) rule.
 pub struct CounterStyleRule {
     /// The name of the counter style to declare.
-    pub name: CustomIdent,
+    pub(crate) name: CustomIdent,
     /// Declarations in the `@counter-style` rule.
     // `DeclarationBlock<'bump>` borrows the parser arena; lifetime erased to
     // `'static` here per the rules/mod.rs `CssRule<R>` lifetime-erasure note.
-    pub declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'static>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl CounterStyleRule {

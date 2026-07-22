@@ -24,21 +24,21 @@ pub enum EasingFunction {
 #[derive(Clone, PartialEq)]
 pub struct CubicBezier {
     /// The x-position of the first point in the curve.
-    pub x1: CSSNumber,
+    pub(crate) x1: CSSNumber,
     /// The y-position of the first point in the curve.
-    pub y1: CSSNumber,
+    pub(crate) y1: CSSNumber,
     /// The x-position of the second point in the curve.
-    pub x2: CSSNumber,
+    pub(crate) x2: CSSNumber,
     /// The y-position of the second point in the curve.
-    pub y2: CSSNumber,
+    pub(crate) y2: CSSNumber,
 }
 
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct Steps {
     /// The number of intervals in the function.
-    pub count: CSSInteger,
+    pub(crate) count: CSSInteger,
     /// The step position.
-    pub position: StepPosition,
+    pub(crate) position: StepPosition,
 }
 
 #[derive(Clone, Copy)]
@@ -66,7 +66,7 @@ bun_core::comptime_string_map! {
 }
 
 impl EasingFunction {
-    pub fn parse(input: &mut css::Parser) -> Result<EasingFunction> {
+    pub(crate) fn parse(input: &mut css::Parser) -> Result<EasingFunction> {
         // Reshaped for borrowck — `try_parse(|i| i.expect_ident())`
         // ties the returned slice to the closure's `&mut Parser` borrow, so the
         // ident can't escape. Read the next token by value (Token slices are
@@ -128,7 +128,7 @@ impl EasingFunction {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             EasingFunction::Linear => dest.write_str("linear"),
             EasingFunction::Ease => dest.write_str("ease"),
@@ -196,12 +196,12 @@ impl EasingFunction {
     }
 
     /// Returns whether the given string is a valid easing function name.
-    pub fn is_ident(s: &[u8]) -> bool {
+    pub(crate) fn is_ident(s: &[u8]) -> bool {
         EASING_KEYWORDS.get_ascii_case_insensitive(s).is_some()
     }
 
     /// Returns whether the easing function is equivalent to the `ease` keyword.
-    pub fn is_ease(&self) -> bool {
+    pub(crate) fn is_ease(&self) -> bool {
         matches!(self, EasingFunction::Ease)
             || matches!(self, EasingFunction::CubicBezier(cb) if *cb == CubicBezier {
                 x1: 0.25,
@@ -254,11 +254,11 @@ bun_core::comptime_string_map! {
 
 impl StepPosition {
     /// Hand-written keyword serializer.
-    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_str(<&'static str>::from(self))
     }
 
-    pub fn parse(input: &mut css::Parser) -> Result<StepPosition> {
+    pub(crate) fn parse(input: &mut css::Parser) -> Result<StepPosition> {
         let location = input.current_source_location();
         let tok = input.next()?.clone();
         let Token::Ident(ident) = tok else {

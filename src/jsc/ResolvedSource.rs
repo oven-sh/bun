@@ -120,12 +120,12 @@ impl OwnedResolvedSource {
     /// ownership. Used for the `source_url`/`specifier` late-fill in
     /// `RuntimeTranspilerStore::run_from_js_thread`.
     #[inline]
-    pub fn as_mut(&mut self) -> &mut ResolvedSource {
+    pub(crate) fn as_mut(&mut self) -> &mut ResolvedSource {
         &mut self.0
     }
 
     #[inline]
-    pub fn get(&self) -> &ResolvedSource {
+    pub(crate) fn get(&self) -> &ResolvedSource {
         &self.0
     }
 }

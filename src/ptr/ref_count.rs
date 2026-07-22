@@ -293,7 +293,7 @@ impl<T: RefCounted> RefCount<T> {
 
     /// # Safety
     /// `self_` must point to a live `T`.
-    pub unsafe fn deref_with_context(self_: *mut T, ctx: T::DestructorCtx) {
+    unsafe fn deref_with_context(self_: *mut T, ctx: T::DestructorCtx) {
         // SAFETY: caller contract
         let count = unsafe { &*T::get_ref_count(self_) };
         #[cfg(debug_assertions)]
@@ -716,7 +716,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
     }
 
     /// Decrement the reference count, and destroy the object if the count is 0.
-    pub fn deref_with_context(&self, ctx: T::DestructorCtx) {
+    fn deref_with_context(&self, ctx: T::DestructorCtx) {
         #[cfg(debug_assertions)]
         {
             // SAFETY: data is live (we hold a ref)
@@ -843,7 +843,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
     ///
     /// # Safety
     /// `raw_ptr` must point to a live `T` and the caller must own one ref.
-    pub unsafe fn take_ref(raw_ptr: *mut T) -> Self {
+    unsafe fn take_ref(raw_ptr: *mut T) -> Self {
         #[cfg(debug_assertions)]
         {
             // SAFETY: caller contract
@@ -871,7 +871,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
 
     /// # Safety
     /// `raw_ptr` must point to a live `T` and the caller must hold/own a ref.
-    pub unsafe fn unchecked_and_unsafe_init(raw_ptr: *mut T, ret_addr: usize) -> Self {
+    unsafe fn unchecked_and_unsafe_init(raw_ptr: *mut T, ret_addr: usize) -> Self {
         let _ = ret_addr;
         Self {
             // SAFETY: caller contract — raw_ptr is non-null and live
@@ -1022,7 +1022,7 @@ pub struct DebugData<Count> {
 #[cfg(debug_assertions)]
 impl<Count> DebugData<Count> {
     // was `pub const EMPTY` — std HashMap::new() is non-const.
-    pub fn empty() -> Self {
+    fn empty() -> Self {
         Self {
             magic: MAGIC_VALID,
             lock: bun_core::Mutex::new(()),

@@ -6,8 +6,8 @@ use bun_alloc::Arena;
 ///
 /// When serialized, only a single component will be written if both are equal.
 pub struct Size2D<T> {
-    pub a: T,
-    pub b: T,
+    pub(crate) a: T,
+    pub(crate) b: T,
 }
 
 // Per-type dispatch is expressed via trait bounds — `f32` and
@@ -52,7 +52,7 @@ where
         Ok(())
     }
 
-    pub(crate) fn val_to_css(val: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr>
+    fn val_to_css(val: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr>
     where
         T: ToCss,
     {
@@ -69,7 +69,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn val_eql(lhs: &T, rhs: &T) -> bool {
+    fn val_eql(lhs: &T, rhs: &T) -> bool {
         // f32 → `lhs.* == rhs.*`, else → `lhs.eql(rhs)` — unified under PartialEq.
         lhs == rhs
     }

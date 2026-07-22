@@ -95,18 +95,18 @@ pub struct Entry {
 // type params (backed by std HashMap); identity hashing is a TODO(perf).
 pub type Map = HashMap<u64, Entry, IdentityContext<u64>>;
 
-pub(crate) fn normalize(path: &[u8]) -> &[u8] {
+fn normalize(path: &[u8]) -> &[u8] {
     FileSystem::instance().normalize(path)
 }
 
-pub fn hash(normalized_path: &[u8]) -> u64 {
+pub(crate) fn hash(normalized_path: &[u8]) -> u64 {
     bun_wyhash::hash(normalized_path)
 }
 
 // ── NewResolver ───────────────────────────────────────────────────────────
 // The const-generic tag requires `#[derive(ConstParamTy)]` (already on `Tag`).
 pub struct NewResolver<'a, const TAG: ResolutionTag> {
-    pub folder_path: &'a [u8],
+    pub(crate) folder_path: &'a [u8],
 }
 
 impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
@@ -165,7 +165,7 @@ impl ResolverContext for CacheFolderResolver {
 /// Unifies `NewResolver<TAG>` and `CacheFolderResolver` for
 /// `read_package_json_from_disk`; the associated const `IS_WORKSPACE`
 /// distinguishes the workspace resolver.
-pub(crate) trait FolderResolverImpl: ResolverContext {
+trait FolderResolverImpl: ResolverContext {
     const IS_WORKSPACE: bool;
 }
 impl<'a, const TAG: ResolutionTag> FolderResolverImpl for NewResolver<'a, TAG> {
@@ -380,7 +380,7 @@ pub enum GlobalOrRelative<'a> {
     CacheFolder(&'a [u8]),
 }
 
-pub fn get_or_put(
+pub(crate) fn get_or_put(
     global_or_relative: GlobalOrRelative<'_>,
     version: &dependency::Version,
     non_normalized_path: &[u8],

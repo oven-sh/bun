@@ -72,7 +72,7 @@ impl<'a> PathPairIter<'a> {
 }
 
 impl PathPair {
-    pub fn iter(&mut self) -> PathPairIter<'_> {
+    pub(crate) fn iter(&mut self) -> PathPairIter<'_> {
         PathPairIter {
             ctx: self,
             index: 0,
@@ -149,7 +149,7 @@ impl ResultFlags {
         self.contains(Self::IS_EXTERNAL)
     }
     #[inline]
-    pub fn set_is_external(&mut self, v: bool) {
+    pub(crate) fn set_is_external(&mut self, v: bool) {
         self.set(Self::IS_EXTERNAL, v)
     }
     #[inline]
@@ -157,19 +157,19 @@ impl ResultFlags {
         self.contains(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH)
     }
     #[inline]
-    pub fn set_is_external_and_rewrite_import_path(&mut self, v: bool) {
+    pub(crate) fn set_is_external_and_rewrite_import_path(&mut self, v: bool) {
         self.set(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH, v)
     }
     #[inline]
-    pub fn is_standalone_module(self) -> bool {
+    pub(crate) fn is_standalone_module(self) -> bool {
         self.contains(Self::IS_STANDALONE_MODULE)
     }
     #[inline]
-    pub fn is_from_node_modules(self) -> bool {
+    pub(crate) fn is_from_node_modules(self) -> bool {
         self.contains(Self::IS_FROM_NODE_MODULES)
     }
     #[inline]
-    pub fn set_is_from_node_modules(&mut self, v: bool) {
+    pub(crate) fn set_is_from_node_modules(&mut self, v: bool) {
         self.set(Self::IS_FROM_NODE_MODULES, v)
     }
     #[inline]
@@ -177,7 +177,7 @@ impl ResultFlags {
         self.contains(Self::EMIT_DECORATOR_METADATA)
     }
     #[inline]
-    pub fn set_emit_decorator_metadata(&mut self, v: bool) {
+    pub(crate) fn set_emit_decorator_metadata(&mut self, v: bool) {
         self.set(Self::EMIT_DECORATOR_METADATA, v)
     }
     #[inline]
@@ -185,7 +185,7 @@ impl ResultFlags {
         self.contains(Self::EXPERIMENTAL_DECORATORS)
     }
     #[inline]
-    pub fn set_experimental_decorators(&mut self, v: bool) {
+    pub(crate) fn set_experimental_decorators(&mut self, v: bool) {
         self.set(Self::EXPERIMENTAL_DECORATORS, v)
     }
 }
@@ -204,7 +204,7 @@ impl Result {
     /// for the ARENA-backed pointer — same invariant as
     /// [`dir_info::DirInfo::package_json`].
     #[inline]
-    pub fn package_json_ref(&self) -> Option<&'static PackageJSON> {
+    pub(crate) fn package_json_ref(&self) -> Option<&'static PackageJSON> {
         Self::deref_package_json(self.package_json)
     }
 
@@ -212,7 +212,7 @@ impl Result {
     /// already mutably borrowed (e.g. while iterating `path_pair`). Takes the
     /// `Copy` field directly so the borrow checker only sees a field read.
     #[inline]
-    pub fn deref_package_json(ptr: Option<*const PackageJSON>) -> Option<&'static PackageJSON> {
+    pub(crate) fn deref_package_json(ptr: Option<*const PackageJSON>) -> Option<&'static PackageJSON> {
         // SAFETY: ARENA — every `*const PackageJSON` stored in
         // `Result::package_json` is interned in the resolver's process-lifetime
         // PackageJSON cache (or a `'static` fallback-module literal); never
@@ -251,16 +251,16 @@ impl Result {
 }
 
 pub struct DirEntryResolveQueueItem {
-    pub result: allocators::Result,
+    pub(crate) result: allocators::Result,
     // NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
     // threadlocal `dir_info_uncached_path` buffer and are consumed before
     // `dir_info_cached_maybe_log` returns. `RawSlice` is `repr(transparent)`
     // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
     // unchanged (the array slot is `MaybeUninit`-wrapped), and read sites use
     // safe `.slice()` instead of an open-coded raw-ptr deref.
-    pub unsafe_path: bun_ptr::RawSlice<u8>,
-    pub safe_path: bun_ptr::RawSlice<u8>,
-    pub fd: FD,
+    pub(crate) unsafe_path: bun_ptr::RawSlice<u8>,
+    pub(crate) safe_path: bun_ptr::RawSlice<u8>,
+    pub(crate) fd: FD,
 }
 
 impl Default for DirEntryResolveQueueItem {
@@ -296,9 +296,9 @@ impl Clone for DirEntryResolveQueueItem {
 }
 
 pub struct DebugLogs {
-    pub what: Vec<u8>,
-    pub indent: MutableString,
-    pub notes: Vec<bun_ast::Data>,
+    pub(crate) what: Vec<u8>,
+    pub(crate) indent: MutableString,
+    pub(crate) notes: Vec<bun_ast::Data>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -320,18 +320,18 @@ impl DebugLogs {
     // deinit → Drop (only frees `notes`)
 
     #[cold]
-    pub fn increase_indent(&mut self) {
+    pub(crate) fn increase_indent(&mut self) {
         self.indent.append(b" ").expect("unreachable");
     }
 
     #[cold]
-    pub fn decrease_indent(&mut self) {
+    pub(crate) fn decrease_indent(&mut self) {
         let new_len = self.indent.list.len() - 1;
         self.indent.list.truncate(new_len);
     }
 
     #[cold]
-    pub fn add_note(&mut self, text: Vec<u8>) {
+    pub(crate) fn add_note(&mut self, text: Vec<u8>) {
         let len = self.indent.len();
         let final_text = if len > 0 {
             let mut __text = Vec::with_capacity(text.len() + len);
@@ -348,7 +348,7 @@ impl DebugLogs {
     }
 
     #[cold]
-    pub fn add_note_fmt(&mut self, args: core::fmt::Arguments<'_>) {
+    pub(crate) fn add_note_fmt(&mut self, args: core::fmt::Arguments<'_>) {
         let mut buf = Vec::new();
         write!(&mut buf, "{}", args).expect("unreachable");
         self.add_note(buf);
@@ -356,15 +356,15 @@ impl DebugLogs {
 }
 
 pub struct MatchResult {
-    pub path_pair: PathPair,
-    pub dirname_fd: FD,
-    pub file_fd: FD,
-    pub is_node_module: bool,
-    pub package_json: Option<*const PackageJSON>,
-    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
+    pub(crate) path_pair: PathPair,
+    pub(crate) dirname_fd: FD,
+    pub(crate) file_fd: FD,
+    pub(crate) is_node_module: bool,
+    pub(crate) package_json: Option<*const PackageJSON>,
+    pub(crate) diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
     pub dir_info: Option<DirInfoRef>,
-    pub module_type: options::ModuleType,
-    pub is_external: bool,
+    pub(crate) module_type: options::ModuleType,
+    pub(crate) is_external: bool,
 }
 
 impl Default for MatchResult {
@@ -398,7 +398,7 @@ pub enum MatchStatus {
 
 impl MatchStatus {
     #[inline]
-    pub fn is_success(&self) -> bool {
+    pub(crate) fn is_success(&self) -> bool {
         matches!(self, MatchStatus::Success)
     }
 }
@@ -435,9 +435,9 @@ pub enum PendingResolutionTag {
 pub struct LoadResult {
     /// Interned in `DirnameStore`/`FilenameStore` (process-lifetime singletons),
     /// so the `'static` borrow is genuine.
-    pub path: &'static [u8],
-    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
-    pub dirname_fd: FD,
-    pub file_fd: FD,
+    pub(crate) path: &'static [u8],
+    pub(crate) diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
+    pub(crate) dirname_fd: FD,
+    pub(crate) file_fd: FD,
     pub dir_info: Option<DirInfoRef>,
 }

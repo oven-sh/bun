@@ -111,7 +111,7 @@ impl StringBuilder {
         self.add(len)
     }
 
-    pub fn add(&mut self, len: usize) -> StringPointer {
+    fn add(&mut self, len: usize) -> StringPointer {
         debug_assert!(self.len <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 

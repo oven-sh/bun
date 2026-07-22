@@ -98,11 +98,11 @@ impl VM {
         JSC__VM__runGC(self, sync)
     }
 
-    pub fn heap_size(&self) -> usize {
+    pub(crate) fn heap_size(&self) -> usize {
         JSC__VM__heapSize(self)
     }
 
-    pub fn collect_async(&self) {
+    pub(crate) fn collect_async(&self) {
         JSC__VM__collectAsync(self)
     }
 
@@ -118,11 +118,11 @@ impl VM {
     // These may be called concurrently from another thread.
 
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
-    pub fn notify_need_termination(&self) {
+    pub(crate) fn notify_need_termination(&self) {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    pub fn clear_has_termination_request(&self) {
+    pub(crate) fn clear_has_termination_request(&self) {
         crate::cpp::JSC__VM__clearHasTerminationRequest(self)
     }
 
@@ -145,7 +145,7 @@ impl VM {
 
     /// `RESOURCE_USAGE` build option in JavaScriptCore is required for this function
     /// This is faster than checking the heap size
-    pub fn block_bytes_allocated(&self) -> usize {
+    pub(crate) fn block_bytes_allocated(&self) -> usize {
         JSC__VM__blockBytesAllocated(self)
     }
 }

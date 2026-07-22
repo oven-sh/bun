@@ -85,7 +85,7 @@ impl SystemError {
         self.dest.deref();
     }
 
-    pub fn ref_(&mut self) {
+    pub(crate) fn ref_(&mut self) {
         self.path.ref_();
         self.code.ref_();
         self.message.ref_();

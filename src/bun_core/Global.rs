@@ -71,8 +71,8 @@ pub struct StackTrace<'a> {
 /// Fixed 31-frame stack-trace buffer.
 #[derive(Clone, Copy)]
 pub struct StoredTrace {
-    pub data: [usize; 31],
-    pub index: usize,
+    data: [usize; 31],
+    index: usize,
 }
 impl StoredTrace {
     pub const fn empty() -> Self {
@@ -392,10 +392,10 @@ pub static JSC_SCOPE: crate::output::ScopedLogger =
 // Debug-build-only breakpoint matchers.
 pub mod debug_flags {
     #[cfg(debug_assertions)]
-    pub(crate) static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> =
+    static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> =
         crate::Once::new();
     #[cfg(debug_assertions)]
-    pub(crate) static PRINT_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
+    static PRINT_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
@@ -574,7 +574,7 @@ pub type ExitFn = extern "C" fn();
 static ON_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__atexit(function: ExitFn) {
+extern "C" fn Bun__atexit(function: ExitFn) {
     let mut cbs = ON_EXIT_CALLBACKS.lock();
     if !cbs.iter().any(|f| *f as usize == function as usize) {
         cbs.push(function);
@@ -599,7 +599,7 @@ pub fn add_pre_exit_callback(function: ExitFn) {
     }
 }
 
-pub(crate) fn run_exit_callbacks() {
+fn run_exit_callbacks() {
     // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
     let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
     for callback in &cbs {
@@ -610,11 +610,11 @@ pub(crate) fn run_exit_callbacks() {
 static IS_EXITING: AtomicBool = AtomicBool::new(false);
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn bun_is_exiting() -> c_int {
+extern "C" fn bun_is_exiting() -> c_int {
     is_exiting() as c_int
 }
 
-pub(crate) fn is_exiting() -> bool {
+fn is_exiting() -> bool {
     IS_EXITING.load(Ordering::Relaxed)
 }
 
@@ -773,7 +773,7 @@ pub struct SyncCStr(pub *const c_char);
 // SAFETY: points into a `'static` string literal; the pointer is never mutated.
 unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
-pub(crate) static Bun__userAgent: SyncCStr =
+static Bun__userAgent: SyncCStr =
     SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
@@ -788,7 +788,7 @@ macro_rules! keep_symbols {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__onExit() {
+extern "C" fn Bun__onExit() {
     // FSEvents close-and-wait runs BEFORE the generic exit-callback list.
     // fs_events pushes into `PRE_EXIT_CALLBACKS` on first loop create.
     let pre: Vec<ExitFn> = core::mem::take(&mut *PRE_EXIT_CALLBACKS.lock());

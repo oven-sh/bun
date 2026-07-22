@@ -330,8 +330,6 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
 
 pub struct DebugOptions {
     pub dump_environment_variables: bool,
-    pub dump_limits: bool,
-    pub fallback_only: bool,
     pub silent: bool,
     pub hot_reload: HotReload,
     pub global_cache: GlobalCache,
@@ -356,8 +354,6 @@ impl Default for DebugOptions {
     fn default() -> Self {
         Self {
             dump_environment_variables: false,
-            dump_limits: false,
-            fallback_only: false,
             silent: false,
             hot_reload: HotReload::None,
             global_cache: GlobalCache::auto,

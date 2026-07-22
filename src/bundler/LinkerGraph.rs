@@ -73,8 +73,8 @@ pub mod js_meta {
     use crate::{ImportTracker, Index, WrapKind};
 
     pub struct ImportData {
-        pub re_exports: AstVec<Dependency>,
-        pub data: ImportTracker,
+        pub(crate) re_exports: AstVec<Dependency>,
+        pub(crate) data: ImportTracker,
     }
     impl Default for ImportData {
         fn default() -> Self {
@@ -87,8 +87,8 @@ pub mod js_meta {
     pub(crate) type ImportToBind = ImportData;
 
     pub struct ExportData {
-        pub potentially_ambiguous_export_star_refs: AstVec<ImportData>,
-        pub data: ImportTracker,
+        pub(crate) potentially_ambiguous_export_star_refs: AstVec<ImportData>,
+        pub(crate) data: ImportTracker,
     }
     impl Default for ExportData {
         fn default() -> Self {
@@ -109,13 +109,13 @@ pub mod js_meta {
 
     #[derive(Clone, Copy, Default)]
     pub struct Flags {
-        pub is_async_or_has_async_dependency: bool,
-        pub needs_exports_variable: bool,
-        pub force_include_exports_for_entry_point: bool,
-        pub needs_export_symbol_from_runtime: bool,
-        pub did_wrap_dependencies: bool,
-        pub needs_synthetic_default_export: bool,
-        pub wrap: WrapKind,
+        pub(crate) is_async_or_has_async_dependency: bool,
+        pub(crate) needs_exports_variable: bool,
+        pub(crate) force_include_exports_for_entry_point: bool,
+        pub(crate) needs_export_symbol_from_runtime: bool,
+        pub(crate) did_wrap_dependencies: bool,
+        pub(crate) needs_synthetic_default_export: bool,
+        pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;
 
@@ -172,7 +172,7 @@ pub use js_meta::{
 
 pub struct LinkerGraph<'a> {
     pub files: FileList,
-    pub files_live: BitSet,
+    pub(crate) files_live: BitSet,
     /// Per-part liveness — `parts_live[source_index].is_set(part_index)`.
     /// One bitset per source file, sized to that file's `parts.len()`.
     /// Populated by `tree_shaking_and_code_splitting` (regular link) or by
@@ -180,9 +180,9 @@ pub struct LinkerGraph<'a> {
     /// read-only thereafter. Replaces the former `Part::is_live: bool` so the
     /// tree-shaking visited-check doesn't pull a full 272-byte `Part` into
     /// cache for a 1-bit answer.
-    pub parts_live: Vec<AutoBitSet>,
-    pub entry_points: entry_point::List,
-    pub symbols: symbol::Map,
+    pub(crate) parts_live: Vec<AutoBitSet>,
+    pub(crate) entry_points: entry_point::List,
+    pub(crate) symbols: symbol::Map,
 
     // Note: lifetime-erased. The
     // arena is owned by `BundleV2` and outlives every `LinkerGraph` — kept as
@@ -190,13 +190,13 @@ pub struct LinkerGraph<'a> {
     // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
     // grow a `'bump` parameter; threading `'bump` would require `Chunk` and
     // `html_import_manifest` to gain lifetimes first.
-    pub bump: bun_ptr::BackRef<Arena>,
+    pub(crate) bump: bun_ptr::BackRef<Arena>,
 
-    pub code_splitting: bool,
+    pub(crate) code_splitting: bool,
 
     // This is an alias from Graph
     // it is not a clone!
-    pub ast: MultiArrayList<JSAst<'a>>,
+    pub(crate) ast: MultiArrayList<JSAst<'a>>,
     pub meta: MultiArrayList<JSMeta>,
 
     /// We should avoid traversing all files in the bundle, because the linker
@@ -206,17 +206,17 @@ pub struct LinkerGraph<'a> {
     /// If you need to iterate over all files in the linking operation, iterate
     /// over this array. This array is also sorted in a deterministic ordering
     /// to help ensure deterministic builds (source indices are random).
-    pub reachable_files: Vec<Index>,
+    pub(crate) reachable_files: Vec<Index>,
 
     /// Index from `.parse_graph.input_files` to index in `.files`
-    pub stable_source_indices: Vec<u32>,
+    pub(crate) stable_source_indices: Vec<u32>,
 
-    pub is_scb_bitset: BitSet,
+    pub(crate) is_scb_bitset: BitSet,
 
     /// This is for cross-module inlining of detected inlinable constants
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
-    pub ts_enums: bun_ast::ast_result::TsEnumsMap,
+    pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
@@ -252,7 +252,7 @@ unsafe impl Sync for LinkerGraph<'_> {}
 impl<'a> LinkerGraph<'a> {
     /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
     #[inline]
-    pub fn arena(&self) -> &Arena {
+    pub(crate) fn arena(&self) -> &Arena {
         // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the
         // lifetime of the link step that constructed this LinkerGraph.
         self.bump.get()
@@ -312,14 +312,14 @@ impl Default for LinkerGraph<'_> {
 // thin forwarders for call sites that don't have a split in hand.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
+fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
     named_exports[Index::RUNTIME.get() as usize]
         .get(name)
         .expect("runtime function must be a named export of the runtime module")
         .ref_
 }
 
-pub fn generate_new_symbol(
+pub(crate) fn generate_new_symbol(
     symbols: &mut symbol::Map,
     module_scopes: &mut [bun_ast::Scope],
     source_index: u32,
@@ -348,7 +348,7 @@ pub fn generate_new_symbol(
     ref_
 }
 
-pub(crate) fn top_level_symbol_to_parts<'a>(
+fn top_level_symbol_to_parts<'a>(
     top_level_symbol_to_parts_overlay: &'a [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &'a [bundled_ast::TopLevelSymbolToParts],
     id: u32,
@@ -363,7 +363,7 @@ pub(crate) fn top_level_symbol_to_parts<'a>(
     &[]
 }
 
-pub(crate) fn add_part_to_file(
+fn add_part_to_file(
     parts: &mut [part::List<'_>],
     top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
@@ -408,7 +408,7 @@ pub(crate) fn add_part_to_file(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_symbol_import_and_use(
+pub(crate) fn generate_symbol_import_and_use(
     parts: &mut [part::List<'_>],
     ast_flags: &mut [bundled_ast::Flags],
     exports_ref: &[Ref],
@@ -498,7 +498,7 @@ pub fn generate_symbol_import_and_use(
 }
 
 impl<'a> LinkerGraph<'a> {
-    pub fn runtime_function(&self, name: &[u8]) -> Ref {
+    pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
         runtime_function(self.ast.items_named_exports(), name)
     }
 
@@ -507,7 +507,7 @@ impl<'a> LinkerGraph<'a> {
     /// [`symbol::Map::get_const`]; callers previously open-coded
     /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
     #[inline]
-    pub fn symbol(&self, ref_: Ref) -> &Symbol {
+    pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol {
         self.symbols
             .get_const(ref_)
             .expect("infallible: ref in symbol table")
@@ -527,7 +527,7 @@ impl<'a> LinkerGraph<'a> {
     /// `unsafe { &mut *get(r) }` call-site obligation.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
+    pub(crate) unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
         // SAFETY: see `symbol` for liveness/validity; caller guarantees the
         // mutated slot is disjoint from any other borrow held at the call site.
         unsafe {
@@ -538,7 +538,7 @@ impl<'a> LinkerGraph<'a> {
         }
     }
 
-    pub fn generate_new_symbol(
+    pub(crate) fn generate_new_symbol(
         &mut self,
         source_index: u32,
         kind: symbol::Kind,
@@ -553,7 +553,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn generate_runtime_symbol_import_and_use(
+    pub(crate) fn generate_runtime_symbol_import_and_use(
         &mut self,
         source_index: index::Int,
         entry_point_part_index: Index,
@@ -580,7 +580,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
+    pub(crate) fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
         let ast = self.ast.split_mut();
         add_part_to_file(
             ast.parts,
@@ -591,7 +591,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn generate_symbol_import_and_use(
+    pub(crate) fn generate_symbol_import_and_use(
         &mut self,
         source_index: u32,
         part_index: u32,
@@ -617,7 +617,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn top_level_symbol_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
+    pub(crate) fn top_level_symbol_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
         top_level_symbol_to_parts(
             self.meta.items_top_level_symbol_to_parts_overlay(),
             self.ast.items_top_level_symbols_to_parts(),
@@ -628,7 +628,7 @@ impl<'a> LinkerGraph<'a> {
 }
 
 impl<'a> LinkerGraph<'a> {
-    pub fn load(
+    pub(crate) fn load(
         &mut self,
         entry_points: &[Index],
         sources: &[bun_ast::Source],
@@ -887,7 +887,7 @@ impl<'a> LinkerGraph<'a> {
     /// through whichever thread's `AstAlloc` state is active — `AstAlloc` is a
     /// ZST, so there is nothing to retag) and new symbols feed through
     /// `self.symbols: symbol::Map` (global).
-    pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
+    pub(crate) fn take_ast_ownership(&mut self, heap: &'a Arena) {
         for v in self.ast.items_import_records_mut() {
             bun_alloc::transfer_arena(v, heap);
         }
@@ -896,7 +896,7 @@ impl<'a> LinkerGraph<'a> {
         }
     }
 
-    pub fn propagate_async_dependencies(&mut self) -> Result<(), crate::Error> {
+    pub(crate) fn propagate_async_dependencies(&mut self) -> Result<(), crate::Error> {
         // Explicit-stack postorder DFS (was per-edge recursive). A parent's
         // flag is read from each child after that child's subtree is fully
         // processed; `AfterChild` is the resumption point for that read.

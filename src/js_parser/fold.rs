@@ -49,7 +49,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
 // File-split mixin pattern: a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub fn maybe_relocate_vars_to_top_level(
+    pub(crate) fn maybe_relocate_vars_to_top_level(
         &mut self,
         decls: &[G::Decl],
         mode: RelocateVarsMode,
@@ -115,7 +115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // EDot nodes represent a property access. This function may return an
     // expression to replace the property access with. It assumes that the
     // target of the EDot expression has already been visited.
-    pub fn maybe_rewrite_property_access(
+    pub(crate) fn maybe_rewrite_property_access(
         &mut self,
         loc: bun_ast::Loc,
         target: js_ast::Expr,
@@ -805,7 +805,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::Error> {
+    pub(crate) fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::Error> {
         let p = self;
         let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
             E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
@@ -831,7 +831,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, crate::Error> {
+    pub(crate) fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, crate::Error> {
         let p = self;
         let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p
@@ -849,7 +849,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_comma_spread_error(&mut self, comma_after_spread: bun_ast::Loc) {
+    pub(crate) fn maybe_comma_spread_error(&mut self, comma_after_spread: bun_ast::Loc) {
         let p = self;
         if comma_after_spread.is_empty() {
             return;

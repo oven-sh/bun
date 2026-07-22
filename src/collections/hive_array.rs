@@ -58,7 +58,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     }
 
     #[inline]
-    pub fn is_set(&self, index: usize) -> bool {
+    fn is_set(&self, index: usize) -> bool {
         debug_assert!(index < CAPACITY);
         (self.masks[index / WORD_BITS].get() >> (index % WORD_BITS)) & 1 != 0
     }
@@ -68,7 +68,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     /// re-`claim()` alias it. Use [`HiveArray::claim`]/[`alloc`](HiveArray::alloc)/
     /// [`put`](HiveArray::put)/[`box_at`](HiveArray::box_at).
     #[inline]
-    pub(crate) fn set(&self, index: usize) {
+    fn set(&self, index: usize) {
         debug_assert!(index < CAPACITY);
         let w = index / WORD_BITS;
         self.masks[w].set(self.masks[w].get() | (1usize << (index % WORD_BITS)));
@@ -76,7 +76,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
 
     /// `pub(crate)` — see [`set`](Self::set).
     #[inline]
-    pub(crate) fn unset(&self, index: usize) {
+    fn unset(&self, index: usize) {
         debug_assert!(index < CAPACITY);
         let w = index / WORD_BITS;
         self.masks[w].set(self.masks[w].get() & !(1usize << (index % WORD_BITS)));
@@ -96,7 +96,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     }
 
     #[inline]
-    pub fn find_first_unset(&self) -> Option<usize> {
+    fn find_first_unset(&self) -> Option<usize> {
         let mut i = 0;
         while i < Self::NUM_WORDS {
             let live_mask = if i + 1 == Self::NUM_WORDS {
@@ -199,7 +199,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// `out` must be non-null, properly aligned, and valid for writes of
     /// `size_of::<Self>()` bytes. The previous contents are not dropped.
     #[inline]
-    pub unsafe fn init_in_place(out: *mut Self) {
+    unsafe fn init_in_place(out: *mut Self) {
         // SAFETY: caller contract — `out` is aligned and writable; only the
         // `used` field is projected and written.
         unsafe {
@@ -336,7 +336,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// No live token ([`HiveSlot`], [`HiveBox`]) may exist for this slot — once
     /// the `used` bit is cleared, [`alloc`](Self::alloc)/[`claim`](Self::claim)
     /// can hand it out again, aliasing the stale token's `DerefMut`/`Drop`.
-    pub unsafe fn put_raw(&self, value: *mut T) -> bool {
+    unsafe fn put_raw(&self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
             return false;
         };
@@ -387,7 +387,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// [`claim`](Self::claim)+[`write`](HiveSlot::write) maintain). A slot
     /// claimed via the deprecated [`get`](Self::get) but never written
     /// violates this and makes the `drop_in_place` UB.
-    pub unsafe fn drop_all(&mut self) {
+    unsafe fn drop_all(&mut self) {
         if core::mem::needs_drop::<T>() {
             // `iter_set` snapshots the bitset, so `unset` inside the loop is
             // invisible to it. Unsetting before `drop_in_place` means a later
@@ -810,8 +810,8 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
 /// remains for FFI ingress points that hold the slot as a `*mut HiveRef`.
 #[repr(C)]
 pub struct HiveRef<T, const CAPACITY: usize> {
-    pub ref_count: Cell<u32>,
-    pub pool: *const Fallback<HiveRef<T, CAPACITY>, CAPACITY>,
+    ref_count: Cell<u32>,
+    pool: *const Fallback<HiveRef<T, CAPACITY>, CAPACITY>,
     pub value: T,
 }
 
@@ -823,7 +823,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
     /// `pool` must be valid for the entire lifetime of the returned
     /// `HiveRef` (i.e. until its `ref_count` drops to zero and it is `put`
     /// back). Callers hold the pool in a long-lived owner (e.g. `VirtualMachine`).
-    pub unsafe fn init(value: T, pool: *const Fallback<Self, CAPACITY>) -> *mut Self {
+    unsafe fn init(value: T, pool: *const Fallback<Self, CAPACITY>) -> *mut Self {
         // SAFETY: caller contract — `pool` is dereferenceable.
         unsafe {
             (*pool)
@@ -837,7 +837,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
     }
 
     #[inline]
-    pub fn ref_(&self) -> &Self {
+    fn ref_(&self) -> &Self {
         self.ref_count.set(self.ref_count.get() + 1);
         self
     }
@@ -848,7 +848,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
     /// # Safety
     /// `this` must point at a live `HiveRef` produced by [`init`](Self::init).
     /// On `None` the slot has been recycled — do not use `this` afterward.
-    pub unsafe fn unref(this: *mut Self) -> Option<*mut Self> {
+    unsafe fn unref(this: *mut Self) -> Option<*mut Self> {
         // SAFETY: caller contract — `this` is a live `HiveRef` slot, and
         // `(*this).pool` outlives every slot it hands out (`init` contract).
         // `Fallback::put` runs `T::drop` (drops the whole `HiveRef` in place).

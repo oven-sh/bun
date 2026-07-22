@@ -6,7 +6,7 @@ use bun_alloc::AllocError;
 use crate::array_hash_map::StringArrayHashMap;
 
 pub struct StringMap {
-    pub map: StringArrayHashMap<Box<[u8]>>,
+    map: StringArrayHashMap<Box<[u8]>>,
     pub dupe_keys: bool,
 }
 

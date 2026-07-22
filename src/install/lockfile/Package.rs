@@ -175,7 +175,7 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     pub scripts: Scripts,
 }
 
-pub type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
+pub(crate) type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
 // ─── ResolverContext ─────────────────────────────────────────────────────────
 //
@@ -264,7 +264,7 @@ impl ResolverContext for () {
 //
 // `count`/`resolve` keep their `StringBuilder<'_>` borrow — lifetimes are
 // permitted on object-safe trait methods, only type generics are not.
-pub(crate) trait ResolverContextDyn {
+trait ResolverContextDyn {
     fn is_void(&self) -> bool;
     fn is_git(&self) -> bool;
     fn check_bundled_dependencies(&self) -> bool;
@@ -368,7 +368,7 @@ pub(crate) enum PackageField {
 }
 
 impl PackageField {
-    pub(crate) const ALL: [PackageField; 8] = [
+    const ALL: [PackageField; 8] = [
         PackageField::Name,
         PackageField::NameHash,
         PackageField::Resolution,
@@ -448,7 +448,7 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
 
 impl<SemverIntType: VersionInt> Package<SemverIntType> {
     #[inline]
-    pub fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
+    pub(crate) fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
         self.meta.is_disabled(cpu, os)
     }
 }
@@ -461,7 +461,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 // `Package<SemverIntType>` ≠ `Package<u64>` mismatches at every Lockfile call
 // site.
 impl Package<u64> {
-    pub fn clone(&self, cloner: &mut Cloner) -> crate::Result<PackageID> {
+    pub(crate) fn clone(&self, cloner: &mut Cloner) -> crate::Result<PackageID> {
         // `cloner` already owns `&mut` to `pm`, `old`, `new`, and
         // `package_id_mapping`; route everything through its disjoint fields.
         // `old`/`new`/`mapping` are reborrowed for the whole body (disjoint
@@ -626,7 +626,7 @@ impl Package<u64> {
         Ok(new_package.meta.id)
     }
 
-    pub fn from_npm(
+    pub(crate) fn from_npm(
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
@@ -894,23 +894,23 @@ pub struct AddedTrustedDependency {
     /// Whether this dependency should be added to lockfile trusted
     /// dependencies. It is false when the new trusted dependency is coming
     /// from the default list.
-    pub add_to_lockfile: bool,
-    pub name: Box<[u8]>,
+    pub(crate) add_to_lockfile: bool,
+    pub(crate) name: Box<[u8]>,
 }
 
 #[derive(Default)]
 pub struct DiffSummary {
-    pub add: u32,
-    pub remove: u32,
-    pub update: u32,
-    pub overrides_changed: bool,
-    pub catalogs_changed: bool,
+    pub(crate) add: u32,
+    pub(crate) remove: u32,
+    pub(crate) update: u32,
+    pub(crate) overrides_changed: bool,
+    pub(crate) catalogs_changed: bool,
 
-    pub added_trusted_dependencies:
+    pub(crate) added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
-    pub removed_trusted_dependencies: TrustedDependenciesSet,
+    pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
 
-    pub patched_dependencies_changed: bool,
+    pub(crate) patched_dependencies_changed: bool,
 }
 
 impl DiffSummary {
@@ -1589,7 +1589,7 @@ impl Package<u64> {
     /// `manager` must point to a live `PackageManager` for the duration of the
     /// call, and its `lockfile` / `log` fields must point to live allocations
     /// disjoint from `*manager` itself.
-    pub unsafe fn parse_from_real_manager<R: ResolverContext>(
+    pub(crate) unsafe fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
         manager: *mut crate::package_manager_real::PackageManager,
         source: &bun_ast::Source,
@@ -2015,7 +2015,7 @@ impl Package<u64> {
         Ok(Some(this_dep))
     }
 
-    pub fn parse_with_json<R: ResolverContext>(
+    pub(crate) fn parse_with_json<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
@@ -2941,9 +2941,9 @@ pub mod serializer {
     use super::*;
 
     /// Number of columns in the on-disk package table.
-    pub(crate) const FIELD_COUNT: usize = PackageField::ALL.len();
+    const FIELD_COUNT: usize = PackageField::ALL.len();
 
-    pub fn save<SemverIntType: VersionInt, S>(
+    pub(crate) fn save<SemverIntType: VersionInt, S>(
         list: &List<SemverIntType>,
         stream: &mut S,
     ) -> crate::Result<()>

@@ -3,9 +3,7 @@
 // transparent u8 newtype with associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct TransactionStatusIndicator(pub u8);
+pub struct TransactionStatusIndicator(pub(crate) u8);
 
 impl TransactionStatusIndicator {
-    /// if idle (not in a transaction block)
-    pub(crate) const I: Self = Self(b'I');
 }

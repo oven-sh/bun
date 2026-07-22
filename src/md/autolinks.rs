@@ -11,8 +11,8 @@ pub(crate) fn is_list_item_mark(c: u8) -> bool {
 
 #[derive(Copy, Clone)]
 pub struct Autolink {
-    pub beg: usize,
-    pub end: usize,
+    pub(crate) beg: usize,
+    pub(crate) end: usize,
 }
 
 pub(crate) type AutolinkResult = Option<Autolink>;
@@ -78,7 +78,7 @@ pub(crate) struct ScanResult {
 }
 
 /// Scan a URL component (host, path, query, or fragment) following md4c's URL_MAP.
-pub(crate) fn scan_url_component(
+fn scan_url_component(
     content: &[u8],
     start: usize,
     start_char: u8,
@@ -149,7 +149,7 @@ pub(crate) fn scan_url_component(
     ScanResult { end: pos, ok: true }
 }
 
-pub(crate) fn is_in_set(c: u8, set: &[u8]) -> bool {
+fn is_in_set(c: u8, set: &[u8]) -> bool {
     for &s in set {
         if c == s {
             return true;
@@ -160,7 +160,7 @@ pub(crate) fn is_in_set(c: u8, set: &[u8]) -> bool {
 
 /// Check left boundary for permissive autolinks.
 /// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-pub(crate) fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
     if pos == 0 {
         return true;
     }
@@ -174,7 +174,7 @@ pub(crate) fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) 
 
 /// Check right boundary for permissive autolinks.
 /// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-pub(crate) fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
     if pos >= content.len() {
         return true;
     }

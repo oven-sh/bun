@@ -9,34 +9,34 @@ use crate::unicode;
 
 /// Maximum raw length of a link label (CommonMark: "a link label can have at
 /// most 999 characters inside the square brackets").
-pub const MAX_LINK_LABEL_LEN: usize = 999;
+pub(crate) const MAX_LINK_LABEL_LEN: usize = 999;
 
 pub struct RefDef {
-    pub dest: Box<[u8]>,  // raw destination (slice of source)
-    pub title: Box<[u8]>, // raw title (slice of source)
+    pub(crate) dest: Box<[u8]>,  // raw destination (slice of source)
+    pub(crate) title: Box<[u8]>, // raw title (slice of source)
 }
 
-pub struct ParsedRefDef<'a> {
-    pub end_pos: usize,
-    pub label: &'a [u8],
-    pub dest: &'a [u8],
-    pub title: &'a [u8],
+pub(crate) struct ParsedRefDef<'a> {
+    pub(crate) end_pos: usize,
+    pub(crate) label: &'a [u8],
+    pub(crate) dest: &'a [u8],
+    pub(crate) title: &'a [u8],
 }
 
-pub struct ParsedDest<'a> {
-    pub dest: &'a [u8],
-    pub end_pos: usize,
+pub(crate) struct ParsedDest<'a> {
+    pub(crate) dest: &'a [u8],
+    pub(crate) end_pos: usize,
 }
 
-pub struct ParsedTitle<'a> {
-    pub title: &'a [u8],
-    pub end_pos: usize,
+pub(crate) struct ParsedTitle<'a> {
+    pub(crate) title: &'a [u8],
+    pub(crate) end_pos: usize,
 }
 
 impl Parser<'_> {
     /// Normalize a link label for comparison: collapse whitespace runs to single space,
     /// strip leading/trailing whitespace, case-fold.
-    pub fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> {
+    pub(crate) fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> {
         // Collapse whitespace and apply Unicode case folding (per CommonMark §6.7)
         let mut result: Vec<u8> = Vec::new();
         let mut in_ws = true; // skip leading whitespace
@@ -84,7 +84,7 @@ impl Parser<'_> {
 
     /// Look up a reference definition by label (case-insensitive, whitespace-normalized).
     // Returns `Option<&RefDef>` instead of a by-value copy: RefDef owns its buffers.
-    pub fn lookup_ref_def(&mut self, raw_label: &[u8]) -> Option<&RefDef> {
+    pub(crate) fn lookup_ref_def(&mut self, raw_label: &[u8]) -> Option<&RefDef> {
         if raw_label.is_empty() || self.ref_defs.is_empty() {
             return None;
         }
@@ -103,7 +103,7 @@ impl Parser<'_> {
 
     /// Try to parse a link reference definition from merged paragraph text at position `pos`.
     /// Returns the end position and the parsed ref def, or None if not a valid ref def.
-    pub fn parse_ref_def<'a>(&self, text: &'a [u8], pos: usize) -> Option<ParsedRefDef<'a>> {
+    pub(crate) fn parse_ref_def<'a>(&self, text: &'a [u8], pos: usize) -> Option<ParsedRefDef<'a>> {
         let mut p = pos;
 
         // Must start with [
@@ -231,7 +231,7 @@ impl Parser<'_> {
         })
     }
 
-    pub fn skip_ref_def_whitespace(&self, text: &[u8], start: usize) -> usize {
+    pub(crate) fn skip_ref_def_whitespace(&self, text: &[u8], start: usize) -> usize {
         let mut p = start;
         while p < text.len() && (text[p] == b' ' || text[p] == b'\t') {
             p += 1;
@@ -245,7 +245,7 @@ impl Parser<'_> {
         p
     }
 
-    pub fn parse_ref_def_dest<'a>(&self, text: &'a [u8], start: usize) -> Option<ParsedDest<'a>> {
+    pub(crate) fn parse_ref_def_dest<'a>(&self, text: &'a [u8], start: usize) -> Option<ParsedDest<'a>> {
         let mut p = start;
         if p >= text.len() {
             return None;
@@ -297,7 +297,7 @@ impl Parser<'_> {
         }
     }
 
-    pub fn parse_ref_def_title<'a>(&self, text: &'a [u8], start: usize) -> Option<ParsedTitle<'a>> {
+    pub(crate) fn parse_ref_def_title<'a>(&self, text: &'a [u8], start: usize) -> Option<ParsedTitle<'a>> {
         let mut p = start;
         if p >= text.len() {
             return None;
@@ -331,7 +331,7 @@ impl Parser<'_> {
         Some(ParsedTitle { title, end_pos: p })
     }
 
-    pub fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
+    pub(crate) fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
         let mut off: usize = 0;
         // Take a raw pointer to block_bytes so we can call &mut self methods
         // (normalize_label, parse_ref_def via self.buffer) while iterating the

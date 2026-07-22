@@ -18,17 +18,17 @@ bun_core::declare_scope!(Postgres, visible);
 // `ref`/`deref` are provided by `IntrusiveRc`, not as inherent methods.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLStatement {
-    pub cached_structure: PostgresCachedStructure,
+    pub(crate) cached_structure: PostgresCachedStructure,
     // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
     // [`Self::init_exact_refs`] at construction time.
     ref_count: Cell<u32>,
-    pub fields: Vec<protocol::FieldDescription>,
-    pub parameters: Box<[int4]>,
-    pub signature: Signature,
-    pub status: Status,
-    pub error_response: Option<Error>,
-    pub needs_duplicate_check: bool,
-    pub fields_flags: DataCellFlags,
+    pub(crate) fields: Vec<protocol::FieldDescription>,
+    pub(crate) parameters: Box<[int4]>,
+    pub(crate) signature: Signature,
+    pub(crate) status: Status,
+    pub(crate) error_response: Option<Error>,
+    pub(crate) needs_duplicate_check: bool,
+    pub(crate) fields_flags: DataCellFlags,
 }
 
 impl Default for PostgresSQLStatement {
@@ -58,7 +58,7 @@ impl Error {
     // Cleanup is handled by `Drop` on
     // `protocol::ErrorResponse`, so no explicit `Drop` impl is needed here.
 
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Error::Protocol(err) => Ok(crate::postgres::protocol::error_response_jsc::to_js(
                 err,
@@ -78,12 +78,12 @@ impl PostgresSQLStatement {
     /// a statement with >1 owner (query + connection-map entry) go through
     /// this instead of writing the field directly.
     #[inline]
-    pub fn init_exact_refs(&mut self, n: u32) {
+    pub(crate) fn init_exact_refs(&mut self, n: u32) {
         debug_assert!(n > 0);
         self.ref_count.set(n);
     }
 
-    pub fn check_for_duplicate_fields(&mut self) {
+    pub(crate) fn check_for_duplicate_fields(&mut self) {
         if !self.needs_duplicate_check {
             return;
         }
@@ -96,7 +96,7 @@ impl PostgresSQLStatement {
     // Note: returning
     // `&CachedStructure` here to avoid moving out of `self` (CachedStructure owns
     // a `Box<[ExternColumnIdentifier]>` and a `StrongOptional`, neither `Copy`).
-    pub fn structure(
+    pub(crate) fn structure(
         &mut self,
         owner: JSValue,
         global_object: &JSGlobalObject,

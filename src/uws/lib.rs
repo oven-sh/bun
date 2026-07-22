@@ -106,7 +106,7 @@ pub use bun_uws_sys::loop_::on_thread_exit;
 /// # Safety
 /// `filename` and `error_msg` must be valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
+unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
     filename: *const c_char,
     error_msg: *const c_char,
 ) {
@@ -209,10 +209,10 @@ pub mod ssl_wrapper {
     pub struct SSLWrapper<T: Copy> {
         pub handlers: Handlers<T>,
         pub ssl: Option<NonNull<boring_sys::SSL>>,
-        pub ctx: Option<NonNull<boring_sys::SSL_CTX>>,
+        pub(crate) ctx: Option<NonNull<boring_sys::SSL_CTX>>,
         pub flags: Flags,
-        pub renegotiation_count: u8,
-        pub renegotiation_window_start: Option<std::time::Instant>,
+        pub(crate) renegotiation_count: u8,
+        pub(crate) renegotiation_window_start: Option<std::time::Instant>,
     }
 
     /// CamelCase alias for callers that use the alternate spelling
@@ -258,7 +258,7 @@ pub mod ssl_wrapper {
         }
 
         #[inline]
-        pub fn handshake_state(&self) -> HandshakeState {
+        pub(crate) fn handshake_state(&self) -> HandshakeState {
             // bits 0-1 are always written via set_handshake_state with a valid
             // discriminant in range 0..=2; the 4th bit-state traps rather than
             // silently folding bitfield corruption to a valid variant.
@@ -270,33 +270,33 @@ pub mod ssl_wrapper {
             }
         }
         #[inline]
-        pub fn set_handshake_state(&self, s: HandshakeState) {
+        pub(crate) fn set_handshake_state(&self, s: HandshakeState) {
             self.0
                 .set((self.bits() & !Self::HANDSHAKE_MASK) | (s as u8));
         }
 
         #[inline]
-        pub fn received_ssl_shutdown(&self) -> bool {
+        pub(crate) fn received_ssl_shutdown(&self) -> bool {
             self.bits() & Self::RECEIVED_SSL_SHUTDOWN != 0
         }
         #[inline]
-        pub fn set_received_ssl_shutdown(&self, v: bool) {
+        pub(crate) fn set_received_ssl_shutdown(&self, v: bool) {
             self.set_bit(Self::RECEIVED_SSL_SHUTDOWN, v)
         }
         #[inline]
-        pub fn sent_ssl_shutdown(&self) -> bool {
+        pub(crate) fn sent_ssl_shutdown(&self) -> bool {
             self.bits() & Self::SENT_SSL_SHUTDOWN != 0
         }
         #[inline]
-        pub fn set_sent_ssl_shutdown(&self, v: bool) {
+        pub(crate) fn set_sent_ssl_shutdown(&self, v: bool) {
             self.set_bit(Self::SENT_SSL_SHUTDOWN, v)
         }
         #[inline]
-        pub fn set_is_client(&self, v: bool) {
+        pub(crate) fn set_is_client(&self, v: bool) {
             self.set_bit(Self::IS_CLIENT, v)
         }
         #[inline]
-        pub fn set_authorized(&self, v: bool) {
+        pub(crate) fn set_authorized(&self, v: bool) {
             self.set_bit(Self::AUTHORIZED, v)
         }
         #[inline]
@@ -304,15 +304,15 @@ pub mod ssl_wrapper {
             self.bits() & Self::FATAL_ERROR != 0
         }
         #[inline]
-        pub fn set_fatal_error(&self, v: bool) {
+        pub(crate) fn set_fatal_error(&self, v: bool) {
             self.set_bit(Self::FATAL_ERROR, v)
         }
         #[inline]
-        pub fn closed_notified(&self) -> bool {
+        pub(crate) fn closed_notified(&self) -> bool {
             self.bits() & Self::CLOSED_NOTIFIED != 0
         }
         #[inline]
-        pub fn set_closed_notified(&self, v: bool) {
+        pub(crate) fn set_closed_notified(&self, v: bool) {
             self.set_bit(Self::CLOSED_NOTIFIED, v)
         }
     }

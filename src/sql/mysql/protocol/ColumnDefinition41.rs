@@ -8,18 +8,18 @@ use bstr::BStr;
 bun_core::declare_scope!(ColumnDefinition41, hidden);
 
 pub struct ColumnDefinition41 {
-    pub catalog: Data,
-    pub schema: Data,
-    pub table: Data,
-    pub org_table: Data,
-    pub name: Data,
-    pub org_name: Data,
-    pub fixed_length_fields_length: u64,
+    pub(crate) catalog: Data,
+    pub(crate) schema: Data,
+    pub(crate) table: Data,
+    pub(crate) org_table: Data,
+    pub(crate) name: Data,
+    pub(crate) org_name: Data,
+    pub(crate) fixed_length_fields_length: u64,
     pub character_set: u16,
     pub column_length: u32,
     pub column_type: FieldType,
     pub flags: ColumnFlags,
-    pub decimals: u8,
+    pub(crate) decimals: u8,
     pub name_or_index: ColumnIdentifier,
 }
 
@@ -65,13 +65,13 @@ bitflags::bitflags! {
 
 impl ColumnFlags {
     #[inline]
-    pub fn from_int(flags: u16) -> ColumnFlags {
+    pub(crate) fn from_int(flags: u16) -> ColumnFlags {
         ColumnFlags::from_bits_retain(flags)
     }
 }
 
 impl ColumnDefinition41 {
-    pub fn decode_internal<Context: ReaderContext>(
+    pub(crate) fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
     ) -> Result<bool, AnyMySQLError> {

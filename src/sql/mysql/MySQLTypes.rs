@@ -51,7 +51,7 @@ impl FieldType {
     /// invalid discriminant. LLVM folds the contiguous arms to two range
     /// checks.
     #[inline]
-    pub const fn from_raw(b: u8) -> Option<Self> {
+    pub(crate) const fn from_raw(b: u8) -> Option<Self> {
         Some(match b {
             0x00 => FieldType::MYSQL_TYPE_DECIMAL,
             0x01 => FieldType::MYSQL_TYPE_TINY,
@@ -88,7 +88,7 @@ impl FieldType {
         })
     }
 
-    pub fn is_binary_format_supported(self) -> bool {
+    pub(crate) fn is_binary_format_supported(self) -> bool {
         matches!(
             self,
             FieldType::MYSQL_TYPE_TINY
@@ -109,4 +109,4 @@ impl FieldType {
 
 pub(crate) type MySQLInt32 = Int4;
 // encode/decode sites must mask/read exactly 3 bytes. Verify all Int3 users do so.
-pub type Int4 = u32;
+pub(crate) type Int4 = u32;

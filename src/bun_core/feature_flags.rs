@@ -108,7 +108,7 @@ pub const WINDOWS_BUNX_FAST_PATH: bool = true;
 // TODO: fix Windows-only test failures in fetch-preconnect.test.ts
 pub const IS_FETCH_PRECONNECT_SUPPORTED: bool = env::IS_POSIX;
 
-pub(crate) const LIBDEFLATE_SUPPORTED: bool = env::IS_NATIVE;
+const LIBDEFLATE_SUPPORTED: bool = env::IS_NATIVE;
 
 // Mostly exists as a way to turn it off later, if necessary.
 pub fn is_libdeflate_enabled() -> bool {

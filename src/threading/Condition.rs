@@ -57,7 +57,7 @@ use crate::guarded::GuardedLock;
 
 #[derive(Default)]
 pub struct Condition {
-    impl_: Impl,
+    pub impl_: Impl,
 }
 
 /// `parking_lot::Condvar` drop-in alias. Same type, different spelling so
@@ -114,7 +114,7 @@ impl Condition {
     ///
     /// Given `timed_wait()` can be interrupted spuriously, the blocking condition should be checked continuously
     /// irrespective of any notifications from `signal()` or `broadcast()`.
-    pub fn timed_wait(&self, mutex: &Mutex, timeout_ns: u64) -> Result<(), TimeoutError> {
+    pub(crate) fn timed_wait(&self, mutex: &Mutex, timeout_ns: u64) -> Result<(), TimeoutError> {
         self.impl_.wait(mutex, Some(timeout_ns))
     }
 
@@ -205,7 +205,7 @@ mod windows_impl {
         safe fn WakeAllConditionVariable(cv: &core::cell::UnsafeCell<windows::CONDITION_VARIABLE>);
     }
 
-    pub(super) struct WindowsImpl {
+    pub struct WindowsImpl {
         condition: core::cell::UnsafeCell<windows::CONDITION_VARIABLE>,
     }
 
@@ -302,7 +302,7 @@ use windows_impl::WindowsImpl;
 
 #[cfg(not(windows))]
 #[derive(Default)]
-struct FutexImpl {
+pub struct FutexImpl {
     state: AtomicU32,
     epoch: AtomicU32,
 }

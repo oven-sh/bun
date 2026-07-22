@@ -7,11 +7,11 @@ use crate::{PrintErr, Printer};
 use crate::css_values::syntax::ParsedComponent;
 
 pub struct PropertyRule {
-    pub name: DashedIdent,
-    pub syntax: SyntaxString,
-    pub inherits: bool,
-    pub initial_value: Option<ParsedComponent>,
-    pub loc: Location,
+    pub(crate) name: DashedIdent,
+    pub(crate) syntax: SyntaxString,
+    pub(crate) inherits: bool,
+    pub(crate) initial_value: Option<ParsedComponent>,
+    pub(crate) loc: Location,
 }
 
 impl PropertyRule {

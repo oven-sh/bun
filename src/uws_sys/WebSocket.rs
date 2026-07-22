@@ -17,7 +17,7 @@ use crate::{Opcode, Request, SendStatus, WebSocketUpgradeContext, uws_res};
 bun_opaque::opaque_ffi! { pub struct RawWebSocket; }
 
 impl RawWebSocket {
-    pub fn memory_cost(&mut self, ssl_flag: i32) -> usize {
+    pub(crate) fn memory_cost(&mut self, ssl_flag: i32) -> usize {
         c::uws_ws_memory_cost(ssl_flag, self)
     }
 }
@@ -54,7 +54,7 @@ impl AnyWebSocket {
     /// args) and raw-pointer `cast` is safe; only the eventual *dereference*
     /// requires the caller's "user data was set to a `*mut T`" guarantee.
     #[inline]
-    pub fn as_ptr<T>(self) -> *mut T {
+    pub(crate) fn as_ptr<T>(self) -> *mut T {
         let (ssl, ws) = self.split();
         c::uws_ws_get_user_data(ssl, ws).cast::<T>()
     }
@@ -367,7 +367,7 @@ where
     // `WebSocketBehavior`; a safe `extern "C" fn` item coerces to the
     // `Option<unsafe extern "C" fn(..)>` field type. Each body already scopes
     // its own proof block around the `T::on_*` dispatch / `thunk::c_slice`.
-    pub(crate) extern "C" fn on_open(raw_ws: *mut RawWebSocket) {
+    extern "C" fn on_open(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
         // `*mut T` (not `&mut T`) — no `noalias` borrow held across the
         // re-entrant handler. User data was set to *mut T at upgrade time.
@@ -379,7 +379,7 @@ where
         unsafe { T::on_open(this, ws) };
     }
 
-    pub(crate) extern "C" fn on_message(
+    extern "C" fn on_message(
         raw_ws: *mut RawWebSocket,
         message: *const u8,
         length: usize,
@@ -394,7 +394,7 @@ where
         unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
     }
 
-    pub(crate) extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
+    extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if this.is_null() {
@@ -404,7 +404,7 @@ where
         unsafe { T::on_drain(this, ws) };
     }
 
-    pub(crate) extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
+    extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if this.is_null() {
@@ -414,7 +414,7 @@ where
         unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) };
     }
 
-    pub(crate) extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
+    extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if this.is_null() {
@@ -424,7 +424,7 @@ where
         unsafe { T::on_pong(this, ws, thunk::c_slice(message, length)) };
     }
 
-    pub(crate) extern "C" fn on_close(
+    extern "C" fn on_close(
         raw_ws: *mut RawWebSocket,
         code: i32,
         message: *const u8,
@@ -439,7 +439,7 @@ where
         unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
     }
 
-    pub(crate) extern "C" fn on_upgrade(
+    extern "C" fn on_upgrade(
         ptr: *mut c_void,
         res: *mut uws_res,
         req: *mut Request,

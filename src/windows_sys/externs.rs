@@ -12,7 +12,7 @@ pub type BOOL = c_int;
 pub type BOOLEAN = u8;
 pub type WORD = c_ushort;
 pub type DWORD = c_ulong;
-pub type DWORD_PTR = usize;
+type DWORD_PTR = usize;
 pub type UINT = c_uint;
 pub type ULONG = c_ulong;
 pub type LONG = c_long;
@@ -222,7 +222,7 @@ pub struct WIN32_FILE_ATTRIBUTE_DATA {
 }
 
 /// `GET_FILEEX_INFO_LEVELS` — enum(u32) selecting `GetFileAttributesExW` payload.
-pub type GET_FILEEX_INFO_LEVELS = u32;
+type GET_FILEEX_INFO_LEVELS = u32;
 
 /// `FILE_INFO_BY_HANDLE_CLASS` (`winbase.h`), as a bare `u32`.
 pub type FILE_INFO_BY_HANDLE_CLASS = u32;
@@ -236,7 +236,7 @@ pub struct UNICODE_STRING {
 }
 
 /// `ACCESS_MASK` (`winnt.h`).
-pub type ACCESS_MASK = DWORD;
+type ACCESS_MASK = DWORD;
 
 /// `OBJECT_ATTRIBUTES` (`ntdef.h`) — passed to `NtCreateFile` / `NtOpenFile`.
 #[repr(C)]
@@ -379,7 +379,7 @@ pub struct FILE_DIRECTORY_INFORMATION {
 /// `NtSetInformationFile`. Newtype-over-u32 so unmapped values round-trip.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct FILE_INFORMATION_CLASS(pub u32);
+pub struct FILE_INFORMATION_CLASS(u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
     pub const FileBasicInformation: Self = Self(4);
@@ -394,7 +394,7 @@ impl FILE_INFORMATION_CLASS {
 /// round-trip.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct FS_INFORMATION_CLASS(pub u32);
+pub struct FS_INFORMATION_CLASS(u32);
 impl FS_INFORMATION_CLASS {
     pub const FileFsVolumeInformation: Self = Self(1);
     pub const FileFsDeviceInformation: Self = Self(4);
@@ -531,6 +531,7 @@ pub enum VolumeName {
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct GetFinalPathNameByHandleFormat {
+    #[cfg(windows)]
     pub volume_name: VolumeName,
 }
 
@@ -1039,7 +1040,7 @@ pub mod ws2_32 {
     /// associated consts. Values from `winsock2.h`.
     #[repr(transparent)]
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-    pub struct WinsockError(pub u16);
+    pub struct WinsockError(u16);
     impl WinsockError {
         #[inline]
         pub const fn raw(self) -> u16 {
@@ -1327,7 +1328,7 @@ impl Win32Error {
     // that directly (T0 must not depend on T1).
 }
 
-pub type LPDWORD = *mut DWORD;
+type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
 
 #[link(name = "shell32")]

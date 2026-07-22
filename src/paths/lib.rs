@@ -13,9 +13,9 @@ pub use error::{Error, Result};
 // thread-local pool as the u8 one (path_buffer_pool.rs already handles both
 // via `PoolStorage`).
 pub mod w_path_buffer_pool {
+    pub type Guard = PoolGuard<WPathBuffer>;
     use super::WPathBuffer;
     use super::path_buffer_pool::{PathBufferPoolT, PoolGuard};
-    pub type Guard = PoolGuard<WPathBuffer>;
     #[inline]
     pub fn get() -> PoolGuard<WPathBuffer> {
         PathBufferPoolT::<WPathBuffer>::get()
@@ -106,7 +106,7 @@ pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
 /// rejects a third leading separator, and requires BOTH server and share
 /// tokens — otherwise returns `b""`.
 #[inline]
-pub(crate) fn disk_designator_windows(p: &[u8]) -> &[u8] {
+fn disk_designator_windows(p: &[u8]) -> &[u8] {
     &p[..crate::path::disk_designator_len_windows::<u8>(p)]
 }
 
@@ -436,10 +436,10 @@ pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
     /// `\??\` — NT object-manager prefix (UTF-16).
-    pub(crate) const NT_OBJECT_PREFIX: [u16; 4] =
+    pub const NT_OBJECT_PREFIX: [u16; 4] =
         ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
     /// `\??\UNC\` — NT object-manager UNC prefix (UTF-16).
-    pub(crate) const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
+    pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
         '\\' as u16,
         '?' as u16,
         '?' as u16,
@@ -450,21 +450,23 @@ pub mod windows {
         '\\' as u16,
     ];
     /// `\\?\` — Win32 long-path prefix (UTF-16).
-    pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
+    pub const LONG_PATH_PREFIX: [u16; 4] =
         ['\\' as u16, '\\' as u16, '?' as u16, '\\' as u16];
 
     /// `\??\` — NT object-manager prefix (UTF-8/ASCII).
-    pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
+    pub const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
     /// `\??\UNC\` — NT object-manager UNC prefix (UTF-8/ASCII).
-    pub(crate) const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
+    pub const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
     /// `\\?\` — Win32 long-path prefix (UTF-8/ASCII).
     pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
     /// Per-width long-path prefix so `Path::<U, ..>::from_long_path` stays width-generic.
     #[inline]
+    #[cfg(windows)]
     pub fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
         U::LONG_PATH_PREFIX
     }
+
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -539,7 +541,7 @@ pub mod fs {
 
     impl FileSystem {
         #[inline]
-        pub fn instance_loaded() -> bool {
+        pub(crate) fn instance_loaded() -> bool {
             INSTANCE_LOADED.load(Ordering::Relaxed)
         }
 
@@ -835,7 +837,7 @@ pub mod fs {
             }
         }
 
-        pub const EMPTY: Path<'static> = Path {
+        const EMPTY: Path<'static> = Path {
             pretty: b"",
             text: b"",
             namespace: b"file",

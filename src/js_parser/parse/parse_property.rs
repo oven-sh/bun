@@ -239,7 +239,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
-    pub fn parse_property(
+    pub(crate) fn parse_property(
         &mut self,
         kind_: PropertyKind,
         opts: &mut PropertyOpts,

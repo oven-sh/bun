@@ -56,8 +56,8 @@ pub trait PriorityCompare<T> {
     fn compare(&self, a: &T, b: &T) -> core::cmp::Ordering;
 }
 pub struct PriorityQueue<T, C> {
-    pub items: Vec<T>,
-    pub context: C,
+    items: Vec<T>,
+    context: C,
 }
 impl<T, C: Default> Default for PriorityQueue<T, C> {
     fn default() -> Self {

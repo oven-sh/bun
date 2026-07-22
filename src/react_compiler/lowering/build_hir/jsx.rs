@@ -24,7 +24,7 @@ fn estring_to_store_str(s: &E::EString) -> StoreStr {
     }
 }
 
-pub(super) fn lower_jsx_element_name(
+fn lower_jsx_element_name(
     builder: &mut HirBuilder,
     tag: &Expr,
 ) -> Result<JsxTag, CompilerError> {
@@ -107,7 +107,7 @@ pub(super) fn lower_jsx_element_name(
     }
 }
 
-pub(super) fn lower_jsx_member_expression(
+fn lower_jsx_member_expression(
     builder: &mut HirBuilder,
     expr: &E::Dot,
     expr_loc: Loc,

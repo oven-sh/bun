@@ -47,7 +47,7 @@ fn signal_name(raw: u8) -> &'static str {
     bun_sys::SignalCode(raw).name().unwrap_or("UNKNOWN")
 }
 
-pub struct PackagePath {
+pub(crate) struct PackagePath {
     pkg_path: Box<[PackageID]>,
     dep_path: Box<[DependencyID]>,
 }
@@ -59,25 +59,25 @@ pub enum SecurityAdvisoryLevel {
 }
 
 pub struct SecurityAdvisory {
-    pub level: SecurityAdvisoryLevel,
-    pub package: Box<[u8]>,
-    pub url: Option<Box<[u8]>>,
-    pub description: Option<Box<[u8]>>,
-    pub pkg_path: Option<Box<[PackageID]>>,
+    pub(crate) level: SecurityAdvisoryLevel,
+    pub(crate) package: Box<[u8]>,
+    pub(crate) url: Option<Box<[u8]>>,
+    pub(crate) description: Option<Box<[u8]>>,
+    pub(crate) pkg_path: Option<Box<[PackageID]>>,
 }
 
 pub struct SecurityScanResults {
-    pub advisories: Box<[SecurityAdvisory]>,
-    pub fatal_count: usize,
-    pub warn_count: usize,
+    pub(crate) advisories: Box<[SecurityAdvisory]>,
+    pub(crate) fatal_count: usize,
+    pub(crate) warn_count: usize,
 }
 
 impl SecurityScanResults {
-    pub fn has_fatal_advisories(&self) -> bool {
+    pub(crate) fn has_fatal_advisories(&self) -> bool {
         self.fatal_count > 0
     }
 
-    pub fn has_warnings(&self) -> bool {
+    pub(crate) fn has_warnings(&self) -> bool {
         self.warn_count > 0
     }
 
@@ -86,7 +86,7 @@ impl SecurityScanResults {
     }
 }
 
-pub(crate) fn do_partial_install_of_security_scanner(
+fn do_partial_install_of_security_scanner(
     manager: &mut PackageManager,
     ctx: CommandContext,
     log_level: crate::package_manager::Options::LogLevel,
@@ -163,7 +163,7 @@ struct ScannerFinder<'a> {
 }
 
 impl<'a> ScannerFinder<'a> {
-    pub(crate) fn find_in_root_dependencies(&self) -> Option<PackageID> {
+    fn find_in_root_dependencies(&self) -> Option<PackageID> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_dependencies = pkgs.items_dependencies();
         let pkg_resolutions = pkgs.items_resolution();
@@ -194,7 +194,7 @@ impl<'a> ScannerFinder<'a> {
         None
     }
 
-    pub(crate) fn validate_not_in_workspaces(&self) -> Result<(), Error> {
+    fn validate_not_in_workspaces(&self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();
         let pkg_res = pkgs.items_resolution();
@@ -479,7 +479,7 @@ struct QueueItem {
 }
 
 impl<'a> PackageCollector<'a> {
-    pub(crate) fn init(manager: &'a PackageManager) -> Self {
+    fn init(manager: &'a PackageManager) -> Self {
         Self {
             manager,
             dedupe: ArrayHashMap::new(),
@@ -488,7 +488,7 @@ impl<'a> PackageCollector<'a> {
         }
     }
 
-    pub(crate) fn collect_all_packages(&mut self) -> Result<(), Error> {
+    fn collect_all_packages(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_dependencies = pkgs.items_dependencies();
         let pkg_resolutions = pkgs.items_resolution();
@@ -557,7 +557,7 @@ impl<'a> PackageCollector<'a> {
         Ok(())
     }
 
-    pub(crate) fn collect_update_packages(&mut self) -> Result<(), Error> {
+    fn collect_update_packages(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
         let pkg_dependencies = pkgs.items_dependencies();
@@ -627,7 +627,7 @@ impl<'a> PackageCollector<'a> {
         Ok(())
     }
 
-    pub(crate) fn process_queue(&mut self) -> Result<(), Error> {
+    fn process_queue(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
         let pkg_dependencies = pkgs.items_dependencies();
@@ -692,7 +692,7 @@ struct JSONBuilder<'a> {
 }
 
 impl<'a> JSONBuilder<'a> {
-    pub(crate) fn build_package_json(&self) -> Result<Box<[u8]>, Error> {
+    fn build_package_json(&self) -> Result<Box<[u8]>, Error> {
         let mut json_buf: Vec<u8> = Vec::new();
 
         let pkgs = self.manager.lockfile.packages.slice();
@@ -1004,7 +1004,7 @@ bun_io::impl_buffered_reader_parent! {
 }
 
 impl<'a> SecurityScanSubprocess<'a> {
-    pub fn spawn(&mut self) -> Result<(), Error> {
+    pub(crate) fn spawn(&mut self) -> Result<(), Error> {
         self.ipc_data = Vec::new();
         self.stderr_data = Vec::new();
         let parent: *mut Self = self;
@@ -1353,7 +1353,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         Ok(())
     }
 
-    pub fn on_close_io(&mut self, _: subprocess::StdioKind) {
+    pub(crate) fn on_close_io(&mut self, _: subprocess::StdioKind) {
         if let Some(writer) = self.json_writer.take() {
             // SAFETY: `writer` holds the field's intrusive ref; sole access path
             // (single-threaded event loop callback).
@@ -1363,7 +1363,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         }
     }
 
-    pub fn is_done(&self) -> bool {
+    pub(crate) fn is_done(&self) -> bool {
         self.has_process_exited && self.remaining_fds == 0
     }
 
@@ -1371,27 +1371,27 @@ impl<'a> SecurityScanSubprocess<'a> {
         &self.manager.event_loop
     }
 
-    pub fn loop_(&mut self) -> *mut AsyncLoop {
+    pub(crate) fn loop_(&mut self) -> *mut AsyncLoop {
         self.manager.event_loop.native_loop()
     }
 
-    pub fn on_reader_done(&mut self) {
+    pub(crate) fn on_reader_done(&mut self) {
         self.has_received_ipc = true;
         self.remaining_fds -= 1;
     }
 
-    pub fn on_reader_error(&mut self, err: bun_sys::Error) {
+    pub(crate) fn on_reader_error(&mut self, err: bun_sys::Error) {
         Output::err_generic("Failed to read security scanner IPC: {}", (err,));
         self.has_received_ipc = true;
         self.remaining_fds -= 1;
     }
 
-    pub fn on_read_chunk(&mut self, chunk: &[u8], _has_more: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&mut self, chunk: &[u8], _has_more: ReadState) -> bool {
         self.ipc_data.extend_from_slice(chunk);
         true
     }
 
-    pub fn on_process_exit(&mut self, _: &mut Process, status: Status, _: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, _: &mut Process, status: Status, _: &Rusage) {
         self.has_process_exited = true;
         self.exit_status = Some(status);
 
@@ -1485,7 +1485,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         }
     }
 
-    pub fn handle_results(
+    pub(crate) fn handle_results(
         &mut self,
         package_paths: &mut ArrayHashMap<PackageID, PackagePath>,
         start_time: i64,

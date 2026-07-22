@@ -9,7 +9,7 @@ pub enum BuildTarget {
     Wasi,
 }
 
-pub(crate) const BUILD_TARGET: BuildTarget = {
+const BUILD_TARGET: BuildTarget = {
     if cfg!(target_family = "wasm") {
         BuildTarget::Wasm
     } else {
@@ -17,10 +17,10 @@ pub(crate) const BUILD_TARGET: BuildTarget = {
     }
 };
 
-pub(crate) const IS_WASM: bool = matches!(BUILD_TARGET, BuildTarget::Wasm);
+const IS_WASM: bool = matches!(BUILD_TARGET, BuildTarget::Wasm);
 pub const IS_NATIVE: bool = matches!(BUILD_TARGET, BuildTarget::Native);
-pub(crate) const IS_WASI: bool = matches!(BUILD_TARGET, BuildTarget::Wasi);
-pub(crate) const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
+const IS_WASI: bool = matches!(BUILD_TARGET, BuildTarget::Wasi);
+const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
 pub(crate) const IS_BROWSER: bool = !IS_WASI && IS_WASM;
 pub const IS_WINDOWS: bool = cfg!(windows);
 pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
@@ -34,17 +34,17 @@ pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 /// semantics; that matches a bare `cargo build` landing in `release`-like
 /// behaviour and keeps IDE diagnostics closer to what ships.
 pub const IS_DEBUG: bool = cfg!(bun_debug);
-pub(crate) const IS_TEST: bool = cfg!(test);
+const IS_TEST: bool = cfg!(test);
 // Android is a Linux kernel target, but Rust splits the two into separate
 // `target_os` values, so this const has to OR them — otherwise `OS` (below)
 // panics at const-eval on the `*-linux-android` cross targets and Linux-only
 // code paths are skipped.
 pub const IS_LINUX: bool = cfg!(any(target_os = "linux", target_os = "android"));
-pub(crate) const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
+const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
 /// kqueue-based event loop (macOS + FreeBSD share most of this path).
 pub const IS_KQUEUE: bool = IS_MAC || IS_FREEBSD;
-pub(crate) const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
-pub(crate) const IS_X64: bool = cfg!(target_arch = "x86_64");
+const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
+const IS_X64: bool = cfg!(target_arch = "x86_64");
 pub const IS_MUSL: bool = cfg!(target_env = "musl");
 pub const IS_ANDROID: bool = cfg!(target_os = "android");
 pub const ALLOW_ASSERT: bool = IS_DEBUG || IS_TEST || build_options::RELEASE_SAFE;
@@ -99,7 +99,7 @@ pub enum OperatingSystem {
 
 impl OperatingSystem {
     /// user-facing name with capitalization
-    pub const fn display_string(self) -> &'static str {
+    pub(crate) const fn display_string(self) -> &'static str {
         match self {
             Self::Mac => "macOS",
             Self::Linux => "Linux",
@@ -110,7 +110,7 @@ impl OperatingSystem {
     }
 
     /// same format as `process.platform`
-    pub const fn name_string(self) -> &'static str {
+    pub(crate) const fn name_string(self) -> &'static str {
         match self {
             Self::Mac => "darwin",
             Self::Linux => "linux",

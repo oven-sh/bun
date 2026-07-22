@@ -82,14 +82,14 @@ impl<'a> fmt::Display for QueryFormatter<'a> {
 }
 
 impl Query {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
+    fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
         QueryFormatter {
             query: self,
             buffer: buf,
         }
     }
 
-    pub fn eql(&self, rhs: &Query) -> bool {
+    fn eql(&self, rhs: &Query) -> bool {
         let mut lhs = self;
         let mut rhs = rhs;
         loop {
@@ -111,7 +111,7 @@ impl Query {
         }
     }
 
-    pub fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
+    fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
         let mut node = self;
         loop {
             if !node.range.satisfies(version, query_buf, version_buf) {
@@ -124,7 +124,7 @@ impl Query {
         }
     }
 
-    pub fn satisfies_pre(
+    fn satisfies_pre(
         &self,
         version: Version,
         query_buf: &[u8],
@@ -156,7 +156,7 @@ impl Query {
 pub struct List {
     pub head: Query,
     // BACKREF: alias into self.head.next chain
-    pub tail: Option<NonNull<Query>>,
+    tail: Option<NonNull<Query>>,
 
     // OR
     pub next: Option<Box<List>>,
@@ -241,14 +241,14 @@ impl<'a> fmt::Display for ListFormatter<'a> {
 }
 
 impl List {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
+    fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
         ListFormatter {
             list: self,
             buffer: buf,
         }
     }
 
-    pub fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
+    fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
         let mut node = self;
         loop {
             if node.head.satisfies(version, list_buf, version_buf) {
@@ -261,7 +261,7 @@ impl List {
         }
     }
 
-    pub fn satisfies_pre(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
+    fn satisfies_pre(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
         debug_assert!(version.tag.has_pre());
 
         // `version` has a prerelease tag:
@@ -286,7 +286,7 @@ impl List {
         }
     }
 
-    pub fn eql(&self, rhs: &List) -> bool {
+    fn eql(&self, rhs: &List) -> bool {
         let mut lhs = self;
         let mut rhs = rhs;
         loop {
@@ -308,7 +308,7 @@ impl List {
         }
     }
 
-    pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if !self.head.range.has_left() && !self.head.range.has_right() {
             self.head.range = *range;
             return Ok(());
@@ -337,13 +337,13 @@ pub(crate) type FlagsBitSet = IntegerBitSet<3>;
 pub struct Flags;
 impl Flags {
     pub const PRE: usize = 1;
-    pub const BUILD: usize = 0;
+    const BUILD: usize = 0;
 }
 
 pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
-    pub tail: Option<NonNull<List>>,
+    tail: Option<NonNull<List>>,
     /// Borrowed view into the caller's source buffer.
     /// Stored as a raw fat pointer
     /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
@@ -494,7 +494,7 @@ impl Group {
         self.head.head.range.left.version
     }
 
-    pub fn or_version(&mut self, version: Version) -> Result<(), AllocError> {
+    fn or_version(&mut self, version: Version) -> Result<(), AllocError> {
         if self.tail.is_none() && !self.head.head.range.has_left() {
             self.head.head.range.left.version = version;
             self.head.head.range.left.op = RangeOp::Eql;
@@ -517,7 +517,7 @@ impl Group {
         Ok(())
     }
 
-    pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         let tail: &mut List = match self.tail {
             // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
@@ -526,7 +526,7 @@ impl Group {
         tail.and_range(range)
     }
 
-    pub fn or_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    fn or_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if self.tail.is_none() && self.head.tail.is_none() && !self.head.head.range.has_left() {
             self.head.head.range = *range;
             return Ok(());
@@ -559,8 +559,8 @@ impl Group {
 
 #[derive(Clone, Copy, Default)]
 pub struct Token {
-    pub tag: TokenTag,
-    pub wildcard: Wildcard,
+    tag: TokenTag,
+    wildcard: Wildcard,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -586,7 +586,7 @@ pub enum Wildcard {
 }
 
 impl Token {
-    pub fn to_range(self, version: &version::Partial<u64>) -> Range {
+    fn to_range(self, version: &version::Partial<u64>) -> Range {
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {

@@ -35,13 +35,13 @@ pub trait StaticPipeWriterProcess {
 #[derive(bun_ptr::RefCounted)]
 pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// Intrusive refcount; `ref`/`deref` provided via `bun_ptr::RefCount`.
-    pub ref_count: RefCount<Self>,
-    pub writer: IOWriter<P>,
-    pub stdio_result: StdioResult,
+    pub(crate) ref_count: RefCount<Self>,
+    pub(crate) writer: IOWriter<P>,
+    pub(crate) stdio_result: StdioResult,
     pub source: Source,
     /// BACKREF: parent process is notified on close; never owned/destroyed here.
-    pub process: *mut P,
-    pub event_loop: EventLoopHandle,
+    pub(crate) process: *mut P,
+    pub(crate) event_loop: EventLoopHandle,
     /// True while `start()`'s `+1` ref is outstanding.
     pub started: bool,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
@@ -51,7 +51,7 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// source (`on_error`, `on_close`, `Drop`) must reset this to
     /// `RawSlice::EMPTY` first. `RawSlice` (typed `*const [u8]` with safe
     /// `.slice()`) keeps the per-access unsafe derefs out of the call sites.
-    pub buffer: RawSlice<u8>,
+    pub(crate) buffer: RawSlice<u8>,
 }
 
 /// The writer's callbacks (`getBuffer`, `onClose`, `onError`, `onWrite`) map
@@ -210,7 +210,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
     }
 
-    pub fn on_write(&mut self, amount: usize, status: WriteStatus) {
+    pub(crate) fn on_write(&mut self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onWrite(amount={} {})",
@@ -241,7 +241,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
     }
 
-    pub fn on_error(&mut self, err: &bun_sys::Error) {
+    pub(crate) fn on_error(&mut self, err: &bun_sys::Error) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onError(err={})",
@@ -258,7 +258,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // Parent::on_write(); freeing here would UAF.
     }
 
-    pub fn on_close(&mut self) {
+    pub(crate) fn on_close(&mut self) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onClose()",

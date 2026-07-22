@@ -3,8 +3,8 @@ use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Counters {
-    pub spawn_sync_blocking: i32,
-    pub spawn_memfd: i32,
+    pub(crate) spawn_sync_blocking: i32,
+    pub(crate) spawn_memfd: i32,
 }
 
 impl Counters {
@@ -16,7 +16,7 @@ impl Counters {
         *slot = slot.saturating_add(1);
     }
 
-    pub fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,

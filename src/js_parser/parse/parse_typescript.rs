@@ -32,7 +32,7 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
+    pub(crate) fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
             return Ok(bun_alloc::AstAlloc::vec());
@@ -74,7 +74,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///   @ DecoratorMemberExpression
     ///   @ DecoratorCallExpression
     ///   @ DecoratorParenthesizedExpression
-    pub fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
+    pub(crate) fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
         let p = self;
 
         // @(Expression) — parenthesized, any expression allowed
@@ -201,7 +201,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
 
-    pub fn parse_type_script_namespace_stmt(
+    pub(crate) fn parse_type_script_namespace_stmt(
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
@@ -476,7 +476,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn parse_type_script_import_equals_stmt(
+    pub(crate) fn parse_type_script_import_equals_stmt(
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
@@ -571,7 +571,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn parse_typescript_enum_stmt(
+    pub(crate) fn parse_typescript_enum_stmt(
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,

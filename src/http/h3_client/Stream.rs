@@ -16,34 +16,34 @@ use crate::h3_client as h3;
 
 pub struct Stream {
     // BACKREF: owned by `session.pending`; session outlives every Stream it holds.
-    pub session: bun_ptr::BackRef<ClientSession>,
+    pub(crate) session: bun_ptr::BackRef<ClientSession>,
     // BACKREF: lifetime-erased — cleared on detach; never reads borrowed fields.
-    pub client: Option<NonNull<HttpClient<'static>>>,
+    pub(crate) client: Option<NonNull<HttpClient<'static>>>,
     // FFI handle into lsquic; bound from `callbacks.onStreamOpen`, closed via `abort`.
-    pub qstream: Option<NonNull<quic::Stream>>,
+    pub(crate) qstream: Option<NonNull<quic::Stream>>,
 
     /// Slices into the lsquic-owned hset buffer; valid only for the duration
     /// of the `onStreamHeaders` callback that populated it. `cloneMetadata`
     /// deep-copies synchronously inside that callback, so nothing reads these
     /// after they go stale.
-    pub decoded_headers: Vec<picohttp::Header>,
-    pub body_buffer: Vec<u8>,
-    pub status_code: u16,
+    pub(crate) decoded_headers: Vec<picohttp::Header>,
+    pub(crate) body_buffer: Vec<u8>,
+    pub(crate) status_code: u16,
 
     // BACKREF: borrows the request body owned by `client`; not freed here.
     // `RawSlice` carries the outlives-holder invariant.
-    pub pending_body: bun_ptr::RawSlice<u8>,
-    pub request_body_done: bool,
-    pub is_streaming_body: bool,
-    pub headers_delivered: bool,
-    pub read_paused: bool,
+    pub(crate) pending_body: bun_ptr::RawSlice<u8>,
+    pub(crate) request_body_done: bool,
+    pub(crate) is_streaming_body: bool,
+    pub(crate) headers_delivered: bool,
+    pub(crate) read_paused: bool,
 }
 
 impl Stream {
     /// Heap-allocates a `Stream` and returns the raw pointer; ownership is held
     /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
     /// `heap::take`.
-    pub fn new(session: &mut ClientSession, client: &mut HttpClient<'_>) -> *mut Stream {
+    pub(crate) fn new(session: &mut ClientSession, client: &mut HttpClient<'_>) -> *mut Stream {
         bun_core::heap::into_raw(Box::new(Stream {
             session: bun_ptr::BackRef::new_mut(session),
             client: Some(client.as_erased_ptr()),
@@ -66,7 +66,7 @@ impl Stream {
     /// nulls it. The `quic::Stream` is an FFI-owned allocation distinct from
     /// `self`, so the returned `&mut` does not alias `self`. HTTP-thread-only.
     #[inline]
-    pub fn qstream_mut<'s>(&self) -> Option<&'s mut quic::Stream> {
+    pub(crate) fn qstream_mut<'s>(&self) -> Option<&'s mut quic::Stream> {
         // Route through the shared `client_session::quic_stream_mut` accessor;
         // see INVARIANT above.
         self.qstream
@@ -82,13 +82,13 @@ impl Stream {
     /// HTTP-thread-only — sole live `&mut ClientSession`. Centralises the
     /// `BackRef::get_mut` upgrade repeated in every lsquic callback.
     #[inline]
-    pub fn session_mut<'s>(&self) -> &'s mut ClientSession {
+    pub(crate) fn session_mut<'s>(&self) -> &'s mut ClientSession {
         // Route through the shared `client_session::session_mut` accessor
         // (one centralised unsafe); see INVARIANT above.
         super::client_session::session_mut(self.session.as_ptr())
     }
 
-    pub fn abort(&mut self) {
+    pub(crate) fn abort(&mut self) {
         if let Some(qs) = self.qstream_mut() {
             qs.close();
         }

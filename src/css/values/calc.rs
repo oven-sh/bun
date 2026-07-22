@@ -40,7 +40,7 @@ pub enum CalcUnit {
 
 impl CalcUnit {
     /// Case-insensitive lookup of a `CalcUnit` by its function name.
-    pub fn get_any_case(f: &[u8]) -> Option<Self> {
+    pub(crate) fn get_any_case(f: &[u8]) -> Option<Self> {
         // PERF: linear match on a stack-lowercased byte slice. Profile
         // before swapping in a `comptime_string_map!`.
         // §Strings: source bytes are &[u8], never &str/String — no from_utf8/to_ascii_lowercase().
@@ -71,7 +71,7 @@ impl CalcUnit {
         }
     }
 
-    pub fn arg_parse_is_type_independent(self) -> bool {
+    pub(crate) fn arg_parse_is_type_independent(self) -> bool {
         matches!(
             self,
             Self::Sin
@@ -186,7 +186,7 @@ impl<V: PartialEq + Clone> PartialEq for Calc<V> {
 }
 
 impl<V> Calc<V> {
-    pub fn deep_clone(&self) -> Self
+    pub(crate) fn deep_clone(&self) -> Self
     where
         V: Clone,
     {
@@ -208,7 +208,7 @@ impl<V> Calc<V> {
         }
     }
 
-    pub fn deep_clone_boxed(&self) -> Box<Self>
+    pub(crate) fn deep_clone_boxed(&self) -> Box<Self>
     where
         V: Clone,
     {
@@ -259,19 +259,19 @@ impl<V: CalcValue> Calc<V> {
         lhs.mul_f32(rhs)
     }
 
-    pub fn add_value(lhs: V, rhs: V) -> V {
+    pub(crate) fn add_value(lhs: V, rhs: V) -> V {
         lhs.add_internal(rhs)
     }
 
-    pub fn into_value(self, input: &mut css::Parser) -> CssResult<V> {
+    pub(crate) fn into_value(self, input: &mut css::Parser) -> CssResult<V> {
         V::from_calc(self, input)
     }
 
-    pub fn into_calc(val: V) -> Self {
+    pub(crate) fn into_calc(val: V) -> Self {
         val.into_calc()
     }
 
-    pub fn add(self, rhs: Self, input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn add(self, rhs: Self, input: &mut css::Parser) -> CssResult<Self> {
         if let (Calc::Value(_), Calc::Value(_)) = (&self, &rhs) {
             // PERF: we can reuse the allocation here
             // Reshaped for borrowck — clone out of boxes then drop originals.
@@ -313,14 +313,14 @@ impl<V: CalcValue> Calc<V> {
         Ok(Self::into_calc(Self::add_value(this_value, rhs_value)))
     }
 
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
         fn parse_with_fn<V>(_: (), _: &[u8]) -> Option<Calc<V>> {
             None
         }
         Self::parse_with(input, (), parse_with_fn::<V>)
     }
 
-    pub fn parse_with<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
+    pub(crate) fn parse_with<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
         input: &mut css::Parser,
         ctx: C,
         parse_ident: F,
@@ -546,7 +546,7 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub fn parse_numeric_fn<C: Copy>(
+    pub(crate) fn parse_numeric_fn<C: Copy>(
         input: &mut css::Parser,
         op: NumericFnOp,
         ctx: C,
@@ -561,7 +561,7 @@ impl<V: CalcValue> Calc<V> {
         })
     }
 
-    pub fn parse_math_fn<C: Copy, OC: Copy>(
+    pub(crate) fn parse_math_fn<C: Copy, OC: Copy>(
         input: &mut css::Parser,
         ctx_for_op_and_fallback: OC,
         op: fn(OC, f32, f32) -> f32,
@@ -579,7 +579,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    pub fn parse_sum<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
+    pub(crate) fn parse_sum<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
         input: &mut css::Parser,
         ctx: C,
         parse_ident: F,
@@ -619,7 +619,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(cur)
     }
 
-    pub fn parse_product<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
+    pub(crate) fn parse_product<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
         input: &mut css::Parser,
         ctx: C,
         parse_ident: F,
@@ -663,7 +663,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(node)
     }
 
-    pub fn parse_value<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
+    pub(crate) fn parse_value<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
         input: &mut css::Parser,
         ctx: C,
         parse_ident: F,
@@ -734,7 +734,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(Calc::Value(Box::new(value)))
     }
 
-    pub fn parse_trig<C: Copy>(
+    pub(crate) fn parse_trig<C: Copy>(
         input: &mut css::Parser,
         trig_fn_kind: TrigFnKind,
         to_angle: bool,
@@ -792,11 +792,11 @@ impl<V: CalcValue> Calc<V> {
         })
     }
 
-    pub fn parse_ident_none<C, Value>(_: C, _: &[u8]) -> Option<Calc<Value>> {
+    pub(crate) fn parse_ident_none<C, Value>(_: C, _: &[u8]) -> Option<Calc<Value>> {
         None
     }
 
-    pub fn parse_atan2<C: Copy>(
+    pub(crate) fn parse_atan2<C: Copy>(
         input: &mut css::Parser,
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
@@ -872,7 +872,7 @@ impl<V: CalcValue> Calc<V> {
         Calc::<CSSNumber>::parse_atan2_args(input, ctx, parse_ident_fn)
     }
 
-    pub fn parse_atan2_args<C: Copy>(
+    pub(crate) fn parse_atan2_args<C: Copy>(
         input: &mut css::Parser,
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
@@ -896,7 +896,7 @@ impl<V: CalcValue> Calc<V> {
         Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
-    pub fn parse_numeric<C: Copy>(
+    pub(crate) fn parse_numeric<C: Copy>(
         input: &mut css::Parser,
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
@@ -918,7 +918,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    pub fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
+    pub(crate) fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
             return Ok(Some(v));
@@ -952,7 +952,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(Self::apply_map(&sum, sqrtf32))
     }
 
-    pub fn apply_op<OC: Copy>(
+    pub(crate) fn apply_op<OC: Copy>(
         a: &Self,
         b: &Self,
         ctx: OC,
@@ -972,7 +972,7 @@ impl<V: CalcValue> Calc<V> {
         None
     }
 
-    pub fn apply_map(this: &Self, op: fn(f32) -> f32) -> Option<Self> {
+    pub(crate) fn apply_map(this: &Self, op: fn(f32) -> f32) -> Option<Self> {
         match this {
             Calc::Number(n) => return Some(Calc::Number(op(*n))),
             Calc::Value(v) => {
@@ -985,7 +985,7 @@ impl<V: CalcValue> Calc<V> {
         None
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let was_in_calc = dest.in_calc;
         dest.in_calc = true;
 
@@ -995,7 +995,7 @@ impl<V: CalcValue> Calc<V> {
         res
     }
 
-    pub fn to_css_impl(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css_impl(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Calc::Value(v) => v.to_css(dest),
             Calc::Number(n) => CSSNumberFns::to_css(*n, dest),
@@ -1031,7 +1031,7 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub fn try_sign(&self) -> Option<f32> {
+    pub(crate) fn try_sign(&self) -> Option<f32> {
         match self {
             Calc::Value(v) => v.try_sign(),
             Calc::Number(n) => Some(css::signfns::sign_f32(*n)),
@@ -1039,14 +1039,14 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub fn is_sign_negative(&self) -> bool {
+    pub(crate) fn is_sign_negative(&self) -> bool {
         let Some(s) = self.try_sign() else {
             return false;
         };
         s.is_sign_negative()
     }
 
-    pub fn mul_f32(self, other: f32) -> Self {
+    pub(crate) fn mul_f32(self, other: f32) -> Self {
         if other == 1.0 {
             return self;
         }
@@ -1129,7 +1129,7 @@ impl<V: CalcValue> Calc<V> {
         *args = reduced;
     }
 
-    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             Calc::Sum { left, right } => {
                 left.is_compatible(browsers) && right.is_compatible(browsers)
@@ -1334,7 +1334,7 @@ impl<V> MathFunction<V> {
         }
     }
 
-    pub fn deep_clone(&self) -> Self
+    pub(crate) fn deep_clone(&self) -> Self
     where
         V: Clone,
     {
@@ -1372,7 +1372,7 @@ impl<V> MathFunction<V> {
 
     // Owned Vec/Calc fields are freed by Drop. No explicit impl.
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>
     where
         V: CalcValue,
     {
@@ -1448,7 +1448,7 @@ impl<V> MathFunction<V> {
         }
     }
 
-    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool
+    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool
     where
         V: CalcValue,
     {
@@ -1572,7 +1572,7 @@ pub enum Constant {
 }
 
 impl Constant {
-    pub fn into_f32(self) -> f32 {
+    pub(crate) fn into_f32(self) -> f32 {
         match self {
             Constant::E => core::f32::consts::E,
             Constant::Pi => core::f32::consts::PI,

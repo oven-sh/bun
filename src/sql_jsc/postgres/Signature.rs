@@ -3,14 +3,14 @@ use bun_sql::postgres::postgres_types::Int4;
 
 #[derive(Default)]
 pub struct Signature {
-    pub fields: Box<[Int4]>,
-    pub name: Box<[u8]>,
+    pub(crate) fields: Box<[Int4]>,
+    pub(crate) name: Box<[u8]>,
     pub query: Box<[u8]>,
-    pub prepared_statement_name: Box<[u8]>,
+    pub(crate) prepared_statement_name: Box<[u8]>,
 }
 
 impl Signature {
-    pub fn empty() -> Signature {
+    pub(crate) fn empty() -> Signature {
         Signature {
             fields: Box::default(),
             name: Box::default(),
@@ -24,7 +24,7 @@ impl Signature {
     // JSError (from QueryBindingIterator /
     // Tag::from_js), OOM, and InvalidQueryBinding are collapsed to the
     // crate-wide `crate::Error`.
-    pub fn generate(
+    pub(crate) fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
         array_value: JSValue,

@@ -9,10 +9,10 @@ use bun_zlib as zlib;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Params {
-    pub server_max_window_bits: u8,
-    pub client_max_window_bits: u8,
-    pub server_no_context_takeover: u8,
-    pub client_no_context_takeover: u8,
+    pub(crate) server_max_window_bits: u8,
+    pub(crate) client_max_window_bits: u8,
+    pub(crate) server_no_context_takeover: u8,
+    pub(crate) client_no_context_takeover: u8,
 }
 
 impl Default for Params {
@@ -27,8 +27,8 @@ impl Default for Params {
 }
 
 impl Params {
-    pub const MAX_WINDOW_BITS: u8 = 15;
-    pub const MIN_WINDOW_BITS: u8 = 8;
+    pub(crate) const MAX_WINDOW_BITS: u8 = 15;
+    pub(crate) const MIN_WINDOW_BITS: u8 = 8;
 }
 
 #[derive(Default)]
@@ -39,14 +39,14 @@ pub struct RareData {
 }
 
 impl RareData {
-    pub const STACK_BUFFER_SIZE: usize = 128 * 1024;
+    pub(crate) const STACK_BUFFER_SIZE: usize = 128 * 1024;
 
-    pub fn array_list(&self) -> Vec<u8> {
+    pub(crate) fn array_list(&self) -> Vec<u8> {
         // PERF: allocates a fresh heap Vec per call — profile if hot.
         Vec::with_capacity(Self::STACK_BUFFER_SIZE)
     }
 
-    pub fn decompressor(&mut self) -> Option<&mut libdeflate_sys::Decompressor> {
+    pub(crate) fn decompressor(&mut self) -> Option<&mut libdeflate_sys::Decompressor> {
         if self.libdeflate_decompressor.is_none() {
             self.libdeflate_decompressor = libdeflate_sys::OwnedDecompressor::new();
         }
@@ -58,18 +58,18 @@ impl RareData {
 pub type WebSocketDeflate = PerMessageDeflate;
 /// Parent module matches `websocket_deflate::Error::*` against `decompress()`'s
 /// error type.
-pub type Error = DecompressError;
+pub(crate) type Error = DecompressError;
 
 pub struct PerMessageDeflate {
-    pub compress_stream: zlib::DeflateEncoder,
-    pub decompress_stream: zlib::InflateDecoder,
-    pub params: Params,
+    pub(crate) compress_stream: zlib::DeflateEncoder,
+    pub(crate) decompress_stream: zlib::InflateDecoder,
+    pub(crate) params: Params,
     // VM `bun_jsc::RareData` would be the natural owner (pooled libdeflate
     // handles, shared across connections), but the concrete type is *this*
     // `RareData`, which `bun_jsc` cannot name without a dep cycle, so each
     // connection owns a fresh instance instead: a per-connection libdeflate
     // allocation, not a correctness divergence.
-    pub rare_data: RareData,
+    pub(crate) rare_data: RareData,
 }
 
 // Constants from zlib.h

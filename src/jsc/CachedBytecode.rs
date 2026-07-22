@@ -37,7 +37,7 @@ impl CachedBytecode {
     // SAFETY CONTRACT: the returned `&'static [u8]` actually borrows from the
     // `CachedBytecode` handle and is invalidated when `deref()` is called. Callers own
     // the handle and must call `deref()` (or drop via `allocator()`) to free.
-    pub fn generate_for_esm(
+    pub(crate) fn generate_for_esm(
         source_provider_url: &mut BunString,
         input: &[u8],
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
@@ -67,7 +67,7 @@ impl CachedBytecode {
         None
     }
 
-    pub fn generate_for_cjs(
+    pub(crate) fn generate_for_cjs(
         source_provider_url: &mut BunString,
         input: &[u8],
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
@@ -100,7 +100,7 @@ impl CachedBytecode {
         CachedBytecode__deref(self)
     }
 
-    pub fn generate(
+    pub(crate) fn generate(
         format: Format,
         input: &[u8],
         source_provider_url: &mut BunString,
@@ -134,7 +134,7 @@ impl bun_alloc::Allocator for CachedBytecode {}
 /// Symbol is definer-prefixed (`__bun_jsc_*`) per LAYERING_AUDIT — the body is
 /// jsc-internal setup, not bundler logic.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_generate_cached_bytecode(
+fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
     source_provider_url: &mut BunString,

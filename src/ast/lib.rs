@@ -26,10 +26,10 @@ use bun_core::Output;
 #[derive(Default)]
 pub struct StringBuilder;
 impl StringBuilder {
-    pub fn count(&mut self, s: &[u8]) {
+    pub(crate) fn count(&mut self, s: &[u8]) {
         let _ = s;
     }
-    pub fn allocate(&mut self) {}
+    pub(crate) fn allocate(&mut self) {}
 }
 
 // Discriminants are wire-stable for serialization.
@@ -272,7 +272,7 @@ impl Ref {
         matches!(self.tag(), RefTag::SourceContentsSlice)
     }
     #[inline]
-    pub fn is_source_index_null(i: u32) -> bool {
+    pub(crate) fn is_source_index_null(i: u32) -> bool {
         i == Self::INNER_MASK as u32 // maxInt(u31)
     }
 
@@ -289,7 +289,7 @@ impl Ref {
     /// `new`/`init`/`pack` this equals the raw `self.0` (user bits are 0 there),
     /// so wyhash output is unchanged vs the pre-shrink layout.
     #[inline]
-    pub const fn as_u64(self) -> u64 {
+    pub(crate) const fn as_u64(self) -> u64 {
         self.0 & !Self::USER_BITS_MASK
     }
 
@@ -301,18 +301,18 @@ impl Ref {
     // identity (eq/hash/as_u64/inner_index) so `id.ref_` remains a valid
     // symbol-map key regardless of flag state.
     #[inline]
-    pub const fn user_bit(self, n: u32) -> bool {
+    pub(crate) const fn user_bit(self, n: u32) -> bool {
         debug_assert!(n < 3);
         (self.0 >> (28 + n)) & 1 != 0
     }
     #[inline]
-    pub fn set_user_bit(&mut self, n: u32, v: bool) {
+    pub(crate) fn set_user_bit(&mut self, n: u32, v: bool) {
         debug_assert!(n < 3);
         let bit = 1u64 << (28 + n);
         self.0 = (self.0 & !bit) | ((v as u64) << (28 + n));
     }
     #[inline]
-    pub const fn with_user_bit(mut self, n: u32, v: bool) -> Ref {
+    pub(crate) const fn with_user_bit(mut self, n: u32, v: bool) -> Ref {
         debug_assert!(n < 3);
         let bit = 1u64 << (28 + n);
         self.0 = (self.0 & !bit) | ((v as u64) << (28 + n));
@@ -324,7 +324,7 @@ impl Ref {
     /// `can_be_removed_if_unused`/`call_can_be_unwrapped_if_unused` bits don't
     /// leak across node kinds.
     #[inline]
-    pub const fn without_user_bits(self) -> Ref {
+    pub(crate) const fn without_user_bits(self) -> Ref {
         Ref(self.0 & !Self::USER_BITS_MASK)
     }
     /// Replace the identity bits with those of `self` while keeping `src`'s
@@ -434,39 +434,24 @@ pub mod api {
 
     #[derive(Clone, Default, Debug)]
     pub struct Location {
-        pub file: Vec<u8>,
-        pub namespace: Vec<u8>,
-        pub line: i32,
-        pub column: i32,
-        pub line_text: Vec<u8>,
-        pub offset: u32,
     }
 
     #[derive(Clone, Default, Debug)]
     pub struct MessageData {
-        pub text: Option<Vec<u8>>,
-        pub location: Option<Location>,
     }
 
     #[derive(Clone, Default, Debug)]
     pub struct MessageMeta {
-        pub resolve: Option<Vec<u8>>,
-        pub build: Option<bool>,
     }
 
     #[derive(Clone, Default, Debug)]
     pub struct Message {
-        pub level: MessageLevel,
-        pub data: MessageData,
-        pub notes: Box<[MessageData]>,
-        pub on: MessageMeta,
     }
 
     #[derive(Clone, Default, Debug)]
     pub struct Log {
         pub warnings: u32,
         pub errors: u32,
-        pub msgs: Box<[Message]>,
     }
 }
 
@@ -621,15 +606,6 @@ impl Kind {
         }
     }
 
-    #[inline]
-    pub fn to_api(self) -> api::MessageLevel {
-        match self {
-            Kind::Err => api::MessageLevel::Err,
-            Kind::Warn => api::MessageLevel::Warn,
-            Kind::Note => api::MessageLevel::Note,
-            _ => api::MessageLevel::Debug,
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -749,7 +725,7 @@ impl Default for Location {
 }
 
 impl Location {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += self.file.len();
         cost += self.namespace.len();
@@ -759,7 +735,7 @@ impl Location {
         cost
     }
 
-    pub fn count(&self, builder: &mut StringBuilder) {
+    pub(crate) fn count(&self, builder: &mut StringBuilder) {
         builder.count(self.file.as_ref().into_str());
         builder.count(self.namespace);
         if let Some(text) = &self.line_text {
@@ -767,14 +743,14 @@ impl Location {
         }
     }
 
-    pub fn clone(&self) -> Location {
+    pub(crate) fn clone(&self) -> Location {
         // The trait `Clone` impl above does the deep-dupe (so the duped bytes
         // outlive the original `Source.contents`); this inherent shim forwards
         // to it.
         <Self as Clone>::clone(self)
     }
 
-    pub fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
+    pub(crate) fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
         // The local
         // `StringBuilder` stub above is a no-op that returns its input, so a
         // `Cow::Borrowed(append(s))` would alias `self`'s storage and dangle
@@ -792,16 +768,6 @@ impl Location {
         }
     }
 
-    pub fn to_api(&self) -> api::Location {
-        api::Location {
-            file: self.file.to_vec(),
-            namespace: self.namespace.to_vec(),
-            line: self.line,
-            column: self.column,
-            line_text: self.line_text.as_deref().unwrap_or(b"").to_vec(),
-            offset: self.offset as u32, // @truncate
-        }
-    }
 
     // No Drop impl needed.
 
@@ -925,7 +891,7 @@ impl Default for Data {
 }
 
 impl Data {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += self.text.len();
         if let Some(loc) = &self.location {
@@ -973,7 +939,7 @@ impl Data {
         }
     }
 
-    pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
+    pub(crate) fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
         Data {
             text: if !self.text.is_empty() {
                 // The local `StringBuilder`
@@ -993,21 +959,15 @@ impl Data {
         }
     }
 
-    pub fn count(&self, builder: &mut StringBuilder) {
+    pub(crate) fn count(&self, builder: &mut StringBuilder) {
         builder.count(&self.text);
         if let Some(loc) = &self.location {
             loc.count(builder);
         }
     }
 
-    pub fn to_api(&self) -> api::MessageData {
-        api::MessageData {
-            text: Some(self.text.to_vec()),
-            location: self.location.as_ref().map(|l| l.to_api()),
-        }
-    }
 
-    pub fn write_format<const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
         to: &mut impl fmt::Write,
         kind: Kind,
@@ -1150,18 +1110,18 @@ pub struct BabyString(u32);
 
 impl BabyString {
     #[inline]
-    pub const fn new(offset: u16, len: u16) -> Self {
+    pub(crate) const fn new(offset: u16, len: u16) -> Self {
         // LSB-first packing: offset = low 16 bits, len = high 16.
         BabyString((offset as u32) | ((len as u32) << 16))
     }
 
     #[inline]
-    pub const fn offset(self) -> u16 {
+    pub(crate) const fn offset(self) -> u16 {
         self.0 as u16
     }
 
     #[inline]
-    pub const fn len(self) -> u16 {
+    pub(crate) const fn len(self) -> u16 {
         (self.0 >> 16) as u16
     }
 
@@ -1207,7 +1167,7 @@ impl Default for Msg {
 }
 
 impl Msg {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += self.data.memory_cost();
         for note in self.notes.iter() {
@@ -1218,7 +1178,7 @@ impl Msg {
 
     // `to_js`/`from_js` live as extension-trait methods in `bun_logger_jsc`.
 
-    pub fn count(&self, builder: &mut StringBuilder) {
+    pub(crate) fn count(&self, builder: &mut StringBuilder) {
         self.data.count(builder);
         for note in self.notes.iter() {
             note.count(builder);
@@ -1239,7 +1199,7 @@ impl Msg {
         }
     }
 
-    pub fn clone_with_builder(&self, notes: &mut [Data], builder: &mut StringBuilder) -> Msg {
+    pub(crate) fn clone_with_builder(&self, notes: &mut [Data], builder: &mut StringBuilder) -> Msg {
         Msg {
             kind: self.kind,
             data: self.data.clone_with_builder(builder),
@@ -1256,37 +1216,6 @@ impl Msg {
             },
             redact_sensitive_information: self.redact_sensitive_information,
         }
-    }
-
-    pub fn to_api(&self) -> api::Message {
-        let mut notes = vec![api::MessageData::default(); self.notes.len()].into_boxed_slice();
-        for (i, note) in self.notes.iter().enumerate() {
-            notes[i] = note.to_api();
-        }
-        api::Message {
-            level: self.kind.to_api(),
-            data: self.data.to_api(),
-            notes,
-            on: api::MessageMeta {
-                resolve: if let Metadata::Resolve(r) = &self.metadata {
-                    Some(r.specifier.slice(&self.data.text).to_vec())
-                } else {
-                    // NON-NULL empty string so peechy `MessageMeta.encode`
-                    // still emits field-ID 1; `None` would skip the field
-                    // entirely on the wire.
-                    Some(Vec::new())
-                },
-                build: Some(matches!(self.metadata, Metadata::Build)),
-            },
-        }
-    }
-
-    pub fn to_api_from_list(list: &[Msg]) -> Box<[api::Message]> {
-        let mut out_list = Vec::with_capacity(list.len());
-        for item in list {
-            out_list.push(item.to_api());
-        }
-        out_list.into_boxed_slice()
     }
 
     // No explicit Drop body needed beyond field drops.
@@ -1363,7 +1292,7 @@ impl Default for Range {
 /// Moved into logger to break logger→js_parser. Includes the full Unicode
 /// `isIdentifierStart/Continue` tables (via `bun_core::identifier`) and
 /// `\u{...}` escape skipping.
-pub fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
+pub(crate) fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
     if loc.start < 0 || (loc.start as usize) >= contents.len() {
         return Range::NONE;
     }
@@ -1634,7 +1563,6 @@ impl Log {
         api::Log {
             warnings,
             errors,
-            msgs: Msg::to_api_from_list(&self.msgs),
         }
     }
 
@@ -2288,7 +2216,7 @@ impl Log {
         }
     }
 
-    pub fn print_with_enable_ansi_colors<const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn print_with_enable_ansi_colors<const ENABLE_ANSI_COLORS: bool>(
         &self,
         to: &mut impl fmt::Write,
     ) -> fmt::Result {
@@ -2499,10 +2427,10 @@ impl Default for Source {
 
 #[derive(Copy, Clone, Debug)]
 pub struct ErrorPosition {
-    pub line_start: usize,
-    pub line_end: usize,
-    pub column_count: usize,
-    pub line_count: usize,
+    pub(crate) line_start: usize,
+    pub(crate) line_end: usize,
+    pub(crate) column_count: usize,
+    pub(crate) line_count: usize,
 }
 
 /// Scanner state shared by [`Source::init_error_position`] and
@@ -2662,7 +2590,7 @@ impl LineColumnTracker {
 
     /// [`Source::init_error_position`], resuming from the previous call's
     /// offset when possible instead of rescanning from the start.
-    pub fn error_position(&mut self, source: &Source, offset_loc: Loc) -> ErrorPosition {
+    pub(crate) fn error_position(&mut self, source: &Source, offset_loc: Loc) -> ErrorPosition {
         debug_assert!(!offset_loc.is_empty());
         let contents: &[u8] = &source.contents;
         let offset = clamp_error_offset(contents, offset_loc);
@@ -2825,7 +2753,7 @@ impl Source {
         Range { loc, len: 0 }
     }
 
-    pub fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
+    pub(crate) fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
         debug_assert!(!offset_loc.is_empty());
         let contents: &[u8] = &self.contents;
         let offset = clamp_error_offset(contents, offset_loc);
@@ -2921,7 +2849,7 @@ pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys
 /// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source_at` (T1 cannot name T2).
-pub(crate) fn source_from_file_at(
+fn source_from_file_at(
     dir_fd: bun_sys::Fd,
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
@@ -3125,7 +3053,7 @@ mod debug_disabler_state {
 
 impl<T: 'static> DebugOnlyDisabler<T> {
     #[inline]
-    pub fn assert() {
+    pub(crate) fn assert() {
         #[cfg(debug_assertions)]
         debug_disabler_state::DISABLED.with(|d| {
             assert!(
@@ -3136,12 +3064,12 @@ impl<T: 'static> DebugOnlyDisabler<T> {
         });
     }
     #[inline]
-    pub fn disable() {
+    pub(crate) fn disable() {
         #[cfg(debug_assertions)]
         debug_disabler_state::DISABLED.with(|d| d.borrow_mut().push(core::any::TypeId::of::<T>()));
     }
     #[inline]
-    pub fn enable() {
+    pub(crate) fn enable() {
         #[cfg(debug_assertions)]
         debug_disabler_state::DISABLED.with(|d| {
             let mut v = d.borrow_mut();
@@ -3254,11 +3182,11 @@ static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
     core::cell::Cell::new(core::ptr::null());
 
 #[inline]
-pub(crate) fn data_store_override() -> *const bun_alloc::Arena {
+fn data_store_override() -> *const bun_alloc::Arena {
     DATA_STORE_OVERRIDE.get()
 }
 #[inline]
-pub(crate) fn set_data_store_override(p: *const bun_alloc::Arena) {
+fn set_data_store_override(p: *const bun_alloc::Arena) {
     DATA_STORE_OVERRIDE.set(p);
 }
 

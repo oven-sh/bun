@@ -20,13 +20,13 @@ type PathAutoOs = bun_paths::Path<
 >;
 
 pub struct FileCopier {
-    pub src_path: AbsPathAutoOs,
-    pub dest_subpath: PathAutoOs,
-    pub walker: Walker,
+    pub(crate) src_path: AbsPathAutoOs,
+    pub(crate) dest_subpath: PathAutoOs,
+    pub(crate) walker: Walker,
 }
 
 impl FileCopier {
-    pub fn init(
+    pub(crate) fn init(
         src_dir: Fd,
         src_path: AbsPathAutoOs,
         dest_subpath: PathAutoOs,
@@ -51,7 +51,7 @@ impl FileCopier {
     // `Walker` owns its resources and drops automatically, so no explicit
     // `Drop` impl is needed.
 
-    pub fn copy(&mut self) -> sys::Result<()> {
+    pub(crate) fn copy(&mut self) -> sys::Result<()> {
         // `make_open_path` is u8-only; on Windows the OS-unit path is u16 so
         // narrow it via the same infallible `from_w_path` transcode that
         // `bun_sys::make_path_w` uses. Don't synthesise EINVAL on

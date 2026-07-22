@@ -66,23 +66,23 @@ unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
 type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTaskWithExtraContext>>;
 
 pub struct MiniEventLoop<'a> {
-    pub tasks: Queue,
-    pub concurrent_tasks: ConcurrentTaskQueue,
+    pub(crate) tasks: Queue,
+    pub(crate) concurrent_tasks: ConcurrentTaskQueue,
     // Raw pointer because the loop is C-owned
     // (created by `uws_get_loop`/`us_create_loop`) and outlives this struct.
     pub loop_: *mut UwsLoop,
-    pub file_polls_: Option<Box<FilePollStore>>,
+    pub(crate) file_polls_: Option<Box<FilePollStore>>,
     /// Mutable; callers (shell spawn,
     /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`
     /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
     /// mutable provenance. `'a` is preserved via PhantomData below.
-    pub env: Option<NonNull<DotEnvLoader<'a>>>,
+    pub(crate) env: Option<NonNull<DotEnvLoader<'a>>>,
     // Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
     pub top_level_dir: Box<[u8]>,
     // Opaque ctx assigned externally; only read/cleared here.
-    pub after_event_loop_callback_ctx: Option<NonNull<c_void>>,
-    pub after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
-    pub pipe_read_buffer: Option<Box<PipeReadBuffer>>,
+    pub(crate) after_event_loop_callback_ctx: Option<NonNull<c_void>>,
+    pub(crate) after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
+    pub(crate) pipe_read_buffer: Option<Box<PipeReadBuffer>>,
 }
 
 thread_local! {
@@ -213,11 +213,11 @@ impl<'a> MiniEventLoop<'a> {
     /// SAFETY (invariant): when `Some`, points to a thread-/process-lifetime
     /// loader set in `init_global` that outlives `self` (never freed).
     #[inline]
-    pub fn env_ptr(&self) -> Option<NonNull<DotEnvLoader<'a>>> {
+    pub(crate) fn env_ptr(&self) -> Option<NonNull<DotEnvLoader<'a>>> {
         self.env
     }
 
-    pub fn pipe_read_buffer(&mut self) -> &mut [u8] {
+    pub(crate) fn pipe_read_buffer(&mut self) -> &mut [u8] {
         // `boxed_zeroed` avoids the 256 KiB stack temporary `Box::new([0u8; N])`
         // would create in debug builds.
         &mut self
@@ -252,7 +252,7 @@ impl<'a> MiniEventLoop<'a> {
     /// live `&mut` to `file_polls_` itself across this call. (Not eligible for
     /// `unsafe-fn-narrow`: every unsafe op below derefs the caller-supplied
     /// `this`; the body cannot discharge that precondition.)
-    pub unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
+    pub(crate) unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
         // SAFETY: caller guarantees `this` points to a live `MiniEventLoop` (see fn `# Safety`);
         // `addr_of_mut!` projects to `file_polls_` without forming `&mut Self`.
         unsafe {
@@ -269,7 +269,7 @@ impl<'a> MiniEventLoop<'a> {
         }
     }
 
-    pub fn init() -> MiniEventLoop<'a> {
+    pub(crate) fn init() -> MiniEventLoop<'a> {
         MiniEventLoop {
             tasks: Queue::init(),
             concurrent_tasks: ConcurrentTaskQueue::default(),
@@ -283,7 +283,7 @@ impl<'a> MiniEventLoop<'a> {
         }
     }
 
-    pub fn tick_concurrent_with_count(&mut self) -> usize {
+    pub(crate) fn tick_concurrent_with_count(&mut self) -> usize {
         let concurrent = self.concurrent_tasks.pop_batch();
         let count = concurrent.count;
         if count == 0 {
@@ -341,7 +341,7 @@ impl<'a> MiniEventLoop<'a> {
         }
     }
 
-    pub fn tick_without_idle(&mut self, context: *mut c_void) {
+    pub(crate) fn tick_without_idle(&mut self, context: *mut c_void) {
         loop {
             let _ = self.tick_concurrent_with_count();
             while let Some(task) = self.tasks.read_item() {

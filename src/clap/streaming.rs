@@ -16,11 +16,11 @@ pub(crate) struct Arg<'p, 'a, Id> {
 
 #[derive(Copy, Clone)]
 pub struct Chaining<'a> {
-    pub arg: &'a [u8],
-    pub index: usize,
+    arg: &'a [u8],
+    index: usize,
 }
 
-pub enum State<'a> {
+pub(crate) enum State<'a> {
     Normal,
     Chaining(Chaining<'a>),
     RestArePositional,
@@ -55,12 +55,12 @@ struct ArgInfo<'a> {
 /// `'p` is the borrow lifetime (params/iter/diagnostic); `'a` is the arg-data lifetime
 /// yielded by `ArgIterator` (e.g. `'static` for `OsIterator`). Splitting them lets
 /// callers use a locally-borrowed param table with process-lifetime argv.
-pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
-    pub params: &'p [clap::Param<Id>],
-    pub iter: &'p mut ArgIterator,
-    pub state: State<'a>,
-    pub positional: Option<&'p clap::Param<Id>>,
-    pub diagnostic: Option<&'p mut clap::Diagnostic>,
+pub(crate) struct StreamingClap<'p, 'a, Id, ArgIterator> {
+    pub(crate) params: &'p [clap::Param<Id>],
+    pub(crate) iter: &'p mut ArgIterator,
+    pub(crate) state: State<'a>,
+    pub(crate) positional: Option<&'p clap::Param<Id>>,
+    pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
 }
 
 // ArgIterator is the

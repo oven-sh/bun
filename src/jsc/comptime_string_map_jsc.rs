@@ -10,7 +10,7 @@ use crate::StringJsc as _;
 
 /// `map` is a [`bun_core::comptime_string_map::ComptimeStringMap`] instance
 /// (Rust port of `ComptimeStringMap(V, ...)`); `M::Value` is the value type.
-pub fn from_js<M>(
+pub(crate) fn from_js<M>(
     map: &'static M,
     global_this: &JSGlobalObject,
     input: JSValue,

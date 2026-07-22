@@ -336,7 +336,7 @@ impl ASTMemoryAllocator {
     }
 
     #[inline]
-    pub fn append<T>(&self, value: T) -> crate::StoreRef<T> {
+    pub(crate) fn append<T>(&self, value: T) -> crate::StoreRef<T> {
         // bumpalo's `alloc` aborts on OOM.
         // SAFETY: bumpalo never returns null.
         crate::StoreRef::from_bump(self.arena().alloc(value))
@@ -409,7 +409,7 @@ impl<'a> Scope<'a> {
         }
     }
 
-    pub fn exit(&mut self) {
+    pub(crate) fn exit(&mut self) {
         if !self.entered {
             return;
         }

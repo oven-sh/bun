@@ -52,7 +52,7 @@ impl PendingConnect {
         unsafe { &mut *self.pc }
     }
 
-    pub fn register(session: *mut ClientSession, pc: *mut quic::PendingConnect, l: *mut uws::Loop) {
+    pub(crate) fn register(session: *mut ClientSession, pc: *mut quic::PendingConnect, l: *mut uws::Loop) {
         // Caller passes a live intrusive-refcounted ClientSession; PendingConnect
         // holds one ref from construction until Drop. `session_mut` centralises
         // the backref upgrade (same invariant as the other call sites below).
@@ -71,7 +71,7 @@ impl PendingConnect {
         unsafe { bun_dns::internal::register_quic(addrinfo, self_.cast()) };
     }
 
-    pub fn r#loop(&self) -> *mut uws::Loop {
+    pub(crate) fn r#loop(&self) -> *mut uws::Loop {
         self.loop_ptr
     }
 
@@ -128,7 +128,7 @@ impl PendingConnect {
         unsafe { (*loop_ptr).wakeup() };
     }
 
-    pub fn drain_resolved() {
+    pub(crate) fn drain_resolved() {
         let batch = core::mem::take(&mut *RESOLVED.lock());
         for Resolved(head) in batch {
             // SAFETY: every entry was heap-allocated in `register()` and is
@@ -139,7 +139,7 @@ impl PendingConnect {
 
     /// Tear down a session that never reached `on_conn_close` (DNS failure or
     /// every waiter aborted while DNS was in flight).
-    pub fn fail_session(session: *mut ClientSession, err: crate::Error) {
+    pub(crate) fn fail_session(session: *mut ClientSession, err: crate::Error) {
         // Caller guarantees `session` is live (held by an intrusive ref) —
         // `session_mut` centralises the backref upgrade.
         let s = session_mut(session);

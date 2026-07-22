@@ -50,7 +50,7 @@ bun_core::define_scoped_log!(debug, MySQLConnection, visible);
 
 pub struct MySQLConnection {
     socket: Socket,
-    pub status: ConnectionState,
+    pub(crate) status: ConnectionState,
 
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
@@ -58,9 +58,9 @@ pub struct MySQLConnection {
     sequence_id: u8,
 
     // TODO: move it to JSMySQLConnection
-    pub queue: MySQLRequestQueue,
+    pub(crate) queue: MySQLRequestQueue,
     // TODO: move it to JSMySQLConnection
-    pub statements: PreparedStatementsMap,
+    pub(crate) statements: PreparedStatementsMap,
 
     server_version: Vec<u8>,
     connection_id: u32,
@@ -129,7 +129,7 @@ impl Default for MySQLConnection {
 bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn get_js_connection; }
 
 impl MySQLConnection {
-    pub fn init(
+    pub(crate) fn init(
         database: Box<[u8]>,
         username: Box<[u8]>,
         password: Box<[u8]>,
@@ -163,38 +163,38 @@ impl MySQLConnection {
         }
     }
 
-    pub fn can_pipeline(&mut self) -> bool {
+    pub(crate) fn can_pipeline(&mut self) -> bool {
         self.queue.can_pipeline(self.js_connection_ref())
     }
-    pub fn can_prepare_query(&mut self) -> bool {
+    pub(crate) fn can_prepare_query(&mut self) -> bool {
         self.queue.can_prepare_query(self.js_connection_ref())
     }
-    pub fn can_execute_query(&mut self) -> bool {
+    pub(crate) fn can_execute_query(&mut self) -> bool {
         self.queue.can_execute_query(self.js_connection_ref())
     }
 
     #[inline]
-    pub fn is_able_to_write(&self) -> bool {
+    pub(crate) fn is_able_to_write(&self) -> bool {
         self.status == ConnectionState::Connected
             && !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
             && (self.write_buffer.len() as usize) < MAX_PIPELINE_SIZE
     }
 
     #[inline]
-    pub fn is_processing_data(&self) -> bool {
+    pub(crate) fn is_processing_data(&self) -> bool {
         self.flags.contains(ConnectionFlags::IS_PROCESSING_DATA)
     }
     #[inline]
-    pub fn has_backpressure(&self) -> bool {
+    pub(crate) fn has_backpressure(&self) -> bool {
         self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
     }
     #[inline]
-    pub fn reset_backpressure(&mut self) {
+    pub(crate) fn reset_backpressure(&mut self) {
         self.flags.remove(ConnectionFlags::HAS_BACKPRESSURE);
     }
 
     #[inline]
-    pub fn can_flush(&self) -> bool {
+    pub(crate) fn can_flush(&self) -> bool {
         !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // if has backpressure we need to wait for onWritable event
             && self.status == ConnectionState::Connected // and we need to be connected
             // we need data to send
@@ -206,16 +206,16 @@ impl MySQLConnection {
     }
 
     #[inline]
-    pub fn is_idle(&self) -> bool {
+    pub(crate) fn is_idle(&self) -> bool {
         self.queue.current().is_none() && self.write_buffer.len() == 0
     }
 
     #[inline]
-    pub fn enqueue_request(&mut self, request: *mut JSMySQLQuery) {
+    pub(crate) fn enqueue_request(&mut self, request: *mut JSMySQLQuery) {
         self.queue.add(request);
     }
 
-    pub fn flush_queue(&mut self) -> Result<(), FlushQueueError> {
+    pub(crate) fn flush_queue(&mut self) -> Result<(), FlushQueueError> {
         self.flush_data();
         if !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {
             if self.tls_status == TLSStatus::MessageSent {
@@ -271,12 +271,12 @@ impl MySQLConnection {
         }
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         self.socket.close(uws::CloseKind::Normal);
         self.write_buffer = OffsetByteList::default();
     }
 
-    pub fn clean_queue_and_close(&mut self, js_reason: Option<JSValue>, js_queries_array: JSValue) {
+    pub(crate) fn clean_queue_and_close(&mut self, js_reason: Option<JSValue>, js_queries_array: JSValue) {
         // cleanup requests
         self.queue.clean(
             js_reason,
@@ -290,7 +290,7 @@ impl MySQLConnection {
         self.close();
     }
 
-    pub fn cleanup(&mut self) {
+    pub(crate) fn cleanup(&mut self) {
         let _queue = core::mem::replace(&mut self.queue, MySQLRequestQueue::init());
         // _queue dropped at scope exit
         let _write_buffer = core::mem::take(&mut self.write_buffer);
@@ -317,7 +317,7 @@ impl MySQLConnection {
         // _options_buf dropped at scope exit (Box<[u8]> frees via Drop)
     }
 
-    pub fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
+    pub(crate) fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
         // Only adopt if we're currently a plain TCP socket.
         let Socket::SocketTcp(tcp) = &self.socket else {
             return Ok(());
@@ -384,11 +384,11 @@ impl MySQLConnection {
         Ok(())
     }
 
-    pub fn set_socket(&mut self, socket: Socket) {
+    pub(crate) fn set_socket(&mut self, socket: Socket) {
         self.socket = socket;
     }
 
-    pub fn is_active(&self) -> bool {
+    pub(crate) fn is_active(&self) -> bool {
         if self.status == ConnectionState::Disconnected || self.status == ConnectionState::Failed {
             return false;
         }
@@ -402,7 +402,7 @@ impl MySQLConnection {
         self.status == ConnectionState::Connected
     }
 
-    pub fn do_handshake(
+    pub(crate) fn do_handshake(
         &mut self,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
@@ -472,7 +472,7 @@ impl MySQLConnection {
         Ok(false)
     }
 
-    pub fn read_and_process_data(&mut self, data: &[u8]) -> Result<(), AnyMySQLError> {
+    pub(crate) fn read_and_process_data(&mut self, data: &[u8]) -> Result<(), AnyMySQLError> {
         self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
         // The flag clear is hand-inlined before every return below
         // (scopeguard would need &mut self.flags).
@@ -562,7 +562,7 @@ impl MySQLConnection {
         Ok(())
     }
 
-    pub fn process_packets<C: ReaderContext>(
+    pub(crate) fn process_packets<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
     ) -> Result<(), AnyMySQLError> {
@@ -620,7 +620,7 @@ impl MySQLConnection {
         }
     }
 
-    pub fn handle_handshake<C: ReaderContext>(
+    pub(crate) fn handle_handshake<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
     ) -> Result<(), AnyMySQLError> {
@@ -744,7 +744,7 @@ impl MySQLConnection {
         Ok(())
     }
 
-    pub fn set_status(&mut self, status: ConnectionState) {
+    pub(crate) fn set_status(&mut self, status: ConnectionState) {
         if self.status == status {
             return;
         }
@@ -760,7 +760,7 @@ impl MySQLConnection {
         }
     }
 
-    pub fn handle_auth<C: ReaderContext>(
+    pub(crate) fn handle_auth<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
         header_length: u32, // u24 on the wire
@@ -922,7 +922,7 @@ impl MySQLConnection {
         Ok(())
     }
 
-    pub fn handle_command<C: ReaderContext>(
+    pub(crate) fn handle_command<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
         header_length: u32, // u24 on the wire
@@ -1000,7 +1000,7 @@ impl MySQLConnection {
         Ok(())
     }
 
-    pub fn send_handshake_response(&mut self) -> Result<(), AnyMySQLError> {
+    pub(crate) fn send_handshake_response(&mut self) -> Result<(), AnyMySQLError> {
         debug!("sendHandshakeResponse");
         // Only require password for caching_sha2_password when connecting for the first time
         if let Some(plugin) = self.auth_plugin {
@@ -1066,7 +1066,7 @@ impl MySQLConnection {
         Ok(())
     }
 
-    pub fn send_auth_switch_response(
+    pub(crate) fn send_auth_switch_response(
         &mut self,
         auth_method: AuthMethod,
         plugin_data: &[u8],
@@ -1089,7 +1089,7 @@ impl MySQLConnection {
         Ok(())
     }
 
-    pub fn writer(&mut self) -> NewWriter<Writer> {
+    pub(crate) fn writer(&mut self) -> NewWriter<Writer> {
         NewWriter {
             wrapped: Writer {
                 connection: std::ptr::from_mut::<Self>(self),
@@ -1097,7 +1097,7 @@ impl MySQLConnection {
         }
     }
 
-    pub fn buffered_reader(&mut self) -> NewReader<Reader> {
+    pub(crate) fn buffered_reader(&mut self) -> NewReader<Reader> {
         NewReader {
             wrapped: Reader {
                 connection: std::ptr::from_mut::<Self>(self),
@@ -1127,7 +1127,7 @@ impl MySQLConnection {
         }
     }
 
-    pub fn handle_prepared_statement<C: ReaderContext>(
+    pub(crate) fn handle_prepared_statement<C: ReaderContext>(
         &mut self,
         mut reader: NewReader<C>,
         header_length: u32, // u24 on the wire
@@ -1573,7 +1573,7 @@ impl From<FlushQueueError> for crate::Error {
 
 #[derive(Clone, Copy)]
 pub struct Writer {
-    pub connection: *mut MySQLConnection,
+    pub(crate) connection: *mut MySQLConnection,
 }
 
 impl Writer {
@@ -1621,7 +1621,7 @@ impl WriterContext for Writer {
 
 #[derive(Clone, Copy)]
 pub struct Reader {
-    pub connection: *mut MySQLConnection,
+    pub(crate) connection: *mut MySQLConnection,
 }
 
 // Aliasing: `Reader` is constructed from `&mut MySQLConnection`

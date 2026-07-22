@@ -56,7 +56,7 @@ pub fn package_manifest_bindings_generate(global: &JSGlobalObject) -> JSValue {
 pub struct ManifestBindings;
 
 impl ManifestBindings {
-    pub fn generate(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
         use bun_jsc::JSFunction;
         let obj = JSValue::create_empty_object(global, 1);
         obj.put(
@@ -80,7 +80,7 @@ impl ManifestBindings {
 // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
 // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
 #[bun_jsc::host_fn]
-pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bstr::BStr;
     use bun_core::{String as BunString, strings};
     use bun_install::npm;

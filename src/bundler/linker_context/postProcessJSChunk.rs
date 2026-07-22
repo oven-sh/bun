@@ -912,7 +912,7 @@ fn add_binding_vars_to_module_info(
 // single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
 // renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
 // share that lifetime.
-pub fn generate_entry_point_tail_js<'a>(
+pub(crate) fn generate_entry_point_tail_js<'a>(
     c: &'a mut LinkerContext,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,

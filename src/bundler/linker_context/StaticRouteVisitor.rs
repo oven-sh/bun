@@ -11,16 +11,16 @@ use crate::import_record;
 use crate::{Index, LinkerContext, UseDirective};
 
 pub struct StaticRouteVisitor<'a> {
-    pub c: &'a LinkerContext<'a>,
-    pub cache: ArrayHashMap</* Index::Int */ u32, bool>,
-    pub visited: AutoBitSet,
+    pub(crate) c: &'a LinkerContext<'a>,
+    pub(crate) cache: ArrayHashMap</* Index::Int */ u32, bool>,
+    pub(crate) visited: AutoBitSet,
 }
 
 impl<'a> StaticRouteVisitor<'a> {
     /// This the quickest, simplest, dumbest way I can think of doing this.
     /// Investigate performance. It can have false negatives (it doesn't properly
     /// handle cycles), but that's okay as it's just used an optimization
-    pub fn has_transitive_use_client(&mut self, entry_point_source_index: u32) -> bool {
+    pub(crate) fn has_transitive_use_client(&mut self, entry_point_source_index: u32) -> bool {
         if cfg!(debug_assertions)
             && env_var::BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR
                 .get()

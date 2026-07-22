@@ -19,7 +19,7 @@ impl SIMDUTFResult {
 // with associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Status(pub i32);
+pub struct Status(i32);
 
 impl Status {
     pub const SUCCESS: Status = Status(0);
@@ -517,7 +517,7 @@ pub mod length {
 }
 
 pub mod trim {
-    pub(crate) fn utf16_len(buf: &[u16]) -> usize {
+    fn utf16_len(buf: &[u16]) -> usize {
         let len = buf.len();
 
         if len == 0 {

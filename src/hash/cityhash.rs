@@ -367,7 +367,7 @@ impl CityHash64 {
         )
     }
 
-    pub fn hash(str: &[u8]) -> u64 {
+    fn hash(str: &[u8]) -> u64 {
         if str.len() <= 32 {
             if str.len() <= 16 {
                 return Self::hash_len_0_to_16(str);
@@ -445,7 +445,7 @@ impl CityHash64 {
     }
 
     #[inline]
-    pub fn hash_with_seeds(str: &[u8], seed0: u64, seed1: u64) -> u64 {
+    fn hash_with_seeds(str: &[u8], seed0: u64, seed1: u64) -> u64 {
         Self::hash_len16(Self::hash(str).wrapping_sub(seed0), seed1)
     }
 }

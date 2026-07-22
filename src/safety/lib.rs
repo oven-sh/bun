@@ -1,10 +1,6 @@
 #![warn(unused_must_use)]
 pub mod alloc;
 
-#[path = "CriticalSection.rs"]
-mod critical_section;
-pub use critical_section::CriticalSection;
-
 // `ThreadLock` and `thread_id` live in `bun_core` (tier-0) so `bun_ptr` /
 // `bun_threading` can use them without an upward dep. Re-exported here for
 // `bun_safety::*` callers.
@@ -64,7 +60,7 @@ pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
 }
 
 #[inline]
-pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
+fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
     let needle = std::ptr::from_ref(alloc.vtable) as *mut ();
     let n = KNOWN_ALLOC_LEN.load(Ordering::Relaxed).min(KNOWN_ALLOC_CAP);
     KNOWN_ALLOC_VTABLES[..n]

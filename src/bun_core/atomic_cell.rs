@@ -582,7 +582,7 @@ impl<T: ?Sized> ThreadCell<T> {
 
     /// Debug-panic if the cell is claimed by a different thread.
     #[inline]
-    pub fn assert_owner(&self) {
+    fn assert_owner(&self) {
         #[cfg(debug_assertions)]
         {
             let owner = self.owner.load(Ordering::Acquire);

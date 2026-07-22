@@ -1,6 +1,6 @@
 use bun_core::strings;
 
-pub(crate) struct PercentEncoding;
+struct PercentEncoding;
 
 /// possible errors for decode and encode
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +54,7 @@ impl From<EncodeError> for DecodeDataError {
 
 impl PercentEncoding {
     /// returns true if str starts with a valid path character or a percent encoded octet
-    pub(crate) fn is_pchar(str: &[u8]) -> bool {
+    fn is_pchar(str: &[u8]) -> bool {
         debug_assert!(!str.is_empty());
         match str[0] {
             b'a'..=b'z'
@@ -83,7 +83,7 @@ impl PercentEncoding {
     }
 
     /// Replaces percent encoded entities within `path` without throwing an error if other URL unsafe characters are present
-    pub(crate) fn decode_unstrict(path: &[u8]) -> Result<Option<Vec<u8>>, EncodeError> {
+    fn decode_unstrict(path: &[u8]) -> Result<Option<Vec<u8>>, EncodeError> {
         Self::_decode(path, false)
     }
 
@@ -134,8 +134,8 @@ impl PercentEncoding {
 pub struct DataURL<'a> {
     pub url: bun_core::String,
     pub mime_type: &'a [u8],
-    pub data: &'a [u8],
-    pub is_base64: bool,
+    pub(crate) data: &'a [u8],
+    pub(crate) is_base64: bool,
 }
 
 impl<'a> DataURL<'a> {
@@ -231,7 +231,7 @@ impl<'a> DataURL<'a> {
         base64buf
     }
 
-    pub fn encode_string_as_percent_escaped_data_url(
+    pub(crate) fn encode_string_as_percent_escaped_data_url(
         buf: &mut impl DataUrlBuf,
         mime_type: &[u8],
         text: &[u8],
@@ -296,7 +296,7 @@ impl<'a> DataURL<'a> {
 
 /// Abstraction over `Vec<u8>` and `CountingBuf` for
 /// `encode_string_as_percent_escaped_data_url`.
-pub(crate) trait DataUrlBuf {
+trait DataUrlBuf {
     fn append_slice(&mut self, slice: &[u8]);
     fn append(&mut self, c: u8);
 }

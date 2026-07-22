@@ -8,11 +8,11 @@ pub mod byte_class {
 }
 use byte_class::{CLASS_STRUCTURAL, CLASS_WHITESPACE, JSON_BYTE_CLASS};
 
-pub const FLAG_HAS_BACKSLASH_IN_STRING: u32 = 1 << 0;
-pub const FLAG_HAS_CTRL_IN_STRING: u32 = 1 << 1;
-pub const FLAG_ODDITY: u32 = 1 << 3;
+pub(crate) const FLAG_HAS_BACKSLASH_IN_STRING: u32 = 1 << 0;
+pub(crate) const FLAG_HAS_CTRL_IN_STRING: u32 = 1 << 1;
+pub(crate) const FLAG_ODDITY: u32 = 1 << 3;
 
-pub const SENTINELS: usize = 2;
+pub(crate) const SENTINELS: usize = 2;
 
 const REFILL_INPUT: usize = 8 * 1024;
 
@@ -33,11 +33,11 @@ pub struct StructuralIndex<'c> {
     base: usize,
     dirty: Vec<u64>,
     /// Flags accumulated over everything indexed so far.
-    pub flags: u32,
+    pub(crate) flags: u32,
     /// First comment seen (scalar indexer only).
-    pub first_comment: Option<Range>,
+    pub(crate) first_comment: Option<Range>,
     /// Set when the indexer hit an error.
-    pub index_error: Option<IndexError>,
+    pub(crate) index_error: Option<IndexError>,
     done: bool,
 
     src_off: usize,
@@ -51,7 +51,7 @@ pub struct StructuralIndex<'c> {
 }
 
 impl<'c> StructuralIndex<'c> {
-    pub fn new(contents: &'c [u8]) -> Self {
+    pub(crate) fn new(contents: &'c [u8]) -> Self {
         Self::with_producer(contents, !bun_core::env::IS_NATIVE)
     }
 
@@ -92,7 +92,7 @@ impl<'c> StructuralIndex<'c> {
 
     /// Byte position of index `logical`, producing more of the index as needed.
     #[inline(always)]
-    pub fn at(&mut self, logical: usize) -> usize {
+    pub(crate) fn at(&mut self, logical: usize) -> usize {
         if logical - self.base >= self.win.len() {
             self.fill_to(logical);
         }
@@ -159,7 +159,7 @@ impl<'c> StructuralIndex<'c> {
 
     /// Does `[from, to)` overlap a 64-byte block with a backslash or control char inside a string?
     #[inline(always)]
-    pub fn is_dirty(&self, from: usize, to: usize) -> bool {
+    pub(crate) fn is_dirty(&self, from: usize, to: usize) -> bool {
         if to <= from {
             return false;
         }

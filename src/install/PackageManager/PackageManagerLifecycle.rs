@@ -45,7 +45,7 @@ pub struct LifecycleScriptTimeLogEntry {
 }
 
 impl LifecycleScriptTimeLog {
-    pub fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {
+    pub(crate) fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {
         self.mutex.lock();
         self.list.push(entry);
         self.mutex.unlock();
@@ -53,7 +53,7 @@ impl LifecycleScriptTimeLog {
 }
 
 impl PackageManager {
-    pub fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
+    pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
         if self.preinstall_state.len() >= count {
             return;
         }
@@ -72,13 +72,13 @@ impl PackageManager {
     /// `self.lockfile` (or an alias of it), which would alias `&mut self`;
     /// `self.lockfile` is read directly instead to keep
     /// borrowck happy.
-    pub fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
+    pub(crate) fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
         let count = self.lockfile.packages.len();
         self.ensure_preinstall_state_list_capacity(count);
         self.preinstall_state[package_id as usize] = value;
     }
 
-    pub fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
+    pub(crate) fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
         if (package_id as usize) >= self.preinstall_state.len() {
             return PreinstallState::Unknown;
         }
@@ -225,12 +225,12 @@ impl PackageManager {
         }
     }
 
-    pub fn has_no_more_pending_lifecycle_scripts(&mut self) -> bool {
+    pub(crate) fn has_no_more_pending_lifecycle_scripts(&mut self) -> bool {
         self.report_slow_lifecycle_scripts();
         self.pending_lifecycle_script_tasks.load(Ordering::Relaxed) == 0
     }
 
-    pub fn tick_lifecycle_scripts(&mut self) {
+    pub(crate) fn tick_lifecycle_scripts(&mut self) {
         // reshaped for borrowck — `self.event_loop.tick_once(self)`
         // would borrow `self` twice. Erase `self` to a raw context pointer
         // first; `tick_once` only forwards it opaquely to task callbacks.
@@ -259,7 +259,7 @@ impl PackageManager {
         }
     }
 
-    pub fn report_slow_lifecycle_scripts(&mut self) {
+    pub(crate) fn report_slow_lifecycle_scripts(&mut self) {
         let log_level = self.options.log_level;
         if log_level == LogLevel::Silent {
             return;
@@ -315,7 +315,7 @@ impl PackageManager {
         }
     }
 
-    pub fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
+    pub(crate) fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
         let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
             FileSystem::instance().top_level_dir(),
             &[b"binding.gyp"],
@@ -456,7 +456,7 @@ impl PackageManager {
         Ok(())
     }
 
-    pub fn find_trusted_dependencies_from_update_requests(
+    pub(crate) fn find_trusted_dependencies_from_update_requests(
         &mut self,
     ) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {
         // find all deps originating from --trust packages from cli

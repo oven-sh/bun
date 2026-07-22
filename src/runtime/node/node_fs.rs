@@ -455,7 +455,7 @@ fn mkdir_os_path(path: &OSPathSliceZ, mode: Mode) -> Maybe<()> {
 }
 #[cfg(not(windows))]
 #[inline]
-fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> Maybe<FD> {
+pub fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> Maybe<FD> {
     Syscall::openat(dirfd, path, flags, mode)
 }
 #[cfg(windows)]

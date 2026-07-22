@@ -53,7 +53,7 @@ impl ClientContext {
 
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
     /// Callers reborrow per-access — PORTING.md §Global mutable state.
-    pub fn get() -> Option<NonNull<ClientContext>> {
+    pub(crate) fn get() -> Option<NonNull<ClientContext>> {
         INSTANCE.load()
     }
 
@@ -64,13 +64,13 @@ impl ClientContext {
     /// is the sole live borrow for its (caller-chosen) lifetime. Mirrors the
     /// `client_mut`/`stream_mut` backref-upgrade helpers in `client_session`.
     #[inline]
-    pub fn as_mut<'a>(this: NonNull<Self>) -> &'a mut Self {
+    pub(crate) fn as_mut<'a>(this: NonNull<Self>) -> &'a mut Self {
         // SAFETY: see INVARIANT above — leaked Box, process-lifetime,
         // HTTP-thread-confined singleton.
         unsafe { &mut *this.as_ptr() }
     }
 
-    pub fn get_or_create(loop_: NonNull<UwsLoop>) -> Option<NonNull<ClientContext>> {
+    pub(crate) fn get_or_create(loop_: NonNull<UwsLoop>) -> Option<NonNull<ClientContext>> {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
@@ -104,7 +104,7 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
-    pub fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
+    pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
         let reject = client.flags.reject_unauthorized;
         for &s in self.sessions.iter() {
             // sessions vec holds live ClientSession pointers; removed via
@@ -182,7 +182,7 @@ impl ClientContext {
         true
     }
 
-    pub fn unregister(&mut self, session: &mut ClientSession) {
+    pub(crate) fn unregister(&mut self, session: &mut ClientSession) {
         let i = session.registry_index as usize;
         if i >= self.sessions.len() || !core::ptr::eq(self.sessions[i], session) {
             return;
@@ -195,7 +195,7 @@ impl ClientContext {
         session.registry_index = u32::MAX;
     }
 
-    pub fn abort_by_http_id(async_http_id: u32) -> bool {
+    pub(crate) fn abort_by_http_id(async_http_id: u32) -> bool {
         let Some(this) = Self::get() else {
             return false;
         };
@@ -213,7 +213,7 @@ impl ClientContext {
         false
     }
 
-    pub fn stream_body_by_http_id(async_http_id: u32, ended: bool) {
+    pub(crate) fn stream_body_by_http_id(async_http_id: u32, ended: bool) {
         let Some(this) = Self::get() else {
             return;
         };
@@ -227,7 +227,7 @@ impl ClientContext {
         }
     }
 
-    pub fn resume_receive_by_http_id(async_http_id: u32) {
+    pub(crate) fn resume_receive_by_http_id(async_http_id: u32) {
         let Some(this) = Self::get() else {
             return;
         };

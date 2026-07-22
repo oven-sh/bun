@@ -18,7 +18,7 @@ pub struct GuardedBy<Value, M: RawMutex> {
     // `UnsafeCell` is load-bearing: `lock(&self)` hands out `&mut Value` while other `&self`
     // borrows of `GuardedBy` exist (the mutex serializes the actual writers). Without the cell,
     // deriving `&mut Value` from `&self` is UB under Stacked Borrows regardless of the mutex.
-    pub unsynchronized_value: UnsafeCell<Value>,
+    pub(crate) unsynchronized_value: UnsafeCell<Value>,
     mutex: M,
 }
 
@@ -102,7 +102,7 @@ impl<'a, Value> GuardedLock<'a, Value, Mutex> {
     /// The returned `&Mutex` has the guard's lifetime, not `'a`, so it cannot
     /// outlive the guard and be used to double-unlock.
     #[inline]
-    pub fn mutex(&self) -> &Mutex {
+    pub(crate) fn mutex(&self) -> &Mutex {
         &self.guarded.mutex
     }
 }

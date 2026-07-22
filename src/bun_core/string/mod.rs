@@ -163,7 +163,7 @@ impl String {
     /// where the pointer value itself is needed (identity comparison,
     /// hand-off to C++) rather than the struct fields.
     #[inline(always)]
-    pub(crate) fn wtf_ptr(&self) -> WTFStringImpl {
+    fn wtf_ptr(&self) -> WTFStringImpl {
         debug_assert_eq!(self.0.tag, Tag::WTFStringImpl);
         // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
         // union field; reading the pointer (not dereferencing) is always sound
@@ -491,7 +491,7 @@ impl String {
     /// this holds (typically by calling [`to_thread_safe`] first); see the
     /// `Send`/`Sync` SAFETY comment for the full contract.
     #[inline]
-    pub fn is_thread_safe(&self) -> bool {
+    fn is_thread_safe(&self) -> bool {
         if self.0.tag == Tag::WTFStringImpl {
             // SAFETY: WTF tag guarantees `value.wtf` is a valid live impl.
             self.as_wtf().is_thread_safe()
@@ -585,7 +585,7 @@ impl String {
     /// unit is ASCII (`< 0x80`). UTF-16 narrows via
     /// [`strings::narrow_ascii_u16`]; 8-bit copies after rejecting any high
     /// Latin-1 byte. Returns `Some(&mut dst[..len])` on success.
-    pub fn ascii_into<'a>(&self, dst: &'a mut [u8]) -> Option<&'a mut [u8]> {
+    fn ascii_into<'a>(&self, dst: &'a mut [u8]) -> Option<&'a mut [u8]> {
         let len = self.length();
         if len == 0 || len > dst.len() {
             return None;
@@ -698,7 +698,7 @@ impl String {
     /// [`to_utf8`]: Self::to_utf8
     /// [`to_slice`]: Self::to_slice
     #[inline]
-    pub fn to_utf8_borrowed(&self) -> ZigStringSlice {
+    fn to_utf8_borrowed(&self) -> ZigStringSlice {
         match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().to_utf8_borrowed(),
             Tag::ZigString => self.as_zig().to_slice(),
@@ -953,7 +953,7 @@ impl String {
 
     /// `bun.String.toUTF8Owned` — like [`to_utf8_without_ref`] but guarantees
     /// the returned slice owns its buffer.
-    pub fn to_utf8_owned(&self) -> ZigStringSlice {
+    fn to_utf8_owned(&self) -> ZigStringSlice {
         self.to_utf8_without_ref().clone_if_borrowed()
     }
 
@@ -1359,7 +1359,7 @@ impl ZigString {
     /// Construct from an already-tagged pointer + length pair. `ptr` is stored
     /// verbatim — tag bits are not touched.
     #[inline]
-    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> Self {
+    const fn from_tagged_ptr(ptr: *const u8, len: usize) -> Self {
         Self(bun_alloc::ZigString::from_tagged_ptr(ptr, len))
     }
 
@@ -1402,7 +1402,7 @@ impl ZigString {
     /// Marks UTF-16 + global; caller must ensure the buffer was allocated by
     /// `bun.default_allocator` (mimalloc) since `deinitGlobal` will free it.
     #[inline]
-    pub fn from16(ptr: *const u16, len: usize) -> Self {
+    fn from16(ptr: *const u16, len: usize) -> Self {
         let mut z = Self::from_tagged_ptr(ptr.cast(), len);
         z.mark_utf16();
         z.mark_global();
@@ -1437,7 +1437,7 @@ impl ZigString {
     /// `ZigString.utf8ByteLength` — exact UTF-8 byte length needed to encode
     /// this string. UTF-16 → simdutf length; Latin-1
     /// → simdutf utf8-from-latin1 length; UTF-8 → `len`.
-    pub fn utf8_byte_length(self) -> usize {
+    fn utf8_byte_length(self) -> usize {
         if self.is_utf8() {
             return self.len;
         }
@@ -1537,7 +1537,7 @@ impl ZigString {
     }
 
     /// `ZigString.eql` — encoding-aware equality.
-    pub fn eql(self, other: Self) -> bool {
+    fn eql(self, other: Self) -> bool {
         if self.len == 0 || other.len == 0 {
             return self.len == other.len;
         }
@@ -1569,7 +1569,7 @@ impl ZigString {
     /// sourced from a JS-produced 8-bit string and need re-widening on
     /// non-ASCII).
     #[inline]
-    pub fn detect_encoding(&mut self) {
+    fn detect_encoding(&mut self) {
         if !strings::is_all_ascii(self.slice()) {
             self.mark_utf16();
         }
@@ -1630,7 +1630,7 @@ impl ZigString {
     }
 
     #[inline]
-    pub fn untagged(ptr: *const u8) -> *const u8 {
+    fn untagged(ptr: *const u8) -> *const u8 {
         bun_alloc::ZigString::untagged(ptr)
     }
     /// `ZigString.utf16Slice` — alias of [`utf16_slice_aligned`] (reached via
@@ -1682,7 +1682,7 @@ impl ZigString {
     /// `ZigString.trunc` — clamp `len`, preserving the
     /// pointer (and its tag bits) verbatim.
     #[inline]
-    pub fn trunc(self, len: usize) -> ZigString {
+    fn trunc(self, len: usize) -> ZigString {
         Self::from_tagged_ptr(self.tagged_ptr(), self.len.min(len))
     }
     /// `ZigString.toSlice` — borrowed-or-owned UTF-8.
@@ -1811,7 +1811,7 @@ impl ZigStringSlice {
     /// storage (`Static`/`WTF`), allocate an owned copy; otherwise return
     /// `self` unchanged. The result is always safe to outlive the original
     /// backing.
-    pub fn clone_if_borrowed(self) -> Self {
+    fn clone_if_borrowed(self) -> Self {
         match &self {
             Self::Owned(_) => self,
             _ => Self::Owned(self.slice().to_vec()),
@@ -2097,7 +2097,7 @@ pub mod lexer {
         crate::string::identifier::is_identifier_start(c as i32)
     }
     #[inline]
-    pub fn is_identifier_continue(c: u32) -> bool {
+    pub(crate) fn is_identifier_continue(c: u32) -> bool {
         crate::string::identifier::is_identifier_part(c as i32)
     }
     #[inline]
@@ -2211,7 +2211,7 @@ pub mod printer {
     pub use crate::io::Write as PrinterWriter;
 
     #[inline]
-    pub(crate) fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
+    fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
         if c <= LAST_ASCII as i32 {
             c >= FIRST_ASCII as i32
                 && c != b'\\' as i32

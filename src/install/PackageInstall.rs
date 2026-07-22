@@ -26,41 +26,41 @@ pub struct PackageInstall<'a> {
     /// Borrowed view of the cache directory fd. The owner is either
     /// `PackageManager`'s cached directory handle, the cwd sentinel, or a
     /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
-    pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a ZStr,
+    pub(crate) cache_dir: Fd,
+    pub(crate) cache_dir_subpath: &'a ZStr,
     // TODO: `destination_dir_subpath` aliases into `destination_dir_subpath_buf`;
     // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
-    pub destination_dir_subpath: &'a ZStr,
-    pub destination_dir_subpath_buf: &'a mut [u8],
+    pub(crate) destination_dir_subpath: &'a ZStr,
+    pub(crate) destination_dir_subpath_buf: &'a mut [u8],
 
-    pub progress: Option<&'a mut Progress>,
+    pub(crate) progress: Option<&'a mut Progress>,
 
-    pub package_name: SemverString,
-    pub package_version: &'a [u8],
-    pub patch: Option<Patch>,
+    pub(crate) package_name: SemverString,
+    pub(crate) package_version: &'a [u8],
+    pub(crate) patch: Option<Patch>,
 
     // TODO: this is never read
-    pub file_count: u32,
-    pub node_modules: &'a NodeModulesFolder,
-    pub lockfile: &'a Lockfile,
+    pub(crate) file_count: u32,
+    pub(crate) node_modules: &'a NodeModulesFolder,
+    pub(crate) lockfile: &'a Lockfile,
 }
 
 #[derive(Clone, Copy)]
 pub struct Patch {
-    pub contents_hash: u64,
+    pub(crate) contents_hash: u64,
 }
 
 #[derive(Default)]
 pub struct Summary {
-    pub fail: u32,
-    pub success: u32,
-    pub skipped: u32,
-    pub successfully_installed: Option<DynamicBitSet>,
+    pub(crate) fail: u32,
+    pub(crate) success: u32,
+    pub(crate) skipped: u32,
+    pub(crate) successfully_installed: Option<DynamicBitSet>,
 
     /// Package name hash -> number of scripts skipped.
     /// Multiple versions of the same package might add to the count, and each version
     /// might have a different number of scripts
-    pub packages_with_blocked_scripts: ArrayHashMap<TruncatedPackageNameHash, usize>,
+    pub(crate) packages_with_blocked_scripts: ArrayHashMap<TruncatedPackageNameHash, usize>,
 }
 
 #[repr(u8)]
@@ -130,7 +130,7 @@ impl Method {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    pub(crate) fn linux() -> BackendSupport {
+    fn linux() -> BackendSupport {
         enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
@@ -173,10 +173,10 @@ impl Method {
 
 #[derive(Copy, Clone)]
 pub struct Failure {
-    pub err: crate::Error,
-    pub step: Step,
+    pub(crate) err: crate::Error,
+    pub(crate) step: Step,
     #[cfg(bun_debug)]
-    pub debug_trace: bun_core::StoredTrace,
+    pub(crate) debug_trace: bun_core::StoredTrace,
 }
 
 impl Failure {
@@ -193,7 +193,7 @@ impl Failure {
     }
 }
 
-pub enum InstallResult {
+pub(crate) enum InstallResult {
     Success,
     Failure(Box<Failure>),
 }
@@ -217,7 +217,7 @@ impl InstallResult {
         }))
     }
 
-    pub(crate) fn is_fail(&self) -> bool {
+    fn is_fail(&self) -> bool {
         matches!(self, InstallResult::Failure(_))
     }
 }
@@ -236,7 +236,7 @@ pub enum Step {
 
 impl Step {
     /// "error: failed {s} for package"
-    pub fn name(self) -> &'static [u8] {
+    pub(crate) fn name(self) -> &'static [u8] {
         match self {
             Step::Copyfile | Step::CopyingFiles => b"copying files from cache to destination",
             Step::OpeningCacheDir => b"opening cache/package/version dir",
@@ -265,14 +265,15 @@ impl PackageInstall<'_> {
     /// Read accessor for the [`SUPPORTED_METHOD`] global. Associated fn so
     /// cross-module callers keep the `PackageInstall::supported_method()` call shape.
     #[inline]
-    pub fn supported_method() -> Method {
+    pub(crate) fn supported_method() -> Method {
         Method::from_u8(SUPPORTED_METHOD.load(Ordering::Relaxed))
     }
 
     /// Write accessor for [`SUPPORTED_METHOD`] (fallback path when
     /// clonefile/hardlink fails). Relaxed — single-writer, advisory hint.
     #[inline]
-    pub fn set_supported_method(m: Method) {
+    #[cfg(not(windows))]
+    pub(crate) fn set_supported_method(m: Method) {
         SUPPORTED_METHOD.store(m as u8, Ordering::Relaxed);
     }
 }
@@ -829,7 +830,7 @@ impl<'a> PackageInstall<'a> {
         )
     }
 
-    pub fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
+    pub(crate) fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
         let verified = match resolution.tag {
             resolution::Tag::Git => {
                 self.verify_git_resolution(resolution.git(), root_node_modules_dir)
@@ -1975,7 +1976,7 @@ impl<'a> PackageInstall<'a> {
         Ok(InstallResult::Success)
     }
 
-    pub fn uninstall_before_install(&self, destination_dir: &Dir) {
+    pub(crate) fn uninstall_before_install(&self, destination_dir: &Dir) {
         let mut rand_path_buf = [0u8; 48];
         let rand_bytes = bun_core::fast_random().to_ne_bytes();
         let temp_path = {
@@ -2052,7 +2053,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub fn is_dangling_symlink(path: &ZStr) -> bool {
+    pub(crate) fn is_dangling_symlink(path: &ZStr) -> bool {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             match sys::open(path, sys::O::PATH, 0) {
@@ -2085,7 +2086,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub fn install_from_link(&mut self, skip_delete: bool, destination_dir: &Dir) -> InstallResult {
+    pub(crate) fn install_from_link(&mut self, skip_delete: bool, destination_dir: &Dir) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
@@ -2285,7 +2286,7 @@ impl<'a> PackageInstall<'a> {
         InstallResult::Success
     }
 
-    pub fn get_install_method(&self) -> Method {
+    pub(crate) fn get_install_method(&self) -> Method {
         if self.cache_dir_subpath.as_bytes() == b"."
             || self.cache_dir_subpath.as_bytes().starts_with(b"..")
         {
@@ -2295,7 +2296,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub fn package_missing_from_cache(
+    pub(crate) fn package_missing_from_cache(
         &mut self,
         manager: &mut PackageManager,
         package_id: PackageID,
@@ -2374,7 +2375,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub fn patched_package_missing_from_cache(
+    pub(crate) fn patched_package_missing_from_cache(
         &mut self,
         manager: &mut PackageManager,
         package_id: PackageID,
@@ -2387,7 +2388,7 @@ impl<'a> PackageInstall<'a> {
         !exists
     }
 
-    pub fn install(
+    pub(crate) fn install(
         &mut self,
         skip_delete: bool,
         destination_dir: &Dir,

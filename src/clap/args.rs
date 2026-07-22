@@ -32,7 +32,7 @@ impl<'a> SliceIterator<'a> {
         SliceIterator { remain: args }
     }
 
-    pub fn next(&mut self) -> Option<&'a [u8]> {
+    fn next(&mut self) -> Option<&'a [u8]> {
         pop_first(&mut self.remain)
     }
 }
@@ -52,16 +52,16 @@ impl<'a> ArgIter<'a> for SliceIterator<'a> {
 /// On windows, this iterator allocates.
 pub struct OsIterator {
     // `remain` borrows the process-global argv, so nothing is allocated per-call.
-    pub remain: &'static [&'static [u8]],
+    remain: &'static [&'static [u8]],
 
     /// The executable path (this is the first argument passed to the program)
     /// TODO: Is it the right choice for this to be null? Maybe `init` should
     ///       return an error when we have no exe.
-    pub exe_arg: Option<&'static [u8]>,
+    exe_arg: Option<&'static [u8]>,
 }
 
 impl OsIterator {
-    pub fn init() -> OsIterator {
+    pub(crate) fn init() -> OsIterator {
         let mut res = OsIterator {
             exe_arg: None,
             remain: os_argv(),
@@ -70,7 +70,7 @@ impl OsIterator {
         res
     }
 
-    pub fn next(&mut self) -> Option<&'static [u8]> {
+    fn next(&mut self) -> Option<&'static [u8]> {
         pop_first(&mut self.remain)
     }
 }

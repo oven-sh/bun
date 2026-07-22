@@ -49,7 +49,7 @@ impl PartialEq for KeyframesName {
 impl Eq for KeyframesName {}
 
 impl KeyframesName {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         use bun_core::strings;
         #[inline]
         fn write_ident<'a>(
@@ -91,7 +91,7 @@ impl KeyframesName {
 }
 
 impl KeyframesName {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `Custom(&'static [u8])` is an arena-owned slice → identity copy.
         match self {
             Self::Ident(i) => Self::Ident(i.deep_clone(bump)),
@@ -102,7 +102,7 @@ impl KeyframesName {
 
 // ─── KeyframesName parse ──────────────────────────────────────────────────
 impl KeyframesName {
-    pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
         use bun_core::strings;
         let tok = input.next()?.clone();
         match tok {
@@ -138,7 +138,7 @@ pub enum KeyframeSelector {
 }
 
 impl KeyframeSelector {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             KeyframeSelector::Percentage(p) => {
                 if dest.minify && p.v == 1.0 {
@@ -163,7 +163,7 @@ impl KeyframeSelector {
 }
 
 impl KeyframeSelector {
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         match self {
             Self::Percentage(p) => Self::Percentage(*p),
             Self::From => Self::From,
@@ -177,7 +177,7 @@ impl KeyframeSelector {
 impl KeyframeSelector {
     // Try the tuple variant (`Percentage`) first, then fall back to keyword
     // idents (`from`/`to`).
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
+    fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
         if let Ok(p) = input.try_parse(Percentage::parse) {
             return Ok(KeyframeSelector::Percentage(p));
         }
@@ -202,21 +202,21 @@ impl KeyframeSelector {
 /// See [KeyframesRule](KeyframesRule).
 pub struct Keyframe {
     /// A list of keyframe selectors to associate with the declarations in this keyframe.
-    pub selectors: ArrayList<KeyframeSelector>,
+    pub(crate) selectors: ArrayList<KeyframeSelector>,
     /// The declarations for this keyframe.
     // Lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
-    pub declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'static>,
 }
 
 impl Keyframe {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_comma_separated(self.selectors.iter(), |d, sel| sel.to_css(d))?;
         super::decl_block_to_css(&self.declarations, dest)
     }
 }
 
 impl Keyframe {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -231,13 +231,13 @@ impl Keyframe {
 pub struct KeyframesRule {
     /// The animation name.
     /// <keyframes-name> = <custom-ident> | <string>
-    pub name: KeyframesName,
+    pub(crate) name: KeyframesName,
     /// A list of keyframes in the animation.
-    pub keyframes: ArrayList<Keyframe>,
+    pub(crate) keyframes: ArrayList<Keyframe>,
     /// A vendor prefix for the rule, e.g. `@-webkit-keyframes`.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl KeyframesRule {

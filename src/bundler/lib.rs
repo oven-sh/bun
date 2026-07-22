@@ -63,10 +63,10 @@ pub use linker_graph::{
 /// `use crate::mal_prelude::*;` brings every `items_<field>()` set into scope.
 pub mod mal_prelude {
     pub use crate::Graph::InputFileColumns as _;
-    pub use crate::bundle_v2::CompileResultForSourceMapColumns as _;
+    pub(crate) use crate::bundle_v2::CompileResultForSourceMapColumns as _;
     pub use crate::bundled_ast::BundledAstColumns as _;
     pub use crate::linker_graph::FileColumns as _;
-    pub use crate::linker_graph::entry_point::EntryPointColumns as _;
+    pub(crate) use crate::linker_graph::entry_point::EntryPointColumns as _;
     pub use crate::linker_graph::js_meta::JSMetaColumns as _;
     pub use bun_ast::server_component_boundary::ServerComponentBoundaryColumns as _;
 }
@@ -90,7 +90,7 @@ pub mod output_file;
 #[path = "ThreadPool.rs"]
 pub mod thread_pool;
 
-pub mod AstBuilder;
+pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
 pub mod bundled_ast;
 pub use bundled_ast::BundledAst;
@@ -193,8 +193,6 @@ pub mod linker_context {
         ChunkMeta, GenerateChunkCtx, LinkerContext, PendingPartRange,
     };
 
-    pub use output_file_list_builder::OutputFileList as OutputFileListBuilder;
-    pub use static_route_visitor::StaticRouteVisitor;
 }
 
 // ---------------------------------------------------------------------------
@@ -244,8 +242,8 @@ pub mod options {
     pub use super::output_file::BakeExtra;
     pub use super::output_file::IndexOptional;
     /// `OutputFile.init` argument struct.
-    pub use super::output_file::Options as OutputFileInit;
-    pub use super::output_file::OptionsData as OutputFileData;
+    pub(crate) use super::output_file::Options as OutputFileInit;
+    pub(crate) use super::output_file::OptionsData as OutputFileData;
     pub use super::output_file::Value as OutputFileValue;
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;

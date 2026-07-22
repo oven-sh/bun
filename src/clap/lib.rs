@@ -11,7 +11,6 @@ pub mod streaming;
 
 pub use comptime::{ComptimeClap, ConvertedTable};
 pub use error::{Error, Result};
-pub use streaming::StreamingClap;
 
 // Proc-macro backend — do not call these directly; use `parse_param!` / `param!` /
 // `parse_params!` below, which inject `$crate` so the expansion resolves `Param`/
@@ -224,7 +223,7 @@ impl Names {
     }
 
     /// Check if the given name matches the primary long name or any alias
-    pub fn matches_long(&self, name: &[u8]) -> bool {
+    fn matches_long(&self, name: &[u8]) -> bool {
         if let Some(l) = self.long {
             if name == l {
                 return true;
@@ -328,9 +327,9 @@ fn expect_param(expect: Param<Help>, actual: Param<Help>) {
 // is flattened to `short`/`long` because `Names.long` is `&'static`.
 #[derive(Default)]
 pub struct Diagnostic {
-    pub arg: Vec<u8>,
-    pub short: Option<u8>,
-    pub long: Option<Vec<u8>>,
+    arg: Vec<u8>,
+    short: Option<u8>,
+    long: Option<Vec<u8>>,
 }
 
 impl Diagnostic {
@@ -455,8 +454,7 @@ fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
 }
 
 pub struct Args<Id: 'static> {
-    pub clap: ComptimeClap<Id>,
-    pub exe_arg: Option<&'static [u8]>,
+    clap: ComptimeClap<Id>,
 }
 
 impl<Id: 'static> Args<Id> {
@@ -498,7 +496,6 @@ pub fn parse<Id: 'static>(
     opt: ParseOptions<'_>,
 ) -> crate::Result<Args<Id>> {
     let mut iter = args::OsIterator::init();
-    let exe_arg = iter.exe_arg;
 
     let clap = parse_ex::<Id, _>(
         params,
@@ -508,7 +505,7 @@ pub fn parse<Id: 'static>(
             stop_after_positional_at: opt.stop_after_positional_at,
         },
     )?;
-    Ok(Args { clap, exe_arg })
+    Ok(Args { clap,})
 }
 
 /// Same as [`parse`] but takes a pre-converted rodata [`ConvertedTable`]
@@ -519,7 +516,6 @@ pub fn parse_with_table<Id: 'static>(
     opt: ParseOptions<'_>,
 ) -> crate::Result<Args<Id>> {
     let mut iter = args::OsIterator::init();
-    let exe_arg = iter.exe_arg;
     let clap = ComptimeClap::<Id>::parse_with_table(
         table,
         &mut iter,
@@ -528,7 +524,7 @@ pub fn parse_with_table<Id: 'static>(
             stop_after_positional_at: opt.stop_after_positional_at,
         },
     )?;
-    Ok(Args { clap, exe_arg })
+    Ok(Args { clap,})
 }
 
 /// Parses the command line arguments passed into the program based on an
@@ -537,7 +533,7 @@ pub fn parse_with_table<Id: 'static>(
 /// **Cold path** — see [`parse`]; the startup hot path is [`parse_with_table`].
 #[cold]
 #[inline(never)]
-pub fn parse_ex<Id: 'static, I>(
+fn parse_ex<Id: 'static, I>(
     params: &'static [Param<Id>],
     iter: &mut I,
     opt: ParseOptions<'_>,
@@ -717,7 +713,7 @@ where
 
 #[cold]
 #[inline(never)]
-pub fn simple_print_param(param: &Param<Help>) -> crate::Result<()> {
+fn simple_print_param(param: &Param<Help>) -> crate::Result<()> {
     bun_core::pretty!("\n");
     if let Some(s) = param.names.short {
         if param.takes_value != Values::None && param.names.long.is_none() {

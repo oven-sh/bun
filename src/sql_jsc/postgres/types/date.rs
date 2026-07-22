@@ -6,7 +6,7 @@ const POSTGRES_EPOCH_DATE: i64 = 946_684_800_000;
 
 const US_PER_MS: i64 = 1000;
 
-pub fn from_binary(bytes: &[u8]) -> f64 {
+pub(crate) fn from_binary(bytes: &[u8]) -> f64 {
     let microseconds =
         i64::from_be_bytes(bytes[0..8].try_into().expect("infallible: size matches"));
     let double_microseconds: f64 = microseconds as f64;
@@ -21,7 +21,7 @@ pub fn from_binary(bytes: &[u8]) -> f64 {
 /// (e.g. `infinity`, BC dates, 5+ digit years), so the caller falls back to
 /// `Date.parse`. `timestamptz` and `date` already decode correctly via
 /// `Date.parse` and must NOT be routed here.
-pub fn timestamp_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) -> Option<f64> {
+pub(crate) fn timestamp_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) -> Option<f64> {
     let parsed = crate::shared::datetime_text::parse_postgres_timestamp(bytes)?;
     global_object
         .gregorian_date_time_to_ms_utc(
@@ -38,7 +38,7 @@ pub fn timestamp_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) ->
         .ok()
 }
 
-pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> {
+pub(crate) fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> {
     let double_value = if value.is_date() {
         value.get_unix_timestamp()
     } else if value.is_number() {

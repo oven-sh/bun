@@ -17,7 +17,7 @@ use crate::JSGlobalObject;
 use bun_ptr::BackRef;
 
 pub struct PluginRunner {
-    pub global_object: BackRef<JSGlobalObject>,
+    pub(crate) global_object: BackRef<JSGlobalObject>,
 }
 
 // Re-export the JSC-free static helpers so callers in this crate can keep

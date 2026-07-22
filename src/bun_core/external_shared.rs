@@ -104,7 +104,7 @@ pub struct ExternalSharedOptional<T: ExternalSharedDescriptor> {
 }
 
 impl<T: ExternalSharedDescriptor> ExternalSharedOptional<T> {
-    pub const fn init_null() -> Self {
+    const fn init_null() -> Self {
         Self { ptr: None }
     }
 

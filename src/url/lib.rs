@@ -122,7 +122,7 @@ pub mod whatwg {
     }
 
     impl URL {
-        pub fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
+        fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
             let mut input = *str;
             URL__fromString(&mut input)
         }
@@ -188,7 +188,7 @@ pub use whatwg::{
 // literal default).
 #[derive(Clone)]
 pub struct URL<'a> {
-    pub hash: &'a [u8],
+    hash: &'a [u8],
     /// hostname, but with a port — `localhost:3000`
     pub host: &'a [u8],
     /// hostname does not have a port — `localhost`
@@ -200,10 +200,10 @@ pub struct URL<'a> {
     pub path: &'a [u8],
     pub port: &'a [u8],
     pub protocol: &'a [u8],
-    pub search: &'a [u8],
-    pub search_params: Option<QueryStringMap>,
+    search: &'a [u8],
+    search_params: Option<QueryStringMap>,
     pub username: &'a [u8],
-    pub port_was_automatically_set: bool,
+    port_was_automatically_set: bool,
 }
 
 impl<'a> Default for URL<'a> {
@@ -406,7 +406,7 @@ impl<'a> URL<'a> {
         }
     }
 
-    pub fn display_host(&self) -> bun_fmt::HostFormatter<'_> {
+    fn display_host(&self) -> bun_fmt::HostFormatter<'_> {
         bun_fmt::HostFormatter {
             host: if !self.host.is_empty() {
                 self.host
@@ -456,7 +456,7 @@ impl<'a> URL<'a> {
         self.get_port().unwrap_or_else(|| self.get_default_port())
     }
 
-    pub fn get_default_port(&self) -> u16 {
+    fn get_default_port(&self) -> u16 {
         if self.is_https() { 443u16 } else { 80u16 }
     }
 
@@ -486,7 +486,7 @@ impl<'a> URL<'a> {
         unsafe { core::mem::MaybeUninit::uninit().assume_init() }
     }
 
-    pub fn join_normalize<'b>(
+    fn join_normalize<'b>(
         out: &'b mut [u8],
         prefix: &[u8],
         dirname: &[u8],
@@ -706,7 +706,7 @@ impl<'a> URL<'a> {
         url
     }
 
-    pub fn parse_protocol(&mut self, str: &'a [u8]) -> Option<u32> {
+    fn parse_protocol(&mut self, str: &'a [u8]) -> Option<u32> {
         if str.len() < b"://".len() {
             return None;
         }
@@ -728,7 +728,7 @@ impl<'a> URL<'a> {
         None
     }
 
-    pub fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
+    fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
         // reset it
         self.username = b"";
 
@@ -752,7 +752,7 @@ impl<'a> URL<'a> {
         None
     }
 
-    pub fn parse_password(&mut self, str: &'a [u8]) -> Option<u32> {
+    fn parse_password(&mut self, str: &'a [u8]) -> Option<u32> {
         // reset it
         self.password = b"";
 
@@ -781,7 +781,7 @@ impl<'a> URL<'a> {
         None
     }
 
-    pub fn parse_host(&mut self, str: &'a [u8]) -> Option<u32> {
+    fn parse_host(&mut self, str: &'a [u8]) -> Option<u32> {
         let mut i: u32 = 0;
 
         // reset it
@@ -869,9 +869,9 @@ impl<'a> URL<'a> {
 
 #[derive(Clone, Copy)]
 pub struct Param {
-    pub name: api::StringPointer,
-    pub name_hash: u64,
-    pub value: api::StringPointer,
+    name: api::StringPointer,
+    name_hash: u64,
+    value: api::StringPointer,
 }
 
 // Vec<Param> (AoS); SoA would be a perf optimization only.
@@ -883,9 +883,9 @@ pub struct QueryStringMap {
     // `slice` is self-referential (points into `buffer`) when decoding
     // happened, otherwise borrows the caller's query_string. Stored as raw fat ptr.
     slice: *const [u8],
-    pub buffer: Vec<u8>,
-    pub list: ParamList,
-    pub name_count: Option<usize>,
+    buffer: Vec<u8>,
+    list: ParamList,
+    name_count: Option<usize>,
 }
 
 impl Clone for QueryStringMap {
@@ -938,7 +938,7 @@ impl QueryStringMap {
         Iterator::init(self)
     }
 
-    pub fn str(&self, ptr: api::StringPointer) -> &[u8] {
+    fn str(&self, ptr: api::StringPointer) -> &[u8] {
         // SAFETY: `slice` is valid for the lifetime of `self` (either borrows
         // `self.buffer` or an external query_string the caller keeps alive).
         let slice = unsafe { &*self.slice };
@@ -1231,9 +1231,9 @@ const MAX_QUERY_STRING_PARAMS: usize = 2048;
 type VisitedMap = ArrayBitSet<MAX_QUERY_STRING_PARAMS, { num_masks_for(MAX_QUERY_STRING_PARAMS) }>;
 
 pub struct Iterator<'a> {
-    pub i: usize,
-    pub map: &'a QueryStringMap,
-    pub visited: VisitedMap,
+    i: usize,
+    map: &'a QueryStringMap,
+    visited: VisitedMap,
 }
 
 pub struct IteratorResult<'a, 't> {
@@ -1242,7 +1242,7 @@ pub struct IteratorResult<'a, 't> {
 }
 
 impl<'a> Iterator<'a> {
-    pub fn init(map: &'a QueryStringMap) -> Iterator<'a> {
+    fn init(map: &'a QueryStringMap) -> Iterator<'a> {
         debug_assert!(map.list.len() <= MAX_QUERY_STRING_PARAMS);
         Iterator {
             i: 0,
@@ -1337,7 +1337,7 @@ impl From<DecodeError> for crate::Error {
 }
 
 impl PercentEncoding {
-    pub fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
+    fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
         Self::decode_fault_tolerant::<_, false>(writer, input, None)
     }
 
@@ -1440,15 +1440,15 @@ impl PercentEncoding {
 
 #[derive(Clone, Copy)]
 pub struct ScannerResult {
-    pub name_needs_decoding: bool,
-    pub value_needs_decoding: bool,
-    pub name: api::StringPointer,
-    pub value: api::StringPointer,
+    name_needs_decoding: bool,
+    value_needs_decoding: bool,
+    name: api::StringPointer,
+    value: api::StringPointer,
 }
 
 impl ScannerResult {
     #[inline]
-    pub(crate) fn raw_name<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
+    fn raw_name<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
         if self.name.length > 0 {
             &query_string[self.name.offset as usize..][..self.name.length as usize]
         } else {
@@ -1457,7 +1457,7 @@ impl ScannerResult {
     }
 
     #[inline]
-    pub(crate) fn raw_value<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
+    fn raw_value<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
         if self.value.length > 0 {
             &query_string[self.value.offset as usize..][..self.value.length as usize]
         } else {
@@ -1467,8 +1467,8 @@ impl ScannerResult {
 }
 
 pub struct CombinedScanner<'a> {
-    pub query: Scanner<'a>,
-    pub pathname: PathnameScanner<'a>,
+    query: Scanner<'a>,
+    pathname: PathnameScanner<'a>,
 }
 
 impl<'a> CombinedScanner<'a> {
@@ -1484,7 +1484,7 @@ impl<'a> CombinedScanner<'a> {
         }
     }
 
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.query.reset();
         self.pathname.reset();
     }
@@ -1516,23 +1516,23 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
 }
 
 pub struct PathnameScanner<'a> {
-    pub params: &'a ParamsList<'a>,
-    pub pathname: &'a [u8],
-    pub routename: &'a [u8],
-    pub i: usize,
+    params: &'a ParamsList<'a>,
+    pathname: &'a [u8],
+    routename: &'a [u8],
+    i: usize,
 }
 
 impl<'a> PathnameScanner<'a> {
     #[inline]
-    pub fn is_done(&self) -> bool {
+    fn is_done(&self) -> bool {
         self.params.len() <= self.i
     }
 
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.i = 0;
     }
 
-    pub fn init(
+    fn init(
         pathname: &'a [u8],
         routename: &'a [u8],
         params: &'a ParamsList<'a>,
@@ -1545,7 +1545,7 @@ impl<'a> PathnameScanner<'a> {
         }
     }
 
-    pub fn next(&mut self) -> Option<ScannerResult> {
+    fn next(&mut self) -> Option<ScannerResult> {
         if self.is_done() {
             return None;
         }
@@ -1565,13 +1565,13 @@ impl<'a> PathnameScanner<'a> {
 }
 
 pub struct Scanner<'a> {
-    pub query_string: &'a [u8],
-    pub i: usize,
-    pub start: usize,
+    query_string: &'a [u8],
+    i: usize,
+    start: usize,
 }
 
 impl<'a> Scanner<'a> {
-    pub fn init(query_string: &'a [u8]) -> Scanner<'a> {
+    fn init(query_string: &'a [u8]) -> Scanner<'a> {
         if !query_string.is_empty() && query_string[0] == b'?' {
             return Scanner {
                 query_string,
@@ -1588,12 +1588,12 @@ impl<'a> Scanner<'a> {
     }
 
     #[inline]
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.i = self.start;
     }
 
     /// Get the next query string parameter without allocating memory.
-    pub fn next(&mut self) -> Option<ScannerResult> {
+    fn next(&mut self) -> Option<ScannerResult> {
         let mut relative_i: usize = 0;
         // `relative_i` is added to `this.i` at every return point.
 

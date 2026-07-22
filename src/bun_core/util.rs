@@ -633,7 +633,7 @@ impl<T> Mutex<T> {
     }
 
     #[inline]
-    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+    pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         match self.0.try_lock() {
             Ok(g) => Some(g),
             Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
@@ -2490,7 +2490,7 @@ fn once_claim_slow(state: &core::sync::atomic::AtomicU8) -> bool {
 impl<T, F> Once<T, F> {
     /// Fast path: already initialised?
     #[inline(always)]
-    pub fn get(&self) -> Option<&T> {
+    pub(crate) fn get(&self) -> Option<&T> {
         if self.state.load(core::sync::atomic::Ordering::Acquire) == ONCE_DONE {
             // SAFETY: DONE is only stored after `cell` has been fully written;
             // the Acquire load synchronises with that Release store. The cell
@@ -2554,7 +2554,7 @@ impl<T, F> Once<T, F> {
     /// `Err(value)` rather than waiting, which is fine for the write-once
     /// startup statics that use it (`START_TIME`, `STD*_DESCRIPTOR_TYPE`, …).
     #[inline]
-    pub fn set(&self, value: T) -> Result<(), T> {
+    pub(crate) fn set(&self, value: T) -> Result<(), T> {
         use core::sync::atomic::Ordering::{Acquire, Release};
         if self
             .state
@@ -4048,7 +4048,7 @@ pub fn bun_options_argc() -> usize {
 }
 /// Write accessor (single-threaded startup).
 #[inline]
-pub fn set_bun_options_argc(n: usize) {
+fn set_bun_options_argc(n: usize) {
     BUN_OPTIONS_ARGC.store(n, core::sync::atomic::Ordering::Relaxed);
 }
 
@@ -4414,7 +4414,7 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
 
 /// Terminate the current OS thread without unwinding.
 /// POSIX `pthread_exit`; Windows `ExitThread`. Called from worker `shutdown()`.
-pub fn exit_thread() -> ! {
+fn exit_thread() -> ! {
     #[cfg(unix)]
     {
         // `retval` is stored opaquely for `pthread_join` and never
@@ -4586,7 +4586,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 /// Full `bun.spawnSync` (with buffered stdio, env, cwd) is in bun_spawn.
 #[derive(Debug, Clone, Copy)]
 pub struct SpawnStatus {
-    pub code: i32,
+    code: i32,
 }
 impl SpawnStatus {
     #[inline]
@@ -5137,7 +5137,7 @@ impl Timespec {
     /// Construct from a signed nanosecond count. Euclidean division keeps
     /// `nsec ∈ [0, 1e9)` for negative inputs so `ns()`/`order()` round-trip.
     #[inline]
-    pub const fn from_ns(ns: i64) -> Timespec {
+    const fn from_ns(ns: i64) -> Timespec {
         Timespec {
             sec: ns.div_euclid(Self::NS_PER_S),
             nsec: ns.rem_euclid(Self::NS_PER_S),
@@ -5234,7 +5234,7 @@ pub mod mock_time {
     }
     /// Current mocked time, or `None` if not mocked.
     #[inline]
-    pub fn get() -> Option<i64> {
+    pub(crate) fn get() -> Option<i64> {
         let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
         if v == i64::MIN { None } else { Some(v) }
     }
@@ -5252,7 +5252,7 @@ pub mod mock_time {
     }
     /// Current mocked wall-clock time in ms, or `None` if not mocked.
     #[inline]
-    pub fn wall_ms() -> Option<f64> {
+    pub(crate) fn wall_ms() -> Option<f64> {
         let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
         if v.is_nan() { None } else { Some(v) }
     }
@@ -5266,11 +5266,11 @@ pub mod mock_time {
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub struct f16(pub u16);
+pub struct f16(u16);
 
 impl f16 {
     /// Widen to `f64` (exact).
-    pub fn to_f64(self) -> f64 {
+    fn to_f64(self) -> f64 {
         let h = self.0 as u32;
         let sign = (h >> 15) & 1;
         let exp = (h >> 10) & 0x1F;
@@ -5345,7 +5345,7 @@ pub mod perf {
         linux: Option<Linux>,
     }
     impl Ctx {
-        pub const DISABLED: Ctx = Ctx {
+        const DISABLED: Ctx = Ctx {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             linux: None,
         };
@@ -5392,7 +5392,7 @@ pub mod perf {
     }
 
     #[inline]
-    pub fn is_enabled() -> bool {
+    fn is_enabled() -> bool {
         match IS_ENABLED.load(Ordering::Relaxed) {
             DISABLED => false,
             ENABLED => true,

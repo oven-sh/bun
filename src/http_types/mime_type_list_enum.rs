@@ -20,7 +20,7 @@ impl MimeTypeList {
     }
 
     #[inline]
-    pub const fn slice(self) -> &'static [u8] {
+    pub(crate) const fn slice(self) -> &'static [u8] {
         self.0.as_bytes()
     }
 
@@ -36,7 +36,7 @@ impl MimeTypeList {
 
     pub const COUNT: usize = 2310;
 
-    pub const ALL: &'static [MimeTypeList] = ALL;
+    pub(crate) const ALL: &'static [MimeTypeList] = ALL;
 }
 
 impl From<MimeTypeList> for &'static str {

@@ -100,7 +100,7 @@ impl Error {
     /// constructor covers `E`, `SystemErrno`, raw `u16` (libuv `ReturnCode::errno`)
     /// and `i32`.
     #[inline]
-    pub fn new<C: IntoErrnoInt>(errno: C, syscall_tag: Tag) -> Error {
+    pub(crate) fn new<C: IntoErrnoInt>(errno: C, syscall_tag: Tag) -> Error {
         Error {
             errno: errno.into_errno_int(),
             syscall: syscall_tag,

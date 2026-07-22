@@ -46,13 +46,13 @@ pub enum Data {
 }
 
 pub struct ReferenceProxy {
-    pub other_source: Source,
-    pub named_exports: NamedExports,
+    pub(crate) other_source: Source,
+    pub(crate) named_exports: NamedExports,
 }
 
 pub struct ClientEntryWrapper {
     // Owned copy.
-    pub path: Box<[u8]>,
+    pub(crate) path: Box<[u8]>,
 }
 
 /// Raw thread-pool callback. Recovers `&mut ServerComponentParseTask` from the

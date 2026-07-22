@@ -26,26 +26,26 @@ type Error = crate::Error;
 const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
 
 pub struct ExtractTarball {
-    pub name: StringOrTinyString,
-    pub resolution: Resolution,
+    pub(crate) name: StringOrTinyString,
+    pub(crate) resolution: Resolution,
     /// Borrowed view of `PackageManager`'s cache directory fd; the manager
     /// owns and closes it, so this stays a non-owning raw `Fd`.
-    pub cache_dir: Fd,
+    pub(crate) cache_dir: Fd,
     /// Borrowed view of `PackageManager`'s temp directory fd (same ownership
     /// story as `cache_dir`).
-    pub temp_dir: Fd,
-    pub dependency_id: DependencyID,
-    pub skip_verify: bool, // = false
-    pub in_trusted_dependencies: bool,
-    pub integrity: Integrity, // = Integrity::default()
-    pub url: StringOrTinyString,
+    pub(crate) temp_dir: Fd,
+    pub(crate) dependency_id: DependencyID,
+    pub(crate) skip_verify: bool, // = false
+    pub(crate) in_trusted_dependencies: bool,
+    pub(crate) integrity: Integrity, // = Integrity::default()
+    pub(crate) url: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
-    pub package_manager: bun_ptr::BackRef<PackageManager>,
+    pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,
 }
 
 impl ExtractTarball {
     #[inline]
-    pub fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
+    pub(crate) fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
         if !self.skip_verify && self.integrity.tag.is_supported() {
             if !self.integrity.verify(bytes) {
                 log.add_error_fmt(
@@ -188,7 +188,7 @@ impl ExtractTarball {
     /// package. Shared by the buffered `extract()` path below and the
     /// streaming extractor in `TarballStream.rs` so both pick identical
     /// temp-dir and cache-folder names.
-    pub fn name_and_basename(&self) -> (&[u8], &[u8]) {
+    pub(crate) fn name_and_basename(&self) -> (&[u8], &[u8]) {
         let name: &[u8] = if !self.name.slice().is_empty() {
             self.name.slice()
         } else {
@@ -474,7 +474,7 @@ impl ExtractTarball {
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
     /// between the buffered and streaming extraction paths.
-    pub fn move_to_cache_directory(
+    pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
         tmpname: &ZStr,

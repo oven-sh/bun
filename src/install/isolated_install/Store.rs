@@ -17,14 +17,14 @@ bun_output::declare_scope!(Store, visible);
 
 #[derive(Copy, Clone)]
 pub struct Ids {
-    pub dep_id: DependencyID,
-    pub pkg_id: PackageID,
+    pub(crate) dep_id: DependencyID,
+    pub(crate) pkg_id: PackageID,
 }
 
 pub struct Store {
     /// Accessed from multiple threads
-    pub entries: entry::List,
-    pub nodes: node::List,
+    pub(crate) entries: entry::List,
+    pub(crate) nodes: node::List,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -71,20 +71,20 @@ impl<T> fmt::Debug for NewId<T> {
 impl<T> NewId<T> {
     const MAX: u32 = u32::MAX;
 
-    pub const ROOT: Self = Self(0, PhantomData);
-    pub const INVALID: Self = Self(Self::MAX, PhantomData);
+    pub(crate) const ROOT: Self = Self(0, PhantomData);
+    pub(crate) const INVALID: Self = Self(Self::MAX, PhantomData);
 
-    pub fn from(id: u32) -> Self {
+    pub(crate) fn from(id: u32) -> Self {
         debug_assert!(id != Self::MAX);
         Self(id, PhantomData)
     }
 
-    pub fn get(self) -> u32 {
+    pub(crate) fn get(self) -> u32 {
         debug_assert!(self != Self::INVALID);
         self.0
     }
 
-    pub fn try_get(self) -> Option<u32> {
+    pub(crate) fn try_get(self) -> Option<u32> {
         if self == Self::INVALID {
             None
         } else {
@@ -158,7 +158,7 @@ pub(crate) trait OrderedArraySetCtx<T: Copy> {
 }
 
 pub struct OrderedArraySet<T> {
-    pub list: Vec<T>,
+    pub(crate) list: Vec<T>,
 }
 
 impl<T: Clone> Clone for OrderedArraySet<T> {
@@ -176,7 +176,7 @@ impl<T> Default for OrderedArraySet<T> {
 }
 
 impl<T> OrderedArraySet<T> {
-    pub(crate) const EMPTY: Self = Self { list: Vec::new() };
+    const EMPTY: Self = Self { list: Vec::new() };
 
     pub(crate) fn init_capacity(n: usize) -> Result<Self, AllocError> {
         // allocator param dropped — global mimalloc
@@ -333,13 +333,13 @@ pub mod entry {
     pub struct PeerHash(u64);
 
     impl PeerHash {
-        pub(crate) const NONE: Self = Self(0);
+        pub const NONE: Self = Self(0);
 
-        pub(crate) fn from(int: u64) -> Self {
+        pub fn from(int: u64) -> Self {
             Self(int)
         }
 
-        pub(crate) fn cast(self) -> u64 {
+        fn cast(self) -> u64 {
             self.0
         }
     }
@@ -415,7 +415,7 @@ pub mod entry {
         }
     }
 
-    pub(crate) fn fmt_store_path<'a>(
+    pub fn fmt_store_path<'a>(
         entry_id: Id,
         store: &'a Store,
         lockfile: &'a Lockfile,
@@ -427,7 +427,7 @@ pub mod entry {
         }
     }
 
-    pub(crate) struct GlobalStorePathFormatter<'a> {
+    pub struct GlobalStorePathFormatter<'a> {
         inner: StorePathFormatter<'a>,
         entry_hash: u64,
     }
@@ -442,7 +442,7 @@ pub mod entry {
     /// Like `fmt_store_path` but suffixes the entry's content hash so the
     /// resulting name is safe to use as a key in the shared global virtual
     /// store (different dependency closures get different directory names).
-    pub(crate) fn fmt_global_store_path<'a>(
+    pub fn fmt_global_store_path<'a>(
         entry_id: Id,
         store: &'a Store,
         lockfile: &'a Lockfile,
@@ -453,7 +453,7 @@ pub mod entry {
         }
     }
 
-    pub(crate) fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
+    pub fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
         let mut i: usize = 0;
         let mut len: usize;
 
@@ -495,7 +495,7 @@ pub mod entry {
         pub dep_id: DependencyID,
     }
 
-    pub(crate) struct DependenciesOrderedArraySetCtx<'a> {
+    pub struct DependenciesOrderedArraySetCtx<'a> {
         pub string_buf: &'a [u8],
         pub dependencies: &'a [Dependency],
     }
@@ -545,7 +545,7 @@ pub mod entry {
 }
 
 pub use entry::Entry;
-pub use entry::EntryColumns;
+pub(crate) use entry::EntryColumns;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Node
@@ -635,4 +635,4 @@ pub mod node {
 }
 
 pub use node::Node;
-pub use node::NodeColumns;
+pub(crate) use node::NodeColumns;

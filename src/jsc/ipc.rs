@@ -59,7 +59,7 @@ pub struct InternalMsgHolder {
     pub callbacks: bun_collections::ArrayHashMap<i32, crate::StrongOptional>,
     pub worker: crate::StrongOptional,
     pub cb: crate::StrongOptional,
-    pub messages: Vec<crate::StrongOptional>,
+    pub(crate) messages: Vec<crate::StrongOptional>,
 }
 
 impl Default for InternalMsgHolder {
@@ -79,7 +79,7 @@ impl InternalMsgHolder {
         self.worker.has() && self.cb.has()
     }
 
-    pub fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
+    pub(crate) fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
         self.messages
             .push(crate::StrongOptional::create(message, global));
     }
@@ -177,7 +177,7 @@ enum IncomingBuffer {
 }
 
 impl IncomingBuffer {
-    pub(crate) fn init(mode: Mode) -> IncomingBuffer {
+    fn init(mode: Mode) -> IncomingBuffer {
         match mode {
             Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::default()),
             Mode::Json => IncomingBuffer::Json(JSONLineBuffer::default()),
@@ -220,7 +220,7 @@ bun_core::comptime_string_map! {
 }
 
 impl Mode {
-    pub fn from_string(s: &[u8]) -> Option<Mode> {
+    pub(crate) fn from_string(s: &[u8]) -> Option<Mode> {
         MODE_MAP.get(s).copied()
     }
 
@@ -239,9 +239,9 @@ pub enum DecodedIPCMessage {
     Internal(JSValue),
 }
 
-pub struct DecodeIPCMessageResult {
-    pub bytes_consumed: u32,
-    pub message: DecodedIPCMessage,
+pub(crate) struct DecodeIPCMessageResult {
+    pub(crate) bytes_consumed: u32,
+    pub(crate) message: DecodedIPCMessage,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -288,10 +288,10 @@ pub enum IPCSerializationError {
 mod advanced {
     use super::*;
 
-    pub(super) const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
+    const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
     // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
-    pub(super) const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
-    pub(super) const VERSION: u32 = 1;
+    const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
+    const VERSION: u32 = 1;
 
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq)]
@@ -614,7 +614,7 @@ mod json {
 
 /// Given potentially unfinished buffer `data`, attempt to decode and process a message from it.
 /// For JSON mode, `known_newline` can be provided to avoid re-scanning for the newline delimiter.
-pub fn decode_ipc_message(
+pub(crate) fn decode_ipc_message(
     mode: Mode,
     data: &[u8],
     global: &JSGlobalObject,
@@ -627,7 +627,7 @@ pub fn decode_ipc_message(
 }
 
 /// Returns the initialization packet for the given mode. Can be zero-length.
-pub fn get_version_packet(mode: Mode) -> &'static [u8] {
+pub(crate) fn get_version_packet(mode: Mode) -> &'static [u8] {
     match mode {
         Mode::Advanced => advanced::get_version_packet(),
         Mode::Json => json::get_version_packet(),
@@ -636,7 +636,7 @@ pub fn get_version_packet(mode: Mode) -> &'static [u8] {
 
 /// Given a writer interface, serialize and write a value.
 /// Returns true if the value was written, false if it was not.
-pub fn serialize(
+pub(crate) fn serialize(
     mode: Mode,
     writer: &mut StreamBuffer,
     global: &JSGlobalObject,
@@ -649,14 +649,14 @@ pub fn serialize(
     }
 }
 
-pub fn get_ack_packet(mode: Mode) -> &'static [u8] {
+pub(crate) fn get_ack_packet(mode: Mode) -> &'static [u8] {
     match mode {
         Mode::Advanced => advanced::get_ack_packet(),
         Mode::Json => json::get_ack_packet(),
     }
 }
 
-pub fn get_nack_packet(mode: Mode) -> &'static [u8] {
+pub(crate) fn get_nack_packet(mode: Mode) -> &'static [u8] {
     match mode {
         Mode::Advanced => advanced::get_nack_packet(),
         Mode::Json => json::get_nack_packet(),
@@ -668,7 +668,7 @@ pub fn get_nack_packet(mode: Mode) -> &'static [u8] {
 pub type Socket = bun_uws::SocketHandler<false>;
 
 pub struct Handle {
-    pub fd: Fd,
+    pub(crate) fd: Fd,
     pub js: Protected,
 }
 
@@ -692,7 +692,7 @@ pub enum CallbackList {
 
 impl CallbackList {
     /// protects the callback
-    pub fn init(callback: JSValue) -> Self {
+    pub(crate) fn init(callback: JSValue) -> Self {
         if callback.is_callable() {
             return CallbackList::Callback(callback.protected());
         }
@@ -700,7 +700,7 @@ impl CallbackList {
     }
 
     /// protects the callback
-    pub fn push(&mut self, callback: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn push(&mut self, callback: JSValue, global: &JSGlobalObject) -> JsResult<()> {
         match self {
             CallbackList::AckNack => unreachable!(),
             CallbackList::None => {
@@ -748,19 +748,19 @@ impl CallbackList {
 pub struct SendHandle {
     // when a message has a handle, make sure it has a new SendHandle - so that if we retry sending it,
     // we only retry sending the message with the handle, not the original message.
-    pub data: StreamBuffer,
+    pub(crate) data: StreamBuffer,
     /// keep sending the handle until data is drained (assume it hasn't sent until data is fully drained)
-    pub handle: Option<Handle>,
-    pub callbacks: CallbackList,
+    pub(crate) handle: Option<Handle>,
+    pub(crate) callbacks: CallbackList,
 }
 
 impl SendHandle {
-    pub fn is_ack_nack(&self) -> bool {
+    pub(crate) fn is_ack_nack(&self) -> bool {
         matches!(self.callbacks, CallbackList::AckNack)
     }
 
     /// Call the callback and deinit
-    pub fn complete(mut self, global: &JSGlobalObject) {
+    pub(crate) fn complete(mut self, global: &JSGlobalObject) {
         let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
     }
@@ -827,17 +827,17 @@ enum ContinueSendReason {
 }
 
 pub struct SendQueue {
-    pub queue: Vec<SendHandle>,
-    pub waiting_for_ack: Option<SendHandle>,
+    pub(crate) queue: Vec<SendHandle>,
+    pub(crate) waiting_for_ack: Option<SendHandle>,
 
-    pub retry_count: u32,
-    pub keep_alive: KeepAlive,
+    pub(crate) retry_count: u32,
+    pub(crate) keep_alive: KeepAlive,
     #[cfg(debug_assertions)]
-    pub has_written_version: u8,
-    pub mode: Mode,
+    pub(crate) has_written_version: u8,
+    pub(crate) mode: Mode,
     pub internal_msg_queue: InternalMsgHolder,
     incoming: IncomingBuffer,
-    pub incoming_fd: Option<Fd>,
+    pub(crate) incoming_fd: Option<Fd>,
 
     pub socket: SocketUnion,
     /// BACKREF to the embedding owner (`Subprocess` or `IPCInstance`). The
@@ -845,15 +845,15 @@ pub struct SendQueue {
     /// raw pointer; never reborrow as `&mut dyn` while a `&mut SendQueue` is
     /// live (every access goes through `unsafe { &mut *self.owner }` at the
     /// call site).
-    pub owner: *mut dyn SendQueueOwner,
+    pub(crate) owner: *mut dyn SendQueueOwner,
 
-    pub close_next_tick: Option<Task>,
+    pub(crate) close_next_tick: Option<Task>,
     /// Set while an `_onAfterIPCClosed` task is queued. Cleared when the task
     /// runs. Tracked so `deinit` can cancel it; the task captures a raw
     /// `*SendQueue` into the owner's inline storage, which is freed right
     /// after `deinit` returns.
-    pub after_close_task: Option<Task>,
-    pub write_in_progress: bool,
+    pub(crate) after_close_task: Option<Task>,
+    pub(crate) write_in_progress: bool,
     pub close_event_sent: bool,
 
     pub windows: WindowsState,
@@ -1095,7 +1095,7 @@ impl SendQueue {
     }
 
     /// returned pointer is invalidated if the queue is modified
-    pub fn start_message(
+    pub(crate) fn start_message(
         &mut self,
         global: &JSGlobalObject,
         callback: JSValue,
@@ -1138,7 +1138,7 @@ impl SendQueue {
     }
 
     /// returned pointer is invalidated if the queue is modified
-    pub fn insert_message(&mut self, message: SendHandle) {
+    pub(crate) fn insert_message(&mut self, message: SendHandle) {
         log!("SendQueue#insertMessage");
         #[cfg(debug_assertions)]
         debug_assert!(self.has_written_version == 1);
@@ -1152,7 +1152,7 @@ impl SendQueue {
         }
     }
 
-    pub fn on_ack_nack(&mut self, global: &JSGlobalObject, ack_nack: AckNack) {
+    pub(crate) fn on_ack_nack(&mut self, global: &JSGlobalObject, ack_nack: AckNack) {
         log!("SendQueue#onAckNack");
         if self.waiting_for_ack.is_none() {
             log!("onAckNack: ack received but not waiting for ack");
@@ -1216,7 +1216,7 @@ impl SendQueue {
         false // error state.
     }
 
-    pub fn update_ref(&mut self, global: &JSGlobalObject) {
+    pub(crate) fn update_ref(&mut self, global: &JSGlobalObject) {
         let _ = global;
         // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
         // break vtable), not `&VirtualMachine`; dispatch is
@@ -2286,7 +2286,7 @@ pub fn ipc_serialize(
 }
 
 #[track_caller]
-pub fn ipc_parse(
+pub(crate) fn ipc_parse(
     global_object: &JSGlobalObject,
     target: JSValue,
     serialized: JSValue,

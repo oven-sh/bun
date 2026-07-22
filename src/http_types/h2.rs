@@ -104,7 +104,7 @@ impl SettingsType {
     pub const SETTINGS_MAX_FRAME_SIZE: Self = Self(0x5);
     pub const SETTINGS_MAX_HEADER_LIST_SIZE: Self = Self(0x6);
     // Non-standard extension settings (still unsupported):
-    pub const SETTINGS_ENABLE_CONNECT_PROTOCOL: Self = Self(0x8);
+    pub(crate) const SETTINGS_ENABLE_CONNECT_PROTOCOL: Self = Self(0x8);
 }
 
 // ─── wire helpers ───────────────────────────────
@@ -153,8 +153,8 @@ impl UInt31WithReserved {
 #[repr(C, packed)]
 #[derive(Copy, Clone, Default)]
 pub struct StreamPriority {
-    pub stream_identifier: u32,
-    pub weight: u8,
+    pub(crate) stream_identifier: u32,
+    pub(crate) weight: u8,
 }
 // SAFETY: `#[repr(C, packed)]` with `u32 + u8` fields — no padding, no niches,
 // every 5-byte pattern is a valid value.
@@ -291,5 +291,5 @@ impl Default for FullSettingsPayload {
     }
 }
 impl FullSettingsPayload {
-    pub(crate) const BYTE_SIZE: usize = 42;
+    const BYTE_SIZE: usize = 42;
 }

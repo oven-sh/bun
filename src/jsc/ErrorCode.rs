@@ -74,7 +74,7 @@ include!(concat!(env!("BUN_CODEGEN_DIR"), "/ErrorCode.generated.rs"));
 // Legacy anyerror-wrapper sentinels.
 // ──────────────────────────────────────────────────────────────────────────
 impl ErrorCode {
-    pub const PARSER_ERROR: ErrorCodeInt = 0xFFFE;
+    pub(crate) const PARSER_ERROR: ErrorCodeInt = 0xFFFE;
     pub const JS_ERROR_OBJECT: ErrorCodeInt = 0xFFFD;
 }
 
@@ -86,7 +86,7 @@ impl ErrorCode {
 
     /// Node `error.code` string (e.g. `"ERR_INVALID_ARG_TYPE"`).
     #[inline]
-    pub fn code_str(self) -> &'static str {
+    pub(crate) fn code_str(self) -> &'static str {
         CODE_STR
             .get(self.0 as usize)
             .copied()
@@ -145,9 +145,9 @@ unsafe extern "C" {
 /// Returned from `JSGlobalObject::err(code, args)` so callers can choose
 /// `.throw()` / `.to_js()` / `.reject()` at the use site.
 pub struct ErrorBuilder<'a, G: GlobalObjectRef + ?Sized = JSGlobalObject> {
-    pub global: &'a G,
-    pub code: ErrorCode,
-    pub args: Arguments<'a>,
+    pub(crate) global: &'a G,
+    pub(crate) code: ErrorCode,
+    pub(crate) args: Arguments<'a>,
 }
 
 impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
@@ -187,9 +187,9 @@ impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
 // (`extern "C" ZigErrorCode Zig_ErrorCodeParserError;`, headers-handwritten.h).
 
 #[unsafe(no_mangle)]
-pub(crate) static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
+static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
 
 #[unsafe(no_mangle)]
-pub(crate) static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
+static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
 
 // ported from: src/jsc/bindings/ErrorCode.ts

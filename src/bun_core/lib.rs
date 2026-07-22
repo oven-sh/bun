@@ -576,7 +576,7 @@ bun_dispatch::link_interface! {
 }
 
 impl OutputSink {
-    pub const SYS: Self = Self {
+    const SYS: Self = Self {
         kind: OutputSinkKind::Sys,
         owner: core::ptr::null_mut(),
     };
@@ -596,7 +596,7 @@ bun_dispatch::link_interface! {
 }
 
 impl ErrnoNames {
-    pub const SYS: Self = Self {
+    const SYS: Self = Self {
         kind: ErrnoNamesKind::Sys,
         owner: core::ptr::null_mut(),
     };
@@ -1333,7 +1333,7 @@ pub(crate) mod strings_impl {
     /// case-insensitive ASCII substring search (callers are cold path-lookup
     /// on macOS/Windows where the FS is case-insensitive).
     #[inline]
-    pub fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
+    pub(crate) fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
         if needle.len() > haystack.len() {
             return false;
         }
@@ -1443,7 +1443,7 @@ pub(crate) mod strings_impl {
     /// [`crate::strings::first_non_ascii`] (`Option<u32>`), a thin view over
     /// this; `_usize` is the raw form for callers that index with the result.
     #[inline]
-    pub fn first_non_ascii_usize(slice: &[u8]) -> Option<usize> {
+    pub(crate) fn first_non_ascii_usize(slice: &[u8]) -> Option<usize> {
         // Short-string fast path: see is_all_ascii() above for the FFI-dispatch
         // cost rationale. position() autovectorizes; ≤32B beats the shim.
         if slice.len() <= 32 {
@@ -1937,7 +1937,7 @@ pub(crate) mod strings_impl {
             .any(|h| eql_case_insensitive_ascii(needle, h, true))
     }
 
-    pub fn starts_with_uuid(s: &[u8]) -> bool {
+    pub(crate) fn starts_with_uuid(s: &[u8]) -> bool {
         // 8-4-4-4-12 hex with dashes
         if s.len() < 36 {
             return false;
@@ -1954,10 +1954,10 @@ pub(crate) mod strings_impl {
         true
     }
     #[inline]
-    pub fn is_uuid(s: &[u8]) -> bool {
+    pub(crate) fn is_uuid(s: &[u8]) -> bool {
         s.len() == 36 && starts_with_uuid(s)
     }
-    pub fn starts_with_npm_secret(s: &[u8]) -> usize {
+    pub(crate) fn starts_with_npm_secret(s: &[u8]) -> usize {
         // Case-insensitive
         // `npm`, then `_` or `s_`/`S_`, then 36..=48 alnum. Returns consumed length or 0.
         if s.len() < 3 {
@@ -2067,7 +2067,7 @@ pub(crate) mod strings_impl {
     }
 
     /// Returns offset and length of first secret found.
-    pub fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
+    pub(crate) fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
         if let Some(r) = starts_with_redacted_item(str, b"_auth") {
             return Some(r);
         }
@@ -2103,7 +2103,7 @@ pub(crate) mod strings_impl {
     /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
     /// `(offset, len)` of the password segment, or None.
     /// Only matches http:// and https:// schemes and rejects empty pw.
-    pub fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
+    pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
         // Case-sensitive prefix match; the search region is truncated at the
         // first '\n' before scanning for '@'/':'.
         let scheme_end = if s.starts_with(b"http://") {
@@ -2309,7 +2309,7 @@ pub use crate::string::immutable as strings;
 // `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
 // `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
-pub mod debug_allocator_data {
+pub(crate) mod debug_allocator_data {
     /// Only referenced from `debug_assert!` — dead in release builds.
     #[allow(dead_code)]
     #[inline]
@@ -2741,7 +2741,7 @@ pub mod ffi {
     /// lifetime — `*mut c_int` is `!Send`, so the cross-thread hazard is
     /// already type-enforced.
     #[inline(always)]
-    pub fn errno_ptr() -> *mut core::ffi::c_int {
+    fn errno_ptr() -> *mut core::ffi::c_int {
         // Per-libc TLS errno accessor: no args, never null, no preconditions.
         // `safe fn` discharges the link-time proof so the body is a plain
         // call; only the per-platform symbol *name* varies, expressed via
@@ -2866,7 +2866,7 @@ pub mod asan {
 // ────────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn __wrap_gettid() -> libc::pid_t {
+extern "C" fn __wrap_gettid() -> libc::pid_t {
     // SAFETY: SYS_gettid takes no arguments and never fails.
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
 }

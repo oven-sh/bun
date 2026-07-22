@@ -147,7 +147,7 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
 
-    pub fn publish_with_options(
+    pub(crate) fn publish_with_options(
         &mut self,
         topic: &[u8],
         message: &[u8],

@@ -8,8 +8,8 @@ use crate::{read_struct, write_struct};
 
 use bun_core::env_var::feature_flag;
 
-pub(crate) const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
-pub(crate) const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum MachoError {
@@ -33,10 +33,10 @@ pub enum MachoError {
 bun_core::oom_from_alloc!(MachoError);
 
 pub struct MachoFile {
-    pub header: macho::mach_header_64,
-    pub data: Vec<u8>,
-    pub segment: macho::segment_command_64,
-    pub section: macho::section_64,
+    pub(crate) header: macho::mach_header_64,
+    pub(crate) data: Vec<u8>,
+    pub(crate) segment: macho::segment_command_64,
+    pub(crate) section: macho::section_64,
 }
 
 /// Expands to one `shift_one` call per named field.
@@ -466,14 +466,14 @@ impl MachoFile {
         Ok(())
     }
 
-    pub fn iterator(&self) -> macho::LoadCommandIterator {
+    pub(crate) fn iterator(&self) -> macho::LoadCommandIterator {
         macho::LoadCommandIterator::new(
             self.header.ncmds,
             &self.data[size_of::<macho::mach_header_64>()..][..self.header.sizeofcmds as usize],
         )
     }
 
-    pub fn build(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    pub(crate) fn build(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -552,7 +552,7 @@ impl Shifter {
     }
 }
 
-pub(crate) struct MachoSigner {
+struct MachoSigner {
     data: Vec<u8>,
     sig_off: usize,
     linkedit_seg: macho::segment_command_64,
@@ -560,7 +560,7 @@ pub(crate) struct MachoSigner {
 }
 
 impl MachoSigner {
-    pub(crate) fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
+    fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
         let header_size = size_of::<macho::mach_header_64>();
         let header: macho::mach_header_64 = read_struct(&obj[..header_size]);
 
@@ -648,7 +648,7 @@ impl MachoSigner {
     /// hashes). `writeSection` uses this to size `linkedit_seg.filesize` and
     /// the `LC_CODE_SIGNATURE.datasize` so the signer's output fits exactly
     /// inside __LINKEDIT.
-    pub(crate) fn compute_signature_size(sig_off: u64) -> usize {
+    fn compute_signature_size(sig_off: u64) -> usize {
         let total_pages: usize =
             usize::try_from(sig_off.div_ceil(Self::SIGNATURE_PAGE_SIZE as u64)).unwrap();
         let super_blob_header_size = size_of::<SuperBlob>();
@@ -660,7 +660,7 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 

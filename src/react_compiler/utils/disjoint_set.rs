@@ -20,7 +20,7 @@ pub struct DisjointSet<K: Copy + Eq + Hash> {
 }
 
 impl<K: Copy + Eq + Hash> DisjointSet<K> {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         DisjointSet {
             entries: IndexMap::new(),
         }
@@ -30,7 +30,7 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     /// linking any previous sets that the items were part of into a single set.
     ///
     /// Corresponds to TS `union(items: Array<T>): void`.
-    pub fn union(&mut self, items: &[K]) {
+    pub(crate) fn union(&mut self, items: &[K]) {
         if items.is_empty() {
             return;
         }
@@ -48,7 +48,7 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     ///
     /// Note: callers that need null/None semantics for missing items should
     /// use `find_opt()` instead.
-    pub fn find(&mut self, item: K) -> K {
+    pub(crate) fn find(&mut self, item: K) -> K {
         let parent = match self.entries.get(&item) {
             Some(&p) => p,
             None => {
@@ -68,7 +68,7 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     /// was never added to the set.
     ///
     /// Corresponds to TS `find(item: T): T | null`.
-    pub fn find_opt(&mut self, item: K) -> Option<K> {
+    pub(crate) fn find_opt(&mut self, item: K) -> Option<K> {
         if !self.entries.contains_key(&item) {
             return None;
         }
@@ -86,7 +86,7 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     /// passing the item and the group root to which it belongs.
     ///
     /// Corresponds to TS `forEach(fn: (item: T, group: T) => void): void`.
-    pub fn for_each<F>(&mut self, mut f: F)
+    pub(crate) fn for_each<F>(&mut self, mut f: F)
     where
         F: FnMut(K, K),
     {

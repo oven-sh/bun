@@ -102,9 +102,6 @@ pub enum CompileOutput {
 }
 
 pub struct CompileDiagnostic {
-    pub fn_name: Option<String>,
-    pub loc: bun_ast::Loc,
-    pub message: String,
 }
 
 /// An item in the ordered log, which can be either a logger event or a debug entry.

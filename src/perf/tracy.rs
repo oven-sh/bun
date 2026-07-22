@@ -27,8 +27,8 @@ pub fn set_enable(v: bool) {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct ___tracy_c_zone_context {
-    pub id: u32,
-    pub active: c_int,
+    id: u32,
+    active: c_int,
 }
 
 impl ___tracy_c_zone_context {
@@ -332,11 +332,11 @@ pub fn init_thread(name: &'static core::ffi::CStr) {
 #[allow(non_camel_case_types)]
 #[repr(C)]
 pub struct ___tracy_source_location_data {
-    pub name: *const c_char,
-    pub function: *const c_char,
-    pub file: *const c_char,
-    pub line: u32,
-    pub color: u32,
+    name: *const c_char,
+    function: *const c_char,
+    file: *const c_char,
+    line: u32,
+    color: u32,
 }
 
 // SAFETY: Tracy requires srcloc data to have 'static lifetime; all pointer

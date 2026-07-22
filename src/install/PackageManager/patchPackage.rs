@@ -33,9 +33,9 @@ fn string_hash(s: &[u8]) -> u64 {
 
 #[derive(Default)]
 pub struct PatchCommitResult {
-    pub patch_key: Box<[u8]>,
-    pub patchfile_path: Box<[u8]>,
-    pub not_in_workspace_root: bool,
+    pub(crate) patch_key: Box<[u8]>,
+    pub(crate) patchfile_path: Box<[u8]>,
+    pub(crate) not_in_workspace_root: bool,
 }
 
 /// - Arg is the dir containing the package with changes OR name and version
@@ -665,7 +665,7 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
     }
 
     impl EscapeVal {
-        pub(crate) fn escaped(self) -> Option<&'static [u8]> {
+        fn escaped(self) -> Option<&'static [u8]> {
             match self {
                 EscapeVal::Slash => Some(b"%2F"),
                 EscapeVal::Backslash => Some(b"%5c"),
@@ -1440,7 +1440,7 @@ enum PatchArgKind {
 }
 
 impl PatchArgKind {
-    pub(crate) fn from_arg(argument: &[u8]) -> PatchArgKind {
+    fn from_arg(argument: &[u8]) -> PatchArgKind {
         if strings::contains(argument, b"node_modules/") {
             return PatchArgKind::Path;
         }

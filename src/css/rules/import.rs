@@ -1,4 +1,3 @@
-use crate as css;
 use crate::css_rules::Location;
 use crate::css_rules::layer::LayerName;
 use crate::css_rules::supports::SupportsCondition;
@@ -18,13 +17,13 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         Self {
             v: self.v.as_ref().map(|n| n.deep_clone(bump)),
         }
     }
 
-    pub fn eql(&self, other: &Self) -> bool {
+    pub(crate) fn eql(&self, other: &Self) -> bool {
         match (&self.v, &other.v) {
             (None, None) => true,
             (None, _) | (_, None) => false,
@@ -190,7 +189,7 @@ impl ImportRule {
         self.layer.is_some() || self.supports.is_some() || !self.media.media_queries.is_empty()
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `url: &'static [u8]` is an arena-owned slice → identity copy;
         // `media` routes through `dc::media_list` until
         // `MediaList` gains an arena-aware `deep_clone`.
@@ -204,35 +203,9 @@ impl ImportRule {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        let dep: Option<css::dependencies::ImportDependency> = if dest.dependencies.is_some() {
-            Some(css::dependencies::ImportDependency::new(
-                dest.arena,
-                self,
-                dest.filename(),
-                dest.local_names,
-                dest.symbols,
-            ))
-        } else {
-            None
-        };
-
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str("@import ")?;
-        if let Some(d) = dep {
-            // SAFETY: `placeholder` is arena-allocated by `css_modules::hash`
-            // and outlives this print call.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
-
-            if let Some(deps) = &mut dest.dependencies {
-                deps.push(css::Dependency::Import(d));
-            }
-        } else {
-            dest.serialize_string(self.url)?;
-        }
+        dest.serialize_string(self.url)?;
 
         if let Some(lyr) = &self.layer {
             dest.write_str(" layer")?;

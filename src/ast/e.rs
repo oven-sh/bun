@@ -721,11 +721,11 @@ impl Number {
     /// by calling out to the APIs in WebKit which are responsible for this operation.
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
-    pub fn to_string(self, bump: &Bump) -> Option<Str> {
+    pub(crate) fn to_string(self, bump: &Bump) -> Option<Str> {
         Self::to_string_from_f64(self.value(), bump)
     }
 
-    pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
+    pub(crate) fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
         if value == value.trunc() && (value < i32::MAX as f64 && value > i32::MIN as f64) {
             let int_value = value as i64;
             let abs = int_value.unsigned_abs();
@@ -779,11 +779,11 @@ impl Number {
     }
 
     #[inline]
-    pub fn to_u32(self) -> u32 {
+    pub(crate) fn to_u32(self) -> u32 {
         self.to::<u32>()
     }
 
-    pub fn to<T: NumberCast>(self) -> T {
+    pub(crate) fn to<T: NumberCast>(self) -> T {
         let clamped = self.value().trunc().max(0.0).min(T::MAX_AS_F64);
         T::from_f64(clamped)
     }
@@ -819,7 +819,7 @@ impl BigInt {
     /// a syntax error, so any literal that starts with `0` and has more than
     /// one character is a radix literal.
     #[inline]
-    pub fn has_radix(v: &[u8]) -> bool {
+    pub(crate) fn has_radix(v: &[u8]) -> bool {
         v.len() >= 2 && v[0] == b'0'
     }
 
@@ -855,7 +855,7 @@ const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
 const _: () = assert!(core::mem::align_of::<JsonValue>() == 4);
 
 impl JsonValue {
-    pub fn write_to_hasher<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
+    pub(crate) fn write_to_hasher<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         match self {
             JsonValue::Null => hasher.update(&[0]),
             JsonValue::Boolean(b) => hasher.update(&[1, *b as u8]),
@@ -1257,7 +1257,7 @@ impl Rope {
     /// the one `unsafe` so the `get_or_put_object`/`get_rope` walkers
     /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
     #[inline]
-    pub fn next_ref<'a>(&self) -> Option<&'a Rope> {
+    pub(crate) fn next_ref<'a>(&self) -> Option<&'a Rope> {
         // SAFETY: `next` is either null or a bump-arena allocation valid until
         // arena reset. Read-only borrow; no `&mut` alias is
         // outstanding at any caller (the chain is fully built before walking).
@@ -1810,7 +1810,7 @@ impl EString {
         }
     }
 
-    pub fn string_cloned<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
+    pub(crate) fn string_cloned<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
         if self.is_utf8() {
             Ok(bump.alloc_slice_copy(&self.data))
         } else {
@@ -1914,7 +1914,7 @@ impl EString {
     /// `other` MUST be Store/arena-allocated (callers pass
     /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly
     /// `Store::append`ed node); its address is captured as a `StoreRef`.
-    pub fn push(&mut self, other: &mut EString) {
+    pub(crate) fn push(&mut self, other: &mut EString) {
         debug_assert!(self.is_utf8());
         debug_assert!(other.is_utf8());
 
@@ -2026,7 +2026,7 @@ pub enum TemplateContents {
     Raw(Str),
 }
 impl TemplateContents {
-    pub fn is_utf8(&self) -> bool {
+    pub(crate) fn is_utf8(&self) -> bool {
         matches!(self, TemplateContents::Cooked(c) if c.is_utf8())
     }
 

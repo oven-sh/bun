@@ -38,12 +38,12 @@ pub struct InitOpts<'a> {
 
 pub struct AsyncModule {
     // This is all the state used by the printer to print the module
-    pub parse_result: ParseResult<'static>,
-    pub promise: StrongOptional, // Strong.Optional, default .empty
+    pub(crate) parse_result: ParseResult<'static>,
+    pub(crate) promise: StrongOptional, // Strong.Optional, default .empty
     /// Packed `referrer ++ specifier ++ path.text`. Owns the bytes; stored as offsets so
     /// the struct stays movable (no self-referential borrows); reconstruct
     /// slices via `referrer()` / `specifier()` / `path_text()`.
-    pub string_buf: Box<[u8]>,
+    pub(crate) string_buf: Box<[u8]>,
     referrer_len: u32,
     specifier_len: u32,
     pub fd: Option<Fd>,
@@ -52,27 +52,27 @@ pub struct AsyncModule {
     // stored as a raw ptr so `AsyncModule` is `'static`-embeddable in
     // `Queue`/`VirtualMachine` without a phantom lifetime; `global_this` uses
     // [`crate::GlobalRef`] which encapsulates the single audited deref.
-    pub package_json: Option<core::ptr::NonNull<PackageJSON>>,
-    pub loader: api::Loader,
-    pub hash: u32, // default = u32::MAX
-    pub global_this: crate::GlobalRef,
-    pub arena: Box<ArenaAllocator>,
+    pub(crate) package_json: Option<core::ptr::NonNull<PackageJSON>>,
+    pub(crate) loader: api::Loader,
+    pub(crate) hash: u32, // default = u32::MAX
+    pub(crate) global_this: crate::GlobalRef,
+    pub(crate) arena: Box<ArenaAllocator>,
     /// See [`InitOpts::ast_alloc_state`].
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
 
     // This is the specific state for making it async
-    pub poll_ref: KeepAlive,
-    pub any_task: bun_event_loop::AnyTask::AnyTask,
+    pub(crate) poll_ref: KeepAlive,
+    pub(crate) any_task: bun_event_loop::AnyTask::AnyTask,
 }
 
-pub(crate) struct PackageDownloadError<'a> {
+struct PackageDownloadError<'a> {
     pub name: &'a [u8],
     pub resolution: Resolution,
     pub err: &'static str,
     pub url: &'a [u8],
 }
 
-pub(crate) struct PackageResolveError<'a> {
+struct PackageResolveError<'a> {
     pub name: &'a [u8],
     pub err: &'static str,
     pub url: &'a [u8],
@@ -83,8 +83,8 @@ pub type Map = Vec<AsyncModule>;
 
 #[derive(Default)]
 pub struct Queue {
-    pub map: Map,
-    pub scheduled: u32,
+    pub(crate) map: Map,
+    pub(crate) scheduled: u32,
 }
 
 impl Queue {
@@ -99,11 +99,11 @@ impl Queue {
     /// `&mut self` is kept as a receiver so existing callers
     /// (`self.vm().package_manager()`) don't change shape.
     #[inline]
-    pub fn vm(&mut self) -> &mut VirtualMachine {
+    pub(crate) fn vm(&mut self) -> &mut VirtualMachine {
         VirtualMachine::get().as_mut()
     }
 
-    pub fn on_resolve(_: &mut Queue) {
+    pub(crate) fn on_resolve(_: &mut Queue) {
         bun_core::scoped_log!(AsyncModule, "onResolve");
     }
 }
@@ -118,18 +118,18 @@ impl bun_event_loop::Taskable for Queue {
 
 impl AsyncModule {
     #[inline]
-    pub fn referrer(&self) -> &[u8] {
+    pub(crate) fn referrer(&self) -> &[u8] {
         &self.string_buf[..self.referrer_len as usize]
     }
 
     #[inline]
-    pub fn specifier(&self) -> &[u8] {
+    pub(crate) fn specifier(&self) -> &[u8] {
         let off = self.referrer_len as usize;
         &self.string_buf[off..off + self.specifier_len as usize]
     }
 
     #[inline]
-    pub fn path_text(&self) -> &[u8] {
+    pub(crate) fn path_text(&self) -> &[u8] {
         let off = self.referrer_len as usize + self.specifier_len as usize;
         &self.string_buf[off..]
     }
@@ -138,7 +138,7 @@ impl AsyncModule {
     /// result back into JSC via `Bun__onFulfillAsyncModule`. This is the entry
     /// point `RuntimeTranspilerStore::run_from_js_thread` calls when a
     /// concurrent transpile job finishes.
-    pub fn fulfill(
+    pub(crate) fn fulfill(
         global_this: &JSGlobalObject,
         promise: JSValue,
         resolved_source: &mut ResolvedSource,
@@ -386,7 +386,7 @@ impl Queue {
         self.poll_modules();
     }
 
-    pub fn run_tasks(&mut self) {
+    pub(crate) fn run_tasks(&mut self) {
         // The `run_tasks` free fn takes both
         // `&mut PackageManager` and `&mut Queue`; the package manager is a
         // separate heap allocation (`NonNull<dyn AutoInstaller>` on the
@@ -410,7 +410,7 @@ impl Queue {
         }
     }
 
-    pub fn on_package_manifest_error(&mut self, name: &[u8], err: &'static str, url: &[u8]) {
+    pub(crate) fn on_package_manifest_error(&mut self, name: &[u8], err: &'static str, url: &[u8]) {
         bun_core::scoped_log!(
             AsyncModule,
             "onPackageManifestError: {}",
@@ -449,7 +449,7 @@ impl Queue {
         });
     }
 
-    pub fn on_package_download_error(
+    pub(crate) fn on_package_download_error(
         &mut self,
         package_id: PackageID,
         name: &[u8],
@@ -505,7 +505,7 @@ impl Queue {
         });
     }
 
-    pub fn poll_modules(&mut self) {
+    pub(crate) fn poll_modules(&mut self) {
         // S017: per-thread VM singleton (safe accessor) instead of
         // `container_of`-derived `*mut` reborrow. The package manager is a
         // separate heap allocation, disjoint from `self` (= `vm.modules`).
@@ -612,7 +612,7 @@ impl Queue {
 }
 
 impl AsyncModule {
-    pub fn init(
+    pub(crate) fn init(
         opts: InitOpts<'_>,
         global_object: &JSGlobalObject,
     ) -> Result<AsyncModule, bun_alloc::AllocError> {
@@ -666,7 +666,7 @@ impl AsyncModule {
         })
     }
 
-    pub fn done(self, jsc_vm: &mut VirtualMachine) {
+    pub(crate) fn done(self, jsc_vm: &mut VirtualMachine) {
         // The caller
         // (`Queue::poll_modules`) removes the element by value and passes it
         // here, so `Box::new(self)` is a single ownership transfer with no
@@ -694,7 +694,7 @@ impl AsyncModule {
     /// # Safety
     /// `this` must be the heap allocation produced by [`AsyncModule::done`]
     /// (via `bun_core::heap::into_raw`); this fn reclaims and drops it.
-    pub unsafe fn on_done(this: *mut AsyncModule) {
+    pub(crate) unsafe fn on_done(this: *mut AsyncModule) {
         jsc::mark_binding();
         // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.
         let this = unsafe { &mut *this };
@@ -1182,7 +1182,7 @@ impl AsyncModule {
         Ok(())
     }
 
-    pub fn resume_loading_module(
+    pub(crate) fn resume_loading_module(
         &mut self,
         log: &mut bun_ast::Log,
     ) -> crate::CrateResult<ResolvedSource> {

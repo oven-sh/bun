@@ -496,7 +496,7 @@ pub(crate) mod kind {
             pub empty_string_as: EmptyStringAs,
         }
         impl DeserOpts {
-            pub(crate) const DEFAULT: Self = Self {
+            const DEFAULT: Self = Self {
                 error_handling: ErrorHandling::DebugWarn,
                 empty_string_as: EmptyStringAs::Erroneous,
             };

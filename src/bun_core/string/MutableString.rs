@@ -67,7 +67,7 @@ impl MutableString {
         Ok(())
     }
 
-    pub fn writable_n_bytes_assume_capacity(&mut self, amount: usize) -> &mut [u8] {
+    fn writable_n_bytes_assume_capacity(&mut self, amount: usize) -> &mut [u8] {
         // SAFETY: caller has reserved at least `amount` bytes of spare capacity
         // (debug-asserted in the callee) and fully writes the returned slice
         // before reading it.
@@ -107,7 +107,7 @@ impl MutableString {
         self.grow_if_needed(amount)
     }
 
-    pub fn init_copy(str: impl AsRef<[u8]>) -> Result<MutableString, AllocError> {
+    fn init_copy(str: impl AsRef<[u8]>) -> Result<MutableString, AllocError> {
         let str = str.as_ref();
         let mut mutable = MutableString::init(str.len())?;
         mutable.copy(str)?;
@@ -207,7 +207,7 @@ impl MutableString {
         self.list.len()
     }
 
-    pub fn copy(&mut self, str: impl AsRef<[u8]>) -> Result<(), AllocError> {
+    fn copy(&mut self, str: impl AsRef<[u8]>) -> Result<(), AllocError> {
         let str = str.as_ref();
         self.list.reserve(str.len().saturating_sub(self.list.len()));
 

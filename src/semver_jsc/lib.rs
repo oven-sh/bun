@@ -9,4 +9,3 @@ pub mod SemverObject;
 #[path = "SemverString_jsc.rs"]
 pub mod SemverString_jsc;
 
-pub use SemverString_jsc::SemverStringJsc;

@@ -31,13 +31,13 @@ pub const EVP_MAX_MD_SIZE: c_int = 64;
 pub const RIPEMD160_DIGEST_LENGTH: c_int = 20;
 
 /// `#define NID_commonName 13`
-pub const NID_commonName: c_int = 13;
+const NID_commonName: c_int = 13;
 /// `#define NID_subject_alt_name 85`
-pub const NID_subject_alt_name: c_int = 85;
+const NID_subject_alt_name: c_int = 85;
 
-pub const GEN_DNS: c_int = 2;
-pub const GEN_URI: c_int = 6;
-pub const GEN_IPADD: c_int = 7;
+const GEN_DNS: c_int = 2;
+const GEN_URI: c_int = 6;
+const GEN_IPADD: c_int = 7;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ASN.1 string types
@@ -47,9 +47,9 @@ pub const GEN_IPADD: c_int = 7;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct asn1_string_st {
-    pub length: c_int,
+    length: c_int,
     pub r#type: c_int,
-    pub data: *mut u8,
+    data: *mut u8,
     pub flags: c_long,
 }
 
@@ -236,15 +236,15 @@ pub union GENERAL_NAME_d {
     pub ptr: *mut c_char,
     pub otherName: *mut OTHERNAME,
     pub rfc822Name: *mut ASN1_IA5STRING,
-    pub dNSName: *mut ASN1_IA5STRING,
+    dNSName: *mut ASN1_IA5STRING,
     pub x400Address: *mut ASN1_STRING,
     pub directoryName: *mut X509_NAME,
     pub ediPartyName: *mut c_void,
-    pub uniformResourceIdentifier: *mut ASN1_IA5STRING,
+    uniformResourceIdentifier: *mut ASN1_IA5STRING,
     pub iPAddress: *mut ASN1_OCTET_STRING,
     pub registeredID: *mut ASN1_OBJECT,
     // OpenSSL convenience aliases:
-    pub ip: *mut ASN1_OCTET_STRING,
+    ip: *mut ASN1_OCTET_STRING,
     pub dirn: *mut X509_NAME,
     pub ia5: *mut ASN1_IA5STRING,
     pub rid: *mut ASN1_OBJECT,
@@ -256,23 +256,23 @@ pub union GENERAL_NAME_d {
 #[derive(Copy, Clone)]
 pub struct GENERAL_NAME {
     /// One of the `GEN_*` discriminants.
-    pub name_type: c_int,
-    pub d: GENERAL_NAME_d,
+    name_type: c_int,
+    d: GENERAL_NAME_d,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // OPENSSL_STACK low-level ABI (used by the typed `sk_*` inline wrappers)
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub(crate) type OPENSSL_sk_free_func = Option<unsafe extern "C" fn(*mut c_void)>;
-pub(crate) type OPENSSL_sk_call_free_func =
+type OPENSSL_sk_free_func = Option<unsafe extern "C" fn(*mut c_void)>;
+type OPENSSL_sk_call_free_func =
     Option<unsafe extern "C" fn(OPENSSL_sk_free_func, *mut c_void)>;
-pub(crate) type OPENSSL_sk_cmp_func =
+type OPENSSL_sk_cmp_func =
     Option<unsafe extern "C" fn(*const *const c_void, *const *const c_void) -> c_int>;
 
 /// `struct stack_st` / `OPENSSL_STACK`.
 #[repr(C)]
-pub(crate) struct OPENSSL_STACK {
+struct OPENSSL_STACK {
     pub num: usize,
     pub data: *mut *mut c_void,
     pub sorted: c_int,
@@ -323,11 +323,11 @@ impl GeneralNames {
     ///
     /// # Safety
     /// `raw` must be null or a stack the caller owns and does not free itself.
-    pub unsafe fn from_raw(raw: *mut c_void) -> Option<Self> {
+    unsafe fn from_raw(raw: *mut c_void) -> Option<Self> {
         core::ptr::NonNull::new(raw.cast::<struct_stack_st_GENERAL_NAME>()).map(Self)
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         // SAFETY: we own a live stack; `sk_num` takes it as `const OPENSSL_STACK`.
         unsafe { sk_num(self.0.as_ptr().cast::<OPENSSL_STACK>()) }
     }
@@ -337,7 +337,7 @@ impl GeneralNames {
     }
 
     /// Borrows the `i`th entry; `None` past the end.
-    pub fn get(&self, i: usize) -> Option<&GENERAL_NAME> {
+    fn get(&self, i: usize) -> Option<&GENERAL_NAME> {
         if i >= self.len() {
             return None;
         }
@@ -350,7 +350,7 @@ impl GeneralNames {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &GENERAL_NAME> {
+    fn iter(&self) -> impl Iterator<Item = &GENERAL_NAME> {
         (0..self.len()).filter_map(|i| self.get(i))
     }
 }

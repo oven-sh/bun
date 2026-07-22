@@ -74,13 +74,13 @@ pub mod protocol {
     pub use signature::Signature;
 
     #[path = "error_packet_jsc.rs"]
-    pub mod error_packet_jsc;
+    pub(crate) mod error_packet_jsc;
 
     #[path = "any_mysql_error_jsc.rs"]
-    pub mod any_mysql_error_jsc;
+    pub(crate) mod any_mysql_error_jsc;
 
     #[path = "DecodeBinaryValue.rs"]
-    pub mod decode_binary_value;
+    pub(crate) mod decode_binary_value;
 
     #[path = "ResultSet.rs"]
     pub mod result_set;

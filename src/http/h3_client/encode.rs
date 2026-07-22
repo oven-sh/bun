@@ -16,7 +16,7 @@ use crate::{HTTPClient, HTTPVerboseLevel, Protocol};
 /// Build pseudo-headers + user headers and send them on `qs`, then kick off
 /// body transmission. Called from `callbacks.on_stream_open` once lsquic hands
 /// us a stream for a pending request.
-pub fn write_request(
+pub(crate) fn write_request(
     session: &ClientSession,
     stream: &mut Stream,
     qs: &mut quic::Stream,

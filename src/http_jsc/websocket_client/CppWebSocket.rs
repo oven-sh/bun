@@ -176,12 +176,12 @@ impl CppWebSocket {
 }
 
 impl CppWebSocket {
-    pub(crate) fn r#ref(&self) {
+    fn r#ref(&self) {
         bun_jsc::mark_binding!();
         WebSocket__incrementPendingActivity(self);
     }
 
-    pub(crate) fn unref(&self) {
+    fn unref(&self) {
         bun_jsc::mark_binding!();
         WebSocket__decrementPendingActivity(self);
     }

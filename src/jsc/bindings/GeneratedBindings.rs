@@ -11,7 +11,7 @@
 use crate::{JSGlobalObject, JSHostFn, JSValue, host_fn, zig_string};
 
 /// Generated for "src/jsc/bindgen_test.rs"
-pub mod bindgen_test {
+pub(crate) mod bindgen_test {
     use super::*;
 
     crate::jsc_abi_extern! {
@@ -21,8 +21,8 @@ pub mod bindgen_test {
         fn jsRequiredAndOptionalArg(global: *mut JSGlobalObject, frame: *mut crate::CallFrame) -> JSValue;
     }
 
-    pub(crate) const JS_ADD: JSHostFn = jsAdd;
-    pub(crate) const JS_REQUIRED_AND_OPTIONAL_ARG: JSHostFn = jsRequiredAndOptionalArg;
+    const JS_ADD: JSHostFn = jsAdd;
+    const JS_REQUIRED_AND_OPTIONAL_ARG: JSHostFn = jsRequiredAndOptionalArg;
 
     pub(crate) fn create_add_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(

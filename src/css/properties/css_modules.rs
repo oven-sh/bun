@@ -18,11 +18,11 @@ pub struct Composes {
     pub from: Option<Specifier>,
     /// The source location of the `composes` property.
     pub loc: bun_ast::Loc,
-    pub cssparser_loc: Location,
+    pub(crate) cssparser_loc: Location,
 }
 
 impl Composes {
-    pub fn parse(input: &mut Parser) -> css::Result<Composes> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Composes> {
         let loc = input.position();
         let loc2 = input.current_source_location();
         let mut names = CustomIdentList::default();
@@ -53,7 +53,7 @@ impl Composes {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::css_values::ident::CustomIdentFns;
         dest.write_separated(
             self.names.slice(),
@@ -78,7 +78,7 @@ impl Composes {
         Ok(name)
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `CustomIdent` is `Copy` (arena-ptr payload), so an element-wise copy
         // into a fresh `SmallList` is the deep clone.
         let mut names = CustomIdentList::default();
@@ -93,7 +93,7 @@ impl Composes {
         }
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         if lhs.names.len() != rhs.names.len() {
             return false;
         }
@@ -135,7 +135,7 @@ impl crate::generics::CssEql for Specifier {
 }
 
 impl Specifier {
-    pub fn eql(lhs: Self, rhs: Self) -> bool {
+    pub(crate) fn eql(lhs: Self, rhs: Self) -> bool {
         match (lhs, rhs) {
             (Specifier::Global, Specifier::Global) => true,
             (Specifier::ImportRecordIndex(a), Specifier::ImportRecordIndex(b)) => a == b,
@@ -143,7 +143,7 @@ impl Specifier {
         }
     }
 
-    pub fn parse(input: &mut Parser) -> css::Result<Specifier> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Specifier> {
         let start_position = input.position();
         if let Ok(file) = input.try_parse(|i| {
             let s = i.expect_url_or_string()?;
@@ -160,7 +160,7 @@ impl Specifier {
         Ok(Specifier::Global)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Specifier::Global => dest.write_str(b"global"),
             Specifier::ImportRecordIndex(import_record_index) => {
@@ -174,12 +174,12 @@ impl Specifier {
         }
     }
 
-    pub fn deep_clone(self, _bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(self, _bump: &Arena) -> Self {
         // Variants are `Copy`; the deep clone is the value itself.
         self
     }
 
-    pub fn hash(self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(self, hasher: &mut Wyhash) {
         match self {
             Specifier::Global => hasher.update(&0u32.to_ne_bytes()),
             Specifier::ImportRecordIndex(i) => {

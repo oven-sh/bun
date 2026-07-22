@@ -250,49 +250,49 @@ pub fn replace_package_manager_run(
 }
 
 pub struct LifecycleScriptSubprocess<'a> {
-    pub package_name: Box<[u8]>,
+    pub(crate) package_name: Box<[u8]>,
 
-    pub scripts: ScriptsList,
-    pub current_script_index: u8,
+    pub(crate) scripts: ScriptsList,
+    pub(crate) current_script_index: u8,
 
-    pub remaining_fds: i8,
+    pub(crate) remaining_fds: i8,
     /// `Process` is intrusively ref-counted (`bun_ptr::ThreadSafeRefCount`),
     /// so it lives behind a raw pointer and is dropped via `process.close(); process.deref()`
     /// in `reset_polls`. Null = none.
-    pub process: *mut Process,
-    pub stdout: OutputReader,
-    pub stderr: OutputReader,
-    pub has_called_process_exit: bool,
+    pub(crate) process: *mut Process,
+    pub(crate) stdout: OutputReader,
+    pub(crate) stderr: OutputReader,
+    pub(crate) has_called_process_exit: bool,
     /// Stored as `BackRef` (not `&'a`) so
     /// callbacks may mutate manager state (`active_lifecycle_scripts`,
     /// `progress`, `scripts_node`) through the long-lived backref without
     /// asserting unique-borrow over the whole `PackageManager`.
-    pub manager: bun_ptr::BackRef<PackageManager>,
+    pub(crate) manager: bun_ptr::BackRef<PackageManager>,
     /// Owned by this
     /// struct so the `K=V\0` buffers stay alive across every async
     /// `spawn_next_script` for the script chain; freed by `Drop`/`destroy`.
-    pub envp: bun_dotenv::NullDelimitedEnvMap,
-    pub shell_bin: Option<&'a ZStr>,
+    pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
+    pub(crate) shell_bin: Option<&'a ZStr>,
 
-    pub timer: Option<Timer>,
+    pub(crate) timer: Option<Timer>,
 
-    pub has_incremented_alive_count: bool,
+    pub(crate) has_incremented_alive_count: bool,
 
-    pub foreground: bool,
-    pub optional: bool,
-    pub started_at: u64,
+    pub(crate) foreground: bool,
+    pub(crate) optional: bool,
+    pub(crate) started_at: u64,
 
-    pub ctx: Option<InstallCtx<'a>>,
+    pub(crate) ctx: Option<InstallCtx<'a>>,
 
-    pub heap: io_heap::IntrusiveField<LifecycleScriptSubprocess<'a>>,
+    pub(crate) heap: io_heap::IntrusiveField<LifecycleScriptSubprocess<'a>>,
 }
 
 pub struct InstallCtx<'a> {
-    pub entry_id: entry::Id,
+    pub(crate) entry_id: entry::Id,
     /// Raw `*mut` for the same reason as
     /// `LifecycleScriptSubprocess::manager` — `on_task_complete`/`start_task`
     /// mutate Installer state from inside an exit-handler callback.
-    pub installer: *mut Installer<'a>,
+    pub(crate) installer: *mut Installer<'a>,
 }
 
 impl<'a> InstallCtx<'a> {
@@ -338,9 +338,9 @@ impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     }
 }
 
-pub(crate) const MIN_MILLISECONDS_TO_LOG: u64 = 500;
+const MIN_MILLISECONDS_TO_LOG: u64 = 500;
 
-pub(crate) static ALIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static ALIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 impl<'a> LifecycleScriptSubprocess<'a> {
     /// Returns the
@@ -362,7 +362,7 @@ pub(crate) type Timer = bun_core::time::Timer;
 impl<'a> LifecycleScriptSubprocess<'a> {
     /// Heap-allocate and return a raw pointer; this type is intrusive (heap field,
     /// OutputReader parent backrefs), so it lives behind `*mut Self`.
-    pub fn new(init: Self) -> *mut Self {
+    pub(crate) fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
     }
 
@@ -387,19 +387,19 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         &self.manager().event_loop
     }
 
-    pub fn script_name(&self) -> &'static [u8] {
+    pub(crate) fn script_name(&self) -> &'static [u8] {
         debug_assert!((self.current_script_index as usize) < LockfileScripts::NAMES.len());
         LockfileScripts::NAMES[self.current_script_index as usize].as_bytes()
     }
 
-    pub fn on_reader_done(&mut self) {
+    pub(crate) fn on_reader_done(&mut self) {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
 
         self.maybe_finished();
     }
 
-    pub fn on_reader_error(&mut self, err: &bun_sys::Error) {
+    pub(crate) fn on_reader_error(&mut self, err: &bun_sys::Error) {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
 
@@ -488,7 +488,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// so it must carry allocation-rooted provenance — passing a `*mut Self` coerced
     /// from a transient `&mut Self` reborrow would leave dead Stacked Borrows tags once
     /// the caller resumes using that borrow.
-    pub unsafe fn spawn_next_script(
+    pub(crate) unsafe fn spawn_next_script(
         this: *mut Self,
         next_script_index: u8,
     ) -> Result<(), crate::Error> {
@@ -801,7 +801,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         } // unsafe
     }
 
-    pub fn print_output(&mut self) {
+    pub(crate) fn print_output(&mut self) {
         if !self.manager().options.log_level.is_verbose() {
             // Reuse the memory
             // Reshaped for borrowck — evaluate
@@ -1060,7 +1060,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     /// This function may free the *LifecycleScriptSubprocess
-    pub fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
         if self.process != proc {
             bun_core::debug_warn!(
                 "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
@@ -1071,7 +1071,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.maybe_finished();
     }
 
-    pub fn reset_polls(&mut self) {
+    pub(crate) fn reset_polls(&mut self) {
         debug_assert!(self.remaining_fds == 0);
 
         let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
@@ -1096,14 +1096,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// # Safety
     /// `this` must have been produced by `Self::new` (`heap::alloc`) and not yet destroyed;
     /// the caller must not use any outstanding `&`/`&mut` to `*this` after this returns.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — `this` came from `heap::alloc` in `Self::new` and is
         // uniquely owned here. Dropping the Box runs `Drop` (reset_polls + ensure_not_in_heap)
         // then frees the allocation.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub fn deinit_and_delete_package(&mut self) {
+    pub(crate) fn deinit_and_delete_package(&mut self) {
         if self.manager().options.log_level.is_verbose() {
             bun_core::warn!(
                 "deleting optional dependency '{}' due to failed '{}' script",
@@ -1129,7 +1129,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
     }
 
-    pub fn spawn_package_scripts(
+    pub(crate) fn spawn_package_scripts(
         manager: &mut PackageManager,
         list: ScriptsList,
         envp: bun_dotenv::NullDelimitedEnvMap,

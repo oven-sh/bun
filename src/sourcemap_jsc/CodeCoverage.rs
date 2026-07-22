@@ -29,19 +29,19 @@ type Bitset = DynamicBitSet;
 /// We use two bitsets since the typical size will be decently small,
 /// bitsets are simple and bitsets are relatively fast to construct and query
 pub struct Report {
-    pub source_url: ZigStringSlice,
-    pub executable_lines: Bitset,
-    pub lines_which_have_executed: Bitset,
-    pub line_hits: LinesHits,
-    pub functions: Vec<Block>,
-    pub functions_which_have_executed: Bitset,
-    pub stmts_which_have_executed: Bitset,
-    pub stmts: Vec<Block>,
+    pub(crate) source_url: ZigStringSlice,
+    pub(crate) executable_lines: Bitset,
+    pub(crate) lines_which_have_executed: Bitset,
+    pub(crate) line_hits: LinesHits,
+    pub(crate) functions: Vec<Block>,
+    pub(crate) functions_which_have_executed: Bitset,
+    pub(crate) stmts_which_have_executed: Bitset,
+    pub(crate) stmts: Vec<Block>,
     pub total_lines: u32,
 }
 
 impl Report {
-    pub fn lines_coverage_fraction(&self) -> f64 {
+    pub(crate) fn lines_coverage_fraction(&self) -> f64 {
         let mut intersected = self
             .executable_lines
             .clone()
@@ -58,7 +58,7 @@ impl Report {
         intersected_count / total_count
     }
 
-    pub fn stmts_coverage_fraction(&self) -> f64 {
+    pub(crate) fn stmts_coverage_fraction(&self) -> f64 {
         let total_count: f64 = self.stmts.len() as f64;
 
         if total_count == 0.0 {
@@ -68,7 +68,7 @@ impl Report {
         (self.stmts_which_have_executed.count() as f64) / total_count
     }
 
-    pub fn function_coverage_fraction(&self) -> f64 {
+    pub(crate) fn function_coverage_fraction(&self) -> f64 {
         let total_count: f64 = self.functions.len() as f64;
         if total_count == 0.0 {
             return 1.0;
@@ -421,8 +421,8 @@ pub struct BasicBlockRange {
 }
 
 pub struct ByteRangeMapping {
-    pub line_offset_table: line_offset_table::List,
-    pub source_id: i32,
+    pub(crate) line_offset_table: line_offset_table::List,
+    pub(crate) source_id: i32,
     pub source_url: ZigStringSlice,
 }
 
@@ -480,7 +480,7 @@ impl ByteRangeMapping {
         thread_map_opt()
     }
 
-    pub fn generate_report_from_blocks(
+    pub(crate) fn generate_report_from_blocks(
         &self,
         source_url: ZigStringSlice,
         blocks: &[BasicBlockRange],
@@ -820,7 +820,7 @@ impl ByteRangeMapping {
         })
     }
 
-    pub fn compute(
+    pub(crate) fn compute(
         source_contents: &[u8],
         source_id: i32,
         source_url: ZigStringSlice,
@@ -838,7 +838,7 @@ impl ByteRangeMapping {
 // source_url is NOT freed (caller owns it).
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn ByteRangeMapping__generate(
+extern "C" fn ByteRangeMapping__generate(
     str_: bun_core::String,
     source_contents_str: bun_core::String,
     source_id: i32,
@@ -859,12 +859,12 @@ pub(crate) extern "C" fn ByteRangeMapping__generate(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
+extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
     this.source_id
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn ByteRangeMapping__find(
+extern "C" fn ByteRangeMapping__find(
     path: bun_core::String,
 ) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
@@ -878,7 +878,7 @@ pub(crate) extern "C" fn ByteRangeMapping__find(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
+extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,
     source_url: bun_core::String,
     blocks_ptr: NonNull<BasicBlockRange>,

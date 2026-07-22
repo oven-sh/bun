@@ -827,7 +827,7 @@ pub fn set_stream_iter_enabled(enabled: bool) {
 /// builtins can consult the write-once CLI bit instead of the user-mutable
 /// `process.execArgv`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__streamIterEnabled() -> bool {
+pub(crate) extern "C" fn Bun__streamIterEnabled() -> bool {
     stream_iter_enabled()
 }
 

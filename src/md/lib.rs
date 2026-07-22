@@ -3,20 +3,20 @@
 
 pub mod ansi_renderer;
 pub mod autolinks;
-pub mod blocks;
-pub mod containers;
-pub mod entity;
+pub(crate) mod blocks;
+pub(crate) mod containers;
+pub(crate) mod entity;
 pub mod helpers;
 pub mod html_renderer;
 pub mod inlines;
 pub mod line_analysis;
-pub mod links;
+pub(crate) mod links;
 pub mod output;
 pub mod parser;
 pub mod ref_defs;
-pub mod render_blocks;
+pub(crate) mod render_blocks;
 pub mod root;
 pub mod types;
-pub mod unicode;
+pub(crate) mod unicode;
 
-pub use root::RenderOptions;
+pub(crate) use root::RenderOptions;

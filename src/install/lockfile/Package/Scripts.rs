@@ -22,19 +22,19 @@ const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct Scripts {
-    pub preinstall: SemverString,
-    pub install: SemverString,
-    pub postinstall: SemverString,
-    pub preprepare: SemverString,
-    pub prepare: SemverString,
-    pub postprepare: SemverString,
-    pub filled: bool,
+    pub(crate) preinstall: SemverString,
+    pub(crate) install: SemverString,
+    pub(crate) postinstall: SemverString,
+    pub(crate) preprepare: SemverString,
+    pub(crate) prepare: SemverString,
+    pub(crate) postprepare: SemverString,
+    pub(crate) filled: bool,
 }
 
 impl Scripts {
     /// (name, getter) table used by debug JSON serialization in place of
     /// field reflection.
-    pub const FIELD_NAMES: &'static [(&'static str, fn(&Scripts) -> &SemverString)] = &[
+    pub(crate) const FIELD_NAMES: &'static [(&'static str, fn(&Scripts) -> &SemverString)] = &[
         (LockfileScripts::NAMES[0], |s| &s.preinstall),
         (LockfileScripts::NAMES[1], |s| &s.install),
         (LockfileScripts::NAMES[2], |s| &s.postinstall),
@@ -46,7 +46,7 @@ impl Scripts {
     /// Helper: indexed access matching `Lockfile.Scripts.names` order.
     /// The 6 hooks are tabulated explicitly (no field-by-name reflection).
     #[inline]
-    pub fn hooks(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
+    pub(crate) fn hooks(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
         [
             &self.preinstall,
             &self.install,
@@ -58,7 +58,7 @@ impl Scripts {
     }
 
     #[inline]
-    pub fn hooks_mut(&mut self) -> [&mut SemverString; SCRIPT_NAMES_LEN] {
+    pub(crate) fn hooks_mut(&mut self) -> [&mut SemverString; SCRIPT_NAMES_LEN] {
         [
             &mut self.preinstall,
             &mut self.install,
@@ -69,7 +69,7 @@ impl Scripts {
         ]
     }
 
-    pub fn eql(&self, r: &Scripts, l_buf: &[u8], r_buf: &[u8]) -> bool {
+    pub(crate) fn eql(&self, r: &Scripts, l_buf: &[u8], r_buf: &[u8]) -> bool {
         self.preinstall.eql(r.preinstall, l_buf, r_buf)
             && self.install.eql(r.install, l_buf, r_buf)
             && self.postinstall.eql(r.postinstall, l_buf, r_buf)
@@ -79,7 +79,7 @@ impl Scripts {
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone`.
-    pub fn clone_into(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) -> Scripts {
+    pub(crate) fn clone_into(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) -> Scripts {
         if !self.filled {
             return Scripts::default();
         }
@@ -93,13 +93,13 @@ impl Scripts {
         scripts
     }
 
-    pub fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
+    pub(crate) fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
         for hook in self.hooks() {
             builder.count(hook.slice(buf));
         }
     }
 
-    pub fn has_any(&self) -> bool {
+    pub(crate) fn has_any(&self) -> bool {
         for hook in self.hooks() {
             if !hook.is_empty() {
                 return true;
@@ -111,7 +111,7 @@ impl Scripts {
     /// return: (first_index, total, entries)
     /// Takes only `lockfile_buf` (not the whole `Lockfile`) so callers can
     /// split-borrow `lockfile.{packages, scripts}`.
-    pub fn get_script_entries(
+    pub(crate) fn get_script_entries(
         &self,
         lockfile_buf: &[u8],
         resolution_tag: ResolutionTag,
@@ -193,7 +193,7 @@ impl Scripts {
         (first_script_index, counter, scripts)
     }
 
-    pub fn create_list(
+    pub(crate) fn create_list(
         &self,
         lockfile: &Lockfile,
         lockfile_buf: &[u8],
@@ -247,7 +247,7 @@ impl Scripts {
     // Generic over `bun_semver::StringBuilder`
     // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
     // are accepted (both impl the trait).
-    pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
+    pub(crate) fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 for script_name in LockfileScripts::NAMES {
@@ -264,7 +264,7 @@ impl Scripts {
         }
     }
 
-    pub fn parse_alloc<B: bun_semver::StringBuilder>(&mut self, builder: &mut B, json: Expr) {
+    pub(crate) fn parse_alloc<B: bun_semver::StringBuilder>(&mut self, builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 let dsts = self.hooks_mut();
@@ -324,7 +324,7 @@ impl Scripts {
         Ok(None)
     }
 
-    pub fn fill_from_package_json(
+    pub(crate) fn fill_from_package_json(
         &mut self,
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut bun_ast::Log,
@@ -353,7 +353,7 @@ impl Scripts {
         Ok(())
     }
 
-    pub fn create_from_package_json(
+    pub(crate) fn create_from_package_json(
         &mut self,
         log: &mut bun_ast::Log,
         lockfile: &Lockfile,
@@ -405,11 +405,11 @@ pub enum PrintFormat {
 #[derive(Clone)]
 pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
-    pub first_index: u8,
+    pub(crate) first_index: u8,
     pub total: u8,
     // Owned NUL-terminated heap string, not a borrow.
-    pub cwd: ZBox,
-    pub package_name: Box<[u8]>,
+    pub(crate) cwd: ZBox,
+    pub(crate) package_name: Box<[u8]>,
 }
 
 impl List {
@@ -468,7 +468,7 @@ impl List {
 
     // No manual deinit: `Box<[u8]>` fields drop automatically.
 
-    pub fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
+    pub(crate) fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
         for (i, maybe_script) in self.items.iter().enumerate() {
             if let Some(script) = maybe_script {
                 bun_output::scoped_log!(

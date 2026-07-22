@@ -5,9 +5,9 @@ use bun_wyhash::hash;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct HashedString {
-    pub ptr: *const u8,
-    pub len: u32,
-    pub hash: u32,
+    ptr: *const u8,
+    len: u32,
+    hash: u32,
 }
 
 impl HashedString {
@@ -39,7 +39,7 @@ impl HashedString {
             && self.str() == other
     }
 
-    pub fn str(&self) -> &[u8] {
+    fn str(&self) -> &[u8] {
         // SAFETY: ptr and len were set together from a valid slice in `init`/`init_no_hash`;
         // caller is responsible for keeping the backing buffer alive.
         unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) }

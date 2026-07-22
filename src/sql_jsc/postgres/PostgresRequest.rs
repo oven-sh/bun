@@ -49,7 +49,7 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
-pub fn write_bind<Context: WriterContext>(
+pub(crate) fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: BunString,
     global: &JSGlobalObject,
@@ -258,7 +258,7 @@ pub fn write_bind<Context: WriterContext>(
     Ok(())
 }
 
-pub fn write_query<Context: WriterContext>(
+pub(crate) fn write_query<Context: WriterContext>(
     query: &[u8],
     name: &[u8],
     params: &[Int4],
@@ -356,7 +356,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
 /// like PgBouncer in transaction mode, which may reassign server connections between protocol
 /// round-trips. Without this, Parse and Bind+Execute could be routed to different backend
 /// connections, causing queries to execute against the wrong prepared statement.
-pub fn parse_and_bind_and_execute<Context: WriterContext>(
+pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     statement: &PostgresSQLStatement,

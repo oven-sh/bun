@@ -80,7 +80,7 @@ pub use route_param::Param;
 
 pub struct Router<'a> {
     pub routes: Routes,
-    pub loaded_routes: bool,
+    pub(crate) loaded_routes: bool,
     // allocator dropped — global mimalloc
     pub fs: &'a FileSystem,
     pub config: RouteConfig,
@@ -151,61 +151,61 @@ pub struct RouteIndexList {
 }
 
 impl RouteIndexList {
-    pub fn set_capacity(&mut self, cap: usize) -> Result<(), CoreError> {
+    pub(crate) fn set_capacity(&mut self, cap: usize) -> Result<(), CoreError> {
         self.route.reserve_exact(cap);
         self.name.reserve_exact(cap);
         self.match_name.reserve_exact(cap);
         self.filepath.reserve_exact(cap);
         Ok(())
     }
-    pub(crate) fn push(&mut self, item: RouteIndex) {
+    fn push(&mut self, item: RouteIndex) {
         self.route.push(item.route);
         self.name.push(item.name);
         self.match_name.push(item.match_name);
         self.filepath.push(item.filepath);
     }
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.route.len()
     }
     #[inline]
-    pub fn items_route(&self) -> &[Box<Route>] {
+    pub(crate) fn items_route(&self) -> &[Box<Route>] {
         &self.route
     }
     #[inline]
-    pub fn items_name(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_name(&self) -> &[&'static [u8]] {
         &self.name
     }
     #[inline]
-    pub fn items_match_name(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_match_name(&self) -> &[&'static [u8]] {
         &self.match_name
     }
     #[inline]
-    pub fn items_filepath(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_filepath(&self) -> &[&'static [u8]] {
         &self.filepath
     }
 }
 
 pub struct Routes {
-    pub list: RouteIndexList,
+    pub(crate) list: RouteIndexList,
     /// Index into `list`'s columns where dynamic routes begin (sorted after
     /// static). Stored as an offset+len instead of materialized slices to avoid
     /// a self-referential struct; we re-slice on each `match_dynamic` call.
-    pub dynamic_start: Option<usize>,
-    pub dynamic_len: usize,
+    pub(crate) dynamic_start: Option<usize>,
+    pub(crate) dynamic_len: usize,
 
     /// completely static children of indefinite depth
     /// `"blog/posts"`
     /// `"dashboard"`
     /// `"profiles"`
     /// this is a fast path?
-    pub static_: StringHashMap<*const Route>,
+    pub(crate) static_: StringHashMap<*const Route>,
 
     /// Corresponds to "index.js" on the filesystem.
     /// A raw pointer co-owned with `list` (points into a `Box<Route>` owned by
     /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
     /// no borrow it doesn't actually take; matches `static_` above.
-    pub index: Option<NonNull<Route>>,
+    pub(crate) index: Option<NonNull<Route>>,
 }
 
 impl Default for Routes {
@@ -356,7 +356,7 @@ struct RouteLoader<'a> {
 }
 
 impl<'a> RouteLoader<'a> {
-    pub(crate) fn append_route(&mut self, route: Route) {
+    fn append_route(&mut self, route: Route) {
         use bun_collections::hash_map::Entry;
 
         // /index.js
@@ -457,7 +457,7 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub(crate) fn load_all<R: ResolverLike>(
+    fn load_all<R: ResolverLike>(
         config: RouteConfig,
         log: &'a mut bun_ast::Log,
         resolver: &mut R,
@@ -543,7 +543,7 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub(crate) fn load<R: ResolverLike>(
+    fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
         root_dir_info: &DirInfo,
@@ -654,24 +654,24 @@ pub struct TinyPtr(u32);
 
 impl TinyPtr {
     #[inline]
-    pub const fn offset(self) -> u16 {
+    pub(crate) const fn offset(self) -> u16 {
         self.0 as u16
     }
     #[inline]
-    pub const fn len(self) -> u16 {
+    pub(crate) const fn len(self) -> u16 {
         (self.0 >> 16) as u16
     }
     #[inline]
-    pub fn set_offset(&mut self, offset: u16) {
+    pub(crate) fn set_offset(&mut self, offset: u16) {
         self.0 = (self.0 & 0xFFFF_0000) | (offset as u32);
     }
     #[inline]
-    pub fn set_len(&mut self, len: u16) {
+    pub(crate) fn set_len(&mut self, len: u16) {
         self.0 = (self.0 & 0x0000_FFFF) | ((len as u32) << 16);
     }
 
     #[inline]
-    pub fn str<'s>(self, slice: &'s [u8]) -> &'s [u8] {
+    pub(crate) fn str<'s>(self, slice: &'s [u8]) -> &'s [u8] {
         if self.len() > 0 {
             &slice[self.offset() as usize..(self.offset() as usize + self.len() as usize)]
         } else {
@@ -692,34 +692,34 @@ pub struct Route {
     /// "/", "/index" is "/"
     /// "/foo/index.js" becomes "/foo"
     /// case-sensitive, has leading slash
-    pub name: &'static [u8],
+    pub(crate) name: &'static [u8],
 
     /// Name used for matching.
     /// - Omits leading slash
     /// - Lowercased
     /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
-    pub match_name: Interned,
+    pub(crate) match_name: Interned,
 
-    pub full_hash: u32,
-    pub param_count: u16,
+    pub(crate) full_hash: u32,
+    pub(crate) param_count: u16,
 
-    pub abs_path: AbsPath,
+    pub(crate) abs_path: AbsPath,
 
-    pub kind: pattern::Tag,
+    pub(crate) kind: pattern::Tag,
 
-    pub has_uppercase: bool,
+    pub(crate) has_uppercase: bool,
 }
 
 // TODO(b1): inherent assoc types unstable; module-level alias instead.
 
 impl Route {
-    pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
+    pub(crate) const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
     /// # Safety
     /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
     /// other active `&mut` borrow for the duration of the call. `base_` and
     /// `extname` may borrow `(*entry).base_`; see the NOTE below.
-    pub unsafe fn parse(
+    pub(crate) unsafe fn parse(
         base_: &[u8],
         extname: &[u8],
         entry: *mut Fs::Entry,
@@ -979,7 +979,7 @@ impl Route {
     }
 }
 
-pub mod sorter {
+pub(crate) mod sorter {
     use super::*;
 
     const fn build_sort_table() -> [u8; 256] {
@@ -999,7 +999,7 @@ pub mod sorter {
 
     static SORT_TABLE: [u8; 256] = build_sort_table();
 
-    pub fn sort_by_name_string(lhs: &[u8], rhs: &[u8]) -> bool {
+    pub(crate) fn sort_by_name_string(lhs: &[u8], rhs: &[u8]) -> bool {
         let n = lhs.len().min(rhs.len());
         for (lhs_i, rhs_i) in lhs[0..n].iter().zip(&rhs[0..n]) {
             match SORT_TABLE[*lhs_i as usize].cmp(&SORT_TABLE[*rhs_i as usize]) {
@@ -1011,7 +1011,7 @@ pub mod sorter {
         lhs.len().cmp(&rhs.len()) == Ordering::Less
     }
 
-    pub fn sort_by_name(a: &Route, b: &Route) -> bool {
+    pub(crate) fn sort_by_name(a: &Route, b: &Route) -> bool {
         let a_name = a.match_name.as_bytes();
         let b_name = b.match_name.as_bytes();
 
@@ -1038,7 +1038,7 @@ pub mod sorter {
     }
 
     /// Adapter for slice::sort_by which expects an Ordering.
-    pub fn sort_by_name_cmp(a: &Route, b: &Route) -> Ordering {
+    pub(crate) fn sort_by_name_cmp(a: &Route, b: &Route) -> Ordering {
         if sort_by_name(a, b) {
             Ordering::Less
         } else if sort_by_name(b, a) {
@@ -1150,13 +1150,13 @@ pub mod pattern {
 
     #[derive(Clone, Copy)]
     pub struct Pattern {
-        pub value: Value,
-        pub len: RoutePathInt,
+        pub(crate) value: Value,
+        pub(crate) len: RoutePathInt,
     }
 
     impl Pattern {
         /// Match a filesystem route pattern to a URL path.
-        pub fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
+        pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &'a [u8],
             // case-sensitive, must not have a leading slash
@@ -1263,7 +1263,7 @@ pub mod pattern {
         /// Validate a Route pattern, returning the number of route parameters.
         /// `None` means invalid. Error messages are logged.
         /// That way, we can provide a list of all invalid routes rather than failing the first time.
-        pub fn validate(input: &[u8], log: &mut bun_ast::Log) -> Option<ValidationResult> {
+        pub(crate) fn validate(input: &[u8], log: &mut bun_ast::Log) -> Option<ValidationResult> {
             if strings::CodepointIterator::needs_utf8_decoding(input) {
                 let source = bun_ast::Source::init_empty_file(input);
                 log.add_error_fmt(
@@ -1349,15 +1349,15 @@ pub mod pattern {
             })
         }
 
-        pub fn init(input: &[u8], offset_: RoutePathInt) -> Result<Pattern, PatternParseError> {
+        pub(crate) fn init(input: &[u8], offset_: RoutePathInt) -> Result<Pattern, PatternParseError> {
             Self::init_maybe_hash::<true>(input, offset_)
         }
 
-        pub fn is_end(self, input: &[u8]) -> bool {
+        pub(crate) fn is_end(self, input: &[u8]) -> bool {
             self.len as usize >= input.len() - 1
         }
 
-        pub fn init_unhashed(
+        pub(crate) fn init_unhashed(
             input: &[u8],
             offset_: RoutePathInt,
         ) -> Result<Pattern, PatternParseError> {
@@ -1516,8 +1516,8 @@ pub mod pattern {
 
     #[derive(Clone, Copy, Default)]
     pub struct ValidationResult {
-        pub param_count: u16,
-        pub kind: Tag,
+        pub(crate) param_count: u16,
+        pub(crate) kind: Tag,
     }
 
     #[derive(strum::IntoStaticStr, Debug, Clone, Copy)]
@@ -1551,7 +1551,7 @@ pub mod pattern {
     }
 }
 
-pub use pattern::Pattern;
+pub(crate) use pattern::Pattern;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Tests + test helpers

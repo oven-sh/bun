@@ -105,7 +105,7 @@ pub mod ast {
     }
 
     impl<'arena> Expr<'arena> {
-        pub fn as_pipeline_item(&self) -> Option<PipelineItem<'arena>> {
+        pub(crate) fn as_pipeline_item(&self) -> Option<PipelineItem<'arena>> {
             match self {
                 Expr::Assign(a) => Some(PipelineItem::Assigns(*a)),
                 Expr::Cmd(c) => Some(PipelineItem::Cmd(*c)),
@@ -126,7 +126,7 @@ pub mod ast {
     pub(crate) type CondExprArgList<'arena> = SmolList<Atom<'arena>, 2>;
 
     impl<'arena> CondExpr<'arena> {
-        pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
+        pub(crate) fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
             let condexpr = bump.alloc(self);
             Ok(Expr::CondExpr(condexpr))
         }
@@ -249,7 +249,7 @@ pub mod ast {
     }
 
     impl CondExprOp {
-        pub const SUPPORTED: &'static [CondExprOp] = &[
+        const SUPPORTED: &'static [CondExprOp] = &[
             CondExprOp::DashF,
             CondExprOp::DashZ,
             CondExprOp::DashN,
@@ -269,7 +269,7 @@ pub mod ast {
         }
 
         /// Single-arg ops: name starts with '-' and len == 2.
-        pub const SINGLE_ARG_OPS: &'static [(&'static str, CondExprOp)] = &[
+        pub(crate) const SINGLE_ARG_OPS: &'static [(&'static str, CondExprOp)] = &[
             ("-a", CondExprOp::DashA),
             ("-b", CondExprOp::DashB),
             ("-c", CondExprOp::DashC),
@@ -299,7 +299,7 @@ pub mod ast {
         ];
 
         /// Binary ops: NOT (name starts with '-' and len == 2).
-        pub const BINARY_OPS: &'static [(&'static str, CondExprOp)] = &[
+        pub(crate) const BINARY_OPS: &'static [(&'static str, CondExprOp)] = &[
             ("-ef", CondExprOp::DashEf),
             ("-nt", CondExprOp::DashNt),
             ("-ot", CondExprOp::DashOt),
@@ -318,8 +318,8 @@ pub mod ast {
 
     pub struct Subshell<'arena> {
         pub script: Script<'arena>,
-        pub redirect: Option<Redirect<'arena>>,
-        pub redirect_flags: RedirectFlags,
+        pub(crate) redirect: Option<Redirect<'arena>>,
+        pub(crate) redirect_flags: RedirectFlags,
     }
 
     /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
@@ -350,7 +350,7 @@ pub mod ast {
     }
 
     impl<'arena> If<'arena> {
-        pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
+        pub(crate) fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
             let i = bump.alloc(self);
             Ok(Expr::If(i))
         }
@@ -381,13 +381,13 @@ pub mod ast {
         CondExpr(&'arena CondExpr<'arena>),
     }
 
-    pub enum CmdOrAssigns<'arena> {
+    pub(crate) enum CmdOrAssigns<'arena> {
         Cmd(Cmd<'arena>),
         Assigns(&'arena [Assign<'arena>]),
     }
 
     impl<'arena> CmdOrAssigns<'arena> {
-        pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
+        pub(crate) fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
             match self {
                 CmdOrAssigns::Cmd(cmd) => {
                     let cmd_ptr = bump.alloc(cmd);
@@ -407,7 +407,7 @@ pub mod ast {
     }
 
     impl JSBuf {
-        pub fn new(idx: u32) -> JSBuf {
+        pub(crate) fn new(idx: u32) -> JSBuf {
             JSBuf { idx }
         }
     }
@@ -468,7 +468,7 @@ pub mod ast {
             self.contains(Self::STDERR)
         }
         #[inline]
-        pub fn append(self) -> bool {
+        pub(crate) fn append(self) -> bool {
             self.contains(Self::APPEND)
         }
         #[inline]
@@ -541,22 +541,22 @@ pub mod ast {
             }
         }
 
-        pub fn lt() -> RedirectFlags {
+        pub(crate) fn lt() -> RedirectFlags {
             Self::STDIN
         }
-        pub fn lt_lt() -> RedirectFlags {
+        pub(crate) fn lt_lt() -> RedirectFlags {
             Self::STDIN | Self::APPEND
         }
-        pub fn gt() -> RedirectFlags {
+        pub(crate) fn gt() -> RedirectFlags {
             Self::STDOUT
         }
-        pub fn gt_gt() -> RedirectFlags {
+        pub(crate) fn gt_gt() -> RedirectFlags {
             Self::APPEND | Self::STDOUT
         }
-        pub fn amp_gt() -> RedirectFlags {
+        pub(crate) fn amp_gt() -> RedirectFlags {
             Self::STDOUT | Self::STDERR
         }
-        pub fn amp_gt_gt() -> RedirectFlags {
+        pub(crate) fn amp_gt_gt() -> RedirectFlags {
             Self::APPEND | Self::STDOUT | Self::STDERR
         }
     }
@@ -573,7 +573,7 @@ pub mod ast {
     }
 
     impl<'arena> Atom<'arena> {
-        pub fn merge(
+        pub(crate) fn merge(
             self,
             right: &Atom<'arena>,
             bump: &'arena Bump,
@@ -651,7 +651,7 @@ pub mod ast {
             }
         }
 
-        pub fn new_simple(atom: SimpleAtom<'arena>) -> Atom<'arena> {
+        pub(crate) fn new_simple(atom: SimpleAtom<'arena>) -> Atom<'arena> {
             Atom::Simple(atom)
         }
 
@@ -694,7 +694,7 @@ pub mod ast {
     }
 
     impl<'arena> SimpleAtom<'arena> {
-        pub fn glob_hint(&self) -> bool {
+        fn glob_hint(&self) -> bool {
             matches!(self, SimpleAtom::Asterisk | SimpleAtom::DoubleAsterisk)
         }
     }
@@ -702,24 +702,24 @@ pub mod ast {
     #[derive(Copy, Clone)]
     pub struct CompoundAtom<'arena> {
         pub atoms: &'arena [SimpleAtom<'arena>],
-        pub brace_expansion_hint: bool,
-        pub glob_hint: bool,
+        pub(crate) brace_expansion_hint: bool,
+        pub(crate) glob_hint: bool,
     }
 }
 
 // ───────────────────────────── Parser ─────────────────────────────
 
 pub struct Parser<'bump> {
-    pub strpool: &'bump [u8],
-    pub tokens: &'bump [Token],
+    strpool: &'bump [u8],
+    tokens: &'bump [Token],
     /// Strpool ranges that came from interpolated JS values (`\x08__bunstr_N`
     /// refs). See `Lexer::js_string_ranges`.
-    pub js_string_ranges: &'bump [TextRange],
-    pub alloc: &'bump Bump,
-    pub jsobjs: &'bump mut [JSValue],
-    pub current: u32,
+    js_string_ranges: &'bump [TextRange],
+    alloc: &'bump Bump,
+    jsobjs: &'bump mut [JSValue],
+    current: u32,
     pub errors: bun_alloc::ArenaVec<'bump, ParserError<'bump>>,
-    pub inside_subshell: Option<SubshellKind>,
+    inside_subshell: Option<SubshellKind>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -729,7 +729,7 @@ pub enum SubshellKind {
 }
 
 impl SubshellKind {
-    pub fn closing_tok(self) -> TokenTag {
+    fn closing_tok(self) -> TokenTag {
         match self {
             SubshellKind::CmdSubst => TokenTag::CmdSubstEnd,
             SubshellKind::Normal => TokenTag::CloseParen,
@@ -739,7 +739,7 @@ impl SubshellKind {
 
 // FIXME error location
 pub struct ParserError<'bump> {
-    pub msg: &'bump [u8],
+    msg: &'bump [u8],
 }
 
 type ParseResult<T> = crate::Result<T>;
@@ -765,7 +765,7 @@ impl<'bump> Parser<'bump> {
     /// __WARNING__:
     /// If you make a subparser and call some fallible functions on it, you need to catch the errors
     /// and call `.continue_from_subparser()`, otherwise errors will not propagate upwards to the parent.
-    pub fn make_subparser(&mut self, kind: SubshellKind) -> Parser<'bump> {
+    fn make_subparser(&mut self, kind: SubshellKind) -> Parser<'bump> {
         // reshaped for borrowck — `self.errors` is moved out
         // via mem::take and restored in continue_from_subparser.
         Parser {
@@ -782,7 +782,7 @@ impl<'bump> Parser<'bump> {
         }
     }
 
-    pub fn continue_from_subparser(&mut self, subparser: &mut Parser<'bump>) {
+    fn continue_from_subparser(&mut self, subparser: &mut Parser<'bump>) {
         self.current = if subparser.current as usize >= self.tokens.len() {
             subparser.current
         } else {
@@ -803,7 +803,7 @@ impl<'bump> Parser<'bump> {
         self.parse_impl()
     }
 
-    pub fn parse_impl(&mut self) -> ParseResult<ast::Script<'bump>> {
+    fn parse_impl(&mut self) -> ParseResult<ast::Script<'bump>> {
         let mut stmts = bun_alloc::ArenaVec::new_in(self.alloc);
         if self.tokens.is_empty()
             || (self.tokens.len() == 1 && matches!(self.tokens[0], Token::Eof))
@@ -837,7 +837,7 @@ impl<'bump> Parser<'bump> {
         })
     }
 
-    pub fn parse_stmt(&mut self) -> ParseResult<ast::Stmt<'bump>> {
+    fn parse_stmt(&mut self) -> ParseResult<ast::Stmt<'bump>> {
         let mut exprs = bun_alloc::ArenaVec::new_in(self.alloc);
 
         while if self.inside_subshell.is_none() {
@@ -1944,7 +1944,7 @@ impl IfClauseTok {
     /// the *next* token delimits it, so `fi$x` / `else$x` / `elif$x` are not
     /// misclassified and routed into the panicking
     /// `expect_if_clause_text_token`.
-    pub fn from_tok(p: &Parser<'_>, tok: Token) -> Option<IfClauseTok> {
+    fn from_tok(p: &Parser<'_>, tok: Token) -> Option<IfClauseTok> {
         match tok {
             Token::Text(range) if p.delimits(p.peek_n(1)) => p.if_clause_tok_at(range),
             _ => None,
@@ -2072,18 +2072,18 @@ pub struct TextRange {
 }
 
 impl TextRange {
-    pub fn len(self) -> u32 {
+    fn len(self) -> u32 {
         debug_assert!(self.start <= self.end);
         self.end - self.start
     }
 
-    pub fn slice(self, buf: &[u8]) -> &[u8] {
+    fn slice(self, buf: &[u8]) -> &[u8] {
         &buf[self.start as usize..self.end as usize]
     }
 }
 
 impl Token {
-    pub fn as_human_readable(self, strpool: &[u8]) -> &[u8] {
+    fn as_human_readable(self, strpool: &[u8]) -> &[u8] {
         // Building these on the stack would need
         // a thread_local or a Cow return type. Use a static lookup instead.
         const VARARGV_STRINGS: [&[u8]; 10] = [
@@ -2133,7 +2133,7 @@ pub struct LexResult<'bump> {
     pub errors: &'bump [LexError],
     pub tokens: &'bump [Token],
     pub strpool: &'bump [u8],
-    pub js_string_ranges: &'bump [TextRange],
+    js_string_ranges: &'bump [TextRange],
 }
 
 impl<'bump> LexResult<'bump> {
@@ -2146,7 +2146,7 @@ impl<'bump> LexResult<'bump> {
 #[derive(Clone, Copy)]
 pub struct LexError {
     /// Allocated with lexer arena
-    pub msg: TextRange,
+    msg: TextRange,
 }
 
 /// A special char used to denote the beginning of a special token
@@ -2196,35 +2196,35 @@ pub struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
 }
 
 pub struct Lexer<'bump, const ENCODING: StringEncoding> {
-    pub chars: ShellCharIter<'bump, ENCODING>,
+    chars: ShellCharIter<'bump, ENCODING>,
 
     /// Tell us the beginning of a "word", indexes into the string pool (`buf`)
     /// Anytime a word is added, this needs to be updated
-    pub word_start: u32,
+    word_start: u32,
 
     /// Keeps track of the end of a "word", indexes into the string pool (`buf`),
     /// anytime characters are added to the string pool this needs to be updated
-    pub j: u32,
+    j: u32,
 
-    pub strpool: bun_alloc::ArenaVec<'bump, u8>,
-    pub tokens: bun_alloc::ArenaVec<'bump, Token>,
-    pub delimit_quote: bool,
-    pub in_subshell: Option<SubShellKind>,
-    pub subshell_depth: u32,
-    pub errors: bun_alloc::ArenaVec<'bump, LexError>,
+    strpool: bun_alloc::ArenaVec<'bump, u8>,
+    tokens: bun_alloc::ArenaVec<'bump, Token>,
+    delimit_quote: bool,
+    in_subshell: Option<SubShellKind>,
+    subshell_depth: u32,
+    errors: bun_alloc::ArenaVec<'bump, LexError>,
 
     /// Strpool ranges that hold bytes spliced in from interpolated JS values
     /// (`\x08__bunstr_N` refs). Interpolated bytes are data, not shell
     /// syntax, so the parser must not reinterpret them (e.g. an `=` inside
     /// one must not create an env assignment).
-    pub js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
+    js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
 
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
-    pub string_refs: &'bump mut [BunString],
+    string_refs: &'bump mut [BunString],
 
     /// Number of JS object references expected (for bounds validation)
-    pub jsobjs_len: u32,
+    jsobjs_len: u32,
 }
 
 impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
@@ -2259,7 +2259,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
     }
 
-    pub fn add_error(&mut self, msg: &[u8]) {
+    fn add_error(&mut self, msg: &[u8]) {
         let start = self.strpool.len();
         self.strpool.extend_from_slice(msg);
         let end = self.strpool.len();
@@ -3513,14 +3513,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 // TODO(perf): if the packed-u8 layout matters for perf, specialize via const generic.
 #[derive(Clone, Copy)]
 pub struct InputChar {
-    pub char: u32,
-    pub escaped: bool,
+    char: u32,
+    escaped: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct SrcAscii<'a> {
-    pub bytes: &'a [u8],
-    pub i: usize,
+    bytes: &'a [u8],
+    i: usize,
 }
 
 #[repr(transparent)]
@@ -3563,7 +3563,7 @@ impl<'a> SrcAscii<'a> {
     }
 }
 
-pub(crate) type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
+type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
 
 // `NewCodePointIterator` lacks
 // `Clone`/`Copy`, so store the underlying `&[u8]` instead and rebuild the
@@ -3571,9 +3571,9 @@ pub(crate) type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
 // `Copy`.
 #[derive(Clone, Copy)]
 pub struct SrcUnicode<'a> {
-    pub bytes: &'a [u8],
-    pub cursor: CodepointCursor,
-    pub next_cursor: CodepointCursor,
+    bytes: &'a [u8],
+    cursor: CodepointCursor,
+    next_cursor: CodepointCursor,
 }
 
 #[derive(Clone, Copy)]
@@ -3674,18 +3674,18 @@ impl<'a> Src<'a> {
 
 #[derive(Clone, Copy)]
 pub struct ShellCharIter<'a, const ENCODING: StringEncoding> {
-    pub src: Src<'a>,
-    pub state: CharState,
-    pub prev: Option<InputChar>,
-    pub current: Option<InputChar>,
+    src: Src<'a>,
+    state: CharState,
+    prev: Option<InputChar>,
+    current: Option<InputChar>,
 }
 
 impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
-    pub fn is_whitespace(char: InputChar) -> bool {
+    fn is_whitespace(char: InputChar) -> bool {
         matches!(char.char, c if c == u32::from(b'\t') || c == u32::from(b'\r') || c == u32::from(b'\n') || c == u32::from(b' '))
     }
 
-    pub fn init(bytes: &'a [u8]) -> Self {
+    fn init(bytes: &'a [u8]) -> Self {
         let src = if ENCODING == StringEncoding::Ascii {
             Src::Ascii(SrcAscii::init(bytes))
         } else {
@@ -3699,14 +3699,14 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
         }
     }
 
-    pub fn src_bytes(&self) -> &'a [u8] {
+    fn src_bytes(&self) -> &'a [u8] {
         match &self.src {
             Src::Ascii(a) => a.bytes,
             Src::Unicode(u) => u.bytes,
         }
     }
 
-    pub fn src_bytes_at_cursor(&self) -> &'a [u8] {
+    fn src_bytes_at_cursor(&self) -> &'a [u8] {
         let bytes = self.src_bytes();
         match &self.src {
             Src::Ascii(a) => {
@@ -3724,14 +3724,14 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
         }
     }
 
-    pub fn cursor_pos(&self) -> usize {
+    fn cursor_pos(&self) -> usize {
         match &self.src {
             Src::Ascii(a) => a.i,
             Src::Unicode(u) => u.cursor.i as usize,
         }
     }
 
-    pub fn eat(&mut self) -> Option<InputChar> {
+    fn eat(&mut self) -> Option<InputChar> {
         if let Some(result) = self.read_char() {
             self.prev = self.current;
             self.current = Some(result);
@@ -3744,11 +3744,11 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
         None
     }
 
-    pub fn peek(&mut self) -> Option<InputChar> {
+    fn peek(&mut self) -> Option<InputChar> {
         self.read_char()
     }
 
-    pub fn read_char(&mut self) -> Option<InputChar> {
+    fn read_char(&mut self) -> Option<InputChar> {
         let mut char: u32 = match &self.src {
             Src::Ascii(a) => a.index()?.char() as u32,
             Src::Unicode(u) => u.index()?.char,
@@ -3810,7 +3810,7 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
 /// - a-zA-Z
 /// - _
 /// - 0-9 (but can't be first char)
-pub fn is_valid_var_name(var_name: &[u8]) -> bool {
+fn is_valid_var_name(var_name: &[u8]) -> bool {
     if is_all_ascii(var_name) {
         return is_valid_var_name_ascii(var_name);
     }
@@ -3876,7 +3876,7 @@ fn is_valid_var_name_ascii(var_name: &[u8]) -> bool {
 // used by the `Test` namespace's debug-dump path (gated to `bun_runtime`), so
 // the lower-tier parser crate omits it.
 
-pub fn has_eq_sign(str: &[u8]) -> Option<u32> {
+fn has_eq_sign(str: &[u8]) -> Option<u32> {
     if is_all_ascii(str) {
         return strings::index_of_char(str, b'=');
     }
@@ -3901,7 +3901,7 @@ fn is_all_ascii(s: &[u8]) -> bool {
 // ───────────────────────────── escaping ─────────────────────────────
 
 /// Characters that need to be escaped
-pub const SPECIAL_CHARS: [u8; 37] = [
+const SPECIAL_CHARS: [u8; 37] = [
     b'~',
     b'[',
     b']',
@@ -3944,14 +3944,14 @@ pub const SPECIAL_CHARS: [u8; 37] = [
 // `bun_collections::IntegerBitSet<N>` is single-`usize`-backed (≤64 bits), so a
 // 256-entry membership table is materialised as `[bool; 256]` instead — same
 // O(1) byte-indexed lookup, const-evaluable.
-pub struct ByteTable(pub [bool; 256]);
+struct ByteTable([bool; 256]);
 impl ByteTable {
     #[inline]
-    pub(crate) const fn is_set(&self, idx: usize) -> bool {
+    const fn is_set(&self, idx: usize) -> bool {
         self.0[idx]
     }
 }
-pub const SPECIAL_CHARS_TABLE: ByteTable = {
+const SPECIAL_CHARS_TABLE: ByteTable = {
     let mut table = [false; 256];
     let mut i = 0;
     while i < SPECIAL_CHARS.len() {
@@ -3962,7 +3962,7 @@ pub const SPECIAL_CHARS_TABLE: ByteTable = {
 };
 
 /// Characters that need to be backslashed inside double quotes
-pub const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
+const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 
 pub fn escape_bun_str<const ADD_QUOTES: bool>(
     bunstr: BunString,
@@ -4019,11 +4019,11 @@ pub fn escape_8bit<const ADD_QUOTES: bool, const LATIN1: bool>(
     Ok(())
 }
 
-pub struct EscapeUtf16Result {
-    pub is_invalid: bool,
+struct EscapeUtf16Result {
+    is_invalid: bool,
 }
 
-pub fn escape_utf16<const ADD_QUOTES: bool>(
+fn escape_utf16<const ADD_QUOTES: bool>(
     str: &[u16],
     outbuf: &mut Vec<u8>,
 ) -> Result<EscapeUtf16Result, bun_alloc::AllocError> {
@@ -4078,7 +4078,7 @@ pub fn needs_escape_bunstr(bunstr: BunString) -> bool {
     needs_escape_utf8_ascii_latin1(bunstr.byte_slice())
 }
 
-pub fn needs_escape_utf16(str: &[u16]) -> bool {
+fn needs_escape_utf16(str: &[u16]) -> bool {
     if str.is_empty() {
         return true;
     }
@@ -4184,8 +4184,8 @@ pub enum SmolList<T, const INLINED_MAX: usize> {
 }
 
 pub struct SmolListInlined<T, const INLINED_MAX: usize> {
-    pub items: [core::mem::MaybeUninit<T>; INLINED_MAX],
-    pub len: u32,
+    items: [core::mem::MaybeUninit<T>; INLINED_MAX],
+    len: u32,
 }
 
 impl<T, const INLINED_MAX: usize> Default for SmolListInlined<T, INLINED_MAX> {
@@ -4200,19 +4200,19 @@ impl<T, const INLINED_MAX: usize> Default for SmolListInlined<T, INLINED_MAX> {
 }
 
 impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
-    pub(crate) fn slice(&self) -> &[T] {
+    fn slice(&self) -> &[T] {
         // SAFETY: first `len` elements are initialized
         unsafe { core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len as usize) }
     }
 
-    pub(crate) fn slice_mut(&mut self) -> &mut [T] {
+    fn slice_mut(&mut self) -> &mut [T] {
         // SAFETY: first `self.len` elements are initialized; pointer is valid for `len` reads/writes.
         unsafe {
             core::slice::from_raw_parts_mut(self.items.as_mut_ptr().cast::<T>(), self.len as usize)
         }
     }
 
-    pub(crate) fn promote(&mut self, n: usize, new: T, bump: &Bump) -> SmolListHeap<T> {
+    fn promote(&mut self, n: usize, new: T, bump: &Bump) -> SmolListHeap<T> {
         let mut list = Vec::with_capacity_in(n + 1, SmolListAlloc::new(bump));
         for i in 0..INLINED_MAX {
             // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)
@@ -4226,18 +4226,18 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
 }
 
 impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
-    pub fn zeroes() -> Self {
+    fn zeroes() -> Self {
         SmolList::Inlined(SmolListInlined::default())
     }
 
-    pub fn init_with(val: T) -> Self {
+    fn init_with(val: T) -> Self {
         let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
         inlined.items[0].write(val);
         inlined.len = 1;
         SmolList::Inlined(inlined)
     }
 
-    pub fn init_with_slice(vals: &[T], bump: &Bump) -> Self
+    fn init_with_slice(vals: &[T], bump: &Bump) -> Self
     where
         T: Clone,
     {
@@ -4267,7 +4267,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     }
 
     #[inline]
-    pub fn slice(&self) -> &[T] {
+    pub(crate) fn slice(&self) -> &[T] {
         match self {
             SmolList::Inlined(i) => {
                 if i.len == 0 {
@@ -4289,7 +4289,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
         &self.slice()[idx]
     }
 
-    pub fn append(&mut self, new: T, bump: &Bump) {
+    fn append(&mut self, new: T, bump: &Bump) {
         match self {
             SmolList::Inlined(inlined) => {
                 if inlined.len as usize == INLINED_MAX {

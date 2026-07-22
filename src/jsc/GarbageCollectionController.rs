@@ -32,13 +32,13 @@ const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 pub struct GarbageCollectionController {
     pub gc_timer: EventLoopTimer,
     pub gc_repeating_timer: EventLoopTimer,
-    pub gc_last_heap_size: usize,
-    pub gc_last_heap_size_on_repeating_timer: usize,
-    pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
-    pub gc_timer_state: GCTimerState,
-    pub gc_timer_interval: i32,
-    pub gc_repeating_timer_fast: bool,
-    pub disabled: bool,
+    pub(crate) gc_last_heap_size: usize,
+    pub(crate) gc_last_heap_size_on_repeating_timer: usize,
+    pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
+    pub(crate) gc_timer_state: GCTimerState,
+    pub(crate) gc_timer_interval: i32,
+    pub(crate) gc_repeating_timer_fast: bool,
+    pub(crate) disabled: bool,
     /// A finished HTTP transaction wants the heap looked at; see `request_hint`.
     hint_pending: bool,
 }
@@ -97,7 +97,7 @@ impl GarbageCollectionController {
         }
     }
 
-    pub fn init(&mut self, vm: &mut VirtualMachine) {
+    pub(crate) fn init(&mut self, vm: &mut VirtualMachine) {
         // SAFETY: uws::Loop::get() returns the live process-global loop.
         let actual = unsafe { &mut *uws::Loop::get() };
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
@@ -129,12 +129,12 @@ impl GarbageCollectionController {
     /// A completed HTTP transaction asked us to look at the heap. We do not act here: the
     /// response's JS handling and its microtasks have not run yet, so the garbage does not
     /// exist to be measured. Acted on at the next event-loop park, by which point it does.
-    pub fn request_hint(&mut self) {
+    pub(crate) fn request_hint(&mut self) {
         self.hint_pending = true;
     }
 
     /// Called just before the event loop blocks. Microtasks have drained by now.
-    pub fn drain_pending_hint(&mut self) {
+    pub(crate) fn drain_pending_hint(&mut self) {
         if !self.hint_pending {
             return;
         }
@@ -142,7 +142,7 @@ impl GarbageCollectionController {
         self.process_gc_timer();
     }
 
-    pub fn schedule_gc_timer(&mut self) {
+    pub(crate) fn schedule_gc_timer(&mut self) {
         self.gc_timer_state = GCTimerState::Scheduled;
         Self::arm(VirtualMachine::get_mut_ptr(), &raw mut self.gc_timer, 16);
     }
@@ -154,7 +154,7 @@ impl GarbageCollectionController {
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
     /// `WTFTimer` nodes sharing the heap, so an unlink afterwards walks freed
     /// siblings.
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         self.disabled = true;
         let Some(vm) = VirtualMachine::get_or_null() else {
             return;
@@ -180,7 +180,7 @@ impl GarbageCollectionController {
     //
     // When the heap size is increasing, we always switch to fast mode
     // When the heap size has been the same or less for 30 seconds, we switch to slow mode
-    pub fn update_gc_repeat_timer(&mut self, setting: GcRepeatSetting) {
+    pub(crate) fn update_gc_repeat_timer(&mut self, setting: GcRepeatSetting) {
         let want_fast = match setting {
             GcRepeatSetting::Fast if !self.gc_repeating_timer_fast => true,
             GcRepeatSetting::Slow if self.gc_repeating_timer_fast => false,
@@ -199,7 +199,7 @@ impl GarbageCollectionController {
     }
 
     #[inline]
-    pub fn process_gc_timer(&mut self) {
+    pub(crate) fn process_gc_timer(&mut self) {
         if self.disabled {
             return;
         }
@@ -250,7 +250,7 @@ impl GarbageCollectionController {
         }
     }
 
-    pub fn perform_gc(&mut self) {
+    pub(crate) fn perform_gc(&mut self) {
         if self.disabled {
             return;
         }

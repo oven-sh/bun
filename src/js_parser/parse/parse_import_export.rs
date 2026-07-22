@@ -10,7 +10,7 @@ use bun_ast::{ClauseItem, E, Expr, LocRef};
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Note: The caller has already parsed the "import" keyword
-    pub fn parse_import_expr(&mut self, loc: bun_ast::Loc, level: Level) -> Result<Expr, Error> {
+    pub(crate) fn parse_import_expr(&mut self, loc: bun_ast::Loc, level: Level) -> Result<Expr, Error> {
         let p = self;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {
@@ -107,7 +107,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn parse_import_clause(&mut self) -> Result<ImportClause<'a>, Error> {
+    pub(crate) fn parse_import_clause(&mut self) -> Result<ImportClause<'a>, Error> {
         let p = self;
         let mut items = bun_alloc::ArenaVec::<ClauseItem>::new_in(p.arena);
         p.lexer.expect(T::TOpenBrace)?;
@@ -282,7 +282,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_export_clause(&mut self) -> Result<ExportClauseResult<'a>, Error> {
+    pub(crate) fn parse_export_clause(&mut self) -> Result<ExportClauseResult<'a>, Error> {
         let p = self;
         let mut items = bun_alloc::ArenaVec::<ClauseItem>::with_capacity_in(1, p.arena);
         p.lexer.expect(T::TOpenBrace)?;

@@ -103,7 +103,7 @@ impl ArrayHashContext<[u8]> for StringContext {
 pub struct CaseInsensitiveAsciiStringContext;
 
 impl CaseInsensitiveAsciiStringContext {
-    pub fn hash_bytes(s: &[u8]) -> u32 {
+    fn hash_bytes(s: &[u8]) -> u32 {
         bun_wyhash::hash_ascii_lowercase(0, s) as u32 // @truncate
     }
 }
@@ -1540,7 +1540,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// Borrowed-key constructor (previously the `Static` variant). Stores the
     /// slice by reference; never freed on drop.
     #[inline]
-    pub const fn borrowed(s: &'static [u8]) -> Self {
+    const fn borrowed(s: &'static [u8]) -> Self {
         // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
         // SAFETY: `as_ptr()` on a slice reference is never null.
         let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) };
@@ -1554,7 +1554,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// Owned-key constructor (previously the `Owned` variant). Takes ownership
     /// of `b`'s allocation; freed via `A::default()` on drop.
     #[inline]
-    pub fn owned(b: Box<[u8], A>) -> Self {
+    fn owned(b: Box<[u8], A>) -> Self {
         let len = b.len();
         debug_assert!(
             len & SHMK_OWNED_BIT == 0,
@@ -2086,8 +2086,8 @@ impl StringSet {
 /// acceptable).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StringHashMapUnownedKey {
-    pub hash: u64,
-    pub len: usize,
+    hash: u64,
+    len: usize,
 }
 
 impl StringHashMapUnownedKey {

@@ -42,7 +42,7 @@ bun_opaque::opaque_ffi! { pub struct EventLoopTaskNoContext; }
 
 impl EventLoopTaskNoContext {
     /// Deallocates `this`
-    pub unsafe fn run(this: *mut EventLoopTaskNoContext) {
+    pub(crate) unsafe fn run(this: *mut EventLoopTaskNoContext) {
         // SAFETY: caller guarantees `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
@@ -52,7 +52,7 @@ impl EventLoopTaskNoContext {
     /// non-owning handle: callers project `&VirtualMachine` via `Deref` and
     /// route mutation through the VM's safe interior accessors (e.g.
     /// `event_loop_shared()`).
-    pub fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
+    pub(crate) fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
         NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
     }
 }
@@ -60,8 +60,8 @@ impl EventLoopTaskNoContext {
 /// A task created from C++ code that runs inside the workpool, usually via ScriptExecutionContext.
 #[repr(C)]
 pub struct ConcurrentCppTask {
-    pub cpp_task: *mut EventLoopTaskNoContext,
-    pub workpool_task: WorkPoolTask,
+    pub(crate) cpp_task: *mut EventLoopTaskNoContext,
+    pub(crate) workpool_task: WorkPoolTask,
 }
 
 bun_threading::owned_task!(ConcurrentCppTask, workpool_task);
@@ -85,7 +85,7 @@ impl ConcurrentCppTask {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
+extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
     crate::mark_binding!();
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
     // the centralised non-null deref proof. C++ just handed it over.

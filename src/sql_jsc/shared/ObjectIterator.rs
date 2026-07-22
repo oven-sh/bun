@@ -5,19 +5,19 @@ use crate::jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
 // duration of a single bind/iteration pass (conservative GC stack scan keeps
 // `array`/`columns`/`current_row` alive). Never `Box` this.
 pub struct ObjectIterator<'a> {
-    pub array: JSValue,
-    pub columns: JSValue,
-    pub global_object: &'a JSGlobalObject,
-    pub cell_i: u32,
-    pub row_i: u32,
-    pub current_row: JSValue,
-    pub columns_count: u32,
-    pub array_length: u32,
-    pub any_failed: bool,
+    pub(crate) array: JSValue,
+    pub(crate) columns: JSValue,
+    pub(crate) global_object: &'a JSGlobalObject,
+    pub(crate) cell_i: u32,
+    pub(crate) row_i: u32,
+    pub(crate) current_row: JSValue,
+    pub(crate) columns_count: u32,
+    pub(crate) array_length: u32,
+    pub(crate) any_failed: bool,
 }
 
 impl<'a> ObjectIterator<'a> {
-    pub fn next(&mut self) -> JsResult<Option<JSValue>> {
+    pub(crate) fn next(&mut self) -> JsResult<Option<JSValue>> {
         if self.array.is_empty_or_undefined_or_null()
             || self.columns.is_empty_or_undefined_or_null()
         {

@@ -24,7 +24,7 @@ pub mod PluginRunner;
 // `bun_bundler_jsc::output_file_jsc`, so no re-export is needed.
 
 #[path = "analyze_jsc.rs"]
-pub mod analyze_jsc;
+pub(crate) mod analyze_jsc;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `JSBundleCompletionTask` was MOVED to `bun_runtime::api::js_bundle_completion_task`

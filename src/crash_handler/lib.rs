@@ -39,7 +39,7 @@ pub use error::{Error, Result};
 /// rather than bypassing it.
 #[cold]
 #[inline(never)]
-pub(crate) fn out_of_memory() -> ! {
+fn out_of_memory() -> ! {
     draft::crash_handler(
         draft::CrashReason::OutOfMemory,
         draft::TraceSeed::BeginAddr(bun_core::return_address()),
@@ -50,7 +50,7 @@ pub(crate) fn out_of_memory() -> ! {
 /// time. Lives in `.text` (read-only) so memory corruption cannot redirect it.
 #[doc(hidden)]
 #[unsafe(no_mangle)]
-pub(crate) extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
+extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
     out_of_memory()
 }
 
@@ -58,7 +58,7 @@ pub(crate) extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
 /// at link time. Lives in `.text` (read-only).
 #[doc(hidden)]
 #[unsafe(no_mangle)]
-pub(crate) extern "Rust" fn __bun_crash_handler_dump_stack_trace(
+extern "Rust" fn __bun_crash_handler_dump_stack_trace(
     first_address: Option<usize>,
     limits: bun_core::DumpStackTraceOptions,
 ) {
@@ -120,7 +120,7 @@ pub mod debug {
 
     impl SelfInfo {
         /// Port of `SelfInfo.open`.
-        pub fn open() -> Result<SelfInfo, Error> {
+        pub(crate) fn open() -> Result<SelfInfo, Error> {
             // `if (builtin.strip_debug_info) return error.MissingDebugInfo;`
             if !cfg!(debug_assertions) {
                 return Err(crate::Error::MissingDebugInfo);
@@ -561,7 +561,7 @@ mod draft {
 
     /// Set this to false if you want to disable all uses of this panic handler.
     /// This is useful for testing as a crash in here will not 'panicked during a panic'.
-    pub(crate) const ENABLE: bool = true;
+    const ENABLE: bool = true;
 
     /// Overridable with BUN_CRASH_REPORT_URL environment variable.
     const DEFAULT_REPORT_BASE_URL: &str = "https://bun.report";
@@ -784,14 +784,14 @@ mod draft {
     /// Snapshot the thread-local `CURRENT_ACTION` for save/restore around a scoped
     /// operation (e.g. `js_printer::print_with_writer_and_platform`).
     #[inline]
-    pub fn current_action() -> Option<Action> {
+    pub(crate) fn current_action() -> Option<Action> {
         CURRENT_ACTION.with(|c| c.get())
     }
 
     /// Set (or clear) the thread-local `CURRENT_ACTION`. Paired with
     /// [`current_action`] for scoped restore via `scopeguard`.
     #[inline]
-    pub(crate) fn set_current_action(action: Option<Action>) {
+    fn set_current_action(action: Option<Action>) {
         CURRENT_ACTION.with(|c| c.set(action));
     }
 
@@ -1566,7 +1566,7 @@ mod draft {
         );
     }
 
-    pub(crate) fn report_base_url() -> &'static [u8] {
+    fn report_base_url() -> &'static [u8] {
         // PORTING.md §Concurrency: OnceLock for lazy global init (was a raw mutable global Option).
         static BASE_URL: std::sync::OnceLock<&'static [u8]> = std::sync::OnceLock::new();
         *BASE_URL.get_or_init(|| {
@@ -1781,7 +1781,7 @@ mod draft {
     /// One-shot state registration into lower-tier crates. Storage moved down:
     /// `bun_core::CRASH_HANDLER_INSTALLED` is a plain `AtomicBool`; T0's
     /// `raise_ignoring_panic_handler` does the SIG_DFL reset itself with libc.
-    pub(crate) fn install_hooks() {
+    fn install_hooks() {
         bun_core::CRASH_HANDLER_INSTALLED.store(true, Ordering::Relaxed);
         // T0 `bun_alloc::out_of_memory()` and `bun_core::dump_current_stack_trace()`
         // reach this crate via link-time `extern "Rust"` symbols
@@ -1981,7 +1981,7 @@ mod draft {
         }
     }
 
-    pub(crate) fn reset_segfault_handler() {
+    fn reset_segfault_handler() {
         if !ENABLE {
             return;
         }
@@ -2069,9 +2069,9 @@ mod draft {
     // `size_t`; `AtomicUsize` has the same size/alignment as `usize` so the
     // symbol layout is unchanged, and the Rust side reads it race-free.
     #[unsafe(no_mangle)]
-    pub(crate) static Bun__reported_memory_size: AtomicUsize = AtomicUsize::new(0);
+    static Bun__reported_memory_size: AtomicUsize = AtomicUsize::new(0);
 
-    pub fn print_metadata(writer: &mut impl Write) -> crate::Result<()> {
+    pub(crate) fn print_metadata(writer: &mut impl Write) -> crate::Result<()> {
         #[cfg(debug_assertions)]
         {
             if Output::is_ai_agent() {
@@ -2384,7 +2384,7 @@ mod draft {
 
     impl StackLine {
         /// `None` implies the trace is not known.
-        pub(crate) fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
+        fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
             #[cfg(windows)]
             {
                 let module = bun_sys::windows::get_module_handle_from_address(addr)?;
@@ -2511,7 +2511,7 @@ mod draft {
             }
         }
 
-        pub(crate) fn write_encoded(
+        fn write_encoded(
             self_: Option<&StackLine>,
             writer: &mut impl Write,
         ) -> crate::Result<()> {
@@ -3305,7 +3305,7 @@ mod draft {
         let _ = list.remove(index);
     }
 
-    pub(crate) struct SourceAtAddress {
+    struct SourceAtAddress {
         pub source_location: Option<SourceLocation>,
         pub symbol_name: Box<[u8]>,
         pub compile_unit_name: Box<[u8]>,
@@ -3430,7 +3430,7 @@ mod draft {
     }
 
     /// Clone of `debug.printSourceAtAddress` but it returns the metadata as well.
-    pub(crate) fn get_source_at_address(
+    fn get_source_at_address(
         debug_info: &mut SelfInfo,
         address: usize,
     ) -> crate::Result<Option<SourceAtAddress>> {
@@ -3691,14 +3691,14 @@ mod draft {
     }
 
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn CrashHandler__setInsideNativePlugin(name: *const c_char) {
+    extern "C" fn CrashHandler__setInsideNativePlugin(name: *const c_char) {
         INSIDE_NATIVE_PLUGIN.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
     }
 
     /// # Safety
     /// `name` must be a valid NUL-terminated C string.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
+    unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
         bun_analytics::features::unsupported_uv_function.fetch_add(1, Ordering::Relaxed);
         UNSUPPORTED_UV_FUNCTION.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
@@ -3720,7 +3720,7 @@ mod draft {
     /// # Safety
     /// `message_ptr` must be valid for reads of `message_len` bytes.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn Bun__crashHandler(
+    unsafe extern "C" fn Bun__crashHandler(
         message_ptr: *const u8,
         message_len: usize,
     ) -> ! {
@@ -3736,7 +3736,7 @@ mod draft {
     /// # Safety
     /// `action` must be null or a valid NUL-terminated C string that outlives the dlopen call.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
+    unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
         if !action.is_null() {
             debug_assert!(CURRENT_ACTION.with(|c| c.get()).is_none());
             // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call

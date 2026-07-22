@@ -161,7 +161,7 @@ where
 
 impl State {
     /// Create a new TCC compilation context
-    pub fn new() -> Result<NonNull<State>, bun_alloc::AllocError> {
+    fn new() -> Result<NonNull<State>, bun_alloc::AllocError> {
         // SAFETY: tcc_new has no preconditions.
         NonNull::new(unsafe { tcc_new() }).ok_or(bun_alloc::AllocError)
     }
@@ -223,7 +223,7 @@ impl State {
     }
 
     /// Set error/warning display callback
-    pub fn set_error_func<Context>(
+    fn set_error_func<Context>(
         &mut self,
         error_opaque: Option<*mut Context>,
         error_func: ErrorFunc<Context>,
@@ -247,7 +247,7 @@ impl State {
     // libtcc.h and would fail to link if referenced.
 
     /// Set options as from command line (multiple supported)
-    pub fn set_options(&mut self, str_: &ZStr) -> Result<(), Error> {
+    fn set_options(&mut self, str_: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; str_ is NUL-terminated.
         if unsafe { tcc_set_options(self, str_.as_ptr()) } != 0 {
             return Err(Error::InvalidOptions);
@@ -334,7 +334,7 @@ impl State {
     // ======================== Linking Commands ========================
 
     /// Set output type. MUST BE CALLED before any compilation
-    pub fn set_output_type(&mut self, output_type: OutputFormat) -> Result<(), Error> {
+    fn set_output_type(&mut self, output_type: OutputFormat) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState.
         if unsafe { tcc_set_output_type(self, output_type as c_int) } == -1 {
             return Err(Error::InvalidOutputType);

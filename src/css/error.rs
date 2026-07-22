@@ -21,7 +21,7 @@ pub struct Err<T> {
     /// The type of error that occurred.
     pub kind: T,
     /// The location where the error occurred.
-    pub loc: Option<ErrorLocation>,
+    pub(crate) loc: Option<ErrorLocation>,
 }
 
 impl<T: fmt::Display> fmt::Display for Err<T> {
@@ -33,7 +33,7 @@ impl<T: fmt::Display> fmt::Display for Err<T> {
 // `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
 
 impl Err<ParserError> {
-    pub fn from_parse_error(err: ParseError<ParserError>, filename: &[u8]) -> Err<ParserError> {
+    pub(crate) fn from_parse_error(err: ParseError<ParserError>, filename: &[u8]) -> Err<ParserError> {
         let kind = match err.kind {
             ParserErrorKind::basic(b) => match b {
                 BasicParseErrorKind::unexpected_token(t) => ParserError::unexpected_token(t),
@@ -86,9 +86,9 @@ impl<T: fmt::Display> Err<T> {
 /// Extensible parse errors that can be encountered by client parsing implementations.
 pub struct ParseError<T> {
     /// Details of this error
-    pub kind: ParserErrorKind<T>,
+    pub(crate) kind: ParserErrorKind<T>,
     /// Location where this error occurred
-    pub location: SourceLocation,
+    pub(crate) location: SourceLocation,
 }
 
 impl<T> ParseError<T> {
@@ -163,15 +163,15 @@ impl fmt::Display for BasicParseErrorKind {
 /// A line and column location within a source file.
 pub struct ErrorLocation {
     /// The filename in which the error occurred.
-    pub filename: Str,
+    pub(crate) filename: Str,
     /// The line number, starting from 0.
-    pub line: u32,
+    pub(crate) line: u32,
     /// The column number, starting from 1.
-    pub column: u32,
+    pub(crate) column: u32,
 }
 
 impl ErrorLocation {
-    pub fn to_location(
+    pub(crate) fn to_location(
         &self,
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
@@ -202,10 +202,6 @@ impl fmt::Display for ErrorLocation {
 #[allow(non_camel_case_types)]
 pub enum PrinterErrorKind {
     /// An ambiguous relative `url()` was encountered in a custom property declaration.
-    ambiguous_url_in_custom_property {
-        /// The ambiguous URL.
-        url: Str,
-    },
     /// A [std::fmt::Error](std::fmt::Error) was encountered in the underlying destination.
     fmt_error,
     /// The CSS modules `composes` property cannot be used within nested rules.
@@ -228,11 +224,6 @@ pub enum PrinterErrorKind {
 impl fmt::Display for PrinterErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ambiguous_url_in_custom_property { url } => write!(
-                f,
-                "Ambiguous relative URL '{}' in custom property declaration",
-                bs(*url)
-            ),
             Self::fmt_error => f.write_str("Formatting error occurred"),
             Self::invalid_composes_nesting => {
                 f.write_str("The 'composes' property cannot be used within nested rules")
@@ -332,12 +323,12 @@ pub struct BasicParseError {
     /// Details of this error
     pub kind: BasicParseErrorKind,
     /// Location where this error occurred
-    pub location: SourceLocation,
+    pub(crate) location: SourceLocation,
 }
 
 impl BasicParseError {
     #[inline]
-    pub fn into_default_parse_error(self) -> ParseError<ParserError> {
+    pub(crate) fn into_default_parse_error(self) -> ParseError<ParserError> {
         ParseError {
             kind: ParserErrorKind::basic(self.kind),
             location: self.location,
@@ -457,8 +448,8 @@ impl fmt::Display for SelectorError {
 }
 
 pub struct ErrorWithLocation<T> {
-    pub kind: T,
-    pub loc: Location,
+    pub(crate) kind: T,
+    pub(crate) loc: Location,
 }
 
 #[derive(strum::IntoStaticStr, Debug)]

@@ -19,12 +19,12 @@ use bun_sql::shared::{ColumnIdentifier, Data};
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct SQLDataCell {
-    pub tag: Tag,
+    pub(crate) tag: Tag,
 
-    pub value: Value,
-    pub free_value: u8,
-    pub is_indexed_column: u8,
-    pub index: u32,
+    pub(crate) value: Value,
+    pub(crate) free_value: u8,
+    pub(crate) is_indexed_column: u8,
+    pub(crate) index: u32,
 }
 
 impl Default for SQLDataCell {
@@ -62,25 +62,25 @@ pub enum Tag {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union Value {
-    pub null: u8,
+    pub(crate) null: u8,
     // LIFETIMES.tsv: SHARED → conceptually `Option<RefPtr<WTFStringImpl>>`.
     // Kept as a raw thin pointer (`*mut WTFStringImplStruct`) because this
     // is a `#[repr(C)] union` crossing FFI; `deinit()` derefs by tag.
-    pub string: WTFStringImpl,
-    pub float8: f64,
-    pub int4: i32,
-    pub int8: i64,
-    pub bool_: u8, // `bool` is a Rust keyword
-    pub date: f64,
-    pub date_with_time_zone: f64,
-    pub bytea: [usize; 2],
+    pub(crate) string: WTFStringImpl,
+    pub(crate) float8: f64,
+    pub(crate) int4: i32,
+    pub(crate) int8: i64,
+    pub(crate) bool_: u8, // `bool` is a Rust keyword
+    pub(crate) date: f64,
+    pub(crate) date_with_time_zone: f64,
+    pub(crate) bytea: [usize; 2],
     // LIFETIMES.tsv: SHARED — same rationale as `string`.
-    pub json: WTFStringImpl,
-    pub array: Array,
-    pub typed_array: TypedArray,
-    pub raw: Raw,
-    pub uint4: u32,
-    pub uint8: u64,
+    pub(crate) json: WTFStringImpl,
+    pub(crate) array: Array,
+    pub(crate) typed_array: TypedArray,
+    pub(crate) raw: Raw,
+    pub(crate) uint4: u32,
+    pub(crate) uint8: u64,
 }
 
 // Clone/Copy: bitwise — `ptr` is logically OWNED (freed by `deinit`), but the
@@ -92,9 +92,9 @@ pub struct Array {
     // LIFETIMES.tsv: OWNED → Vec<SQLDataCell>. Kept as raw ptr/len/cap because
     // C++ reads these three fields directly across FFI; reconstructed as Vec in
     // `deinit` to free.
-    pub ptr: *mut SQLDataCell,
-    pub len: u32,
-    pub cap: u32,
+    pub(crate) ptr: *mut SQLDataCell,
+    pub(crate) len: u32,
+    pub(crate) cap: u32,
 }
 
 impl Default for Array {
@@ -108,7 +108,7 @@ impl Default for Array {
 }
 
 impl Array {
-    pub fn slice(&mut self) -> &mut [SQLDataCell] {
+    pub(crate) fn slice(&mut self) -> &mut [SQLDataCell] {
         if self.ptr.is_null() {
             return &mut [];
         }
@@ -139,7 +139,7 @@ impl Array {
         unsafe { slice::from_raw_parts_mut(self.ptr, self.cap as usize) }
     }
 
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         let p = self.ptr;
         let cap = self.cap as usize;
         self.ptr = ptr::null_mut();
@@ -159,8 +159,8 @@ impl Array {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Raw {
-    pub ptr: *const u8,
-    pub len: u64,
+    pub(crate) ptr: *const u8,
+    pub(crate) len: u64,
 }
 
 impl Default for Raw {
@@ -179,12 +179,12 @@ pub struct TypedArray {
     // #[repr(C)] FFI layout (a Rust slice ref is a fat pointer). free_value=0
     // for typed_array producers, so deinit's free path is effectively dead for
     // borrowed buffers.
-    pub head_ptr: *mut u8,
+    pub(crate) head_ptr: *mut u8,
     // LIFETIMES.tsv: BORROW_FIELD → sub-slice of head_ptr; same rationale.
-    pub ptr: *mut u8,
-    pub len: u32,
-    pub byte_len: u32,
-    pub type_: JSType, // `type` is a Rust keyword
+    pub(crate) ptr: *mut u8,
+    pub(crate) len: u32,
+    pub(crate) byte_len: u32,
+    pub(crate) type_: JSType, // `type` is a Rust keyword
 }
 
 // Note: no `&mut [u8]` slice getters are provided. `len` is the typed-array
@@ -198,7 +198,7 @@ impl SQLDataCell {
     // #[repr(C)], lives inside a C union, is bulk-passed to C++ by pointer, and
     // freeing is gated on `free_value`. See PORTING.md §Idiom map (FFI types
     // keep explicit destroy).
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         if self.free_value == 0 {
             return;
         }
@@ -279,12 +279,12 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub fn null() -> SQLDataCell {
+    pub(crate) fn null() -> SQLDataCell {
         SQLDataCell::default()
     }
 
     #[inline]
-    pub fn int4(value: i32) -> SQLDataCell {
+    pub(crate) fn int4(value: i32) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::Int4,
             value: Value { int4: value },
@@ -293,7 +293,7 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub fn uint4(value: u32) -> SQLDataCell {
+    pub(crate) fn uint4(value: u32) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::Uint4,
             value: Value { uint4: value },
@@ -302,7 +302,7 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub fn int8(value: i64) -> SQLDataCell {
+    pub(crate) fn int8(value: i64) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::Int8,
             value: Value { int8: value },
@@ -311,7 +311,7 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub fn uint8(value: u64) -> SQLDataCell {
+    pub(crate) fn uint8(value: u64) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::Uint8,
             value: Value { uint8: value },
@@ -320,7 +320,7 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub fn float8(value: f64) -> SQLDataCell {
+    pub(crate) fn float8(value: f64) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::Float8,
             value: Value { float8: value },
@@ -329,7 +329,7 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub fn bool_(value: bool) -> SQLDataCell {
+    pub(crate) fn bool_(value: bool) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::Bool,
             value: Value { bool_: value as u8 },
@@ -338,7 +338,7 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub fn date(value: f64) -> SQLDataCell {
+    pub(crate) fn date(value: f64) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::Date,
             value: Value { date: value },
@@ -347,7 +347,7 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub fn date_with_tz(value: f64) -> SQLDataCell {
+    pub(crate) fn date_with_tz(value: f64) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::DateWithTimeZone,
             value: Value {
@@ -361,7 +361,7 @@ impl SQLDataCell {
     /// `free_value = 1`. Empty input becomes a null pointer, which the C++
     /// side (SQLClient.cpp) renders as the empty string.
     #[inline]
-    pub fn string(bytes: &[u8]) -> SQLDataCell {
+    pub(crate) fn string(bytes: &[u8]) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::String,
             value: Value {
@@ -376,7 +376,7 @@ impl SQLDataCell {
     /// `free_value = 1`. Empty input becomes a null pointer, which the C++
     /// side (SQLClient.cpp) renders as `null`.
     #[inline]
-    pub fn json(bytes: &[u8]) -> SQLDataCell {
+    pub(crate) fn json(bytes: &[u8]) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::Json,
             value: Value {
@@ -387,7 +387,7 @@ impl SQLDataCell {
         }
     }
 
-    pub fn raw<'a>(optional_bytes: impl IntoOptionalData<'a>) -> SQLDataCell {
+    pub(crate) fn raw<'a>(optional_bytes: impl IntoOptionalData<'a>) -> SQLDataCell {
         if let Some(bytes) = optional_bytes.into_optional_data() {
             let bytes_slice = bytes.slice();
             return SQLDataCell {
@@ -408,7 +408,7 @@ impl SQLDataCell {
     /// Shared wrapper around `construct_object_from_data_cell` used by the
     /// per-row `to_js` paths (postgres `Putter`, mysql `Row`): extracts the
     /// cached-structure column names and forwards the cells.
-    pub fn to_js_object(
+    pub(crate) fn to_js_object(
         global_object: &JSGlobalObject,
         array: JSValue,
         structure: JSValue,
@@ -436,7 +436,7 @@ impl SQLDataCell {
     }
 
     // TODO: cppbind isn't yet able to detect slice parameters when the next is uint32_t
-    pub fn construct_object_from_data_cell(
+    pub(crate) fn construct_object_from_data_cell(
         global_object: &JSGlobalObject,
         encoded_array_value: JSValue,
         encoded_structure_value: JSValue,
@@ -533,7 +533,7 @@ bitflags::bitflags! {
 /// Rewrites repeated column identifiers to [`ColumnIdentifier::Duplicate`] and
 /// accumulates the column-set [`Flags`]. Callers pass the columns in reverse
 /// order so the LAST occurrence of a repeated name/index keeps its identifier.
-pub fn dedupe_columns<'a>(
+pub(crate) fn dedupe_columns<'a>(
     columns: impl ExactSizeIterator<Item = &'a mut ColumnIdentifier>,
 ) -> Flags {
     let mut seen_numbers: Vec<u32> = Vec::new();

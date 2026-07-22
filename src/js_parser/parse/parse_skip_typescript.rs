@@ -11,11 +11,11 @@ use bun_ast::ts::Metadata;
 
 // Re-export so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.
-pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
+type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     #[inline]
-    pub fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
         self.skip_type_script_type_with_opts::<false>(
             Level::Lowest,
             SkipTypeOptionsBitset::only(SkipTypeOptions::IsReturnType),
@@ -24,7 +24,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn skip_typescript_return_type_with_metadata(&mut self) -> Result<Metadata, Error> {
+    pub(crate) fn skip_typescript_return_type_with_metadata(&mut self) -> Result<Metadata, Error> {
         let mut result = Metadata::DEFAULT;
         self.skip_type_script_type_with_opts::<true>(
             Level::Lowest,
@@ -35,13 +35,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn skip_type_script_type(&mut self, level: Level) -> Result<(), Error> {
+    pub(crate) fn skip_type_script_type(&mut self, level: Level) -> Result<(), Error> {
         self.mark_type_script_only();
         self.skip_type_script_type_with_opts::<false>(level, SkipTypeOptionsBitset::empty(), None)
     }
 
     #[inline]
-    pub fn skip_type_script_type_with_metadata(&mut self, level: Level) -> Result<Metadata, Error> {
+    pub(crate) fn skip_type_script_type_with_metadata(&mut self, level: Level) -> Result<Metadata, Error> {
         self.mark_type_script_only();
         let mut result = Metadata::DEFAULT;
         self.skip_type_script_type_with_opts::<true>(
@@ -52,7 +52,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    pub fn skip_type_script_binding(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_type_script_binding(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
         // Nested destructuring patterns in skipped type positions recurse through
         // this function; bound it like `parse_binding` does.
@@ -149,7 +149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn skip_typescript_fn_args(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_typescript_fn_args(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
 
         self.lexer.expect(T::TOpenParen)?;
@@ -200,7 +200,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///     let x = (y: any): (y) => {return 0};
     ///     let x = (y: any): asserts y is (y) => {};
     ///
-    pub fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
+    pub(crate) fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
         &mut self,
         result: Option<&mut Metadata>,
     ) -> Result<(), Error> {
@@ -227,7 +227,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // Rust cannot express a const-generic-dependent param type on stable; we use
     // `Option<&mut Metadata>` and require callers to pass `Some` iff `GET_METADATA == true`.
     // The const generic is kept so `if GET_METADATA { ... }` branches monomorphize away.
-    pub fn skip_type_script_type_with_opts<const GET_METADATA: bool>(
+    pub(crate) fn skip_type_script_type_with_opts<const GET_METADATA: bool>(
         &mut self,
         level: Level,
         opts: SkipTypeOptionsBitset,
@@ -1012,7 +1012,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
 
         self.lexer.expect(T::TOpenBrace)?;
@@ -1133,7 +1133,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // This is the type parameter declarations that go with other symbol
     // declarations (class, function, type, etc.)
-    pub fn skip_type_script_type_parameters(
+    pub(crate) fn skip_type_script_type_parameters(
         &mut self,
         flags: TypeParameterFlag,
     ) -> Result<SkipTypeParameterResult, Error> {
@@ -1285,7 +1285,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    pub fn skip_type_script_type_stmt(
+    pub(crate) fn skip_type_script_type_stmt(
         &mut self,
         opts: &mut ParseStatementOptions,
     ) -> Result<(), Error> {
@@ -1340,7 +1340,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn skip_type_script_interface_stmt(
+    pub(crate) fn skip_type_script_interface_stmt(
         &mut self,
         opts: &mut ParseStatementOptions,
     ) -> Result<(), Error> {
@@ -1383,7 +1383,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn skip_type_script_type_arguments<
+    pub(crate) fn skip_type_script_type_arguments<
         const IS_INSIDE_JSX_ELEMENT: bool,
         const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
     >(
@@ -1490,7 +1490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
-    pub fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
+    pub(crate) fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
         &mut self,
     ) -> Result<SkipTypeParameterResult, Error> {
         let result =
@@ -1502,7 +1502,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    pub fn skip_type_script_constraint_of_infer_type_with_backtracking(
+    pub(crate) fn skip_type_script_constraint_of_infer_type_with_backtracking(
         &mut self,
         flags: SkipTypeOptionsBitset,
     ) -> Result<bool, Error> {
@@ -1522,7 +1522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    pub fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
+    pub(crate) fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
         self.skip_typescript_fn_args()?;
         if self.lexer.expect(T::TEqualsGreaterThan).is_err() {
             return Err(crate::Error::Backtrack);
@@ -1531,7 +1531,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    pub fn skip_type_script_type_arguments_with_backtracking(&mut self) -> Result<bool, Error> {
+    pub(crate) fn skip_type_script_type_arguments_with_backtracking(&mut self) -> Result<bool, Error> {
         if self.skip_type_script_type_arguments::<false, true>()? {
             // Check the token after this and backtrack if it's the wrong one
             if !self.can_follow_type_arguments_in_expression() {
@@ -1542,7 +1542,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    pub fn skip_type_script_arrow_return_type_with_backtracking(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_type_script_arrow_return_type_with_backtracking(&mut self) -> Result<(), Error> {
         self.lexer.expect(T::TColon)?;
 
         self.skip_typescript_return_type()?;
@@ -1555,7 +1555,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ─────────────────────── try_* wrappers ───────────────────────
 
-    pub fn try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
+    pub(crate) fn try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
         &mut self,
     ) -> SkipTypeParameterResult {
         self.lexer_backtracker_result(
@@ -1563,19 +1563,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn try_skip_type_script_type_arguments_with_backtracking(&mut self) -> bool {
+    pub(crate) fn try_skip_type_script_type_arguments_with_backtracking(&mut self) -> bool {
         self.lexer_backtracker_bool(Self::skip_type_script_type_arguments_with_backtracking)
     }
 
-    pub fn try_skip_type_script_arrow_return_type_with_backtracking(&mut self) -> bool {
+    pub(crate) fn try_skip_type_script_arrow_return_type_with_backtracking(&mut self) -> bool {
         self.lexer_backtracker_bool(Self::skip_type_script_arrow_return_type_with_backtracking)
     }
 
-    pub fn try_skip_type_script_arrow_args_with_backtracking(&mut self) -> bool {
+    pub(crate) fn try_skip_type_script_arrow_args_with_backtracking(&mut self) -> bool {
         self.lexer_backtracker_bool(Self::skip_type_script_arrow_args_with_backtracking)
     }
 
-    pub fn try_skip_type_script_constraint_of_infer_type_with_backtracking(
+    pub(crate) fn try_skip_type_script_constraint_of_infer_type_with_backtracking(
         &mut self,
         flags: SkipTypeOptionsBitset,
     ) -> bool {

@@ -119,15 +119,15 @@ mod handler {
 
     // No-op handlers: the pointer arg is never dereferenced. Safe fn items
     // coerce to the `unsafe extern "C" fn` slots in `uws::LoopHandler` below.
-    pub(super) extern "C" fn wakeup(_loop: *mut uws::Loop) {
+    extern "C" fn wakeup(_loop: *mut uws::Loop) {
         // No-op: we don't need to wake up from another thread for spawnSync
     }
 
-    pub(super) extern "C" fn pre(_loop: *mut uws::Loop) {
+    extern "C" fn pre(_loop: *mut uws::Loop) {
         // No-op: no pre-tick work needed for spawnSync
     }
 
-    pub(super) extern "C" fn post(_loop: *mut uws::Loop) {
+    extern "C" fn post(_loop: *mut uws::Loop) {
         // No-op: no post-tick work needed for spawnSync
     }
 
@@ -224,7 +224,7 @@ impl SpawnSyncEventLoop {
     /// `self.uws_loop` out *before* that store and ticks via the raw pointer
     /// directly. This accessor is for non-re-entrant call sites (e.g. `init`).
     #[inline]
-    pub fn uws_loop_mut(&mut self) -> &mut uws::Loop {
+    pub(crate) fn uws_loop_mut(&mut self) -> &mut uws::Loop {
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` for its
         // entire lifetime (created in `init`, freed in `Drop`). `&mut self`
         // guarantees no other safe borrow of the loop is live.

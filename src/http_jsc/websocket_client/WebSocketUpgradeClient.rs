@@ -199,7 +199,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// On error, this returns null.
     /// Returning null signals to the parent function that the connection failed.
     #[allow(clippy::too_many_arguments)]
-    pub unsafe fn connect(
+    pub(crate) unsafe fn connect(
         global: &JSGlobalObject,
         websocket: *mut CppWebSocket,
         host: &BunString,
@@ -561,12 +561,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
     }
 
-    pub fn clear_input(&mut self) {
+    pub(crate) fn clear_input(&mut self) {
         self.input_body_buf = Vec::new();
         self.to_send_len = 0;
     }
 
-    pub fn clear_data(&mut self) {
+    pub(crate) fn clear_data(&mut self) {
         // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
         self.poll_ref
             .unref(unsafe { vm_loop_ctx(VirtualMachineRef::get_mut_ptr()) });
@@ -601,7 +601,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// socket userdata pointer, which would alias a `&mut self` argument; and
     /// the trailing `deref` may free `this`, which would violate a `&mut self`
     /// argument protector.
-    pub unsafe fn cancel(this: *mut Self) {
+    pub(crate) unsafe fn cancel(this: *mut Self) {
         // SAFETY: caller (C++ / uWS) holds a live ref; `this` carries root
         // (userdata) provenance from `heap::alloc`.
         let this = unsafe { ThisPtr::new(this) };
@@ -658,7 +658,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `did_abrupt_close` may run JS that re-enters via `cancel()`, and
     /// `tcp.close()` synchronously dispatches `handle_close`; both would alias
     /// a `&mut self` argument.
-    pub unsafe fn fail(this: *mut Self, code: ErrorCode) {
+    pub(crate) unsafe fn fail(this: *mut Self, code: ErrorCode) {
         log!("onFail: {}", <&'static str>::from(code));
         bun_jsc::mark_binding!();
         // SAFETY: caller contract — `this` is a live `heap::alloc` pointer.
@@ -711,7 +711,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
     /// # Safety
     /// `this` must point to a live `Self`. See `fail`.
-    pub unsafe fn terminate(this: *mut Self, code: ErrorCode) {
+    pub(crate) unsafe fn terminate(this: *mut Self, code: ErrorCode) {
         // SAFETY: forwards `this` with root provenance.
         unsafe { Self::fail(this, code) };
         // We cannot access the pointer after fail is called.
@@ -841,7 +841,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         me.to_send_len = me.input_body_buf.len() - usize::try_from(wrote).expect("int cast");
     }
 
-    pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
+    pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
         // `InternalSocket` has no `PartialEq`; compare native handles.
         socket.get_native_handle() == self.tcp.get_native_handle()
     }
@@ -1146,7 +1146,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate` may free `this`; see `fail`.
-    pub unsafe fn on_proxy_tls_handshake_complete(this: *mut Self) {
+    pub(crate) unsafe fn on_proxy_tls_handshake_complete(this: *mut Self) {
         log!("onProxyTLSHandshakeComplete");
 
         // SAFETY: short-lived `&mut`; no reentrant calls until `terminate` below.
@@ -1200,7 +1200,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate`/`process_response` may free `this`; see `fail`.
-    pub unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) {
+    pub(crate) unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
 
         // SAFETY: short-lived `&mut` for body buffering; no reentrant calls in
@@ -1268,7 +1268,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `terminate`/`tcp.close()` may synchronously dispatch `handle_close`
     /// (aliased `&mut`), and the success path's double `deref` may free
     /// `this` (argument-protector UB on `&mut self`).
-    pub unsafe fn process_response(
+    pub(crate) unsafe fn process_response(
         this: *mut Self,
         response: picohttp::Response,
         remain_buf: &[u8],
@@ -1692,7 +1692,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         drop(saved_secure);
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<Self>();
         cost += self.body.capacity();
         cost += self.to_send_len;

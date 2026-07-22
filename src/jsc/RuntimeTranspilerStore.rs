@@ -63,7 +63,7 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // the caller's `&mut TranspilerJob` (which is stored inside
 // `vm.transpiler_store`). Only the `source_mappings` leaf field is touched,
 // under its own internal lock.
-pub(crate) fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
+fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
     dump_source_string(vm, specifier, printer.ctx.get_written());
 }
 
@@ -78,7 +78,7 @@ pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], 
 // safe code (replaces the prior split `Mutex` + `RacyCell` pair).
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
-pub(crate) fn dump_source_string_failiable(
+fn dump_source_string_failiable(
     vm: NonNull<VirtualMachine>,
     specifier: &[u8],
     written: &[u8],
@@ -199,10 +199,10 @@ pub fn set_break_point_on_first_line() -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RuntimeTranspilerStore {
-    pub generation_number: AtomicU32,
-    pub store: TranspilerJobStore,
+    pub(crate) generation_number: AtomicU32,
+    pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
-    pub queue: Queue,
+    pub(crate) queue: Queue,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -223,7 +223,7 @@ impl Taskable for RuntimeTranspilerStore {
 }
 
 impl RuntimeTranspilerStore {
-    pub fn init() -> RuntimeTranspilerStore {
+    pub(crate) fn init() -> RuntimeTranspilerStore {
         // The HiveArrayFallback uses the global mimalloc
         // (PORTING.md §Allocators).
         Self::default()
@@ -366,31 +366,31 @@ pub struct TranspilerJob {
     // Note: stored as the lower-tier `bun_paths::fs::Path<'static>` (the type
     // `ParseOptions.path` / `bun_ast::Source.path` use). The slices borrow the
     // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
-    pub path: bun_paths::fs::Path<'static>,
+    pub(crate) path: bun_paths::fs::Path<'static>,
     /// RAII: `Drop` derefs the WTF refcount — torn down by
     /// `HiveArray::put` → `drop_in_place` (not in `reset_for_pool`).
-    pub non_threadsafe_input_specifier: OwnedString,
-    pub non_threadsafe_referrer: OwnedString,
-    pub loader: Loader,
-    pub promise: StrongOptional,
+    pub(crate) non_threadsafe_input_specifier: OwnedString,
+    pub(crate) non_threadsafe_referrer: OwnedString,
+    pub(crate) loader: Loader,
+    pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
-    pub vm: *mut VirtualMachine,
-    pub global_this: BackRef<JSGlobalObject>,
-    pub fetcher: Fetcher,
-    pub poll_ref: KeepAlive,
-    pub generation_number: u32,
-    pub log: bun_ast::Log,
-    pub parse_error: Option<crate::CrateError>,
+    pub(crate) vm: *mut VirtualMachine,
+    pub(crate) global_this: BackRef<JSGlobalObject>,
+    pub(crate) fetcher: Fetcher,
+    pub(crate) poll_ref: KeepAlive,
+    pub(crate) generation_number: u32,
+    pub(crate) log: bun_ast::Log,
+    pub(crate) parse_error: Option<crate::CrateError>,
     /// RAII-owned: holds +1 on `source_code`/`source_url`/`specifier`/
     /// `bytecode_origin_path` until `run_from_js_thread` `take()`s and
     /// `into_ffi()`s to C++. Dropped (via `HiveArray::put` → `drop_in_place`)
     /// on any path that skips `run_from_js_thread` derefs them.
-    pub resolved_source: OwnedResolvedSource,
-    pub work_task: WorkPoolTask,
+    pub(crate) resolved_source: OwnedResolvedSource,
+    pub(crate) work_task: WorkPoolTask,
     /// INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
-    pub next: unbounded_queue::Link<TranspilerJob>,
+    pub(crate) next: unbounded_queue::Link<TranspilerJob>,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TranspilerJob>`.
@@ -484,7 +484,7 @@ impl TranspilerJob {
         // replacement a second time).
     }
 
-    pub(crate) fn dispatch_to_main_thread(&mut self) {
+    fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
@@ -498,7 +498,7 @@ impl TranspilerJob {
             .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
     }
 
-    pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
+    fn run_from_js_thread(&mut self) -> JsResult<()> {
         let vm = self.vm;
         let promise = self.promise.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
@@ -554,7 +554,7 @@ impl TranspilerJob {
         )
     }
 
-    pub(crate) fn schedule(&mut self) {
+    fn schedule(&mut self) {
         // Note: the KeepAlive takes an
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
@@ -562,7 +562,7 @@ impl TranspilerJob {
         WorkPool::schedule(&raw mut self.work_task);
     }
 
-    pub(crate) unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
+    unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
@@ -571,7 +571,7 @@ impl TranspilerJob {
         this.run();
     }
 
-    pub(crate) fn run(&mut self) {
+    fn run(&mut self) {
         // Stack-local per call, bulk-freed on return. An earlier version hoisted
         // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
         // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at

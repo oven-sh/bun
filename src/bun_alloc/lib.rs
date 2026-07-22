@@ -33,11 +33,11 @@ impl Alignment {
         Self(core::mem::align_of::<T>().trailing_zeros() as u8)
     }
     #[inline]
-    pub const fn to_byte_units(self) -> usize {
+    const fn to_byte_units(self) -> usize {
         1usize << self.0
     }
     #[inline]
-    pub const fn from_byte_units(b: usize) -> Self {
+    const fn from_byte_units(b: usize) -> Self {
         Self(b.trailing_zeros() as u8)
     }
 }
@@ -64,7 +64,7 @@ pub const MAX_ALIGN_T: usize = core::mem::align_of::<MaxAlignT>();
 #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
 pub const MAX_ALIGN_T: usize = 16;
 #[cfg(not(any(windows, all(target_os = "freebsd", target_arch = "aarch64"))))]
-pub const MAX_ALIGN_T: usize = core::mem::align_of::<libc::max_align_t>();
+pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<libc::max_align_t>();
 
 pub struct AllocatorVTable {
     pub alloc: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8,
@@ -76,16 +76,16 @@ impl AllocatorVTable {
     /// `alloc` impl that always fails. For vtables that only ever `free` an
     /// externally-produced buffer (mmap region, plugin-owned memory, refcounted
     /// foreign string) and never allocate or grow it.
-    pub const NO_ALLOC: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8 =
+    const NO_ALLOC: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8 =
         |_, _, _, _| core::ptr::null_mut();
-    pub const NO_RESIZE: unsafe fn(
+    const NO_RESIZE: unsafe fn(
         *mut core::ffi::c_void,
         &mut [u8],
         Alignment,
         usize,
         usize,
     ) -> bool = |_, _, _, _, _| false;
-    pub const NO_REMAP: unsafe fn(
+    const NO_REMAP: unsafe fn(
         *mut core::ffi::c_void,
         &mut [u8],
         Alignment,
@@ -161,7 +161,7 @@ impl StdAllocator {
         if p.is_null() { None } else { Some(p) }
     }
     #[inline]
-    pub fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
+    fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
         // SAFETY: see `raw_alloc`.
         unsafe { (self.vtable.free)(self.ptr, buf, alignment, ra) }
     }
@@ -324,7 +324,7 @@ pub mod default_alloc {
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
-    pub unsafe fn usable_size(ptr: *const c_void) -> usize {
+    pub(crate) unsafe fn usable_size(ptr: *const c_void) -> usize {
         if ptr.is_null() {
             return 0;
         }
@@ -348,7 +348,7 @@ pub mod default_alloc {
 
     #[cfg(not(bun_asan))]
     #[inline]
-    pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
+    pub(crate) fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
         crate::mimalloc::mi_malloc_auto_align(size, align)
     }
 
@@ -389,7 +389,7 @@ pub mod default_alloc {
     /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
     #[cfg(not(bun_asan))]
     #[inline]
-    pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
+    pub(crate) unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
         // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation
         // with alignment `align`.
         unsafe { crate::mimalloc::mi_realloc_aligned(ptr, new_size, align) }
@@ -621,11 +621,11 @@ pub fn buf_print_len(
 // futex-backed since Rust 1.62) is the dependency-free stand-in.
 pub struct Mutex(std::sync::Mutex<()>);
 impl Mutex {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self(std::sync::Mutex::new(()))
     }
     #[inline]
-    pub fn lock(&self) -> MutexGuard {
+    fn lock(&self) -> MutexGuard {
         let g = self
             .0
             .lock()
@@ -646,7 +646,7 @@ impl Mutex {
 /// Unlocks the paired [`Mutex`] on drop. See the type-level comment on
 /// [`Mutex`] for why this erases the guard lifetime rather than borrowing.
 #[must_use = "if unused the Mutex will immediately unlock"]
-pub struct MutexGuard {
+struct MutexGuard {
     _guard: std::sync::MutexGuard<'static, ()>,
 }
 impl Default for Mutex {
@@ -899,10 +899,10 @@ pub enum Tag {
 // `ZigString` pointer-tag scheme — single source of truth.
 // Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
 pub const ZS_STATIC_BIT: usize = 1usize << 60;
-pub const ZS_UTF8_BIT: usize = 1usize << 61;
-pub const ZS_GLOBAL_BIT: usize = 1usize << 62;
-pub const ZS_16BIT_BIT: usize = 1usize << 63;
-pub const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
+const ZS_UTF8_BIT: usize = 1usize << 61;
+const ZS_GLOBAL_BIT: usize = 1usize << 62;
+const ZS_16BIT_BIT: usize = 1usize << 63;
+const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
 
 /// FFI string slice — `{ ptr: *const u8, len: usize }`.
 ///
@@ -919,7 +919,7 @@ pub const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
 #[derive(Clone, Copy)]
 pub struct ZigString {
     /// Tagged pointer — never dereference directly; use `untagged()`.
-    pub _unsafe_ptr_do_not_use: *const u8,
+    _unsafe_ptr_do_not_use: *const u8,
     pub len: usize,
 }
 
@@ -1066,10 +1066,10 @@ impl ZigString {
 /// `UnsafeCell<u32>`, so the C ABI layout is unchanged.
 #[repr(C)]
 pub struct WTFStringImplStruct {
-    pub m_ref_count: core::cell::Cell<u32>,
-    pub m_length: u32,
+    m_ref_count: core::cell::Cell<u32>,
+    m_length: u32,
     pub m_ptr: WTFStringImplPtr,
-    pub m_hash_and_flags: core::cell::Cell<u32>,
+    m_hash_and_flags: core::cell::Cell<u32>,
 }
 
 #[repr(C)]
@@ -1088,11 +1088,11 @@ impl WTFStringImplStruct {
     // ---------------------------------------------------------------------
     // These details must stay in sync with WTFStringImpl.h in WebKit!
     // ---------------------------------------------------------------------
-    pub const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
+    const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
     /// The bottom bit in the ref count indicates a static (immortal) string.
-    pub const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
+    const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
     /// This allows us to ref / deref without disturbing the static string flag.
-    pub const S_REF_COUNT_INCREMENT: u32 = 0x2;
+    const S_REF_COUNT_INCREMENT: u32 = 0x2;
 
     #[inline]
     pub fn length(&self) -> u32 {
@@ -1381,7 +1381,7 @@ impl String {
     }
 
     #[inline]
-    pub fn to_zig_string(&self) -> ZigString {
+    fn to_zig_string(&self) -> ZigString {
         match self.tag {
             Tag::StaticZigString | Tag::ZigString => {
                 // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string`
@@ -1608,7 +1608,7 @@ pub struct IndexType(u32);
 
 impl IndexType {
     #[inline]
-    pub const fn new(index: u32, is_overflow: bool) -> Self {
+    const fn new(index: u32, is_overflow: bool) -> Self {
         Self((index & 0x7FFF_FFFF) | ((is_overflow as u32) << 31))
     }
     #[inline]
@@ -1620,11 +1620,11 @@ impl IndexType {
         (self.0 >> 31) != 0
     }
     #[inline]
-    pub fn set_index(&mut self, index: u32) {
+    fn set_index(&mut self, index: u32) {
         self.0 = (self.0 & 0x8000_0000) | (index & 0x7FFF_FFFF);
     }
     #[inline]
-    pub fn set_is_overflow(&mut self, v: bool) {
+    fn set_is_overflow(&mut self, v: bool) {
         self.0 = (self.0 & 0x7FFF_FFFF) | ((v as u32) << 31);
     }
     #[inline]
@@ -1774,7 +1774,7 @@ pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
 /// Returned pointer is `align`-aligned (`align ≤ 4096`).
 #[doc(hidden)]
 #[inline]
-pub fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
+fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
     debug_assert!(size > 0);
     #[cfg(unix)]
     let ptr = {
@@ -1914,7 +1914,7 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
 /// counter — never read past `used`.
 #[doc(hidden)]
 #[inline]
-pub fn bss_lazy_slice<T>(count: usize) -> NonNull<[MaybeUninit<T>]> {
+fn bss_lazy_slice<T>(count: usize) -> NonNull<[MaybeUninit<T>]> {
     let p =
         bss_lazy_bytes(count * size_of::<T>(), core::mem::align_of::<T>()).cast::<MaybeUninit<T>>();
     NonNull::slice_from_raw_parts(p, count)
@@ -2055,9 +2055,9 @@ type OverflowUsedSize = u16;
 pub struct OverflowGroup<Block> {
     // 16 million files should be good enough for anyone
     // ...right?
-    pub used: OverflowUsedSize,
-    pub allocated: OverflowUsedSize,
-    pub ptrs: [Option<Box<Block>>; OVERFLOW_GROUP_SLOTS],
+    used: OverflowUsedSize,
+    allocated: OverflowUsedSize,
+    ptrs: [Option<Box<Block>>; OVERFLOW_GROUP_SLOTS],
 }
 
 impl<Block: OverflowBlock> OverflowGroup<Block> {
@@ -2067,7 +2067,7 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
         self.allocated = 0;
     }
 
-    pub fn tail(&mut self) -> core::result::Result<&mut Block, AllocError> {
+    fn tail(&mut self) -> core::result::Result<&mut Block, AllocError> {
         if self.used as usize + 1 >= OVERFLOW_GROUP_SLOTS
             && self.ptrs[self.used as usize]
                 .as_ref()
@@ -2121,9 +2121,9 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 // `feature(generic_const_exprs)` on stable Rust, so COUNT is pinned per instantiation site.
 
 pub struct OverflowListBlock<ValueType, const COUNT: usize> {
-    pub used: u32,
+    used: u32,
     // Only `[0..used]` is initialized; writes are raw (no drop glue).
-    pub items: [MaybeUninit<ValueType>; COUNT],
+    items: [MaybeUninit<ValueType>; COUNT],
 }
 
 impl<ValueType, const COUNT: usize> OverflowListBlock<ValueType, COUNT> {
@@ -2132,7 +2132,7 @@ impl<ValueType, const COUNT: usize> OverflowListBlock<ValueType, COUNT> {
         self.used as usize >= COUNT
     }
 
-    pub fn append(&mut self, value: ValueType) -> &mut ValueType {
+    fn append(&mut self, value: ValueType) -> &mut ValueType {
         debug_assert!((self.used as usize) < COUNT);
         let index = self.used as usize;
         // Raw write — slot may be uninit; no drop glue runs.
@@ -2157,8 +2157,8 @@ impl<ValueType, const COUNT: usize> OverflowBlock for OverflowListBlock<ValueTyp
 }
 
 pub struct OverflowList<ValueType, const COUNT: usize> {
-    pub list: OverflowGroup<OverflowListBlock<ValueType, COUNT>>,
-    pub count: u32,
+    list: OverflowGroup<OverflowListBlock<ValueType, COUNT>>,
+    count: u32,
 }
 
 impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
@@ -2180,7 +2180,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     /// `list.ptrs` bytes are already zero (i.e. obtained from
     /// `bss_heap_init`/`bss_lazy_bytes`, NOT `mi_malloc`/stack `MaybeUninit`).
     #[inline]
-    pub unsafe fn init_counters_at(slot: *mut Self) {
+    unsafe fn init_counters_at(slot: *mut Self) {
         // SAFETY: caller contract.
         unsafe {
             addr_of_mut!((*slot).list.used).write(0);
@@ -2190,12 +2190,12 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     }
 
     #[inline]
-    pub fn len(&self) -> u32 {
+    fn len(&self) -> u32 {
         self.count
     }
 
     #[inline]
-    pub fn append(&mut self, value: ValueType) -> core::result::Result<&mut ValueType, AllocError> {
+    fn append(&mut self, value: ValueType) -> core::result::Result<&mut ValueType, AllocError> {
         let block = self.list.tail()?;
         self.count += 1;
         Ok(block.append(value))
@@ -2283,15 +2283,15 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
 /// fault only as `append` actually fills them.
 #[repr(C)]
 pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
-    pub mutex: Mutex,
+    mutex: Mutex,
     // LIFETIMES.tsv: dual semantics — points at sibling `tail` OR a heap alloc.
     // Kept as a raw NonNull: self-referential when `head == &self.tail`, so a safe
     // borrow cannot express it.
-    pub head: Option<NonNull<BSSListOverflowBlock<ValueType>>>,
-    pub used: u32,
-    pub tail: BSSListOverflowBlock<ValueType>,
+    head: Option<NonNull<BSSListOverflowBlock<ValueType>>>,
+    used: u32,
+    tail: BSSListOverflowBlock<ValueType>,
     // Only `[0..used]` is initialized.
-    pub backing_buf: [MaybeUninit<ValueType>; COUNT],
+    backing_buf: [MaybeUninit<ValueType>; COUNT],
 }
 
 // SAFETY: `head` is a self-referential `NonNull` into `self.tail` or a heap block owned by
@@ -2313,17 +2313,17 @@ pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 /// locality; the constraint is on the inline-tail instance.
 #[repr(C)]
 pub struct BSSListOverflowBlock<ValueType> {
-    pub used: AtomicU16,
-    pub prev: Option<Box<BSSListOverflowBlock<ValueType>>>,
+    used: AtomicU16,
+    prev: Option<Box<BSSListOverflowBlock<ValueType>>>,
     // Only `[0..used]` is initialized.
-    pub data: [MaybeUninit<ValueType>; BSS_LIST_CHUNK_SIZE],
+    data: [MaybeUninit<ValueType>; BSS_LIST_CHUNK_SIZE],
 }
 
 impl<ValueType> BSSListOverflowBlock<ValueType> {
     /// In-place initialize `used` and `prev` on possibly-uninitialized storage.
     /// SAFETY: `this` must point to writable, properly-aligned storage of `Self`.
     #[inline]
-    pub unsafe fn zero(this: *mut Self) {
+    unsafe fn zero(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to writable, aligned storage of
         // `Self`. Raw `ptr::write` because `*this` may be uninit — assignment
         // would run drop glue on garbage (`prev: Option<Box<..>>`).
@@ -2347,7 +2347,7 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
     /// Reserve a slot and return its uninitialized storage. Caller MUST
     /// initialize the slot before any other access.
     #[inline(always)]
-    pub fn append_uninit(
+    fn append_uninit(
         &mut self,
     ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         let index = self.used.fetch_add(1, Ordering::AcqRel);
@@ -2580,12 +2580,12 @@ pub struct BSSStringList<
     //
     // `MaybeUninit` because both arrays are logically uninitialized; only
     // `[..backing_buf_used]` / `[..slice_buf_used]` are ever read.
-    pub backing_buf: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ITEM_LENGTH
-    pub backing_buf_used: u64,
-    pub overflow_list: OverflowList<&'static [u8], BSS_OVERFLOW_BLOCK_SIZE>,
-    pub slice_buf: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
-    pub slice_buf_used: u16,
-    pub mutex: Mutex,
+    backing_buf: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ITEM_LENGTH
+    backing_buf_used: u64,
+    overflow_list: OverflowList<&'static [u8], BSS_OVERFLOW_BLOCK_SIZE>,
+    slice_buf: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
+    slice_buf_used: u16,
+    mutex: Mutex,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -2713,7 +2713,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// SAFETY: `this` must point to a live, initialized `BSSStringList`
     /// (typically the `bss_string_list!` singleton). Concurrent callers are
     /// allowed.
-    pub unsafe fn append_mutable<'a, A: BSSAppendable>(
+    unsafe fn append_mutable<'a, A: BSSAppendable>(
         this: *mut Self,
         value: &A,
     ) -> core::result::Result<&'a mut [u8], AllocError> {
@@ -2740,7 +2740,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     }
 
     /// SAFETY: see [`append_mutable`].
-    pub unsafe fn print_with_type<'a>(
+    unsafe fn print_with_type<'a>(
         this: *mut Self,
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<&'a [u8], AllocError> {
@@ -2968,9 +2968,9 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 // Callers that passed `store_keys=false` should name `BSSMapInner` directly.
 
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
-    pub index: IndexMap,
+    index: IndexMap,
     pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
-    pub mutex: Mutex,
+    mutex: Mutex,
     // Only `[0..backing_buf_used]` is initialized.
     pub backing_buf: [MaybeUninit<ValueType>; COUNT],
     pub backing_buf_used: u16,

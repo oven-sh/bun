@@ -357,7 +357,7 @@ impl Drop for OwnedJscUrl {
 // `url` is owned: `jsc.URL.fromString` creates it and the holder deinits.
 pub struct ParsedUrl<'a> {
     pub url: OwnedJscUrl,
-    pub proto: UrlProtocol<'a>,
+    pub(crate) proto: UrlProtocol<'a>,
 }
 
 /// Handles input like git:github.com:user/repo and inserting the // after the first : if necessary
@@ -426,7 +426,7 @@ pub enum WellDefinedProtocol {
 /// Sized to hold the longest protocol name plus one character for the colon.
 // Lives at module scope (not inside `impl WellDefinedProtocol`) because
 // inherent associated types are unstable (E0658).
-pub(crate) type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
+type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
 bun_core::comptime_string_map! {
     /// Mapping from protocol string (without colon) to WellDefinedProtocol.
@@ -472,7 +472,7 @@ impl WellDefinedProtocol {
 
     /// Look up a protocol from a string that includes the trailing colon (e.g., "https:").
     /// This method strips the colon before looking up in the strings map.
-    pub(crate) fn from_string_with_colon(protocol_with_colon: &[u8]) -> Option<Self> {
+    fn from_string_with_colon(protocol_with_colon: &[u8]) -> Option<Self> {
         if protocol_with_colon.is_empty() {
             None
         } else {
@@ -485,12 +485,12 @@ impl WellDefinedProtocol {
     /// Maximum length of any protocol string in the strings map (computed at compile time).
     // The longest keys in `PROTOCOL_STRINGS` ("git+https", "git+rsync", "sourcehut",
     // "bitbucket") are 9 bytes.
-    pub(crate) const MAX_PROTOCOL_LENGTH: usize = 9;
+    const MAX_PROTOCOL_LENGTH: usize = 9;
 
     /// Get the protocol string with colon (e.g., "https:") for a given protocol enum.
     /// Takes a buffer pointer to hold the result.
     /// Returns a slice into that buffer containing the protocol string with colon.
-    pub(crate) fn to_string_with_colon(self, buf: &mut StringWithColonBuffer) -> &[u8] {
+    fn to_string_with_colon(self, buf: &mut StringWithColonBuffer) -> &[u8] {
         // Look up the protocol string (without colon) from the map
         let protocol_str = self.protocol_str();
 
@@ -645,7 +645,7 @@ pub enum UrlProtocol<'a> {
 
 impl<'a> UrlProtocol<'a> {
     /// Deduces the default representation for this protocol.
-    pub(crate) fn default_representation(self) -> Representation {
+    fn default_representation(self) -> Representation {
         match self {
             UrlProtocol::WellFormed(p) => p.default_representation(),
             _ => Representation::Sshurl, // Unknown/custom protocols default to sshurl
@@ -998,18 +998,18 @@ impl HostProvider {
 // HostProvider::Config
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Config {
-    pub domain: &'static [u8],
-    pub shortcut: &'static [u8],
-    pub format_extract: formatters::extract::Type,
+pub(crate) struct Config {
+    pub(crate) domain: &'static [u8],
+    pub(crate) shortcut: &'static [u8],
+    pub(crate) format_extract: formatters::extract::Type,
 }
 
 // Uses `Range<usize>` into `_owned_buffer` rather than self-referential
 // slices (see the HostedGitInfo struct-level note).
-pub struct ExtractResult {
-    pub user: Option<Range<usize>>,
-    pub project: Range<usize>,
-    pub committish: Option<Range<usize>>,
+pub(crate) struct ExtractResult {
+    pub(crate) user: Option<Range<usize>>,
+    pub(crate) project: Range<usize>,
+    pub(crate) committish: Option<Range<usize>>,
     _owned_buffer: Option<Box<[u8]>>,
 }
 
@@ -1032,14 +1032,14 @@ impl ExtractResult {
 
 /// Encapsulates all the various foramtters that different hosts may have. Usually this has
 /// to do with URLs, but could be other things.
-pub mod formatters {
+pub(crate) mod formatters {
     use super::*;
 
     /// Mirrors hosts.js's extract function
-    pub mod extract {
+    pub(crate) mod extract {
         use super::*;
 
-        pub type Type = fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
+        pub(crate) type Type = fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
 
         pub(crate) fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();

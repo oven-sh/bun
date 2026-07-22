@@ -153,7 +153,7 @@ impl<'arena> BundledAst<'arena> {
     // The three `ArenaVec` fields prevent `const fn` here, but spell out the
     // defaults directly instead of round-tripping through `Ast::empty_in` +
     // `init` — this runs once per discovered module on the main thread.
-    pub fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
+    pub(crate) fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
         Self {
             approximate_newline_count: 0,
             nested_scope_slot_counts: SlotCounts::default(),
@@ -186,7 +186,7 @@ impl<'arena> BundledAst<'arena> {
 
     // The collection types aren't Copy, so consume `self` to move them (to_ast
     // is a one-shot conversion back to the fat Ast).
-    pub fn to_ast(self) -> Ast<'arena> {
+    pub(crate) fn to_ast(self) -> Ast<'arena> {
         let arena: &'arena bun_alloc::Arena = *self.parts.allocator();
         Ast {
             approximate_newline_count: self.approximate_newline_count as usize,
@@ -263,7 +263,7 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    pub fn init(ast: Ast<'arena>) -> Self {
+    pub(crate) fn init(ast: Ast<'arena>) -> Self {
         let mut flags = Flags::empty();
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);
         flags.set(Flags::USES_MODULE_REF, ast.uses_module_ref);
@@ -329,7 +329,7 @@ impl<'arena> BundledAst<'arena> {
     }
 
     /// TODO: Move this from being done on all parse tasks into the start of the linker. This currently allocates base64 encoding for every small file loaded thing.
-    pub fn add_url_for_css(
+    pub(crate) fn add_url_for_css(
         &mut self,
         bump: &'arena bun_alloc::Arena,
         source: &bun_ast::Source,

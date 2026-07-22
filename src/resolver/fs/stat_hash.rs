@@ -4,11 +4,11 @@ use bun_sys::{S, Stat, Timespec};
 
 #[derive(Default)]
 pub struct StatHash {
-    pub value: u64,
+    pub(crate) value: u64,
 
     pub last_modified_u64: u64,
-    pub last_modified_buffer: [u8; 32],
-    pub last_modified_buffer_len: u8,
+    pub(crate) last_modified_buffer: [u8; 32],
+    pub(crate) last_modified_buffer_len: u8,
     // TODO: add etag support here!
 }
 

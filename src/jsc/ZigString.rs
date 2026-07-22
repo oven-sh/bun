@@ -56,7 +56,7 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
 /// # Safety
 /// `raw` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn ZigString__free(
+unsafe extern "C" fn ZigString__free(
     raw: *const u8,
     len: usize,
     allocator_: *mut c_void,
@@ -84,7 +84,7 @@ pub(crate) unsafe extern "C" fn ZigString__free(
 /// # Safety
 /// `ptr` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
+unsafe extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: ptr/len describe a valid slice.
     let s = unsafe { bun_core::ffi::slice(ptr, len) };
     let untagged = ZigString::init(s)

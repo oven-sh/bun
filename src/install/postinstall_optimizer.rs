@@ -69,7 +69,7 @@ impl PostinstallOptimizer {
         Ok(true)
     }
 
-    pub fn from_package_json(
+    pub(crate) fn from_package_json(
         list: &mut List,
         expr: &js_ast::Expr,
     ) -> Result<(), bun_alloc::AllocError> {
@@ -90,7 +90,7 @@ impl PostinstallOptimizer {
         Ok(())
     }
 
-    pub fn get_native_binlink_replacement_package_id(
+    pub(crate) fn get_native_binlink_replacement_package_id(
         resolutions: &[PackageID],
         metas: &[Meta],
         target_cpu: npm::Architecture,
@@ -128,18 +128,18 @@ pub type Map = ArrayHashMap<PackageNameHash, PostinstallOptimizer, ArrayIdentity
 
 #[derive(Default)]
 pub struct List {
-    pub dynamic: Map,
-    pub disable_default_native_binlinks: bool,
-    pub disable_default_ignore: bool,
+    pub(crate) dynamic: Map,
+    pub(crate) disable_default_native_binlinks: bool,
+    pub(crate) disable_default_ignore: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct PkgInfo<'a> {
-    pub name_hash: PackageNameHash,
-    pub version: Option<semver::Version>,
+    pub(crate) name_hash: PackageNameHash,
+    pub(crate) version: Option<semver::Version>,
     // Borrows the lockfile string buffer at call sites; only used to resolve
     // pre/build tags inside `Version::order`, never stored.
-    pub version_buf: &'a [u8],
+    pub(crate) version_buf: &'a [u8],
 }
 
 impl Default for PkgInfo<'_> {
@@ -153,7 +153,7 @@ impl Default for PkgInfo<'_> {
 }
 
 impl List {
-    pub fn is_native_binlink_enabled(&self) -> bool {
+    pub(crate) fn is_native_binlink_enabled(&self) -> bool {
         if self.dynamic.len() == 0 {
             if self.disable_default_native_binlinks {
                 return true;
@@ -172,7 +172,7 @@ impl List {
         true
     }
 
-    pub fn should_ignore_lifecycle_scripts(
+    pub(crate) fn should_ignore_lifecycle_scripts(
         &self,
         pkg_info: &PkgInfo<'_>,
         resolutions: &[PackageID],
@@ -243,7 +243,7 @@ impl List {
         None
     }
 
-    pub fn get(&self, pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
+    pub(crate) fn get(&self, pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         if let Some(optimize) = self.dynamic.get(&pkg_info.name_hash) {
             return Some(*optimize);
         }

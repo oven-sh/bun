@@ -85,7 +85,7 @@ pub mod sliced_string {
 
     #[derive(Copy, Clone)]
     pub struct SlicedString<'a> {
-        pub buf: &'a [u8],
+        pub(crate) buf: &'a [u8],
         pub slice: &'a [u8],
     }
 
@@ -101,7 +101,7 @@ pub mod sliced_string {
         }
 
         #[inline]
-        pub fn external(self) -> ExternalString {
+        pub(crate) fn external(self) -> ExternalString {
             debug_assert!(
                 (self.buf.as_ptr() as usize) <= (self.slice.as_ptr() as usize)
                     && ((self.slice.as_ptr() as usize) + self.slice.len())
@@ -169,11 +169,11 @@ pub mod external_string {
 
     impl ExternalString {
         #[inline]
-        pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> Formatter<'a> {
+        pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> Formatter<'a> {
             self.value.fmt(buf)
         }
 
-        pub fn order(&self, rhs: &ExternalString, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+        pub(crate) fn order(&self, rhs: &ExternalString, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
             if self.hash == rhs.hash && self.hash > 0 {
                 return Ordering::Equal;
             }
@@ -182,12 +182,12 @@ pub mod external_string {
         }
 
         #[inline]
-        pub fn is_inline(&self) -> bool {
+        pub(crate) fn is_inline(&self) -> bool {
             self.value.is_inline()
         }
 
         #[inline]
-        pub fn is_empty(&self) -> bool {
+        pub(crate) fn is_empty(&self) -> bool {
             self.value.is_empty()
         }
 
@@ -197,7 +197,7 @@ pub mod external_string {
         }
 
         #[inline]
-        pub fn init(buf: &[u8], in_: &[u8], hash: u64) -> ExternalString {
+        pub(crate) fn init(buf: &[u8], in_: &[u8], hash: u64) -> ExternalString {
             ExternalString {
                 value: String::init(buf, in_),
                 hash,
@@ -388,7 +388,7 @@ pub mod semver_string {
             }
         }
 
-        pub fn init_inline(in_: &[u8]) -> String {
+        fn init_inline(in_: &[u8]) -> String {
             debug_assert!(Self::can_inline(in_));
             match in_.len() {
                 0 => String::default(),
@@ -466,7 +466,7 @@ pub mod semver_string {
             })
         }
 
-        pub fn init_append(buf: &mut Vec<u8>, in_: &[u8]) -> Result<String, AllocError> {
+        fn init_append(buf: &mut Vec<u8>, in_: &[u8]) -> Result<String, AllocError> {
             // Vec::extend_from_slice
             // panics on OOM under the global mimalloc allocator instead of returning an error.
             buf.extend_from_slice(in_);
@@ -666,8 +666,8 @@ pub mod semver_string {
 
     // ── String.Formatter ──────────────────────────────────────────────────
     pub struct Formatter<'a> {
-        pub str: &'a String,
-        pub buf: &'a [u8],
+        str: &'a String,
+        buf: &'a [u8],
     }
 
     impl<'a> fmt::Display for Formatter<'a> {
@@ -690,9 +690,9 @@ pub mod semver_string {
     }
 
     pub struct JsonFormatter<'a> {
-        pub str: &'a String,
-        pub buf: &'a [u8],
-        pub opts: JsonFormatterOptions,
+        str: &'a String,
+        buf: &'a [u8],
+        opts: JsonFormatterOptions,
     }
 
     impl<'a> fmt::Display for JsonFormatter<'a> {
@@ -712,8 +712,8 @@ pub mod semver_string {
 
     // ── String.StorePathFormatter ─────────────────────────────────────────
     pub struct StorePathFormatter<'a> {
-        pub str: &'a String,
-        pub buf: &'a [u8],
+        str: &'a String,
+        buf: &'a [u8],
     }
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
@@ -777,7 +777,7 @@ pub mod semver_string {
 
     impl Pointer {
         #[inline]
-        pub fn init(buf: &[u8], in_: &[u8]) -> Pointer {
+        fn init(buf: &[u8], in_: &[u8]) -> Pointer {
             debug_assert!(bun_alloc::is_slice_in_buffer(in_, buf));
 
             Pointer {
@@ -790,7 +790,7 @@ pub mod semver_string {
         /// offset 0 and `len` at offset 4; composing via native-endian byte arrays is
         /// byte-identical to a raw bitcast.
         #[inline]
-        pub fn to_bits(self) -> u64 {
+        fn to_bits(self) -> u64 {
             let mut b = [0u8; 8];
             b[..4].copy_from_slice(&self.off.to_ne_bytes());
             b[4..].copy_from_slice(&self.len.to_ne_bytes());
@@ -799,7 +799,7 @@ pub mod semver_string {
 
         /// Inverse of [`to_bits`].
         #[inline]
-        pub fn from_bits(bits: u64) -> Pointer {
+        fn from_bits(bits: u64) -> Pointer {
             let b = bits.to_ne_bytes();
             Pointer {
                 off: u32::from_ne_bytes([b[0], b[1], b[2], b[3]]),
@@ -894,7 +894,7 @@ pub mod semver_string {
         }
 
         #[inline]
-        pub fn count_with_hash(&mut self, slice_: &[u8], hash: u64) {
+        fn count_with_hash(&mut self, slice_: &[u8], hash: u64) {
             if slice_.len() <= String::MAX_INLINE_LEN {
                 return;
             }
@@ -956,7 +956,7 @@ pub mod semver_string {
         }
 
         // SlicedString is not supported due to inline strings.
-        pub fn append_without_pool<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
+        fn append_without_pool<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
             if slice_.len() <= String::MAX_INLINE_LEN {
                 return T::from_init(self.allocated_slice(), slice_, hash);
             }
@@ -979,7 +979,7 @@ pub mod semver_string {
             T::from_init(allocated, final_slice, hash)
         }
 
-        pub fn append_with_hash<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
+        fn append_with_hash<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
             if slice_.len() <= String::MAX_INLINE_LEN {
                 return T::from_init(self.allocated_slice(), slice_, hash);
             }

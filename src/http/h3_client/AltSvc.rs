@@ -49,7 +49,7 @@ pub enum ParseError {
 ///
 /// Returns `Err(ParseError::Clear)` for the literal `clear` so the caller can
 /// drop the cache entry.
-pub fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
+pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
     let value = strings::trim(field_value, b" \t");
     if value.is_empty() {
         return Ok(None);

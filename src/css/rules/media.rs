@@ -16,7 +16,7 @@ pub struct MediaRule<R> {
 // `minify` lives in `rules/mod.rs` (hoisted next to `CssRuleList::minify` so
 // the dispatch can call it without re-exporting `MinifyContext` here).
 impl<R> MediaRule<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if dest.minify && self.query.always_matches() {
             self.rules.to_css(dest)?;
             return Ok(());
@@ -34,7 +34,7 @@ impl<R> MediaRule<R> {
 }
 
 impl<R> MediaRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

@@ -71,7 +71,7 @@ impl File {
     /// `Output.Source.init`). We route through the sink so the platform check
     /// lives in `bun_sys`.
     #[inline]
-    pub fn supports_ansi_escape_codes(self) -> bool {
+    fn supports_ansi_escape_codes(self) -> bool {
         #[cfg(windows)]
         {
             // Query the live console
@@ -191,8 +191,8 @@ pub enum Unit {
 /// Represents one unit of progress. Each node can have children nodes, or
 /// one can use integers with `update`.
 pub struct Node {
-    pub context: *mut Progress,
-    pub parent: *mut Node,
+    pub(crate) context: *mut Progress,
+    pub(crate) parent: *mut Node,
     // The non-allocating design means `Node` cannot own the bytes. `'static`
     // is the chosen simplification because all current callers (install/,
     // cli/) pass string literals; the alternative would be threading a
@@ -200,7 +200,7 @@ pub struct Node {
     pub name: &'static [u8],
     pub unit: Unit,
     /// Must be handled atomically to be thread-safe.
-    pub recently_updated_child: AtomicPtr<Node>,
+    pub(crate) recently_updated_child: AtomicPtr<Node>,
     /// Must be handled atomically to be thread-safe. 0 means null.
     pub unprotected_estimated_total_items: AtomicUsize,
     /// Must be handled atomically to be thread-safe.
@@ -240,7 +240,7 @@ impl Node {
     /// For paths that must call `&mut self` methods on the parent (e.g.
     /// `complete_one`), use [`parent_ptr`](Self::parent_ptr) instead.
     #[inline]
-    pub fn parent(&self) -> Option<&Node> {
+    fn parent(&self) -> Option<&Node> {
         // SAFETY: parent backref points into caller-provided storage that
         // outlives this node per the non-allocating API contract (see module
         // docs); null only for the root node.
@@ -251,7 +251,7 @@ impl Node {
     /// (e.g. `end` → `parent.complete_one`, which re-enters `maybe_refresh`).
     /// See [`context_ptr`](Self::context_ptr) for the aliasing rationale.
     #[inline]
-    pub fn parent_ptr(&self) -> *mut Node {
+    fn parent_ptr(&self) -> *mut Node {
         self.parent
     }
 

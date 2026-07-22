@@ -145,11 +145,11 @@ pub fn to_fetch_headers(
     .ok_or(JsError::Thrown)
 }
 
-pub(crate) struct H2TestingAPIs;
+struct H2TestingAPIs;
 
 impl H2TestingAPIs {
     // No attribute needed — generate-js2native.ts scans by signature shape.
-    pub(crate) fn live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    fn live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         use bun_http::h2_client;
         let obj = JSValue::create_empty_object(global, 2);
         // h2 atomics
@@ -168,13 +168,13 @@ impl H2TestingAPIs {
     }
 }
 
-pub(crate) struct H3TestingAPIs;
+struct H3TestingAPIs;
 
 impl H3TestingAPIs {
     /// Named distinctly from H2's `live_counts` because generate-js2native.ts
     /// mangles `[^A-Za-z]` to `_`, so the H2 and H3 client paths produce
     /// the same path prefix and the function name has to differ.
-    pub(crate) fn quic_live_counts(
+    fn quic_live_counts(
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {

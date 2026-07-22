@@ -29,7 +29,7 @@ impl Strong {
     }
 
     /// Set a new value for the strong reference.
-    pub fn set(&mut self, global: &JSGlobalObject, new_value: JSValue) {
+    pub(crate) fn set(&mut self, global: &JSGlobalObject, new_value: JSValue) {
         debug_assert!(!new_value.is_empty());
         Impl::set(self.handle, global, new_value);
     }
@@ -40,7 +40,7 @@ impl Strong {
     /// # Safety
     /// `handle` must have been produced by `Bun__StrongRef__new` (or equivalent)
     /// and must not be owned by any other `Strong`/`Optional`.
-    pub unsafe fn adopt(handle: NonNull<Impl>) -> Strong {
+    pub(crate) unsafe fn adopt(handle: NonNull<Impl>) -> Strong {
         Strong { handle }
     }
 }
@@ -75,7 +75,7 @@ impl Optional {
     /// # Safety
     /// If `Some`, `handle` must have been produced by `Bun__StrongRef__new`
     /// (or equivalent) and must not be owned by any other `Strong`/`Optional`.
-    pub unsafe fn adopt(handle: Option<NonNull<Impl>>) -> Optional {
+    pub(crate) unsafe fn adopt(handle: Option<NonNull<Impl>>) -> Optional {
         Optional { handle }
     }
 
@@ -174,12 +174,12 @@ bun_opaque::opaque_ffi! {
 }
 
 impl Impl {
-    pub fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
+    pub(crate) fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
         crate::mark_binding!();
         NonNull::new(Bun__StrongRef__new(global, value)).expect("Bun__StrongRef__new returned null")
     }
 
-    pub fn get(this: NonNull<Impl>) -> JSValue {
+    pub(crate) fn get(this: NonNull<Impl>) -> JSValue {
         // `this` is actually a pointer to a `JSC::JSValue`; see Strong.cpp.
         // SAFETY: HandleSlot storage is a live, aligned JSC::JSValue for the
         // lifetime of the Impl handle; `DecodedJSValue` is its `#[repr(C)]`
@@ -187,18 +187,18 @@ impl Impl {
         unsafe { (*this.as_ptr().cast::<crate::DecodedJSValue>()).encode() }
     }
 
-    pub fn set(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
+    pub(crate) fn set(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
         crate::mark_binding!();
         Bun__StrongRef__set(Impl::opaque_ref(this.as_ptr()), global, value);
     }
 
-    pub fn clear(this: NonNull<Impl>) {
+    pub(crate) fn clear(this: NonNull<Impl>) {
         crate::mark_binding!();
         Bun__StrongRef__clear(Impl::opaque_ref(this.as_ptr()));
     }
 
     /// SAFETY: `this` must be a valid handle from `init`; consumed here (do not reuse).
-    pub unsafe fn destroy(this: NonNull<Impl>) {
+    pub(crate) unsafe fn destroy(this: NonNull<Impl>) {
         crate::mark_binding!();
         // Defensive: a corrupted slot pointer here segfaults inside JSC's
         // HandleBlock::handleSet (the backing block is recovered by masking

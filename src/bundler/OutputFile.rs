@@ -20,7 +20,7 @@ pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
     pub src_path: fs::Path<'static>,
-    pub owned_src_path_text: Box<[u8]>,
+    pub(crate) owned_src_path_text: Box<[u8]>,
     pub value: Value,
     pub size: usize,
     pub size_without_sourcemap: usize,
@@ -43,7 +43,7 @@ pub struct OutputFile {
 
 impl OutputFile {
     // Not a `const` because `Box`/`fs::Path` aren't const-constructible.
-    pub fn zero_value() -> OutputFile {
+    pub(crate) fn zero_value() -> OutputFile {
         OutputFile {
             loader: Loader::File,
             input_loader: Loader::Js,
@@ -109,7 +109,7 @@ impl Clone for OutputFile {
 
 #[derive(Default, Clone, Copy)]
 pub struct BakeExtra {
-    pub is_route: bool,
+    pub(crate) is_route: bool,
     pub fully_static: bool,
     pub bake_is_runtime: bool,
 }
@@ -127,7 +127,7 @@ pub struct FileOperation {
     // Owned copy so the field has a single, obvious lifetime.
     pub pathname: Box<[u8]>,
     pub fd: Fd,
-    pub dir: Fd,
+    pub(crate) dir: Fd,
 }
 
 impl Default for FileOperation {
@@ -141,7 +141,7 @@ impl Default for FileOperation {
 }
 
 impl FileOperation {
-    pub fn from_file(fd: Fd, pathname: &[u8]) -> FileOperation {
+    pub(crate) fn from_file(fd: Fd, pathname: &[u8]) -> FileOperation {
         FileOperation {
             fd,
             pathname: Box::from(pathname),
@@ -149,7 +149,7 @@ impl FileOperation {
         }
     }
 
-    pub fn get_pathname(&self) -> &[u8] {
+    pub(crate) fn get_pathname(&self) -> &[u8] {
         &self.pathname
     }
 }
@@ -236,7 +236,7 @@ impl Value {
         }
     }
 
-    pub fn kind(&self) -> Kind {
+    pub(crate) fn kind(&self) -> Kind {
         match self {
             Value::Move(_) => Kind::Move,
             Value::Copy(_) => Kind::Copy,
@@ -265,28 +265,28 @@ pub enum OptionsData {
 }
 
 pub struct Options {
-    pub loader: Loader,
-    pub input_loader: Loader,
-    pub hash: Option<u64>,
-    pub source_map_index: Option<u32>,
-    pub bytecode_index: Option<u32>,
-    pub module_info_index: Option<u32>,
-    pub output_path: Box<[u8]>,
-    pub source_index: IndexOptional,
-    pub size: Option<usize>,
-    pub input_path: Box<[u8]>,
-    pub display_size: u32,
-    pub output_kind: OutputKind,
-    pub is_executable: bool,
-    pub data: OptionsData,
-    pub side: Option<Side>,
-    pub entry_point_index: Option<u32>,
-    pub referenced_css_chunks: Box<[Index]>,
-    pub bake_extra: BakeExtra,
+    pub(crate) loader: Loader,
+    pub(crate) input_loader: Loader,
+    pub(crate) hash: Option<u64>,
+    pub(crate) source_map_index: Option<u32>,
+    pub(crate) bytecode_index: Option<u32>,
+    pub(crate) module_info_index: Option<u32>,
+    pub(crate) output_path: Box<[u8]>,
+    pub(crate) source_index: IndexOptional,
+    pub(crate) size: Option<usize>,
+    pub(crate) input_path: Box<[u8]>,
+    pub(crate) display_size: u32,
+    pub(crate) output_kind: OutputKind,
+    pub(crate) is_executable: bool,
+    pub(crate) data: OptionsData,
+    pub(crate) side: Option<Side>,
+    pub(crate) entry_point_index: Option<u32>,
+    pub(crate) referenced_css_chunks: Box<[Index]>,
+    pub(crate) bake_extra: BakeExtra,
 }
 
 impl OutputFile {
-    pub fn init(options: Options) -> OutputFile {
+    pub(crate) fn init(options: Options) -> OutputFile {
         let size = options.size.unwrap_or(match &options.data {
             OptionsData::Buffer { data } => data.len(),
             OptionsData::File { size, .. } => *size,
@@ -367,7 +367,7 @@ impl OutputFile {
         Ok(())
     }
 
-    pub fn move_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
+    pub(crate) fn move_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
         let Value::Move(mv) = &self.value else {
             unreachable!()
         };
@@ -380,7 +380,7 @@ impl OutputFile {
         Ok(())
     }
 
-    pub fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
+    pub(crate) fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
         let mut out_buf = PathBuffer::uninit();
         let fd_out = bun_sys::openat(
             dir,

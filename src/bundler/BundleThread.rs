@@ -44,12 +44,12 @@ pub enum BundleV2Result {
 // `singleton` static can name `BundleThread<JSBundleCompletionTask>` before T6
 // provides the `CompletionStruct` impl for the forward-decl.
 pub struct BundleThread<C: Node> {
-    pub waker: Async::Waker,
-    pub ready_event: ResetEvent,
+    pub(crate) waker: Async::Waker,
+    pub(crate) ready_event: ResetEvent,
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
-    pub queue: UnboundedQueue<C>,
-    pub generation: bun_core::Generation,
+    pub(crate) queue: UnboundedQueue<C>,
+    pub(crate) generation: bun_core::Generation,
 }
 
 /// Trait capturing the interface a completion task must satisfy.
@@ -120,7 +120,7 @@ impl<C: CompletionStruct> BundleThread<C> {
     // `placeholder()` yields a fully-initialized inert value instead.
     // `ready_event.wait()` in `spawn()` blocks until `thread_main` overwrites
     // it via `ptr::write`, so the placeholder is never observed live.
-    pub fn uninitialized() -> Self {
+    pub(crate) fn uninitialized() -> Self {
         Self {
             waker: Async::Waker::placeholder(),
             queue: UnboundedQueue::new(),
@@ -134,7 +134,7 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// accesses it). After this returns the bundle thread concurrently accesses
     /// `*instance`; callers must only touch it via the raw-pointer methods on this
     /// impl (e.g. `enqueue`) and never materialize a `&mut Self`.
-    pub unsafe fn spawn(instance: *mut Self) -> std::io::Result<std::thread::JoinHandle<()>> {
+    pub(crate) unsafe fn spawn(instance: *mut Self) -> std::io::Result<std::thread::JoinHandle<()>> {
         // `std::thread::Builder` (not `std::thread::spawn`) so the spawn error
         // is surfaced to the caller.
         struct SendPtr<T>(*mut T);
@@ -162,7 +162,7 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// # Safety
     /// `instance` must point to a live `BundleThread` whose bundle thread has been
     /// spawned (so `waker` is initialized). Called concurrently with `thread_main`.
-    pub unsafe fn enqueue(instance: *mut Self, completion: *mut C) {
+    pub(crate) unsafe fn enqueue(instance: *mut Self, completion: *mut C) {
         // SAFETY: `completion` is a live, caller-owned task node (non-null).
         let completion = unsafe { core::ptr::NonNull::new_unchecked(completion) };
         // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
@@ -383,7 +383,7 @@ pub mod singleton {
     /// # Safety
     /// All calls (across the process) must use the same `C`; the static is
     /// type-erased.
-    pub fn get<C: CompletionStruct>() -> *mut BundleThread<C> {
+    pub(crate) fn get<C: CompletionStruct>() -> *mut BundleThread<C> {
         // INSTANCE is a leaked 'static Box of `BundleThread<C>` (same `C` per
         // the safety contract).
         INSTANCE

@@ -425,6 +425,103 @@ class WeakReference {
   }
 }
 
+
+// node's internal/child_process.getValidStdio, ported verbatim except that
+// bun has no Pipe/TTY/TCP handle wraps: pipe entries get a closeable stand-in
+// handle and wrap detection is omitted (throws ERR_INVALID_ARG_VALUE instead).
+function stdioStringToArray(stdio, channel?) {
+  const options: (string | number)[] = [];
+  switch (stdio) {
+    case "ignore":
+    case "overlapped":
+    case "pipe":
+      options.push(stdio, stdio, stdio);
+      break;
+    case "inherit":
+      options.push(0, 1, 2);
+      break;
+    default:
+      throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
+  }
+  if (channel) options.push(channel);
+  return options;
+}
+
+function makeCodedError(Base: ErrorConstructor, code: string, message: string) {
+  const err = new Base(message) as Error & { code: string };
+  err.code = code;
+  return err;
+}
+
+function nodeGetValidStdio(stdio, sync?) {
+  const { isArrayBufferView } = require("node:util/types");
+  let ipc;
+  let ipcFd;
+
+  if (typeof stdio === "string") {
+    stdio = stdioStringToArray(stdio);
+  } else if (!Array.isArray(stdio)) {
+    throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
+  }
+
+  while (stdio.length < 3) stdio.push(undefined);
+
+  stdio = stdio.reduce((acc, stdio, i) => {
+    function cleanup() {
+      for (let i = 0; i < acc.length; i++) {
+        if ((acc[i].type === "pipe" || acc[i].type === "ipc") && acc[i].handle) acc[i].handle.close();
+      }
+    }
+
+    stdio ??= i < 3 ? "pipe" : "ignore";
+
+    if (stdio === "ignore") {
+      acc.push({ type: "ignore" });
+    } else if (stdio === "pipe" || stdio === "overlapped" || (typeof stdio === "number" && stdio < 0)) {
+      const a: Record<string, unknown> = {
+        type: stdio === "overlapped" ? "overlapped" : "pipe",
+        readable: i === 0,
+        writable: i !== 0,
+      };
+      // node: `a.handle = new Pipe(PipeConstants.SOCKET)`; bun has no Pipe wrap.
+      if (!sync) a.handle = { close() {} };
+      acc.push(a);
+    } else if (stdio === "ipc") {
+      if (sync || ipc !== undefined) {
+        cleanup();
+        if (!sync) throw $ERR_IPC_ONE_PIPE();
+        else throw makeCodedError(Error, "ERR_IPC_SYNC_FORK", "IPC cannot be used with synchronous forks");
+      }
+      ipc = { close() {} };
+      ipcFd = i;
+      acc.push({ type: "pipe", handle: ipc, ipc: true });
+    } else if (stdio === "inherit") {
+      acc.push({ type: "inherit", fd: i });
+    } else if (typeof stdio === "number" || typeof stdio.fd === "number") {
+      acc.push({ type: "fd", fd: typeof stdio === "number" ? stdio : stdio.fd });
+    } else if (isArrayBufferView(stdio) || typeof stdio === "string") {
+      if (!sync) {
+        cleanup();
+        const inspected = require("node:util").inspect(stdio);
+        throw makeCodedError(
+          TypeError,
+          "ERR_INVALID_SYNC_FORK_INPUT",
+          `Asynchronous forks do not support Buffer, TypedArray, DataView or string input: ${inspected}`,
+        );
+      }
+    } else {
+      cleanup();
+      throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
+    }
+
+    return acc;
+  }, []);
+
+  return { stdio, ipc, ipcFd };
+}
+
+let cachedInternalChildProcess;
+
 // Userland access to node-internal modules for vendored node tests that
 // declare `// Flags: --expose-internals` (served via the require interceptor
 // in test/js/node/test/common/index.js). Static requires only — the builtin
@@ -472,6 +569,15 @@ export const exposedInternals = {
     CustomEvent: globalThis.CustomEvent,
     EventTarget: globalThis.EventTarget,
     kWeakHandler: require("internal/shared").kWeakHandler,
+  },
+  // ChildProcess is the real class exec()/spawn() instantiate, so vendored
+  // tests can monkeypatch its prototype; getValidStdio is ported from node.
+  // A getter so loading this module does not eagerly pull in child_process.
+  get "internal/child_process"() {
+    return (cachedInternalChildProcess ??= {
+      ChildProcess: require("node:child_process").ChildProcess,
+      getValidStdio: nodeGetValidStdio,
+    });
   },
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.

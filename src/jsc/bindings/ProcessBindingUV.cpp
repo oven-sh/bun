@@ -340,7 +340,8 @@
   macro(EILSEQ, "illegal byte sequence") \
   macro(ESOCKTNOSUPPORT, "socket type not supported") \
   macro(ENODATA, "no data available") \
-  macro(EUNATCH, "protocol driver not attached")
+  macro(EUNATCH, "protocol driver not attached") \
+  macro(ENOEXEC, "exec format error")
 
 // clang-format on
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
@@ -383,7 +384,8 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     BUN_UV_ERRNO_MAP(CASE)
 #undef CASE
 
-    return JSValue::encode(jsString(vm, makeString("Unknown system error: "_s, err)));
+    // node: `Unknown system error ${err}` (no colon), matching util.getSystemErrorName.
+    return JSValue::encode(jsString(vm, makeString("Unknown system error "_s, err)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

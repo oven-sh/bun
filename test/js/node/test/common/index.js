@@ -247,11 +247,19 @@ function installBunExposeInternalsRequireInterceptor() {
   const BunModule = require('module');
   const originalRequire = BunModule.prototype.require;
   let exposedInternals;
+  let requireVendoredNodeInternal;
   BunModule.prototype.require = function require(id) {
     if (typeof id === 'string' && id.startsWith('internal/')) {
       exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
       if (exposedInternals[id] !== undefined) {
         return exposedInternals[id];
+      }
+      // Pure-JS node internals vendored under common/nodeinternals/ (webidl,
+      // socket_list, fs/utils, webcrypto helpers). undefined = not vendored.
+      requireVendoredNodeInternal ??= originalRequire.call(this, path.join(__dirname, 'nodeinternals.js')).requireVendoredNodeInternal;
+      const vendored = requireVendoredNodeInternal(id);
+      if (vendored !== undefined) {
+        return vendored;
       }
     }
     return originalRequire.apply(this, arguments);
@@ -1460,6 +1468,10 @@ function installBunExposeInternalsShim() {
         exports: {
           getOptionValue(name) {
             switch (name) {
+              case "--expose-internals":
+                // This shim is only installed for tests whose Flags line
+                // carries --expose-internals, so the answer is always true.
+                return true;
               case "--max-http-header-size":
                 return require("node:http").maxHeaderSize;
               case "--insecure-http-parser":

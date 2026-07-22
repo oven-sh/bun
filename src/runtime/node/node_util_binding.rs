@@ -24,6 +24,24 @@ pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) ->
 }
 
 #[bun_jsc::host_fn]
+pub(crate) fn internal_error_entries(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    // Flat [code, name, code, name, ...] pairs — libuv's full error table for
+    // this target. Consumed by node:util's getSystemErrorMap().
+    let entries = UV_E::ENTRIES;
+    JSValue::create_array_from_iter(global, 0..entries.len() * 2, |i| {
+        let (code, name) = entries[i / 2];
+        if i % 2 == 0 {
+            Ok(JSValue::js_number_from_int32(code))
+        } else {
+            BunString::static_(name).to_js(global)
+        }
+    })
+}
+
+#[bun_jsc::host_fn]
 pub(crate) fn etimedout_error_code(
     _global: &JSGlobalObject,
     _frame: &CallFrame,

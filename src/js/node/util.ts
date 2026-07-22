@@ -4,11 +4,12 @@ const types = require("node:util/types");
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
 const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
-const { resistStopPropagation } = require("internal/shared");
+const { resistStopPropagation, ErrnoException } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
 const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
+const internalErrorEntries = $newRustFunction("node_util_binding.rs", "internalErrorEntries", 0);
 const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
@@ -247,6 +248,134 @@ function getSystemErrorName(err: any) {
   return internalErrorName(err);
 }
 
+// libuv's uv_strerror() messages keyed by error name (target-independent).
+// The per-target codes come from the native uv_e table (internalErrorEntries).
+const uvErrorMessages = {
+  __proto__: null,
+  E2BIG: "argument list too long",
+  EACCES: "permission denied",
+  EADDRINUSE: "address already in use",
+  EADDRNOTAVAIL: "address not available",
+  EAFNOSUPPORT: "address family not supported",
+  EAGAIN: "resource temporarily unavailable",
+  EAI_ADDRFAMILY: "address family not supported",
+  EAI_AGAIN: "temporary failure",
+  EAI_BADFLAGS: "bad ai_flags value",
+  EAI_BADHINTS: "invalid value for hints",
+  EAI_CANCELED: "request canceled",
+  EAI_FAIL: "permanent failure",
+  EAI_FAMILY: "ai_family not supported",
+  EAI_MEMORY: "out of memory",
+  EAI_NODATA: "no address",
+  EAI_NONAME: "unknown node or service",
+  EAI_OVERFLOW: "argument buffer overflow",
+  EAI_PROTOCOL: "resolved protocol is unknown",
+  EAI_SERVICE: "service not available for socket type",
+  EAI_SOCKTYPE: "socket type not supported",
+  EALREADY: "connection already in progress",
+  EBADF: "bad file descriptor",
+  EBUSY: "resource busy or locked",
+  ECANCELED: "operation canceled",
+  ECHARSET: "invalid Unicode character",
+  ECONNABORTED: "software caused connection abort",
+  ECONNREFUSED: "connection refused",
+  ECONNRESET: "connection reset by peer",
+  EDESTADDRREQ: "destination address required",
+  EEXIST: "file already exists",
+  EFAULT: "bad address in system call argument",
+  EFBIG: "file too large",
+  EHOSTUNREACH: "host is unreachable",
+  EINTR: "interrupted system call",
+  EINVAL: "invalid argument",
+  EIO: "i/o error",
+  EISCONN: "socket is already connected",
+  EISDIR: "illegal operation on a directory",
+  ELOOP: "too many symbolic links encountered",
+  EMFILE: "too many open files",
+  EMSGSIZE: "message too long",
+  ENAMETOOLONG: "name too long",
+  ENETDOWN: "network is down",
+  ENETUNREACH: "network is unreachable",
+  ENFILE: "file table overflow",
+  ENOBUFS: "no buffer space available",
+  ENODEV: "no such device",
+  ENOENT: "no such file or directory",
+  ENOMEM: "not enough memory",
+  ENONET: "machine is not on the network",
+  ENOPROTOOPT: "protocol not available",
+  ENOSPC: "no space left on device",
+  ENOSYS: "function not implemented",
+  ENOTCONN: "socket is not connected",
+  ENOTDIR: "not a directory",
+  ENOTEMPTY: "directory not empty",
+  ENOTSOCK: "socket operation on non-socket",
+  ENOTSUP: "operation not supported on socket",
+  EOVERFLOW: "value too large for defined data type",
+  EPERM: "operation not permitted",
+  EPIPE: "broken pipe",
+  EPROTO: "protocol error",
+  EPROTONOSUPPORT: "protocol not supported",
+  EPROTOTYPE: "protocol wrong type for socket",
+  ERANGE: "result too large",
+  EROFS: "read-only file system",
+  ESHUTDOWN: "cannot send after transport endpoint shutdown",
+  ESPIPE: "invalid seek",
+  ESRCH: "no such process",
+  ETIMEDOUT: "connection timed out",
+  ETXTBSY: "text file is busy",
+  EXDEV: "cross-device link not permitted",
+  UNKNOWN: "unknown error",
+  EOF: "end of file",
+  ENXIO: "no such device or address",
+  EMLINK: "too many links",
+  EHOSTDOWN: "host is down",
+  EREMOTEIO: "remote I/O error",
+  ENOTTY: "inappropriate ioctl for device",
+  EFTYPE: "inappropriate file type or format",
+  EILSEQ: "illegal byte sequence",
+  ESOCKTNOSUPPORT: "socket type not supported",
+  ENODATA: "no data available",
+  EUNATCH: "protocol driver not attached",
+  ENOEXEC: "exec format error",
+};
+
+let uvErrmap: Map<number, [string, string]> | undefined;
+function getUvErrmap() {
+  if (uvErrmap === undefined) {
+    uvErrmap = new Map();
+    const flat = internalErrorEntries();
+    for (let i = 0; i < flat.length; i += 2) {
+      const code = flat[i];
+      const name = flat[i + 1];
+      if (!uvErrmap.has(code)) uvErrmap.set(code, [name, uvErrorMessages[name] ?? name]);
+    }
+  }
+  return uvErrmap;
+}
+
+function getSystemErrorMap() {
+  // Fresh Map with fresh entry arrays: node's binding materialises a new map
+  // per call, and callers may mutate the [name, message] pairs.
+  const copy = new Map();
+  for (const [code, entry] of getUvErrmap()) {
+    copy.set(code, [entry[0], entry[1]]);
+  }
+  return copy;
+}
+
+function getSystemErrorMessage(err: any) {
+  if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  const entry = getUvErrmap().get(err);
+  return entry !== undefined ? entry[1] : `Unknown system error ${err}`;
+}
+
+function _errnoException(err: any, syscall: string, original?: string) {
+  // ErrnoException validates err via getSystemErrorName (type + range) and
+  // builds node's exact `${syscall} ${code}[ ${original}]` shape.
+  return new ErrnoException(err, syscall, original);
+}
+
 let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
   unregisterToken: (...args: any[]) => void;
@@ -317,7 +446,7 @@ function setTraceSigInt(enable) {
 
 cjs_exports = {
   // This is in order of `node --print 'Object.keys(util)'`
-  // _errnoException,
+  _errnoException,
   // _exceptionWithHostPort,
   _extend,
   callbackify,
@@ -329,9 +458,9 @@ cjs_exports = {
   formatWithOptions,
   // getCallSite,
   // getCallSites,
-  // getSystemErrorMap,
+  getSystemErrorMap,
   getSystemErrorName,
-  // getSystemErrorMessage,
+  getSystemErrorMessage,
   inherits,
   inspect,
   isDeepStrictEqual,

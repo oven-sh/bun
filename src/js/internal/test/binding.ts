@@ -63,6 +63,8 @@ function isInsideNodeModules() {
   return false;
 }
 
+let cachedUvBinding: Record<string, unknown> | undefined;
+
 function internalBinding(name: string) {
   switch (name) {
     case "trace_events":
@@ -72,23 +74,38 @@ function internalBinding(name: string) {
         getCategoryEnabledBuffer: agent.getCategoryEnabledBuffer,
       };
     case "constants":
-      return {
-        trace: {
-          TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN: 98,
-          TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: 101,
-        },
-      };
-    // libuv error codes, the UDP handle wrap, and the minimal TCP wrap the
-    // vendored dgram tests consume.
+      // The real thing: os/fs/crypto/zlib/trace sections, same object node's
+      // internalBinding("constants") exposes (ProcessBindingConstants.cpp).
+      return $processBindingConstants;
+    // The full libuv error surface: UV_* codes plus errname()/getErrorMessage(),
+    // all derived from the same native uv_e table node:util's
+    // getSystemErrorMap() reads. Cached: node returns a stable binding object.
     case "uv": {
-      const isWindows = process.platform === "win32";
-      const errno = require("node:os").constants.errno;
-      return {
-        UV_UNKNOWN: -4094,
-        UV_EBADF: isWindows ? -4083 : -errno.EBADF,
-        UV_EINVAL: isWindows ? -4071 : -errno.EINVAL,
-        UV_ENOTSOCK: isWindows ? -4050 : -errno.ENOTSOCK,
-      };
+      if (cachedUvBinding === undefined) {
+        const errmap: Map<number, [string, string]> = require("node:util").getSystemErrorMap();
+        const uv: Record<string, unknown> = {};
+        for (const { 0: code, 1: entry } of errmap) {
+          uv["UV_" + entry[0]] = code;
+        }
+        uv.errname = function errname(n: number) {
+          const entry = errmap.get(n);
+          return entry !== undefined ? entry[0] : `Unknown system error ${n}`;
+        };
+        uv.getErrorMessage = function getErrorMessage(n: number) {
+          const entry = errmap.get(n);
+          return entry !== undefined ? entry[1] : `Unknown system error ${n}`;
+        };
+        cachedUvBinding = uv;
+      }
+      return cachedUvBinding;
+    }
+    // node's credentials binding: without setuid/setgid mismatch handling,
+    // safeGetenv degenerates to a plain env read (same as node run normally).
+    case "credentials":
+      return { safeGetenv: (name: string) => process.env[name] };
+    case "buffer": {
+      const { kMaxLength, kStringMaxLength } = require("node:buffer");
+      return { kMaxLength, kStringMaxLength };
     }
     case "udp_wrap":
       return { UDP: require("internal/dgram").UDP };
@@ -112,8 +129,12 @@ function internalBinding(name: string) {
       };
       return icu;
     }
-    default:
-      throw new Error(`internalBinding("${name}") is not implemented in Bun`);
+    default: {
+      const err = new Error(`internalBinding("${name}") is not implemented in Bun`);
+      // node reports unknown/restricted bindings with this code.
+      (err as Error & { code: string }).code = "ERR_INVALID_MODULE";
+      throw err;
+    }
   }
 }
 

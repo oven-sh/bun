@@ -1,5 +1,8 @@
 #include "config.h"
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
 
@@ -108,7 +111,14 @@ static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDef
     holder.unlockEarly();
 
     if (pendingTicket && !pendingTicket->isCancelled()) {
+        auto& vm = job->vm();
+        auto* globalObject = pendingTicket->scriptExecutionOwner()->globalObject();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         job->task(job->ticket.get());
+        if (auto* exception = scope.exception()) {
+            if (scope.clearExceptionExceptTermination())
+                globalObject->globalObjectMethodTable()->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        }
     }
 
     delete job;

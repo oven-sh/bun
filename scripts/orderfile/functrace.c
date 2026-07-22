@@ -255,10 +255,13 @@ static void on_trap(int sig, siginfo_t *si, void *uc)
 #endif
     int r = region_of(at);
     if (i == SIZE_MAX || r < 0) {
-        // Not ours: let the default disposition handle it so a real trap still
-        // crashes instead of spinning here.
+        // Not ours: hand it to the default disposition so a real trap still
+        // crashes at the right address instead of spinning here. INT3 is a
+        // trap, so on x86-64 RIP is already past it and returning would resume
+        // there rather than re-execute — raise() re-delivers either way.
         armed = 0;
         signal(sig, SIG_DFL);
+        raise(sig);
         return;
     }
 

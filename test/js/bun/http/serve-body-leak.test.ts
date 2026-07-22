@@ -146,6 +146,7 @@ describe.todoIf(isFlaky && isWindows)("request body leak", () => {
       },
     });
     fixture.unref();
+    fixture.exited.then(code => defer.reject(new Error(`body-leak fixture exited (${code}) before sending its URL`)));
     url = new URL(await defer.promise);
     await warmup(url);
   }, 60_000);
@@ -168,6 +169,8 @@ describe.todoIf(isFlaky && isWindows)("request body leak", () => {
     it.todoIf(skip)(
       testName,
       async () => {
+        // fail fast with the exit code instead of a ConnectionRefused cascade if a prior scenario crashed the fixture
+        expect(fixture.exitCode ?? fixture.signalCode).toBeNull();
         const report = await calculateMemoryLeak(fn, url);
         console.log(report);
         // peak memory is too high
@@ -177,8 +180,6 @@ describe.todoIf(isFlaky && isWindows)("request body leak", () => {
         // ASAN quarantine + debug-assertions instrumentation inflate RSS;
         // give the asan lane more headroom than a plain release build.
         expect(report.end_memory).toBeLessThanOrEqual((isASAN ? 768 : 512) * 1024 * 1024);
-        // the fixture must still be serving (no crash / OOM-kill mid-run)
-        expect(fixture.exitCode).toBeNull();
       },
       isDebug || isASAN ? 60_000 : 40_000,
     );

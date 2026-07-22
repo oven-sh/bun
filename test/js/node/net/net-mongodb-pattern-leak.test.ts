@@ -202,9 +202,10 @@ describe.each([
       expect(messages.listenerCount("data")).toBe(0);
       expect(messages.listenerCount("error")).toBeLessThanOrEqual(1);
 
-      // RSS round-2 vs round-1: weak signal (mimalloc segment noise) but
-      // catches anything egregious that heapStats can't see.
-      const rssBound = isASAN || isDebug ? 32 * 1024 * 1024 : 8 * 1024 * 1024;
+      // RSS round-2 vs round-1: weak backstop for native leaks heapStats can't
+      // see. Release CI observed 8-13 MB here with flat heapSize and flat object
+      // counts (mimalloc + JIT noise); a real native leak at ITER=5000 is 25+ MB.
+      const rssBound = isASAN || isDebug ? 32 * 1024 * 1024 : 24 * 1024 * 1024;
       expect(after2.rss - after1.rss).toBeLessThan(rssBound);
     } finally {
       sock.destroy();

@@ -877,7 +877,7 @@ it.if(isWindows)(
     }
 
     const batch = [];
-    const before = heapStats().objectTypeCounts.TLSSocket || 0;
+    const before = heapStats().objectTypeCounts.TCPSocket || 0;
     for (let i = 0; i < 100; i++) {
       batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
       batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
@@ -892,7 +892,7 @@ it.if(isWindows)(
       }
     }
     await Promise.all(batch);
-    expectMaxObjectTypeCount(expect, "TCPSocket", before);
+    await expectMaxObjectTypeCount(expect, "TCPSocket", before);
   },
   20_000,
 );

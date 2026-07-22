@@ -376,7 +376,9 @@ pub(crate) fn validate_object(
             ));
         }
 
-        if !value.is_object() && (!options.allow_function() || !value.js_type().is_function()) {
+        if (!value.is_object() || value.is_callable())
+            && (!options.allow_function() || !value.js_type().is_function())
+        {
             return Err(throw_err_invalid_arg_type(
                 global_this,
                 name,

@@ -61,8 +61,7 @@ async function resolveClangBuildAnalyzer(): Promise<string> {
   const cacheRoot =
     process.env.BUN_BUILD_CACHE ??
     resolve(process.env.BUN_INSTALL ?? `${process.env.HOME ?? process.env.USERPROFILE}/.bun`, "build-cache");
-  const suffix =
-    process.platform === "darwin" ? "mac" : process.platform === "win32" ? "windows.exe" : "linux";
+  const suffix = process.platform === "darwin" ? "mac" : process.platform === "win32" ? "windows.exe" : "linux";
   const bin = resolve(
     cacheRoot,
     "tools",
@@ -156,7 +155,9 @@ function reportNinjaLog(edges: Edge[]): void {
     (byGroup.get(m[1]!) ?? byGroup.set(m[1]!, []).get(m[1]!)!).push(b);
   }
   console.log(`\n  unified-bundle balance (max/min per directory group):`);
-  for (const [g, bs] of [...byGroup].sort((a, b) => Math.max(...b[1].map(e => e.end - e.start)) - Math.max(...a[1].map(e => e.end - e.start)))) {
+  for (const [g, bs] of [...byGroup].sort(
+    (a, b) => Math.max(...b[1].map(e => e.end - e.start)) - Math.max(...a[1].map(e => e.end - e.start)),
+  )) {
     if (bs.length < 2) continue;
     const ds = bs.map(b => b.end - b.start).sort((a, b) => b - a);
     const max = ds[0]!;
@@ -216,10 +217,7 @@ reportNinjaLog(readNinjaLog(buildDir));
 // to the capture so section counts are useful (defaults are tiny).
 const capture = resolve(buildDir, "time-trace.capture");
 const ini = resolve(buildDir, "ClangBuildAnalyzer.ini");
-await Bun.write(
-  ini,
-  `[counts]\nfileParse=20\nfileCodegen=15\nfunction=0\ntemplate=30\nheader=30\nheaderChain=5\n`,
-);
+await Bun.write(ini, `[counts]\nfileParse=20\nfileCodegen=15\nfunction=0\ntemplate=30\nheader=30\nheaderChain=5\n`);
 let r = spawnSync(cba, ["--all", buildDir, capture], { stdio: ["ignore", "ignore", "inherit"] });
 if (r.status !== 0) process.exit(r.status ?? 1);
 

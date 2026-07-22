@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows, randomPort, tempDir, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -298,6 +298,124 @@ describe("websocket", () => {
   afterEach(() => {
     inspectee?.kill();
   });
+});
+
+describe("standalone executable", () => {
+  let compiledInspectee: Subprocess | undefined;
+
+  afterEach(() => {
+    compiledInspectee?.kill();
+  });
+
+  async function readInspectorUrl(proc: Subprocess): Promise<{ url: URL | undefined; stderr: string }> {
+    let url: URL | undefined;
+    let stderr = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk);
+      for (const line of stderr.split("\n")) {
+        try {
+          const candidate = new URL(line.trim());
+          if (candidate.protocol.includes("ws")) {
+            url = candidate;
+          }
+        } catch {}
+      }
+      if (url) break;
+    }
+    return { url, stderr };
+  }
+
+  async function compile(dir: string, extraArgs: string[] = []): Promise<string> {
+    const exePath = join(dir, isWindows ? "app.exe" : "app");
+    await using build = spawn({
+      cmd: [bunExe(), "build", "--compile", join(dir, "entry.ts"), "--outfile", exePath, ...extraArgs],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    if (buildExit !== 0) throw new Error("compile failed: " + buildErr);
+    return exePath;
+  }
+
+  // Keep the process alive long enough for the (concurrently-started)
+  // debugger thread to print its banner; bounded so the fail-before case
+  // does not hang until the test timeout.
+  const entry = `setTimeout(() => {}, 15_000);`;
+
+  for (const { name, env, compileArgs } of [
+    { name: "BUN_OPTIONS=--inspect", env: { BUN_OPTIONS: "--inspect=127.0.0.1:0" }, compileArgs: [] },
+    { name: "--compile-exec-argv=--inspect", env: {}, compileArgs: ["--compile-exec-argv=--inspect=127.0.0.1:0"] },
+  ]) {
+    test(`${name} opens the inspector`, async () => {
+      using dir = tempDir("inspect-compile", { "entry.ts": entry });
+      const exePath = await compile(String(dir), compileArgs);
+
+      compiledInspectee = spawn({
+        cmd: [exePath],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+
+      const { url, stderr } = await readInspectorUrl(compiledInspectee);
+      if (!url) {
+        throw new Error("Inspector never started; stderr: " + JSON.stringify(stderr));
+      }
+      expect({ protocol: url.protocol, hostname: url.hostname }).toEqual({
+        protocol: "ws:",
+        hostname: "127.0.0.1",
+      });
+
+      const webSocket = new WebSocket(url);
+      await new Promise<void>((resolve, reject) => {
+        webSocket.addEventListener("open", () => resolve());
+        webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+        webSocket.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
+      });
+      webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+      const reply = await new Promise(resolve => {
+        webSocket.addEventListener("message", ({ data }) => resolve(JSON.parse(data.toString())));
+      });
+      expect(reply).toMatchObject({
+        id: 1,
+        result: { result: { type: "number", value: 2 } },
+      });
+      webSocket.close();
+    }, 60_000);
+  }
+
+  test("BUN_OPTIONS=--inspect-wait blocks until a debugger connects", async () => {
+    using dir = tempDir("inspect-compile-wait", {
+      "entry.ts": `console.error("ran");`,
+    });
+    const exePath = await compile(String(dir));
+
+    compiledInspectee = spawn({
+      cmd: [exePath],
+      env: { ...bunEnv, BUN_OPTIONS: "--inspect-wait=127.0.0.1:0" },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    const { url, stderr } = await readInspectorUrl(compiledInspectee);
+    if (!url) {
+      throw new Error("Inspector never started; stderr: " + JSON.stringify(stderr));
+    }
+    // The script body must not have run before a debugger connects.
+    expect(stderr).not.toContain("ran");
+    expect(compiledInspectee.exitCode).toBeNull();
+
+    const webSocket = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      webSocket.addEventListener("open", () => resolve());
+      webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    });
+    webSocket.close();
+  }, 60_000);
 });
 
 describe("http metadata endpoint", () => {

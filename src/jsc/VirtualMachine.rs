@@ -2763,10 +2763,9 @@ pub struct Options {
     // forward-dep crate; callers pass it as the resolver's trait object so
     // both VM and resolver can hold it without the cycle.
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    // Note: debugger
-    // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
-    // CLI option struct lives in `bun_cli`, a forward dep). See
-    // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
+    /// Forwarded to [`InitOptions::debugger`] so `configure_debugger` sees the
+    /// CLI `--inspect*` flag on the standalone-executable path.
+    pub debugger: bun_options_types::context::Debugger,
     pub is_main_thread: bool,
 }
 
@@ -3594,6 +3593,7 @@ impl VirtualMachine {
             graph: Some(graph),
             log: opts.log,
             env_loader: opts.env_loader,
+            debugger: opts.debugger,
             smol: opts.smol,
             mini_mode: opts.smol,
             eval_mode: false,

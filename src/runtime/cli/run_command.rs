@@ -1172,6 +1172,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             args: ctx.args.clone(),
             graph: Some(graph_dyn),
             is_main_thread: true,
+            debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             smol: ctx.runtime_options.smol,
             // `Options::dns_result_order` is `u8` until the
             // b2-cycle widens it to `bun_dns::Order`; the enum is

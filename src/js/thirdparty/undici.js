@@ -65,10 +65,20 @@ function applyDispatcher(url, options) {
 }
 
 function fetch(input, init) {
-  // `input` may be a Request; dispatchers that inspect the target URL need the
-  // string href, not the Request object, so normalize before resolving proxy.
-  const url = input instanceof Request ? input.url : input;
-  return nativeFetch(input, applyDispatcher(url, init));
+  try {
+    // `input` may be a Request or Bun's `{url, ...}` init object; dispatchers
+    // that inspect the target URL need the string href, so normalize it first.
+    const url =
+      input instanceof Request || (input != null && typeof input === "object" && typeof input.url === "string")
+        ? input.url
+        : input;
+    return nativeFetch(input, applyDispatcher(url, init));
+  } catch (e) {
+    // WHATWG fetch never throws synchronously from option conversion; match
+    // Bun.fetch and upstream undici by converting any wrapper-side throw
+    // (throwing getters, Proxy traps) into a rejection.
+    return Promise.reject(e);
+  }
 }
 fetch.preconnect = nativeFetch.preconnect;
 
@@ -450,8 +460,8 @@ class EnvHttpProxyAgent extends Dispatcher {
     if (list.includes("*")) return true;
     const hostport = port ? `${hostname}:${port}` : hostname;
     for (let entry of list) {
-      if (entry === hostname || entry === hostport) return true;
       if (entry[0] === ".") entry = entry.slice(1);
+      if (entry === hostname || entry === hostport) return true;
       if (hostname.endsWith("." + entry)) return true;
     }
     return false;

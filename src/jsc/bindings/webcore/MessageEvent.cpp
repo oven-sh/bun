@@ -119,7 +119,7 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
     return MessageEventWithStrongData { event, WTF::move(strongWrapper) };
 }
 
-void MessageEvent::initMessageEvent(const AtomString& type, bool canBubble, bool cancelable, JSValue data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports)
+void MessageEvent::initMessageEvent(JSC::VM& vm, const JSC::JSCell* owner, const AtomString& type, bool canBubble, bool cancelable, JSValue data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports)
 {
     if (isBeingDispatched())
         return;
@@ -130,9 +130,7 @@ void MessageEvent::initMessageEvent(const AtomString& type, bool canBubble, bool
         Locker locker { m_concurrentDataAccessLock };
         m_data = JSValueTag {};
     }
-    // FIXME: This code is wrong: we should emit a write-barrier. Otherwise, GC can collect it.
-    // https://bugs.webkit.org/show_bug.cgi?id=236353
-    m_jsData.setWeakly(data);
+    m_jsData.set(vm, owner, data);
     m_cachedData.clear();
     m_origin = origin;
     m_lastEventId = lastEventId;

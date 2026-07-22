@@ -73,7 +73,7 @@ public:
 
     virtual ~MessageEvent();
 
-    void initMessageEvent(const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&&, Vector<RefPtr<MessagePort>>&&);
+    void initMessageEvent(JSC::VM&, const JSC::JSCell*, const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&&, Vector<RefPtr<MessagePort>>&&);
 
     const String& origin() const { return m_origin; }
     const String& lastEventId() const { return m_lastEventId; }

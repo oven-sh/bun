@@ -1862,6 +1862,21 @@ impl<const SSL: bool> NewSocket<SSL> {
         if socket.is_detached() || socket.is_closed() {
             return;
         }
+        // Surface the verify error via `error` before closing (Node emits
+        // `'error'` here). Skip when no `error` handler is defined: without one
+        // `handle_error` routes to uncaught, and `handshake`/`close` already carry it.
+        if let Some(handlers) = self.handlers_opt() {
+            if !handlers.on_error().is_empty() && !handlers.vm.is_shutting_down() {
+                let global = handlers.global_object;
+                if let Some(err_value) = self.stored_verify_error_to_js(&global) {
+                    self.handle_error(err_value);
+                    let socket = self.socket.get();
+                    if socket.is_detached() || socket.is_closed() {
+                        return;
+                    }
+                }
+            }
+        }
         self.close_and_detach(uws::CloseCode::FastShutdown);
     }
 
@@ -2061,6 +2076,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(err, sys::Tag::read),
                 &global,
             );
+        } else if SSL && this.flags.get().contains(Flags::REJECTED) {
+            // A rejectUnauthorized close: pass the stored verify error so
+            // `close(socket, error)` tells the user why we dropped the peer.
+            js_error = this
+                .stored_verify_error_to_js(&global)
+                .unwrap_or(JSValue::UNDEFINED);
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {

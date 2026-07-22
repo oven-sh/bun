@@ -1034,7 +1034,15 @@ async function pausesAt(banner: RegExp, enable: [string, unknown?][], resume: st
     stdout: "ignore",
     stderr: "pipe",
   });
-  {
+  // Any throw below (banner timeout, rejected send, failed pause wait) must
+  // not leak the never-exiting --inspect-brk child or its temp dir.
+  const reap = async () => {
+    proc.kill();
+    // Windows: the child must exit before rm'ing its cwd or rmSync EBUSYs.
+    await proc.exited;
+    dir[Symbol.dispose]();
+  };
+  try {
     const decoder = new TextDecoder();
     const stderrReader = proc.stderr.getReader();
     let stderrText = "";
@@ -1107,12 +1115,12 @@ async function pausesAt(banner: RegExp, enable: [string, unknown?][], resume: st
 
     const done = async () => {
       ws.close();
-      proc.kill();
-      // Windows: the child must exit before rm'ing its cwd or rmSync EBUSYs.
-      await proc.exited;
-      dir[Symbol.dispose]();
+      await reap();
     };
     return { send, done, userScript, pauses, line: (n: number) => pauses[n].callFrames[0].location.lineNumber };
+  } catch (err) {
+    await reap().catch(() => {});
+    throw err;
   }
 }
 
@@ -1123,23 +1131,26 @@ test("CDP clients see positions and source from the file the user wrote", async 
     "Runtime.runIfWaitingForDebugger",
   );
 
-  // Node reports both of these against the original file. Bun prepends the
-  // break-on-start `debugger;` and reflows everything below it, so untranslated
-  // these are lines 0 and 4.
-  expect(line(0)).toBe(2);
-  expect(line(1)).toBe(10);
+  try {
+    // Node reports both of these against the original file. Bun prepends the
+    // break-on-start `debugger;` and reflows everything below it, so untranslated
+    // these are lines 0 and 4.
+    expect(line(0)).toBe(2);
+    expect(line(1)).toBe(10);
 
-  const { scriptSource } = await send("Debugger.getScriptSource", { scriptId: userScript.scriptId });
-  expect(scriptSource).toBe(transpileShiftFixture);
-  // Bun's own map describes text this client never sees; forwarding it would
-  // make a client that applies source maps translate a second time.
-  expect(userScript.sourceMapURL).toBe("");
-  expect(userScript.endLine).toBe(13);
+    const { scriptSource } = await send("Debugger.getScriptSource", { scriptId: userScript.scriptId });
+    expect(scriptSource).toBe(transpileShiftFixture);
+    // Bun's own map describes text this client never sees; forwarding it would
+    // make a client that applies source maps translate a second time.
+    expect(userScript.sourceMapURL).toBe("");
+    expect(userScript.endLine).toBe(13);
 
-  // A breakpoint is named in the same coordinates and comes back in them.
-  const resolved = await send("Debugger.setBreakpointByUrl", { lineNumber: 1, url: userScript.url });
-  expect(resolved.locations[0].lineNumber).toBe(2);
-  await done();
+    // A breakpoint is named in the same coordinates and comes back in them.
+    const resolved = await send("Debugger.setBreakpointByUrl", { lineNumber: 1, url: userScript.url });
+    expect(resolved.locations[0].lineNumber).toBe(2);
+  } finally {
+    await done();
+  }
 }, 30_000);
 
 test("JSC-protocol clients keep seeing generated positions and Bun's source map", async () => {
@@ -1155,16 +1166,19 @@ test("JSC-protocol clients keep seeing generated positions and Bun's source map"
     "Inspector.initialized",
   );
 
-  // debug.bun.sh and the VS Code extension apply the map themselves, so this
-  // endpoint must keep reporting the transpiler's own coordinates.
-  expect(line(0)).toBe(0);
-  expect(line(1)).toBe(4);
+  try {
+    // debug.bun.sh and the VS Code extension apply the map themselves, so this
+    // endpoint must keep reporting the transpiler's own coordinates.
+    expect(line(0)).toBe(0);
+    expect(line(1)).toBe(4);
 
-  const { scriptSource } = await send("Debugger.getScriptSource", { scriptId: userScript.scriptId });
-  expect(scriptSource).toContain("//# sourceMappingURL=data:application/json;base64,");
-  expect(scriptSource.split("\n")[0]).toBe("debugger;");
-  expect(userScript.sourceMapURL).toStartWith("data:application/json");
-  await done();
+    const { scriptSource } = await send("Debugger.getScriptSource", { scriptId: userScript.scriptId });
+    expect(scriptSource).toContain("//# sourceMappingURL=data:application/json;base64,");
+    expect(scriptSource.split("\n")[0]).toBe("debugger;");
+    expect(userScript.sourceMapURL).toStartWith("data:application/json");
+  } finally {
+    await done();
+  }
 }, 30_000);
 // The lazy module reuses the fixture's shift-inducing shape (quote rewrite,
 // blank-line collapse) so its original coordinates differ from the

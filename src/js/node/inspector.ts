@@ -6,6 +6,7 @@
 const { hideFromStack } = require("internal/shared");
 const { validateString, validateFunction } = require("internal/validators");
 const EventEmitter = require("node:events");
+const { Buffer } = require("node:buffer");
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
 
@@ -585,7 +586,18 @@ function emitToSession(session: Session, method: string, params: object) {
     session.emit(method, message);
     session.emit("inspectorNotification", message);
   } catch (error) {
-    process.emitWarning(error);
+    process.emitWarning(toWarning(error));
+  }
+}
+
+// process.emitWarning throws ERR_INVALID_ARG_TYPE for values that are neither
+// strings nor Errors, so a listener throwing `{}` must not defeat the
+// isolation guards above/below. Mirrors emitConsoleAPICalled's handling.
+function toWarning(e: unknown): Error {
+  try {
+    return e instanceof Error ? e : new ErrorObject(String(e));
+  } catch {
+    return new ErrorObject("inspector listener threw a value that could not be stringified");
   }
 }
 
@@ -1028,7 +1040,7 @@ class Session extends EventEmitter {
         this.emit("inspectorNotification", message);
       }
     } catch (thrown) {
-      process.emitWarning(thrown);
+      process.emitWarning(toWarning(thrown));
     }
   }
 

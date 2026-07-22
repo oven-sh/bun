@@ -136,7 +136,7 @@ function decodeSourceMapURL(sourceMapURL: string | undefined): AnyObject | undef
     // whose map names several cannot be shown as one original script, so it is
     // left alone.
     if (!map || typeof map.mappings !== "string") return undefined;
-    if (!Array.isArray(map.sources) || map.sources.length !== 1) return undefined;
+    if (!$isJSArray(map.sources) || map.sources.length !== 1) return undefined;
     return map;
   } catch {
     return undefined;

@@ -426,7 +426,12 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Also upload it standalone, so the next build inherits it with a small
   // download instead of pulling the whole profile zip. Named per target.
   // Relative, like makeZip's return — upload() runs with cwd = buildDir.
-  if (hasOrderFile) {
+  //
+  // Only when this lane produced the file itself: a cross-compiled lane's fresh
+  // trace comes from the sibling trace-order step (see .buildkite/ci.mjs), and
+  // re-uploading the inherited copy here would give inheritOrderFile() two
+  // same-named artifacts whose download order is undefined.
+  if (hasOrderFile && canTraceOrderFile(cfg)) {
     const artifact = orderFileArtifact(cfg);
     cpSync(orderFilePath(cfg), resolve(buildDir, artifact));
     zipPaths.push(artifact);
@@ -677,7 +682,6 @@ export interface OrderFileContext {
   buildUrl: string | undefined;
   branch: string | undefined;
   buildNumber: number | undefined;
-  stepKey: string | undefined;
   commitMessage: string;
   pullRequest: boolean;
 }
@@ -690,7 +694,6 @@ export function orderFileContext(): OrderFileContext {
     buildUrl: process.env.BUILDKITE_BUILD_URL,
     branch: process.env.BUILDKITE_BRANCH,
     buildNumber: Number(process.env.BUILDKITE_BUILD_NUMBER) || undefined,
-    stepKey: process.env.BUILDKITE_STEP_KEY,
     commitMessage: process.env.BUILDKITE_MESSAGE ?? "",
     pullRequest: pr !== undefined && pr !== "" && pr !== "false",
   };
@@ -843,9 +846,11 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
 
   for await (const build of candidateBuilds(ctx)) {
     if (++tried > PREVIOUS_BUILDS_TO_TRY) break;
-    // No --step: the artifact name is target-unique, and a cross-compiled lane's
-    // order file is published by a sibling trace-order step on a native-arch
-    // host (see getTraceOrderStep in .buildkite/ci.mjs), not by this step.
+    // No --step: the artifact name is target-unique, and exactly one step per
+    // build publishes it — a lane that traced its own binary re-uploads from
+    // packageAndUpload(), a cross-compiled lane's comes from the sibling
+    // trace-order step on a native-arch host (getTraceOrderStep in
+    // .buildkite/ci.mjs).
     const result = spawnSync("buildkite-agent", ["artifact", "download", artifact, ".", "--build", build.id], {
       cwd: cfg.buildDir,
       stdio: "ignore",

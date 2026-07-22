@@ -316,13 +316,19 @@ static int remap_executable(void)
     for (int i = 0; i < region_count; i++) {
         size_t n = regions[i].end - regions[i].start;
         int fd = (int)syscall(SYS_memfd_create, "bun-functrace", 1u /* MFD_CLOEXEC */);
-        if (fd < 0 || ftruncate(fd, (off_t)n) != 0) return -1;
-        void *rw = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        if (rw == MAP_FAILED) return -1;
-        memcpy(rw, (const void *)regions[i].start, n);
-        if (mmap((void *)regions[i].start, n, PROT_READ | PROT_EXEC, MAP_SHARED | MAP_FIXED, fd, 0) == MAP_FAILED)
+        if (fd < 0) return -1;
+        void *rw = ftruncate(fd, (off_t)n) != 0 ? MAP_FAILED : mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (rw == MAP_FAILED) {
+            close(fd);
             return -1;
+        }
+        memcpy(rw, (const void *)regions[i].start, n);
+        void *rx = mmap((void *)regions[i].start, n, PROT_READ | PROT_EXEC, MAP_SHARED | MAP_FIXED, fd, 0);
         close(fd);
+        if (rx == MAP_FAILED) {
+            munmap(rw, n);
+            return -1;
+        }
         regions[i].rw = rw;
         sync_icache(regions[i].start, rw, n);
     }
@@ -404,9 +410,11 @@ static int cmp_uintptr(const void *a, const void *b)
 static int read_starts(const char *path)
 {
     int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
     struct stat st;
-    if (fd < 0 || fstat(fd, &st) != 0 || st.st_size < (off_t)(STARTS_HEADER_WORDS * 8)) return -1;
-    const uint64_t *w = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    const uint64_t *w = (fstat(fd, &st) != 0 || st.st_size < (off_t)(STARTS_HEADER_WORDS * 8))
+                            ? MAP_FAILED
+                            : mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (w == MAP_FAILED) return -1;
     uint64_t n = w[2];
@@ -460,8 +468,9 @@ static int open_record(const char *path)
 {
     size_t bytes = (TRACE_HEADER_WORDS + start_count) * 8;
     int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
-    if (fd < 0 || ftruncate(fd, (off_t)bytes) != 0) return -1;
-    void *map = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (fd < 0) return -1;
+    void *map = ftruncate(fd, (off_t)bytes) != 0 ? MAP_FAILED
+                                                 : mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     close(fd);
     if (map == MAP_FAILED) return -1;
     record = map;

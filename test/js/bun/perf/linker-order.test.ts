@@ -51,7 +51,6 @@ const ctx = (overrides: Partial<OrderFileContext> = {}): OrderFileContext => ({
   buildUrl: "https://buildkite.com/bun/bun/builds/68425",
   branch: "main",
   buildNumber: 68425,
-  stepKey: "linux-x64-build-bun",
   commitMessage: "some ordinary commit",
   pullRequest: false,
   ...overrides,

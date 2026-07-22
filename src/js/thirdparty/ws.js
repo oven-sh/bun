@@ -94,7 +94,9 @@ function emitWarning(type, message) {
 // RFC 6455 7.4 + IANA: the status codes an endpoint may send in a Close
 // frame. Matches npm `ws` lib/validation.js isValidStatusCode.
 function isValidStatusCode(code) {
-  return (code >= 1000 && code <= 1014 && code !== 1004 && code !== 1005 && code !== 1006) || (code >= 3000 && code <= 4999);
+  return (
+    (code >= 1000 && code <= 1014 && code !== 1004 && code !== 1005 && code !== 1006) || (code >= 3000 && code <= 4999)
+  );
 }
 
 // TODO: add private method on WebSocket to avoid these allocations

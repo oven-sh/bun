@@ -413,7 +413,10 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    // The client drives Runtime.evaluate in the child, which trips the
+    // WebKit-internal evaluateWithScopeExtension validator abort this file
+    // is exempted from; children must not re-inherit the validator env.
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined, BUN_JSC_dumpSimulatedThrows: undefined },
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -499,7 +502,8 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    // Same validator-env strip as the single-wait test above.
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined, BUN_JSC_dumpSimulatedThrows: undefined },
     cwd: String(dir),
     stderr: "pipe",
   });

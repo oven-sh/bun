@@ -308,6 +308,7 @@ pub struct SSLConfig {
     pub ca: SSLConfigFile,
     pub cert: SSLConfigFile,
     pub key: SSLConfigFile,
+    pub crl: SSLConfigFile,
     pub key_file: GenOpt<GenString>,
     pub cert_file: GenOpt<GenString>,
     pub ca_file: GenOpt<GenString>,
@@ -405,7 +406,7 @@ impl Drop for SSLConfig {
         release_gen_opt_string(&self.passphrase);
         release_gen_opt_string(&self.dh_params_file);
         release_gen_opt_string(&self.server_name);
-        // `ca` / `cert` / `key`: `SSLConfigFile` — released by its own `Drop`.
+        // `ca` / `cert` / `key` / `crl`: `SSLConfigFile` — released by its own `Drop`.
         release_gen_opt_string(&self.key_file);
         release_gen_opt_string(&self.cert_file);
         release_gen_opt_string(&self.ca_file);
@@ -560,6 +561,7 @@ struct ExternSSLConfig {
     ciphers: RawWTFStringImpl,
     client_renegotiation_limit: u32,
     client_renegotiation_window: u32,
+    crl: ExternSSLConfigFile,
 }
 
 // safe: same handle/out-param contract as
@@ -584,6 +586,7 @@ impl SSLConfig {
             ca: SSLConfigFile::convert_from_extern(ext.ca),
             cert: SSLConfigFile::convert_from_extern(ext.cert),
             key: SSLConfigFile::convert_from_extern(ext.key),
+            crl: SSLConfigFile::convert_from_extern(ext.crl),
             secure_options: ext.secure_options,
             ssl_min_version: ext.ssl_min_version,
             ssl_max_version: ext.ssl_max_version,
@@ -598,7 +601,10 @@ impl SSLConfig {
     }
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
-        let mut ext = MaybeUninit::<ExternSSLConfig>::uninit();
+        // Zeroed so an under-writing C++ side (e.g. a stale codegen header
+        // missing a trailing field) yields the field's `None` variant rather
+        // than garbage; every field's all-zeros representation is valid.
+        let mut ext = MaybeUninit::<ExternSSLConfig>::zeroed();
         crate::call_false_is_throw(global, || {
             bindgenConvertJSToSSLConfig(global, value, &mut ext)
         })?;

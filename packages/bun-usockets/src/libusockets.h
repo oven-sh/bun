@@ -476,6 +476,8 @@ struct us_bun_socket_context_options_t {
     unsigned int cert_count;
     const char * const *ca;
     unsigned int ca_count;
+    const char * const *crl;
+    unsigned int crl_count;
     unsigned int secure_options;
     // Minimum/maximum TLS protocol version (TLS1_VERSION..TLS1_3_VERSION); 0 = unset/default.
     int ssl_min_version;
@@ -492,6 +494,7 @@ enum create_bun_socket_error_t {
     CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
     CREATE_BUN_SOCKET_ERROR_INVALID_CA,
     CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
+    CREATE_BUN_SOCKET_ERROR_INVALID_CRL,
 };
 
 /* Build an SSL_CTX from options. Returns the BoringSSL SSL_CTX*; caller owns

@@ -677,6 +677,8 @@ var InternalSecureContext = class SecureContext {
       if (key) throwOnInvalidTLSArray("options.key", key);
       const ca = options.ca;
       if (ca) throwOnInvalidTLSArray("options.ca", ca);
+      const crl = options.crl;
+      if (crl) throwOnInvalidTLSArray("options.crl", crl);
       if (options.servername != null && typeof options.servername !== "string")
         throw new TypeError("servername argument must be an string");
       if (options.secureOptions != null && typeof options.secureOptions !== "number")
@@ -1140,6 +1142,7 @@ function Server(options, secureConnectionListener): void {
   this.key = undefined;
   this.cert = undefined;
   this.ca = undefined;
+  this.crl = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
   this._rejectUnauthorized = rejectUnauthorizedDefault();
@@ -1256,6 +1259,12 @@ function Server(options, secureConnectionListener): void {
       }
       this.ca = ca;
 
+      let crl = options.crl;
+      if (crl) {
+        throwOnInvalidTLSArray("options.crl", crl);
+      }
+      this.crl = crl;
+
       let passphrase = options.passphrase;
       if (passphrase && typeof passphrase !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
@@ -1333,6 +1342,7 @@ function Server(options, secureConnectionListener): void {
         key: this.key,
         cert: this.cert,
         ca: this.ca,
+        crl: this.crl,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
         rejectUnauthorized: this._rejectUnauthorized,

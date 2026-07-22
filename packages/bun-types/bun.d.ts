@@ -4086,6 +4086,10 @@ declare module "bun" {
      */
     key?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
+     * PEM formatted CRLs (Certificate Revocation Lists).
+     */
+    crl?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
+    /**
      * Optionally affect the OpenSSL protocol behavior, which is not
      * usually necessary. Use it carefully, if at all. Value is a numeric
      * bitmask of the SSL_OP_* options from OpenSSL Options

@@ -32,6 +32,7 @@ pub struct SSLConfig {
     pub key: CStrSlice,
     pub cert: CStrSlice,
     pub ca: CStrSlice,
+    pub crl: CStrSlice,
 
     pub secure_options: u32,
     /// Minimum/maximum TLS protocol version (TLS1_VERSION..TLS1_3_VERSION); 0 = unset/default.
@@ -105,6 +106,7 @@ impl SSLConfig {
         key: None,
         cert: None,
         ca: None,
+        crl: None,
         secure_options: 0,
         ssl_min_version: 0,
         ssl_max_version: 0,
@@ -199,6 +201,10 @@ impl SSLConfig {
             ctx_opts.ca = ca.as_ptr();
             ctx_opts.ca_count = ca.len() as u32;
         }
+        if let Some(crl) = &self.crl {
+            ctx_opts.crl = crl.as_ptr();
+            ctx_opts.crl_count = crl.len() as u32;
+        }
 
         if !self.ssl_ciphers.is_null() {
             ctx_opts.ssl_ciphers = self.ssl_ciphers;
@@ -271,6 +277,7 @@ impl SSLConfig {
         eq_slice!(key);
         eq_slice!(cert);
         eq_slice!(ca);
+        eq_slice!(crl);
         if self.secure_options != other.secure_options {
             return false;
         }
@@ -343,6 +350,7 @@ impl SSLConfig {
         hash_slice!(key);
         hash_slice!(cert);
         hash_slice!(ca);
+        hash_slice!(crl);
         hasher.update(&self.secure_options.to_ne_bytes());
         hasher.update(&self.ssl_min_version.to_ne_bytes());
         hasher.update(&self.ssl_max_version.to_ne_bytes());
@@ -382,6 +390,7 @@ impl SSLConfig {
         free_strings(&mut self.key);
         free_strings(&mut self.cert);
         free_strings(&mut self.ca);
+        free_strings(&mut self.crl);
         free_string(&mut self.ssl_ciphers);
         free_string(&mut self.protos);
     }
@@ -434,6 +443,7 @@ impl Clone for SSLConfig {
             key: clone_strings(&self.key),
             cert: clone_strings(&self.cert),
             ca: clone_strings(&self.ca),
+            crl: clone_strings(&self.crl),
             secure_options: self.secure_options,
             ssl_min_version: self.ssl_min_version,
             ssl_max_version: self.ssl_max_version,

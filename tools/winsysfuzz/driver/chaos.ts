@@ -104,6 +104,14 @@ const MASK_PROGRAMS: string[][] = [
   ["-e", "Bun.spawnSync(['cmd','/c','rem'])"],
   ["-e", "new Intl.DateTimeFormat().format()"],
 ];
+// A test-file target incurs the TEST RUNNER's bring-up (harness preload,
+// runner machinery) - heavier than a plain process. Mask it too, or draws
+// land in bun test's own init and read as the program's code.
+if (progArgs[0] === "test") {
+  const trivial = join(runsDir, "wsf-trivial.test.ts");
+  await Bun.write(trivial, `import { test, expect } from "bun:test";\ntest("wsf-trivial", () => { expect(1).toBe(1); });\n`);
+  MASK_PROGRAMS.push(["test", trivial]);
+}
 const masked = new Set<string>();
 for (let i = 0; i < MASK_PROGRAMS.length; i++) {
   const m = await runOnce({ bun, args: MASK_PROGRAMS[i], workDir: join(runsDir, `startup-mask${i}`), timeoutMs });

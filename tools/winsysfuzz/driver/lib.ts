@@ -170,6 +170,7 @@ export interface Trace {
   modules: { base: bigint; size: bigint; name: string }[]; // '# mod' map for o:-key naming
   termStacks: string[][]; // one 'T' record per traced process: terminating thread's bun.exe frame RVAs
   leaks: string[]; // 'L' records: named handles still open at process exit ("<kind> <name-tail>")
+  leaksByProc: string[][]; // the same, kept per traced process (one array per trace file)
 }
 
 // Name the module an absolute address (an 'o:' key or a frame) falls in.
@@ -195,7 +196,7 @@ export function keyName(t: Trace, key: string): string {
 // counting all). Injection runs need "did it fire, and where" - not a
 // 200k-record array for a 20MB trace of a big test file.
 export function parseTrace(text: string, faultsOnly = false): Trace {
-  const t: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: false, attached: 0, modules: [], termStacks: [], leaks: [] };
+  const t: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: false, attached: 0, modules: [], termStacks: [], leaks: [], leaksByProc: [] };
   const bySeq = new Map<number, Rec>();
   for (const line of text.split("\n")) {
     if (!line) continue;
@@ -367,7 +368,7 @@ export async function readTraceDir(dir: string, opts: { faultsOnly?: boolean } =
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir).filter(f => f.startsWith("wsf-") && f.endsWith(".log"));
   if (!files.length) return null;
-  const merged: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: true, attached: 0, modules: [], termStacks: [], leaks: [] };
+  const merged: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: true, attached: 0, modules: [], termStacks: [], leaks: [], leaksByProc: [] };
   for (const f of files) {
     let t: Trace;
     try {
@@ -386,6 +387,10 @@ export async function readTraceDir(dir: string, opts: { faultsOnly?: boolean } =
     for (const m of t.modules) merged.modules.push(m);
     for (const ts of t.termStacks) merged.termStacks.push(ts);
     for (const l of t.leaks) merged.leaks.push(l);
+    // Leaks are a per-PROCESS property: a test that spawns N children has
+    // N sets of standing handles - keep each process's set separate so the
+    // oracle judges every process on its own, never a merged multiset.
+    merged.leaksByProc.push(t.leaks);
     if (merged.bunBase === "0") merged.bunBase = t.bunBase;
     merged.cleanEnd = merged.cleanEnd && t.cleanEnd;
     merged.attached = Math.max(merged.attached, t.attached);

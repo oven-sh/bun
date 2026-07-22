@@ -145,22 +145,27 @@ const notWorkloadIo = /(Local\\|Global\\|BaseNamedObjects|WilError|\\SM0:|\.mui\
 const normalizeLeak = (l: string) => l.trim().replace(/(\\pipe\\uv\\\d+)-\d+/i, "$1-<pid>");
 const cleanLeaks = (leaks: string[]) =>
   leaks.map(normalizeLeak).filter(l => !harnessPath.test(l) && !notWorkloadIo.test(l));
-// Diff as a MULTISET: normalized names collapse instances of one kind, so
-// a leak is a count of that kind ABOVE the baseline's count (three stdio
-// pipes where the baseline held one), reported once with its surplus.
+// Leaks are a per-PROCESS property: a test that spawns N children has N
+// standing-handle sets, so a merged multiset shows an Nx "surplus" that is
+// only process count. Judge each traced process on its own: the standing
+// counts are the max per-process counts across the baseline's processes,
+// and a run leaks when SOME process's own counts exceed them.
 const countKinds = (leaks: string[]) => {
   const m = new Map<string, number>();
   for (const l of cleanLeaks(leaks)) m.set(l, (m.get(l) ?? 0) + 1);
   return m;
 };
-const baseLeakCounts = countKinds(baseTrace.leaks ?? []);
-const newLeaks = (leaks: string[]): string[] => {
-  const out: string[] = [];
-  for (const [k, n] of countKinds(leaks)) {
-    const over = n - (baseLeakCounts.get(k) ?? 0);
-    if (over > 0) out.push(over > 1 ? `${k} x${over}` : k);
-  }
-  return out;
+const baseLeakCounts = new Map<string, number>();
+for (const proc of baseTrace.leaksByProc ?? [baseTrace.leaks ?? []])
+  for (const [k, n] of countKinds(proc)) baseLeakCounts.set(k, Math.max(baseLeakCounts.get(k) ?? 0, n));
+const newLeaks = (leaksByProc: string[][]): string[] => {
+  const worst = new Map<string, number>(); // largest surplus of each kind in any one process
+  for (const proc of leaksByProc)
+    for (const [k, n] of countKinds(proc)) {
+      const over = n - (baseLeakCounts.get(k) ?? 0);
+      if (over > 0) worst.set(k, Math.max(worst.get(k) ?? 0, over));
+    }
+  return [...worst].map(([k, over]) => (over > 1 ? `${k} x${over}` : k));
 };
 
 // --- coordinates --------------------------------------------------------------
@@ -208,6 +213,15 @@ const MASK_PROGRAMS: string[][] = [
   ["-e", "Bun.spawnSync(['cmd','/c','rem'])"],
   ["-e", "new Intl.DateTimeFormat().format()"],
 ];
+// When the target IS a test file, its startup is the TEST RUNNER's bring-up
+// (heavier than a plain process: harness preload, snapshot/coverage init,
+// the runner's own machinery) - mask that too, or the sweep spends itself
+// faulting bun test's init and calls it the program's code.
+if (progArgs[0] === "test") {
+  const trivial = join(runsDir, "wsf-trivial.test.ts");
+  await Bun.write(trivial, `import { test, expect } from "bun:test";\ntest("wsf-trivial", () => { expect(1).toBe(1); });\n`);
+  MASK_PROGRAMS.push(["test", trivial]);
+}
 const startupMask = new Set<string>();
 for (let i = 0; i < MASK_PROGRAMS.length; i++) {
   const m = await runOnce({ bun, args: MASK_PROGRAMS[i], workDir: join(runsDir, `startup-mask${i}`), timeoutMs });
@@ -372,7 +386,7 @@ async function worker(w: number) {
       // The leak oracle: named handles (file/pipe/socket/key) still open at
       // exit that the baseline closed. A quiet resource-leak bug no crash or
       // hang would ever reveal; the leaked names ride onto the finding.
-      else if ((leaked = newLeaks(tr?.leaks ?? [])).length) outcome = "leak";
+      else if ((leaked = newLeaks(tr?.leaksByProc ?? [])).length) outcome = "leak";
       // A run that got slow because a test TIMED OUT is the hang class in
       // disguise: some awaited operation never completed and the runner's
       // per-test timeout rescued it. That is a finding ('stalled'). A run
@@ -601,7 +615,7 @@ if (findings.length) {
       // to know that, so the verdict is computed here from its trace).
       if (f.outcome === "leak") {
         const vt = await readTraceDir(rr.dir, { faultsOnly: true }).catch(() => null);
-        outcomes.push(newLeaks(vt?.leaks ?? []).length ? "leak" : rr.outcome === "exit" ? "clean" : rr.outcome);
+        outcomes.push(newLeaks(vt?.leaksByProc ?? []).length ? "leak" : rr.outcome === "exit" ? "clean" : rr.outcome);
       } else outcomes.push(rr.outcome);
       if (n === 1) {
         stage = lastStage(rr.stdout);

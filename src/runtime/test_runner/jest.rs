@@ -612,10 +612,6 @@ pub(crate) fn js_node_test_late_report(
     // 0 = normal (pass/fail by error), 1 = skip, 2 = todo.
     let mode = mode_arg.to_int32();
 
-    // Re-derive the BunTestRoot backref before printing; `on_before_print`
-    // must not observe a `&mut BunTest` held across it (stacked-borrows).
-    buntest.bun_test_root.on_before_print();
-
     // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
     // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
     // every BunTest.
@@ -626,25 +622,32 @@ pub(crate) fn js_node_test_late_report(
 
     let colors = Output::enable_ansi_colors_stderr();
     let mut line: Vec<u8> = Vec::new();
-    if dots && !failed && mode == 0 {
-        let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>.<r>");
-        reporter.last_printed_dot.set(true);
-    } else if dots && mode == 1 {
-        let _ = bun_core::write_pretty!(&mut line, colors, "<r><yellow>.<d>");
-        reporter.last_printed_dot.set(true);
-    } else if dots && mode == 2 {
-        let _ = bun_core::write_pretty!(&mut line, colors, "<r><magenta>.<r>");
+    let is_dot = dots && (!failed || mode != 0);
+    if is_dot {
+        if mode == 1 {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><yellow>.<d>");
+        } else if mode == 2 {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><magenta>.<r>");
+        } else {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>.<r>");
+        }
         reporter.last_printed_dot.set(true);
     } else if only_failures && !failed {
         // suppressed
-    } else if mode == 1 {
-        let _ = bun_core::write_pretty!(&mut line, colors, "<r><yellow>(skip)<d> {}<r>\n", name_bytes);
-    } else if mode == 2 {
-        let _ = bun_core::write_pretty!(&mut line, colors, "<r><magenta>(todo)<r> {}\n", name_bytes);
-    } else if failed {
-        let _ = bun_core::write_pretty!(&mut line, colors, "<r><red>(fail)<r> {}\n", name_bytes);
     } else {
-        let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>(pass)<r> {}\n", name_bytes);
+        // Full-line output only: on_before_print breaks the dots row with a
+        // newline and prints the deferred file header (handle_test_completed
+        // calls it in the same position).
+        buntest.bun_test_root.on_before_print();
+        if mode == 1 {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><yellow>(skip)<d> {}<r>\n", name_bytes);
+        } else if mode == 2 {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><magenta>(todo)<r> {}\n", name_bytes);
+        } else if failed {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><red>(fail)<r> {}\n", name_bytes);
+        } else {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>(pass)<r> {}\n", name_bytes);
+        }
     }
     if let Some(idx) = worker_idx {
         crate::cli::test::parallel_runner::worker_emit_test_done(idx, &line);
@@ -669,6 +672,17 @@ pub(crate) fn js_node_test_late_report(
             reporter.failures_to_repeat_buf.extend_from_slice(&line);
         }
         global.bun_vm().as_mut().run_error_handler(error_arg, None);
+        if reporter.summary().fail == reporter.jest.bail {
+            reporter.print_summary();
+            bun_core::pretty_error!(
+                "\nBailed out after {} failure{}<r>\n",
+                reporter.jest.bail,
+                if reporter.jest.bail == 1 { "" } else { "s" }
+            );
+            Output::flush();
+            reporter.write_junit_report_if_needed();
+            bun_core::Global::exit(1);
+        }
     } else {
         reporter.summary().pass += 1;
     }

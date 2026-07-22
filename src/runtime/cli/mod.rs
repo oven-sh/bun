@@ -1435,22 +1435,27 @@ pub mod command {
         if raw.is_empty() {
             return None;
         }
-        let module_path = raw.to_vec();
         // SAFETY: single-threaded startup, before `bun_jsc::initialize`.
         unsafe { std::env::remove_var("BUN_INTERNAL_FORK_ENTRY") };
 
-        // argv() has compile_exec_argv / BUN_OPTIONS tokens spliced at index 1;
-        // `offset_for_passthrough` is the first OS-passed arg slot, so start
-        // the scan there to avoid matching a spliced flag value.
-        let argv = bun::argv();
-        let idx = argv
-            .iter()
-            .skip(offset_for_passthrough)
-            .position(|a| a == module_path.as_slice())
-            .map(|i| i + offset_for_passthrough)
-            .unwrap_or(argv.len());
+        // fork() writes "<execArgv.length>:<modulePath>" so modulePath sits at
+        // offset_for_passthrough + execArgv_len in argv(); no value scan
+        // needed. `offset_for_passthrough` already accounts for
+        // compile_exec_argv / BUN_OPTIONS tokens spliced at index 1.
+        let digits = raw.iter().take_while(|b| b.is_ascii_digit()).count();
+        let (exec_argv_len, module_path) = match raw.get(digits) {
+            Some(b':') if digits > 0 => (
+                bun_core::parse_int::<usize>(&raw[..digits], 10).unwrap_or(0),
+                &raw[digits + 1..],
+            ),
+            _ => (0, raw),
+        };
+        if module_path.is_empty() {
+            return None;
+        }
+        let idx = (offset_for_passthrough + exec_argv_len).min(bun::argv().len());
 
-        let entry = match graph.resolve_embedded_entry(&module_path) {
+        let entry = match graph.resolve_embedded_entry(module_path) {
             Some(name) => name.to_vec().into_boxed_slice(),
             None => {
                 let mut cwd_buf = bun_paths::PathBuffer::uninit();
@@ -1461,7 +1466,7 @@ pub mod command {
                 bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
                     cwd,
                     &mut out[..],
-                    &[&module_path],
+                    &[module_path],
                 )
                 .to_vec()
                 .into_boxed_slice()

@@ -21,8 +21,8 @@ import { join, resolve } from "path";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import net from "node:net";
-import nodeTls from "node:tls";
 import { networkInterfaces } from "node:os";
+import nodeTls from "node:tls";
 import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;

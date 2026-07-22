@@ -34,12 +34,12 @@ pub static fs_watch: bun_output::ScopedLogger =
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORTING.md §Global mutable state: singleton ptr → `AtomicCell`, guarded by
-// `DEFAULT_MANAGER_MUTEX`. `fs.watch()` is reachable from Worker JS threads
+// PORTING.md §Global mutable state: singleton ptr → `AtomicPtrCell`, guarded
+// by `DEFAULT_MANAGER_MUTEX`. `fs.watch()` is reachable from Worker JS threads
 // (each Worker is its own OS thread + VM), so an unguarded read+write
 // would be a data race. Mirror the posix
 // `path_watcher.rs` pattern: every `DEFAULT_MANAGER` access holds the mutex.
-// `AtomicCell<*mut _>` (Acquire/Release on the pointer word) means even an
+// `AtomicPtrCell` (Acquire/Release on the pointer word) means even an
 // unsynchronized racing reader observes either null or a fully-published
 // pointer — and lets every load/store be safe code (`RacyCell` required an
 // `unsafe` block per access for the same single-word op).
@@ -49,8 +49,8 @@ pub static fs_watch: bun_output::ScopedLogger =
 // the one stored here (last caller wins the slot), so a Worker never mutates
 // another VM's manager or drives its uv_loop cross-thread. Promoting this to
 // true per-VM storage (e.g. `RareData`) is the longer-term fix.
-static DEFAULT_MANAGER: bun_core::AtomicCell<*mut PathWatcherManager> =
-    bun_core::AtomicCell::new(ptr::null_mut());
+static DEFAULT_MANAGER: bun_core::AtomicPtrCell<PathWatcherManager> =
+    bun_core::AtomicPtrCell::null();
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 // TODO: make this a generic so we can reuse code with path_watcher

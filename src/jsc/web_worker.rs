@@ -245,11 +245,10 @@ mod live_workers {
     pub(super) static MUTEX: Mutex = Mutex::new();
     // Intrusive doubly-linked list head; nodes are `WebWorker.live_{next,prev}`.
     // PORTING.md §Global mutable state: list head, every read/write is under
-    // `MUTEX` above. `AtomicCell` so the slot itself is `Sync` with safe
+    // `MUTEX` above. `AtomicPtrCell` so the slot itself is `Sync` with safe
     // load/store (the mutex still provides the actual happens-before for the
     // intrusive list walk).
-    pub(super) static HEAD: bun_core::AtomicCell<*mut WebWorker> =
-        bun_core::AtomicCell::new(core::ptr::null_mut());
+    pub(super) static HEAD: bun_core::AtomicPtrCell<WebWorker> = bun_core::AtomicPtrCell::null();
     /// Number of workers registered in `list`. Separate atomic so
     /// `terminateAllAndWait` can futex-wait on it without the mutex.
     pub(super) static OUTSTANDING: AtomicU32 = AtomicU32::new(0);

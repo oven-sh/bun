@@ -31,12 +31,10 @@ pub struct ClientContext {
 /// `quic.Context.createClient` (it lives on `loop->data.quic_head` and is
 /// driven by that loop's pre/post hooks), so a second loop would get its
 /// own engine; this var would just need to become per-loop storage.
-// PORTING.md §Global mutable state: HTTP-thread-only singleton. AtomicCell
-// over RacyCell because the payload is a pointer-sized `Copy` value
-// (`Option<NonNull<_>>` has an `Atom` impl) so load/store are safe; the
+// PORTING.md §Global mutable state: HTTP-thread-only singleton.
+// `AtomicPtrCell` over `RacyCell` so load/store are safe code; the
 // uncontended atomic op is free on the single HTTP client thread.
-static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
-    bun_core::AtomicCell::new(None);
+static INSTANCE: bun_core::AtomicPtrCell<ClientContext> = bun_core::AtomicPtrCell::null();
 static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
@@ -54,7 +52,7 @@ impl ClientContext {
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
     /// Callers reborrow per-access — PORTING.md §Global mutable state.
     pub fn get() -> Option<NonNull<ClientContext>> {
-        INSTANCE.load()
+        INSTANCE.load_nn()
     }
 
     /// Upgrade the [`get`]/[`get_or_create`] handle to `&mut Self`.
@@ -71,7 +69,7 @@ impl ClientContext {
     }
 
     pub fn get_or_create(loop_: NonNull<UwsLoop>) -> Option<NonNull<ClientContext>> {
-        if let Some(i) = INSTANCE.load() {
+        if let Some(i) = INSTANCE.load_nn() {
             return Some(i);
         }
         LSQUIC_INIT_ONCE.call_once(quic::global_init);
@@ -99,7 +97,7 @@ impl ClientContext {
         // `self_` is the freshly-boxed sole owner; callbacks don't fire until
         // the loop runs, so registering after construction is order-neutral.
         callbacks::register(Self::as_mut(self_).qctx_mut());
-        INSTANCE.store(Some(self_));
+        INSTANCE.store_nn(Some(self_));
         Some(self_)
     }
 

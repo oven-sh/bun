@@ -22,7 +22,7 @@ pub mod result;
 pub mod thread_id;
 pub mod tty;
 pub mod util;
-pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
+pub use atomic_cell::{Atom, AtomicCell, AtomicPtrCell, ThreadCell};
 
 /// Shared state-machine tag for the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`.

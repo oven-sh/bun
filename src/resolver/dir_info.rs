@@ -302,18 +302,17 @@ impl DirInfo {
 // `BSSMapInner<DirInfo, ..>` cannot host a
 // per-generic-instantiation static on stable, so the singleton pointer lives here at
 // the use site and `bun_alloc::BSSMapInner::init()` hands back the storage.
-// PORTING.md §Global mutable state: lazy singleton. `AtomicCell` over the
-// `Option<NonNull<_>>` because resolver-pool threads race on first access;
-// the load/CAS below makes the publish itself data-race-free. (The map's
-// *contents* are still guarded by the resolver mutex.)
-static DIR_INFO_MAP: bun_core::AtomicCell<Option<NonNull<HashMap>>> =
-    bun_core::AtomicCell::new(None);
+// PORTING.md §Global mutable state: lazy singleton. `AtomicPtrCell` because
+// resolver-pool threads race on first access; the load/CAS below makes the
+// publish itself data-race-free. (The map's *contents* are still guarded by
+// the resolver mutex.)
+static DIR_INFO_MAP: bun_core::AtomicPtrCell<HashMap> = bun_core::AtomicPtrCell::null();
 
 /// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
 /// per-access under the resolver mutex — PORTING.md §Global mutable state.
 #[inline(always)]
 pub fn hash_map_instance() -> *mut HashMap {
-    if let Some(p) = DIR_INFO_MAP.load() {
+    if let Some(p) = DIR_INFO_MAP.load_nn() {
         return p.as_ptr();
     }
     hash_map_instance_init()
@@ -327,7 +326,7 @@ fn hash_map_instance_init() -> *mut HashMap {
     // the pointer; the loser's `init()` result is leaked, which is fine for
     // a process-lifetime BSS-backed singleton.
     let new = HashMap::init();
-    match DIR_INFO_MAP.compare_exchange(None, Some(new)) {
+    match DIR_INFO_MAP.compare_exchange_nn(None, Some(new)) {
         Ok(_) => new.as_ptr(),
         Err(existing) => existing.unwrap().as_ptr(),
     }

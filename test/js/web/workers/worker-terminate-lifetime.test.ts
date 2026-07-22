@@ -83,6 +83,85 @@ test(
   timeout,
 );
 
+// Coverage for the `live_workers` intrusive list (`web_worker.rs`): the list
+// head is an `AtomicPtrCell<WebWorker>` that every worker spawn/exit
+// links/unlinks under `live_workers::MUTEX`, and `terminate_all_and_wait()`
+// (run from `global_exit` under `BUN_DESTRUCT_VM_ON_EXIT=1`) walks it on the
+// main thread while worker threads are still registering/unregistering. Spawn a burst of long-lived
+// workers, then `process.exit()` mid-burst so the sweep sees a populated
+// list under contention. A broken head pointer would corrupt the intrusive
+// links and the sweep would deref garbage (ASAN / null-deref crash).
+test(
+  "process.exit with many live workers terminates cleanly via live_workers sweep",
+  async () => {
+    const n = slow ? 16 : 48;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Workers that never exit on their own, so all ${n} are still
+        // registered in the live_workers list when process.exit fires.
+        const ws = [];
+        for (let i = 0; i < ${n}; i++) {
+          ws.push(new Worker("data:text/javascript,setInterval(() => {}, 1e9)"));
+        }
+        // live_workers::register runs on the parent thread before each
+        // worker thread spawns, so the list is already fully populated here.
+        // Waiting for 'open' (dispatchOnline) ensures each worker has
+        // published its VM, so the sweep exercises the vm_ptr-non-null
+        // branch (vm_lock + notify_need_termination + wakeup) rather than
+        // just the pre-VM requested_terminate checkpoint.
+        await Promise.all(ws.map(w => new Promise(r => w.addEventListener("open", r, { once: true }))));
+        console.log("all-open");
+        process.exit(0);
+      `,
+      ],
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("all-open\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Coverage for concurrent `live_workers::register`/`unregister`: spawn and
+// immediately drain many short-lived workers in parallel so the intrusive
+// list head sees interleaved link/unlink from dozens of threads at once.
+test(
+  "concurrent worker spawn+exit churns the live_workers list without corruption",
+  async () => {
+    const n = slow ? 24 : 64;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Empty body → each worker registers, drains, unregisters. Firing
+        // them all at once maximises overlap on the list head.
+        const ws = Array.from({ length: ${n} }, () => new Worker("data:text/javascript,"));
+        await Promise.all(ws.map(w => new Promise(r => w.addEventListener("close", r, { once: true }))));
+        console.log("done");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and
 // EventListenerMap::releaseAssertOrSetThreadUID tripped because the listener

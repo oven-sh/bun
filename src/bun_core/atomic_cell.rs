@@ -8,6 +8,7 @@
 //! | Invariant                                      | Type                  |
 //! | ---------------------------------------------- | --------------------- |
 //! | small `Copy` scalar, read+written from ≥2 threads | [`AtomicCell<T>`]  |
+//! | shared pointer (published singleton, intrusive list head) | [`AtomicPtrCell<T>`] |
 //! | thread-confined scratch (HTTP-thread-only buffer, resolver watermark) | [`ThreadCell<T>`] |
 //! | init-once-then-read-only                       | `std::sync::OnceLock` |
 //!
@@ -30,8 +31,10 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, O
 /// This is the cross-thread counterpart to [`RacyCell`](crate::RacyCell):
 /// where `RacyCell` documents "single-threaded by construction", `AtomicCell`
 /// documents "actually shared; every load/store is an atomic op with
-/// Acquire/Release ordering". Use this for flags, counters, small enums,
-/// handles, and `Option<NonNull<_>>` that more than one thread touches.
+/// Acquire/Release ordering". Use this for flags, counters, small enums and
+/// handles that more than one thread touches. **For pointers use
+/// [`AtomicPtrCell<T>`] instead** — it wraps `core::sync::atomic::AtomicPtr`
+/// directly (no width dispatch, provenance-preserving by construction).
 ///
 /// `T` must implement [`Atom`] (no padding, `size_of::<T>() ∈ {1,2,4,8}`).
 /// Larger or padded `T` is a compile error — use `bun_threading::RwLock<T>` or
@@ -57,13 +60,12 @@ pub struct AtomicCell<T: Copy> {
 
 // SAFETY: every shared access goes through an atomic op; `T: Atom ⊃ Copy` so
 // no drop glue races. We bound on `T: Atom` (not `T: Send`) because `Atom`'s
-// safety contract includes cross-thread transport — that's what lets the
-// pointer specializations carry `*mut U` / `NonNull<U>` across threads
-// (matching `AtomicPtr<U>: Send + Sync` unconditionally) even though raw
-// pointers are `!Send`. What the receiving thread *does* with a loaded pointer
-// is on the caller, same as `AtomicPtr`. A plain `T: Copy` bound would be
-// unsound: `&Cell<u32>` is `Copy + !Send`, and shipping one to another thread
-// via `into_inner()` would be a data race.
+// safety contract includes cross-thread transport. Pointers are *not* `Atom`
+// — they are steered to [`AtomicPtrCell`], whose backing `AtomicPtr<U>` is
+// `Send + Sync` unconditionally; what the receiving thread *does* with a
+// loaded pointer is on the caller, same as `AtomicPtr`. A plain `T: Copy`
+// bound would be unsound: `&Cell<u32>` is `Copy + !Send`, and shipping one to
+// another thread via `into_inner()` would be a data race.
 unsafe impl<T: Atom> Sync for AtomicCell<T> {}
 // SAFETY: see the `Sync` justification above — the same invariants apply to
 // moving the cell itself across threads; `T: Copy` has no drop glue to race.
@@ -148,10 +150,9 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 /// Types storable in an [`AtomicCell`].
 ///
 /// The hidden `_atomic_*` methods route each operation to the correct
-/// `core::sync::atomic` backing for `Self`'s width (or `AtomicPtr` for
-/// pointer types, preserving provenance). Callers never invoke these
-/// directly — they exist so [`AtomicCell`] has a single inherent `impl` block
-/// without inherent-impl overlap on pointer specializations.
+/// `core::sync::atomic` backing for `Self`'s width. Callers never invoke
+/// these directly — they exist so [`AtomicCell`] has a single inherent
+/// `impl` block. Pointer types are *not* `Atom`; use [`AtomicPtrCell`].
 ///
 /// # Safety
 ///
@@ -166,10 +167,10 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 /// - `Self` is safe to transport across threads when stored in an
 ///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
 ///   itself provides. This is what backs `AtomicCell<T: Atom>: Send + Sync`.
-///   Raw pointers / `NonNull` qualify (the *pointee* may be thread-affine, but
-///   that's the caller's problem, exactly as with `AtomicPtr`). A `Copy`
-///   reference like `&Cell<_>` does **not** — it would alias unsynchronized
-///   interior mutability across threads.
+///   A `Copy` reference like `&Cell<_>` does **not** qualify — it would alias
+///   unsynchronized interior mutability across threads. (Pointers are not
+///   `Atom` at all; use [`AtomicPtrCell`], which inherits the same
+///   caller-owns-the-pointee contract from `AtomicPtr`.)
 ///
 /// Prefer the [`unsafe_impl_atom!`](crate::unsafe_impl_atom) macro over a
 /// hand-written `impl`.
@@ -370,140 +371,150 @@ unsafe_impl_atom!(
     bool, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64,
 );
 
-// Pointer specializations: route through `AtomicPtr` so provenance survives
-// the round-trip (the integer path would launder it to an int and back).
+// NOTE: pointer types are deliberately *not* `Atom`. Use [`AtomicPtrCell<T>`]
+// — a direct `core::sync::atomic::AtomicPtr<T>` newtype — instead of
+// `AtomicCell<*mut T>` / `AtomicCell<Option<NonNull<T>>>`. Routing pointers
+// through the width-dispatched `AtomicCell` machinery buys nothing over the
+// standard type designed for exactly this, and obscures intent at the call
+// site.
 
-// SAFETY: `*mut U` is pointer-sized, padding-free; `AtomicPtr<U>` is its
-// native atomic backing.
-unsafe impl<U> Atom for *mut U {
-    #[inline]
-    unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is `AtomicCell<*mut U>::inner.get()`, 8-aligned via
-        // `_align`; `*mut U` and `AtomicPtr<U>` have identical layout.
-        unsafe { (*(p as *const AtomicPtr<U>)).load(ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
-        // SAFETY: `p` is 8-aligned and live; `*mut U` and `AtomicPtr<U>` have
-        // identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).store(v, ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is 8-aligned and live; `*mut U` and `AtomicPtr<U>` have
-        // identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).swap(v, ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_cas(
-        p: *mut Self,
-        cur: Self,
-        new: Self,
-        s: Ordering,
-        f: Ordering,
-    ) -> Result<Self, Self> {
-        // SAFETY: `p` is 8-aligned and live; `*mut U` and `AtomicPtr<U>` have
-        // identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).compare_exchange(cur, new, s, f) }
-    }
-}
-
-// SAFETY: same as `*mut U`; the cast goes through `*mut U`.
-unsafe impl<U> Atom for *const U {
-    #[inline]
-    unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is `AtomicCell<*const U>::inner.get()`, 8-aligned via
-        // `_align`; `*const U` and `AtomicPtr<U>` have identical layout.
-        unsafe { (*(p as *const AtomicPtr<U>)).load(ord).cast_const() }
-    }
-    #[inline]
-    unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).store(v.cast_mut(), ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe {
-            (*(p as *const AtomicPtr<U>))
-                .swap(v.cast_mut(), ord)
-                .cast_const()
-        }
-    }
-    #[inline]
-    unsafe fn _atomic_cas(
-        p: *mut Self,
-        cur: Self,
-        new: Self,
-        s: Ordering,
-        f: Ordering,
-    ) -> Result<Self, Self> {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe {
-            match (*(p as *const AtomicPtr<U>)).compare_exchange(
-                cur.cast_mut(),
-                new.cast_mut(),
-                s,
-                f,
-            ) {
-                Ok(x) => Ok(x.cast_const()),
-                Err(x) => Err(x.cast_const()),
-            }
-        }
-    }
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// AtomicPtrCell<T>
+// ═══════════════════════════════════════════════════════════════════════════
 
 #[inline(always)]
-fn nn_to_raw<U>(v: Option<NonNull<U>>) -> *mut U {
-    v.map_or(core::ptr::null_mut(), |n| n.as_ptr())
+fn nn_to_raw<T>(v: Option<NonNull<T>>) -> *mut T {
+    v.map_or(core::ptr::null_mut(), NonNull::as_ptr)
 }
 
-// SAFETY: `Option<NonNull<U>>` is guaranteed to have the same layout as
-// `*mut U` (null-pointer niche), so the storage cast to `AtomicPtr<U>` is
-// sound; round-tripping preserves provenance.
-unsafe impl<U> Atom for Option<NonNull<U>> {
+/// [`core::sync::atomic::AtomicPtr<T>`] with the same Acquire/Release-by-
+/// default surface as [`AtomicCell`].
+///
+/// This is the pointer counterpart to `AtomicCell`: use it wherever the old
+/// port reached for `AtomicCell<*mut T>` or `AtomicCell<Option<NonNull<T>>>`.
+/// The backing is the standard `AtomicPtr<T>` — no `UnsafeCell`, no width
+/// dispatch, no transmute — so provenance is preserved by construction and
+/// the storage is exactly what `core::sync::atomic` prescribes for shared
+/// pointers.
+///
+/// As with `AtomicCell`, loads are **Acquire** and stores are **Release** so
+/// a published pointer synchronizes-with the init that filled the pointee —
+/// the failure mode that motivated this module (see the [`AtomicCell`] doc).
+/// Opt out with [`load_relaxed`](Self::load_relaxed) /
+/// [`store_relaxed`](Self::store_relaxed) only for telemetry / best-effort
+/// hints; the explicit name keeps every Relaxed site greppable.
+///
+/// `Option<NonNull<T>>` accessors (`*_nn`) are provided for call sites that
+/// want the null-as-`None` spelling; they are straight `NonNull::new` /
+/// `as_ptr` wrappers over the raw-pointer methods.
+#[repr(transparent)]
+pub struct AtomicPtrCell<T>(AtomicPtr<T>);
+
+impl<T> AtomicPtrCell<T> {
+    /// `const` constructor — most call sites are `static` initializers.
     #[inline]
-    unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` has the same
-        // layout as `*mut U` (null-pointer niche), hence as `AtomicPtr<U>`.
-        NonNull::new(unsafe { (*(p as *const AtomicPtr<U>)).load(ord) })
+    pub const fn new(p: *mut T) -> Self {
+        Self(AtomicPtr::new(p))
     }
+
+    /// Shorthand for `AtomicPtrCell::new(core::ptr::null_mut())`.
     #[inline]
-    unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
-        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
-        // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).store(nn_to_raw(v), ord) }
+    pub const fn null() -> Self {
+        Self(AtomicPtr::new(core::ptr::null_mut()))
     }
+
+    /// Acquire load.
     #[inline]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
-        // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
-        NonNull::new(unsafe { (*(p as *const AtomicPtr<U>)).swap(nn_to_raw(v), ord) })
+    pub fn load(&self) -> *mut T {
+        self.0.load(Ordering::Acquire)
     }
+
+    /// Release store.
     #[inline]
-    unsafe fn _atomic_cas(
-        p: *mut Self,
-        cur: Self,
-        new: Self,
-        s: Ordering,
-        f: Ordering,
-    ) -> Result<Self, Self> {
-        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
-        // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
-        unsafe {
-            match (*(p as *const AtomicPtr<U>)).compare_exchange(
-                nn_to_raw(cur),
-                nn_to_raw(new),
-                s,
-                f,
-            ) {
-                Ok(x) => Ok(NonNull::new(x)),
-                Err(x) => Err(NonNull::new(x)),
-            }
-        }
+    pub fn store(&self, p: *mut T) {
+        self.0.store(p, Ordering::Release)
+    }
+
+    /// AcqRel swap; returns the previous pointer.
+    #[inline]
+    pub fn swap(&self, p: *mut T) -> *mut T {
+        self.0.swap(p, Ordering::AcqRel)
+    }
+
+    /// AcqRel compare-and-swap (Acquire on failure). `Ok(prev)` on success,
+    /// `Err(actual)` on failure.
+    #[inline]
+    pub fn compare_exchange(&self, current: *mut T, new: *mut T) -> Result<*mut T, *mut T> {
+        self.0
+            .compare_exchange(current, new, Ordering::AcqRel, Ordering::Acquire)
+    }
+
+    /// Relaxed load. **Only** for telemetry / best-effort hints. Named
+    /// `load_relaxed` not `load(Ordering)` so grep finds every site that
+    /// opted out of ordering.
+    #[inline]
+    pub fn load_relaxed(&self) -> *mut T {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Relaxed store. See [`load_relaxed`](Self::load_relaxed).
+    #[inline]
+    pub fn store_relaxed(&self, p: *mut T) {
+        self.0.store(p, Ordering::Relaxed)
+    }
+
+    // ── Option<NonNull<T>> convenience ─────────────────────────────────────
+
+    /// Acquire load as `Option<NonNull<T>>` (null → `None`).
+    #[inline]
+    pub fn load_nn(&self) -> Option<NonNull<T>> {
+        NonNull::new(self.load())
+    }
+
+    /// Release store of `Option<NonNull<T>>` (`None` → null).
+    #[inline]
+    pub fn store_nn(&self, p: Option<NonNull<T>>) {
+        self.store(nn_to_raw(p))
+    }
+
+    /// AcqRel swap, `Option<NonNull<T>>` spelling.
+    #[inline]
+    pub fn swap_nn(&self, p: Option<NonNull<T>>) -> Option<NonNull<T>> {
+        NonNull::new(self.swap(nn_to_raw(p)))
+    }
+
+    /// AcqRel compare-and-swap, `Option<NonNull<T>>` spelling.
+    #[inline]
+    pub fn compare_exchange_nn(
+        &self,
+        current: Option<NonNull<T>>,
+        new: Option<NonNull<T>>,
+    ) -> Result<Option<NonNull<T>>, Option<NonNull<T>>> {
+        self.compare_exchange(nn_to_raw(current), nn_to_raw(new))
+            .map(NonNull::new)
+            .map_err(NonNull::new)
+    }
+
+    /// Borrow the underlying [`AtomicPtr`] for the rare call site that needs
+    /// an ordering this wrapper doesn't expose (e.g. `compare_exchange_weak`
+    /// in a spin loop). Prefer the wrapper methods — reaching for this means
+    /// the default Acq/Rel isn't what you want, which is worth a second look.
+    #[inline]
+    pub fn as_atomic_ptr(&self) -> &AtomicPtr<T> {
+        &self.0
+    }
+}
+
+impl<T> Default for AtomicPtrCell<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::null()
+    }
+}
+
+impl<T> core::fmt::Debug for AtomicPtrCell<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("AtomicPtrCell").field(&self.load()).finish()
     }
 }
 
@@ -658,12 +669,33 @@ mod tests {
     }
 
     #[test]
-    fn atomic_cell_ptr() {
+    fn atomic_ptr_cell_raw() {
         let mut x = 5_u32;
-        let c: AtomicCell<Option<NonNull<u32>>> = AtomicCell::new(None);
-        assert!(c.load().is_none());
-        c.store(NonNull::new(&mut x));
-        assert_eq!(unsafe { *c.load().unwrap().as_ptr() }, 5);
+        let c: AtomicPtrCell<u32> = AtomicPtrCell::null();
+        assert!(c.load().is_null());
+        c.store(&mut x);
+        assert_eq!(unsafe { *c.load() }, 5);
+        assert_eq!(c.swap(core::ptr::null_mut()), &mut x as *mut u32);
+        assert!(c.load().is_null());
+    }
+
+    #[test]
+    fn atomic_ptr_cell_nn() {
+        let mut x = 5_u32;
+        let c: AtomicPtrCell<u32> = AtomicPtrCell::null();
+        assert!(c.load_nn().is_none());
+        c.store_nn(NonNull::new(&mut x));
+        assert_eq!(unsafe { *c.load_nn().unwrap().as_ptr() }, 5);
+        // CAS: wrong `current` fails, correct `current` succeeds.
+        assert_eq!(
+            c.compare_exchange_nn(None, None),
+            Err(NonNull::new(&mut x as *mut u32))
+        );
+        assert_eq!(
+            c.compare_exchange_nn(NonNull::new(&mut x), None),
+            Ok(NonNull::new(&mut x as *mut u32))
+        );
+        assert!(c.load_nn().is_none());
     }
 
     #[test]

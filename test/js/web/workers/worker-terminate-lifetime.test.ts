@@ -145,7 +145,11 @@ test(
           "parentPort.postMessage('up');";
         for (let r = 0; r < ${rounds}; r++) {
           const w = new Worker(workerSrc, { eval: true });
-          await new Promise(res => w.once("message", res));
+          await new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", c => rej(new Error("worker exited (" + c + ") before 'up'")));
+          });
           // Vary the delay so terminate scans across the hash-compute window.
           await Bun.sleep(20 + (r * 37) % 120);
           await w.terminate();

@@ -1267,6 +1267,17 @@ pub type Stat = libc::stat;
 #[cfg(windows)]
 pub type Stat = bun_libuv_sys::uv_stat_t;
 
+/// Shared predicate for the "is this a cache root we trust to source bytes
+/// from" checks (the bunx cache, the install extraction cache, the per-sha
+/// `bun --bun` node-symlink dir): a real directory, owned by `uid`, with no
+/// group/other write bits.
+#[cfg(unix)]
+#[inline]
+pub fn stat_is_owner_only_writable_dir(st: &Stat, uid: libc::uid_t) -> bool {
+    let mode = st.st_mode as Mode;
+    S::ISDIR(mode) && st.st_uid == uid && (mode & (S::IWGRP | S::IWOTH)) == 0
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Syscall surface — real posix libc FFI. Windows path lives in
 // `windows_impl` (NT/kernel32/libuv triad) below.
@@ -7377,6 +7388,50 @@ pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
     exists_at_type_nt(dir, path)
+}
+/// `NtQueryAttributesFile` relative to `dir`, surfacing the directory and
+/// reparse-point bits. Unlike `lstatat` → `fstat` (which maps junctions to
+/// `S_IFDIR` and never sets `S_IFLNK`), this exposes
+/// `FILE_ATTRIBUTE_REPARSE_POINT` so callers can refuse junctions/symlinks.
+#[cfg(windows)]
+pub fn get_file_attributes_at(dir: Fd, sub: &ZStr) -> Option<WindowsFileAttributes> {
+    use bun_windows_sys::externs as w;
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let mut path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+    if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
+        path = &path[2..];
+    }
+    let path_len_bytes = (path.len() * 2) as u16;
+    let mut nt_name = w::UNICODE_STRING {
+        Length: path_len_bytes,
+        MaximumLength: path_len_bytes,
+        Buffer: path.as_ptr().cast_mut().cast::<u16>(),
+    };
+    let attr = w::OBJECT_ATTRIBUTES {
+        Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: if is_nt_object_name(path) {
+            core::ptr::null_mut()
+        } else if dir.is_valid() {
+            dir.native()
+        } else {
+            Fd::cwd().native()
+        },
+        Attributes: 0,
+        ObjectName: &mut nt_name,
+        SecurityDescriptor: core::ptr::null_mut(),
+        SecurityQualityOfService: core::ptr::null_mut(),
+    };
+    let mut basic_info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: FFI; attr/basic_info valid for the call duration.
+    let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
+    if rc != w::NTSTATUS::SUCCESS {
+        return None;
+    }
+    Some(WindowsFileAttributes {
+        is_directory: (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
+        is_reparse_point: (basic_info.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+        raw: basic_info.FileAttributes,
+    })
 }
 /// `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.
 pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {

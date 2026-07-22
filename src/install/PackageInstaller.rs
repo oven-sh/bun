@@ -1510,6 +1510,16 @@ impl<'a> PackageInstaller<'a> {
             {
                 debug_assert!(resolution.can_enqueue_install_task());
 
+                // Patched packages have a derived `<entry>_patch_hash=<h>` cache
+                // entry that is what actually lands in node_modules. The npm
+                // extract task does not re-apply the patch, so remove the stale
+                // derived entry now; the post-download re-entry then sees it
+                // absent and enqueues `ApplyPatch` against the fresh base.
+                if force_cache_refetch && installer.patch.is_some() {
+                    let _ = bun_sys::Dir::borrow(&installer.cache_dir)
+                        .delete_tree(installer.cache_dir_subpath.as_bytes());
+                }
+
                 let context =
                     TaskCallbackContext::DependencyInstallContext(DependencyInstallContext {
                         tree_id: self.current_tree_id,

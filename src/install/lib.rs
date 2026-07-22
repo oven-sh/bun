@@ -607,10 +607,10 @@ impl RunCommand {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(DIR_Z) {
                     Ok(st)
-                        if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
-                            == bun_sys::FileKind::Directory
-                            && st.st_uid == bun_sys::c::getuid()
-                            && (st.st_mode as bun_sys::Mode) & 0o022 == 0 => {}
+                        if bun_sys::stat_is_owner_only_writable_dir(
+                            &st,
+                            bun_sys::c::getuid(),
+                        ) => {}
                     _ => return Ok(()),
                 },
                 Err(_) => return Ok(()),

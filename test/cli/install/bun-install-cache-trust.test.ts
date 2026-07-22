@@ -95,7 +95,7 @@ async function findCacheEntry(cacheDir: string): Promise<string> {
   return join(cacheDir, hit);
 }
 
-describe("install extraction cache trust", () => {
+describe.concurrent("install extraction cache trust", () => {
   for (const linker of ["hoisted", "isolated"] as const) {
     test(`--force re-downloads and re-verifies on a cache hit (${linker})`, async () => {
       const registry = await startRegistry();

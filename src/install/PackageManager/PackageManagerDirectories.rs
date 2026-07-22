@@ -386,12 +386,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 #[cfg(unix)]
 fn is_trusted_cache_root(dir: Fd) -> bool {
     match sys::fstat(dir) {
-        Ok(st) => {
-            let mode = st.st_mode as bun_sys::Mode;
-            bun_sys::S::ISDIR(mode)
-                && st.st_uid == bun_sys::c::getuid()
-                && (mode & (bun_sys::S::IWGRP | bun_sys::S::IWOTH)) == 0
-        }
+        Ok(st) => sys::stat_is_owner_only_writable_dir(&st, bun_sys::c::getuid()),
         Err(_) => false,
     }
 }
@@ -788,15 +783,26 @@ pub fn cached_tarball_folder_name(
     )
 }
 
-/// `true` iff `subpath` under `dir` is a real directory (not a symlink).
-/// A cache hit short-circuits the tarball download and its integrity check, so
-/// a symlink planted under the expected entry name must be treated as absent
-/// and re-fetched. `lstatat` (AT_SYMLINK_NOFOLLOW) answers "is this a
-/// directory", not "does this resolve to a directory".
+/// `true` iff `subpath` under `dir` is a real directory, not a symlink or
+/// junction. A cache hit short-circuits the tarball download and its integrity
+/// check, so a link planted at the predictable entry name must be treated as
+/// absent and re-fetched. POSIX uses `lstatat` (AT_SYMLINK_NOFOLLOW); on
+/// Windows `lstatat`'s `fstat` never sets `S_IFLNK` for a junction, so query
+/// the attributes directly and refuse `FILE_ATTRIBUTE_REPARSE_POINT`.
 pub fn cache_entry_is_dir(dir: Fd, subpath: &ZStr) -> bool {
-    match sys::lstatat(dir, subpath) {
-        Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
-        Err(_) => false,
+    #[cfg(windows)]
+    {
+        match sys::get_file_attributes_at(dir, subpath) {
+            Some(a) => a.is_directory && !a.is_reparse_point,
+            None => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match sys::lstatat(dir, subpath) {
+            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+            Err(_) => false,
+        }
     }
 }
 

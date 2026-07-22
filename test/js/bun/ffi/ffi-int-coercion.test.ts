@@ -38,6 +38,7 @@ const symbols = {
   echo_char: { args: [FFIType.char], returns: FFIType.char },
 } as const;
 
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 let S: any;
 
 function build() {
@@ -45,7 +46,7 @@ function build() {
   using dir = tempDir("ffi-int-coercion", { "echo.c": echoC });
   const out = join(String(dir), "libecho.so");
   const res = Bun.spawnSync({
-    cmd: ["cc", "-shared", "-fPIC", "-o", out, join(String(dir), "echo.c")],
+    cmd: [cc!, "-shared", "-fPIC", "-o", out, join(String(dir), "echo.c")],
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -57,7 +58,7 @@ function build() {
 }
 
 // Requires a system C compiler for the dlopen fixture.
-describe.skipIf(isWindows)("integer argument coercion wraps modularly at every width", () => {
+describe.skipIf(isWindows || !cc)("integer argument coercion wraps modularly at every width", () => {
   // ToInt32 reference: what a typed array would store.
   const i8 = (n: number) => new Int8Array([n])[0];
   const u8 = (n: number) => new Uint8Array([n])[0];

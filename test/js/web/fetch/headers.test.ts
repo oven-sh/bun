@@ -628,10 +628,12 @@ describe("Headers", () => {
     // the last N names of an N-entry map and an 8N-entry map: with a linear
     // scan the second run does ~15x the work (average scan depth ~7.5N vs
     // ~N/2); with the hash index it is O(1) and both runs take the same time.
-    // The ratio self-calibrates across release/debug/ASAN builds so no
-    // absolute time budget is needed.
+    // ITER is sized so the baseline clears 1ms on a release build and the
+    // ratio self-calibrates across release/debug/ASAN without an absolute
+    // time budget.
     test("per-name lookup is independent of distinct-name count", () => {
       const N = 1500;
+      const ITER = 20000;
 
       const small = new Headers();
       for (let i = 0; i < N; i++) small.append("x-" + i, "v");
@@ -645,19 +647,16 @@ describe("Headers", () => {
 
       const time = (h: Headers, names: string[]) => {
         const t = performance.now();
-        for (let i = 0; i < N; i++) h.get(names[i]);
+        for (let i = 0; i < ITER; i++) h.get(names[i % N]);
         return performance.now() - t;
       };
-      const best = (h: Headers, names: string[]) => Math.min(time(h, names), time(h, names), time(h, names));
 
-      time(small, smallProbe);
-      time(large, largeProbe);
-      const tSmall = best(small, smallProbe);
-      const tLarge = best(large, largeProbe);
+      const tSmall = Math.min(time(small, smallProbe), time(small, smallProbe));
+      const tLarge = Math.min(time(large, largeProbe), time(large, largeProbe));
 
       expect(small.get("x-0")).toBe("v");
       expect(large.get("x-" + (N * 8 - 1))).toBe("v");
-      expect(tLarge / Math.max(tSmall, 1)).toBeLessThan(3);
+      expect(tLarge / tSmall).toBeLessThan(3);
     });
   });
   describe("count", () => {

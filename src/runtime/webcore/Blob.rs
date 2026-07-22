@@ -425,7 +425,11 @@ impl BlobExt for Blob {
         ) -> JSValue {
             let g = g.get();
             jsc::host_fn::to_js_host_call(g, || {
-                F::call(b, g, std::ptr::from_mut::<[u8]>(by), Lifetime::Clone)
+                // SAFETY: `by` points into the byte store `on_s3_download_resolved`
+                // installed on `b` before calling this, which is what
+                // `Lifetime::Clone` requires (the string arm roots the bytes by
+                // cloning that store).
+                unsafe { F::call(b, g, std::ptr::from_mut::<[u8]>(by), Lifetime::Clone) }
             })
         }
         S3BlobDownloadTask::init(global, self, wrapped::<F>)
@@ -6229,7 +6233,7 @@ pub struct ToFormDataWithBytesFn;
 // `ReadFileToJs::call`'s `by: *mut [u8]` is fixed by the trait; each impl adopts
 // it into a `BlobBytes` stating the ownership the contract promised.
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
+    unsafe fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: `by` upholds the `ReadFileToJs::call` contract — a leaked
         // `Box<[u8]>` for `Temporary`, store-backed otherwise — which is
         // exactly `BlobBytes::adopt`'s contract.
@@ -6237,25 +6241,25 @@ impl read_file::ReadFileToJs for ToStringWithBytesFn {
     }
 }
 impl read_file::ReadFileToJs for ToJsonWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
+    unsafe fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
         b.to_json_with_bytes(g, unsafe { BlobBytes::adopt(by, l) })
     }
 }
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
+    unsafe fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
         b.to_array_buffer_with_bytes(g, unsafe { BlobBytes::adopt(by, l) })
     }
 }
 impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
+    unsafe fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
         b.to_uint8_array_with_bytes(g, unsafe { BlobBytes::adopt(by, l) })
     }
 }
 impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
+    unsafe fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // FormData only reads the bytes; a `Temporary` buffer is not reclaimed.
         // SAFETY: see `ToStringWithBytesFn::call`.
         Ok(b.to_form_data_with_bytes(g, unsafe { BlobBytes::adopt(by, l) }))

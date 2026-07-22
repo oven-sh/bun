@@ -621,8 +621,9 @@ impl Expect {
         value: *mut JSValue,
         any_constructor_type: *mut u8,
     ) -> bool {
-        // SAFETY: `from_js` returns the live `m_ctx` payload owned by `instance_value`.
         let flags: Flags = 'flags: {
+            // SAFETY: `from_js` returns the live `m_ctx` payload owned by
+            // `instance_value`.
             unsafe {
                 if let Some(instance) = ExpectCustomAsymmetricMatcher::from_js(instance_value) {
                     break 'flags (*instance).flags;

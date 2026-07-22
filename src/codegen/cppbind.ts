@@ -827,13 +827,15 @@ function generateScopedFn(fn: CppFn, rustScoped: string[]): void {
   const call = needsUnsafe
     ? `unsafe { super::${fn.name}(${callArgs.join(", ")}) }`
     : `super::${fn.name}(${callArgs.join(", ")})`;
-  rustScoped.push(
-    `    #[inline(always)]`,
-    `    pub ${safeKw}fn ${fn.name}<'s>(${params.join(", ")}) -> crate::JsResult<${okType}> {`,
-    `        let __r = ${call}?;`,
-    `        Ok(${okExpr})`,
-    `    }`,
-  );
+  rustScoped.push(`    #[inline(always)]`);
+  rustScoped.push(`    pub ${safeKw}fn ${fn.name}<'s>(${params.join(", ")}) -> crate::JsResult<${okType}> {`);
+  if (needsUnsafe) {
+    rustScoped.push(
+      `        // SAFETY: forwarded verbatim to the unscoped wrapper; this fn is`,
+      `        // \`unsafe\` for the same reason, so the caller upholds its contract.`,
+    );
+  }
+  rustScoped.push(`        let __r = ${call}?;`, `        Ok(${okExpr})`, `    }`);
 }
 
 function closest(node: SyntaxNode | null, type: string): SyntaxNode | null {

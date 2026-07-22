@@ -52,10 +52,20 @@ macro_rules! log {
 /// Modelled as a trait so each instantiation monomorphizes.
 pub trait ReadFileToJs {
     /// `by` carries the caller's allocation provenance unchanged:
-    /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
-    /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
-    /// otherwise a borrow valid for the call.
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], lifetime: Lifetime) -> JsResult<JSValue>;
+    /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee takes
+    /// ownership of (the FormData arm is the exception: it only reads, so a
+    /// `Temporary` buffer leaks there); otherwise `by` must point into the
+    /// store backing `b`, which the string arm hands to JSC as external data
+    /// owned by a clone of that store.
+    ///
+    /// # Safety
+    /// `by` must match `lifetime` as described above.
+    unsafe fn call(
+        b: &Blob,
+        g: &JSGlobalObject,
+        by: *mut [u8],
+        lifetime: Lifetime,
+    ) -> JsResult<JSValue>;
 }
 
 pub struct NewReadFileHandler<'a, F: ReadFileToJs> {
@@ -111,7 +121,9 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 // The `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // provides the source-location/exception-scope behaviour.
                 AnyPromise::Normal(promise).wrap(global_this, move |g| {
-                    F::call(&blob, g, bytes, Lifetime::Temporary)
+                    // SAFETY: `bytes` is the read task's leaked `Box<[u8]>`;
+                    // `Temporary` transfers that ownership to the callee.
+                    unsafe { F::call(&blob, g, bytes, Lifetime::Temporary) }
                 })?;
             }
             ReadFileResultType::Err(err) => {

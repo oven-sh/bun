@@ -9291,14 +9291,14 @@ impl H2FrameParser {
         // Same engine-driven inbound path as on_native_read (JS-fed sockets / proxied streams).
         // The engine dispatches into JS between frames, and a handler can detach/transfer this
         // ArrayBuffer; copy the bytes so the parse never reads freed memory.
-        if let Some(payload) = buffer.array_buffer_bytes(scope) {
-            let copied = payload.to_vec();
-            drop(payload);
-            this.rewrite_read(&copied);
-            Ok(scope.undefined())
-        } else {
-            Err(scope.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
-        }
+        let Some(copied) = buffer
+            .array_buffer_bytes(scope)
+            .map(|payload| payload.to_vec())
+        else {
+            return Err(scope.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")));
+        };
+        this.rewrite_read(&copied);
+        Ok(scope.undefined())
     }
 
     pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {

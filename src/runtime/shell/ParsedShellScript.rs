@@ -2,10 +2,10 @@ use core::cell::Cell;
 use core::mem::size_of;
 use core::sync::atomic::Ordering;
 
-use bun_core::String as BunString;
+use bun_core::{OwnedString, String as BunString, fmt, strings};
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell,
-    JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
+    CallFrame, ErrorCode, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
+    JsCell, JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 
 use super::env_map::EnvMap;
@@ -120,11 +120,23 @@ impl ParsedShellScript {
         let Some(str_js) = arguments.next_eat() else {
             return Err(global.throw(format_args!("$`...`.cwd(): expected a string argument")));
         };
-        let str = BunString::from_js(str_js, global)?;
+        let str = OwnedString::new(BunString::from_js(str_js, global)?);
+        if str.index_of_ascii_char(0).is_some() {
+            let bytes = str.to_owned_slice();
+            return Err(global
+                .err(
+                    ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "cwd must be a string without null bytes. Received {}",
+                        fmt::quote(&bytes)
+                    ),
+                )
+                .throw());
+        }
         if let Some(prev) = self.cwd.get() {
             prev.deref();
         }
-        self.cwd.set(Some(str));
+        self.cwd.set(Some(str.into_inner()));
         Ok(JSValue::UNDEFINED)
     }
 
@@ -165,12 +177,37 @@ impl ParsedShellScript {
                 continue;
             }
 
+            if key.index_of_ascii_char(0).is_some() {
+                let bytes = key.to_owned_slice();
+                return Err(global
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "env key must be a string without null bytes. Received {}",
+                            fmt::quote(&bytes)
+                        ),
+                    )
+                    .throw());
+            }
+
             let keyslice = key.to_owned_slice();
             // errdefer free(keyslice) — Drop on early-return handles this.
             let value_str = value.get_zig_string(global)?;
             // `ZigString::to_owned_slice` is infallible (global alloc aborts
             // on OOM).
             let slice = value_str.to_owned_slice();
+            if strings::index_of_char(&slice, 0).is_some() {
+                return Err(global
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "env value for {} must be a string without null bytes. Received {}",
+                            fmt::quote(&keyslice),
+                            fmt::quote(&slice)
+                        ),
+                    )
+                    .throw());
+            }
             let keyref = EnvStr::init_ref_counted(keyslice.into_boxed_slice());
             // defer keyref.deref() — done below (insert refs again).
             let valueref = EnvStr::init_ref_counted(slice.into_boxed_slice());

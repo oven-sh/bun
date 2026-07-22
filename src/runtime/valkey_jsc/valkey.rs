@@ -616,10 +616,15 @@ impl ValkeyClient {
             jsvalue,
         );
 
-        if !self.connection_ready() {
-            self.flags.is_manually_closed = true;
-            self.close();
-        }
+        // A failed client rejects every later command, so the socket has to go with it.
+        // Leaving it open strands the client in `failed && connected`: `onclose` never
+        // fires and `.connected` keeps reporting true. The failure is ours, not the
+        // socket's (bad handshake, a frame we cannot parse, an idle timeout), so
+        // reconnecting would just hit it again: mark it deliberate and let `connect()`
+        // revive the client. A socket the peer drops never reaches here, so
+        // `autoReconnect` still covers it. `close()` is idempotent.
+        self.flags.is_manually_closed = true;
+        self.close();
         val
     }
 

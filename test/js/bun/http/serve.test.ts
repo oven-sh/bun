@@ -3124,8 +3124,7 @@ describe("pipelined request behind an async fetch handler", () => {
   // answer and onClose would abort it.
   it("still delivers the in-flight response when the dropped request's bytes are malformed", async () => {
     const { wire, calls } = await pipelined(
-      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" +
-        "POST /b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\n",
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + "POST /b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\n",
     );
     expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
     expect(wire).toContain("FIRST");

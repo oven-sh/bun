@@ -3,10 +3,11 @@
 //! `libuv_sys`.
 //!
 //! `#[link(name = "...")]` on every `extern` block is wrapped in
-//! `#[cfg_attr(windows, ...)]` because `bun_errno`/`bun_spawn_sys` depend on
-//! this crate unconditionally (for the POD typedefs), and an unconditional
-//! `#[link]` would bake `-lntdll`/`-lkernel32`/... into the rlib and break
-//! linking any standalone test/bench binary on a non-Windows host.
+//! `#[cfg_attr(windows, ...)]`. This crate is depended on unconditionally (not
+//! behind `[target.'cfg(windows)']`) by several workspace members that need
+//! the POD typedefs on every target, so an unconditional `#[link]` would bake
+//! `-lntdll`/`-lkernel32`/... into the rlib and break linking any standalone
+//! test/bench binary on a non-Windows host.
 
 use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
 

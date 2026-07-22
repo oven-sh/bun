@@ -720,7 +720,7 @@ impl JunitReporter {
 
         // SAFETY: junit_path_buf[path.len()] == 0 written above
         let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
-        match File::openat(
+        match File::make_openat(
             Fd::cwd(),
             zpath,
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,

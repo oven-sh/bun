@@ -109,7 +109,7 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
     contents.extend_from_slice(b"</testsuites>\n");
 
     let out_z = ZBox::from_bytes(outfile);
-    match File::openat(Fd::cwd(), &out_z, O::WRONLY | O::CREAT | O::TRUNC, 0o664) {
+    match File::make_openat(Fd::cwd(), &out_z, O::WRONLY | O::CREAT | O::TRUNC, 0o664) {
         bun_sys::Result::Err(e) => Output::err(
             crate::Error::JUnitReportFailed,
             "Failed to write JUnit report to {}\n{}",

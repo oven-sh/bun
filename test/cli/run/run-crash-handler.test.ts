@@ -1,8 +1,9 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
+const is_canary: boolean = (crash_handler as any).getFeatureData().is_canary;
 
 // CI sets BUN_CRASH_REPORT_URL so unexpected crashes are captured; these
 // deliberate crashes must not upload there or the runner pins them on the
@@ -152,6 +153,18 @@ describe("trace string v3 (build flags + fault register block)", () => {
     const lo = Number(v & 0xffff_ffffn) | 0;
     return vlq(hi) + vlq(lo);
   }
+  function decodeVlq(s: string, i: number): [number, number] {
+    let shift = 0,
+      v = 0;
+    for (;;) {
+      const d = B64.indexOf(s[i++]);
+      v |= (d & 31) << shift;
+      shift += 5;
+      if ((d & 32) === 0) break;
+    }
+    const mag = v >>> 1;
+    return [v & 1 ? (mag === 0 ? -0x80000000 : -mag) : mag, i];
+  }
 
   test("version char is '3' and a fault context encodes pc + registers", async () => {
     await using proc = Bun.spawn({
@@ -172,8 +185,8 @@ describe("trace string v3 (build flags + fault register block)", () => {
     const payload = traceStringPayload(stderr);
     // payload = <platform><cmd><version><sha7><build_flags vlq>... ; version at index 2.
     expect(payload[2], `payload=${payload}`).toBe("3");
-    // build_flags VLQ(0|1) is one byte ('A' or 'C') right after the 7-char sha.
-    expect(["A", "C"], `payload=${payload}`).toContain(payload[10]);
+    // build_flags VLQ right after the 7-char sha: bit0 = canary.
+    expect(payload[10], `payload=${payload}`).toBe(is_canary ? "C" : "A");
 
     const body = payload.replace(/\/view$/, "");
 
@@ -190,6 +203,62 @@ describe("trace string v3 (build flags + fault register block)", () => {
     expect(before.lastIndexOf(reason), `reason '${reason}' not in payload=${body}`).toBeGreaterThan(0);
     const pcStackLine = before.slice(before.lastIndexOf(reason) + reason.length);
     expect(pcStackLine.length, `no pc StackLine; payload=${body}`).toBeGreaterThan(0);
+
+    expect(exitCode).not.toBe(0);
+  });
+
+  // Under ASAN the SIGSEGV handler is not installed (ASAN owns it), so the
+  // real ucontext/CONTEXT readers only run on non-ASAN builds.
+  test.skipIf(isASAN)("a real fault populates registers from ucontext/CONTEXT", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        "segfault",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
+
+    expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+    const body = traceStringPayload(stderr).replace(/\/view$/, "");
+
+    // `segfault()` writes 0xDEADBEEF to *0xDEADBEEF, so at least one GP
+    // register must carry 0xDEADBEEF at the fault (address and/or value).
+    const expected_count = process.arch === "arm64" ? 33 : 17;
+
+    // Anchor on the frame terminator + reason byte + fault address. Frames
+    // precede the reason and the register block follows it, so the first
+    // occurrence is the real one.
+    const anchor = "A" + "2" + u64AsTwoVlqs(0xdead_beefn);
+    const anchorIdx = body.indexOf(anchor);
+    expect(anchorIdx, `anchor not found; payload=${body}`).toBeGreaterThan(0);
+    const afterReason = body.slice(anchorIdx + anchor.length);
+    // pc StackLine: a single VLQ (or '_' — never here since pc is in-image).
+    let i = 0;
+    if (afterReason[0] === "_") {
+      i = 1;
+    } else {
+      while (B64.indexOf(afterReason[i]) >= 32) i++;
+      i++;
+    }
+    const [count, ci] = decodeVlq(afterReason, i);
+    expect(count, `payload=${body}`).toBe(expected_count);
+    i = ci;
+    const regs: bigint[] = [];
+    for (let k = 0; k < count; k++) {
+      const [hi, j1] = decodeVlq(afterReason, i);
+      const [lo, j2] = decodeVlq(afterReason, j1);
+      regs.push((BigInt(hi >>> 0) << 32n) | BigInt(lo >>> 0));
+      i = j2;
+    }
+    expect(afterReason.slice(i), `trailing bytes after regs; payload=${body}`).toBe("");
+    expect(regs, `regs=${regs.map(r => r.toString(16))}`).toContain(0xdead_beefn);
+    // rip/pc (last slot) should be a plausible code address (non-zero).
+    expect(regs[expected_count - 1]).toBeGreaterThan(0n);
 
     expect(exitCode).not.toBe(0);
   });

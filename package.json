@@ -10,7 +10,7 @@
     "@lezer/common": "^1.2.3",
     "@lezer/cpp": "^1.1.3",
     "@types/bun": "workspace:*",
-    "bun-tracestrings": "github:oven-sh/bun.report#912ca63e26c51429d3e6799aa2a6ab079b188fd8",
+    "bun-tracestrings": "github:oven-sh/bun.report#1a48fb004e3f7d2fc36239c3589ca2a3429b8a89",
     "esbuild": "^0.21.5",
     "mitata": "^0.1.14",
     "oxlint": "1.70.0",

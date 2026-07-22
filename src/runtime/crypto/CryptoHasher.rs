@@ -6,12 +6,13 @@ use bun_boringssl_sys as boring_ssl;
 use bun_core::ZigString;
 use bun_jsc::{
     ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _,
-    JsError, JsResult,
+    JsError, JsResult, ZigStringSlice,
 };
 
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::crypto::{HMAC, create_crypto_error, evp};
 use crate::generated_classes::PropertyName;
+use crate::node::util::validators;
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
 use bun_sha_hmac::sha as hashers;
 
@@ -243,19 +244,16 @@ impl CryptoHasher {
     /// `(algorithm string, input, optional output buffer/encoding)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
-        let mut i = 0usize;
-        let mut next_eat = || {
+        let arg_at = |i: usize| {
             if i < arguments.len {
-                let v = arguments.ptr[i];
-                i += 1;
-                Some(v)
+                Some(arguments.ptr[i])
             } else {
                 None
             }
         };
 
         let algorithm = {
-            let Some(string_value) = next_eat() else {
+            let Some(string_value) = arg_at(0) else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
             };
             if string_value.is_undefined_or_null() {
@@ -264,9 +262,50 @@ impl CryptoHasher {
             string_value.get_zig_string(global)?
         };
 
+        // Parse the output/options argument before decoding `input`: option
+        // getters can run user JS that detaches or resizes the input buffer,
+        // so all user-JS re-entry must happen before the input pointer is
+        // captured.
+        let mut output_length: Option<u32> = None;
+        let output: Option<StringOrBuffer> = match arg_at(2) {
+            Some(arg) => match StringOrBuffer::from_js(global, arg)? {
+                Some(v) => Some(v),
+                None => {
+                    if arg.is_undefined() {
+                        None
+                    } else {
+                        validators::validate_object(
+                            global,
+                            arg,
+                            "options",
+                            validators::ValidateObjectOptions::default(),
+                        )?;
+                        if let Some(len) = arg.get(global, "outputLength")? {
+                            output_length = Some(validators::validate_uint32(
+                                global,
+                                len,
+                                "outputLength",
+                                false,
+                            )?);
+                        }
+                        match arg.get(global, "outputEncoding")? {
+                            Some(enc) if !enc.is_null() => {
+                                validators::validate_string(global, enc, "outputEncoding")?;
+                                StringOrBuffer::from_js(global, enc)?
+                            }
+                            _ => Some(StringOrBuffer::EncodedSlice(
+                                ZigStringSlice::from_utf8_never_free(b"hex"),
+                            )),
+                        }
+                    }
+                }
+            },
+            None => None,
+        };
+
         // Node.BlobOrStringOrBuffer
         let input = {
-            let Some(arg) = next_eat() else {
+            let Some(arg) = arg_at(1) else {
                 return Err(
                     global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
                 );
@@ -280,23 +319,7 @@ impl CryptoHasher {
             }
         };
 
-        // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let output: Option<StringOrBuffer> = match next_eat() {
-            Some(arg) => match StringOrBuffer::from_js(global, arg)? {
-                Some(v) => Some(v),
-                None => {
-                    if arg.is_undefined() {
-                        None
-                    } else {
-                        return Err(global
-                            .throw_invalid_arguments(format_args!("expected string or buffer")));
-                    }
-                }
-            },
-            None => None,
-        };
-
-        Self::hash_(global, algorithm, &input, output)
+        Self::hash_(global, algorithm, &input, output, output_length)
     }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
@@ -422,20 +445,40 @@ impl CryptoHasher {
         algorithm: ZigString,
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
+        output_length: Option<u32>,
     ) -> JsResult<JSValue> {
         let mut evp = match EVP::by_name(&algorithm, global) {
             Some(e) => e,
-            None => match CryptoHasherZig::hash_by_name(global, &algorithm, input, output)? {
-                Some(v) => return Ok(v),
-                None => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Unsupported algorithm \"{}\"",
-                        algorithm
-                    )));
+            None => {
+                match CryptoHasherZig::hash_by_name(
+                    global,
+                    &algorithm,
+                    input,
+                    output,
+                    output_length,
+                )? {
+                    Some(v) => return Ok(v),
+                    None => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Unsupported algorithm \"{}\"",
+                            algorithm
+                        )));
+                    }
                 }
-            },
+            }
         };
         // `defer evp.deinit()` — handled by Drop on `evp`.
+
+        if let Some(len) = output_length {
+            // BoringSSL-backed algorithms are all fixed-length; XOF goes through
+            // CryptoHasherZig above.
+            if u32::from(evp.size()) != len {
+                return Err(global.throw(format_args!(
+                    "Output length {} is invalid for {}, which does not support XOF",
+                    len, algorithm
+                )));
+            }
+        }
 
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
@@ -799,6 +842,7 @@ pub trait ZigHashAlgo: Default + Clone + 'static {
     const ALGORITHM: evp::Algorithm;
     /// Shake128→16, Shake256→32, else the algorithm's digest length.
     const DIGEST_LENGTH: u8;
+    const IS_XOF: bool = false;
     fn init() -> Self {
         Self::default()
     }
@@ -849,6 +893,7 @@ mod zig_crypto_algos {
             impl ZigHashAlgo for $ty {
                 const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
                 const DIGEST_LENGTH: u8 = $len;
+                const IS_XOF: bool = true;
                 fn update(&mut self, bytes: &[u8]) {
                     Update::update(self, bytes);
                 }
@@ -889,31 +934,50 @@ impl CryptoHasherZig {
         algorithm: &ZigString,
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
+        output_length: Option<u32>,
     ) -> JsResult<Option<JSValue>> {
         let name = algorithm.to_slice();
         let Some(algo) = evp::lookup_ignore_case(name.slice()) else {
             return Ok(None);
         };
         macro_rules! arm {
-            ($ty:ty, $g:expr, $alg:expr, $in:expr, $out:expr) => {
+            ($ty:ty, $g:expr, $alg:expr, $in:expr, $out:expr, $len:expr) => {
                 if $alg == <$ty as ZigHashAlgo>::ALGORITHM {
-                    return Ok(Some(Self::hash_by_name_inner::<$ty>($g, $in, $out)?));
+                    return Ok(Some(Self::hash_by_name_inner::<$ty>($g, $in, $out, $len)?));
                 }
             };
         }
-        for_each_zig_algo!(arm, global, algo, input, output);
+        for_each_zig_algo!(arm, global, algo, input, output, output_length);
         Ok(None)
+    }
+
+    fn resolve_output_length<A: ZigHashAlgo>(
+        global: &JSGlobalObject,
+        output_length: Option<u32>,
+    ) -> JsResult<usize> {
+        match output_length {
+            Some(len) if A::IS_XOF => Ok(len as usize),
+            Some(len) if len == u32::from(A::DIGEST_LENGTH) => Ok(len as usize),
+            Some(len) => Err(global.throw(format_args!(
+                "Output length {} is invalid for {}, which does not support XOF",
+                len,
+                bstr::BStr::new(A::ALGORITHM.tag_cstr().to_bytes())
+            ))),
+            None => Ok(A::DIGEST_LENGTH as usize),
+        }
     }
 
     fn hash_by_name_inner<A: ZigHashAlgo>(
         global: &JSGlobalObject,
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
+        output_length: Option<u32>,
     ) -> JsResult<JSValue> {
+        let len = Self::resolve_output_length::<A>(global, output_length)?;
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
                 let ab = buffer.buffer;
-                return Self::hash_by_name_inner_to_bytes::<A>(global, input, Some(ab));
+                return Self::hash_by_name_inner_to_bytes::<A>(global, input, Some(ab), len);
             }
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
                 return Err(global
@@ -928,18 +992,19 @@ impl CryptoHasherZig {
             };
 
             if encoding == Encoding::Buffer {
-                return Self::hash_by_name_inner_to_bytes::<A>(global, input, None);
+                return Self::hash_by_name_inner_to_bytes::<A>(global, input, None, len);
             }
 
-            return Self::hash_by_name_inner_to_string::<A>(global, input, encoding);
+            return Self::hash_by_name_inner_to_string::<A>(global, input, encoding, len);
         }
-        Self::hash_by_name_inner_to_bytes::<A>(global, input, None)
+        Self::hash_by_name_inner_to_bytes::<A>(global, input, None, len)
     }
 
     fn hash_by_name_inner_to_string<A: ZigHashAlgo>(
         global: &JSGlobalObject,
         input: &BlobOrStringOrBuffer,
         encoding: Encoding,
+        len: usize,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
@@ -949,23 +1014,29 @@ impl CryptoHasherZig {
             )));
         }
 
+        if len == 0 {
+            return bun_jsc::bun_string_jsc::create_utf8_for_js(global, b"");
+        }
+
         let mut h = A::init();
         h.update(input.slice());
 
-        // Const-generic array length from trait assoc const requires
-        // `feature(generic_const_exprs)` — use a stack buffer of EVP_MAX_MD_SIZE
-        // sliced to A::DIGEST_LENGTH instead.
-        let mut out = [0u8; EVP_MAX_MD_SIZE_USIZE];
-        let len = A::DIGEST_LENGTH as usize;
-        h.final_(&mut out[..len]);
-
-        encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, &out[..len])
+        if len <= EVP_MAX_MD_SIZE_USIZE {
+            let mut out = [0u8; EVP_MAX_MD_SIZE_USIZE];
+            h.final_(&mut out[..len]);
+            encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, &out[..len])
+        } else {
+            let mut out = vec![0u8; len];
+            h.final_(&mut out);
+            encoding.encode_with_size(global, len, &out)
+        }
     }
 
     fn hash_by_name_inner_to_bytes<A: ZigHashAlgo>(
         global: &JSGlobalObject,
         input: &BlobOrStringOrBuffer,
         output: Option<ArrayBuffer>,
+        len: usize,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
@@ -975,14 +1046,20 @@ impl CryptoHasherZig {
             )));
         }
 
+        if len == 0 {
+            return match output {
+                Some(output_buf) => Ok(output_buf.value),
+                None => ArrayBuffer::create_buffer(global, &[]),
+            };
+        }
+
         let mut h = A::init();
-        let digest_length_comptime = A::DIGEST_LENGTH as usize;
 
         if let Some(output_buf) = &output {
-            if output_buf.byte_slice().len() < digest_length_comptime {
+            if output_buf.byte_slice().len() < len {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
-                    digest_length_comptime
+                    len
                 )));
             }
         }
@@ -994,15 +1071,18 @@ impl CryptoHasherZig {
             // writable backing store, outliving this frame. Build the `&mut`
             // directly from the raw `*mut u8` field — never via `&[u8].as_ptr()`
             // (Stacked-Borrows UB).
-            let out =
-                unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, digest_length_comptime) };
+            let out = unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, len) };
             h.final_(out);
             Ok(output_buf.value)
-        } else {
+        } else if len <= EVP_MAX_MD_SIZE_USIZE {
             let mut out = [0u8; EVP_MAX_MD_SIZE_USIZE];
-            h.final_(&mut out[..digest_length_comptime]);
+            h.final_(&mut out[..len]);
             // Clone to GC-managed memory
-            ArrayBuffer::create_buffer(global, &out[..digest_length_comptime])
+            ArrayBuffer::create_buffer(global, &out[..len])
+        } else {
+            let mut out = vec![0u8; len].into_boxed_slice();
+            h.final_(&mut out);
+            Ok(JSValue::create_buffer_from_box(global, out))
         }
     }
 

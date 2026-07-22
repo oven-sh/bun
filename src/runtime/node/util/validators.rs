@@ -340,7 +340,7 @@ pub(crate) fn validate_object(
     options: ValidateObjectOptions,
 ) -> JsResult<()> {
     if !options.allow_nullable() && !options.allow_array() && !options.allow_function() {
-        if value.is_null() || value.js_type().is_array() {
+        if value.is_null() || value.js_type().is_array() || value.is_callable() {
             return Err(throw_err_invalid_arg_type(
                 global_this,
                 name,
@@ -376,7 +376,9 @@ pub(crate) fn validate_object(
             ));
         }
 
-        if !value.is_object() && (!options.allow_function() || !value.js_type().is_function()) {
+        if (!value.is_object() || value.is_callable())
+            && (!options.allow_function() || !value.js_type().is_function())
+        {
             return Err(throw_err_invalid_arg_type(
                 global_this,
                 name,

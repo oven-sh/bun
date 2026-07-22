@@ -14,7 +14,7 @@
 // CRASH and HANG are the bugs. Everything is deterministic: the coordinate
 // (syscall + callsite RVA + hit) plus the program replays the finding.
 
-import { rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { DELAY_MS, F, FAULTS, type Fault, type Mode } from "./faults";
 import {
@@ -62,6 +62,8 @@ const planOnly = argv.includes("--plan-only"); // baseline + estimate, then stop
 // Keep run directories that found nothing (default: only findings, baselines
 // and verify replays are kept - a clean run is not a test case).
 const keepAllRuns = argv.includes("--keep-all-runs");
+// Keep raw syscall traces even where only replay text is needed.
+const keepAllTraces = argv.includes("--keep-all-traces");
 
 const runsDir = join(workRoot, "runs");
 ensureDir(runsDir);
@@ -603,6 +605,54 @@ await Bun.write(
   ),
 );
 console.log(`\nreport: ${outPath}`);
+
+// --- retention pass: keep replay material, not raw traces ---------------------
+// After classification+verification the multi-MB raw syscall traces have
+// done their job (fired-count, coordinates, fatal chain). What earns disk
+// is what REPLAYS a finding: its schedule, its small stdout/stderr, its
+// captured stacks. So: strip wsf-*.log traces from controls, the baseline
+// and startup-mask runs, verify replays of findings that did NOT confirm,
+// and kept sightings that are not confirmed - directories stay (tiny text)
+// so nothing loses its record. Confirmed/stalled findings and their verify
+// replays keep everything. --keep-all-traces opts out.
+if (!keepAllTraces) {
+  const stripTraces = (d: string) => {
+    for (const f of readdirSync(d)) {
+      if (f.startsWith("wsf-") && f.endsWith(".log")) {
+        try {
+          rmSync(join(d, f), { force: true });
+        } catch {}
+      }
+    }
+  };
+  const confirmedIds = new Set(
+    findings.filter(f => verdicts.get(f)?.verdict === "confirmed").map(f => `${f.job.coord.sys}-${f.job.coord.key.replace(":", "_")}`),
+  );
+  for (const d of readdirSync(runsDir, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    if (/^(baseline|startup-mask\d*|control\d*)$/.test(d.name)) {
+      stripTraces(join(runsDir, d.name)); // enumeration/health scratch
+      continue;
+    }
+  }
+  const verifyRoot = join(workRoot, "verify");
+  if (existsSync(verifyRoot)) {
+    for (const d of readdirSync(verifyRoot, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue;
+      // verify dir name = "<sysId>-<key_>-<n>": keep confirmed findings' replays
+      const stem = d.name.replace(/-\d+$/, "");
+      if (!confirmedIds.has(stem)) stripTraces(join(verifyRoot, d.name));
+    }
+  }
+  // Sightings kept in runs/ that did not confirm: keep the record, drop the trace.
+  for (const r of results) {
+    if (!["CRASH", "HANG", "slow", "stalled", "system-crash", "expected-abort"].includes(r.outcome)) continue;
+    const v = verdicts.get(r);
+    if (v?.verdict === "confirmed") continue; // full case kept
+    const dir = join(runsDir, `job${String(r.job.id).padStart(4, "0")}`);
+    if (existsSync(dir)) stripTraces(dir);
+  }
+}
 
 // --- the queue: global append-only feed of verified findings ---------------
 // The fuzzer runs continuously and the triager drains this file, so every

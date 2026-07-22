@@ -38,6 +38,29 @@ const infra = /^(baseline|startup-mask|verify|control\d*)$/i;
 let kept = 0;
 let deleted = 0;
 let freed = 0;
+let freedByStrip = 0;
+const traceBytes = (d: string): number => {
+  let n = 0;
+  for (const e of readdirSync(d, { withFileTypes: true })) {
+    const p = join(d, e.name);
+    try {
+      n += e.isDirectory() ? traceBytes(p) : e.name.startsWith("wsf-") && e.name.endsWith(".log") ? statSync(p).size : 0;
+    } catch {}
+  }
+  return n;
+};
+const stripTraces = (d: string) => {
+  for (const e of readdirSync(d, { withFileTypes: true })) {
+    const p = join(d, e.name);
+    try {
+      if (e.isDirectory()) stripTraces(p);
+      else if (e.name.startsWith("wsf-") && e.name.endsWith(".log")) {
+        freedByStrip += statSync(p).size;
+        rmSync(p, { force: true });
+      }
+    } catch {}
+  }
+};
 
 function pruneRunsDir(runsDir: string) {
   for (const e of readdirSync(runsDir, { withFileTypes: true })) {
@@ -45,6 +68,10 @@ function pruneRunsDir(runsDir: string) {
     const dir = join(runsDir, e.name);
     if (infra.test(e.name)) {
       kept++;
+      // baselines / masks / controls: enumeration + health scratch once the
+      // sweep is done - the trace is useless afterward.
+      if (!dryRun) stripTraces(dir);
+      else freedByStrip += traceBytes(dir);
       continue;
     }
     // A job dir: keep it only if its output confesses a crash.
@@ -60,6 +87,10 @@ function pruneRunsDir(runsDir: string) {
     const hasCapture = existsSync(join(dir, "hang-stacks.txt")) || existsSync(join(dir, "crash-stack.txt"));
     if (crash || hasCapture) {
       kept++;
+      // Kept case: its replay material (schedule, output, captured stacks)
+      // is what matters - strip the raw multi-MB traces.
+      if (!dryRun) stripTraces(dir);
+      else freedByStrip += traceBytes(dir);
       continue;
     }
     const size = dirSize(dir);
@@ -101,6 +132,8 @@ for (const root of roots) {
   walk(root);
 }
 console.log(
-  `\n${dryRun ? "[dry-run] would delete" : "deleted"} ${deleted} non-finding run dir(s), ` +
-    `kept ${kept} case/infra dir(s), ${(freed / 1024 ** 3).toFixed(1)} GB ${dryRun ? "reclaimable" : "reclaimed"}`,
+  `\n${dryRun ? "[dry-run] would delete" : "deleted"} ${deleted} non-finding run dir(s) ` +
+    `(${(freed / 1024 ** 3).toFixed(1)} GB), kept ${kept} case/infra dir(s) with traces stripped ` +
+    `(${(freedByStrip / 1024 ** 3).toFixed(1)} GB) - ${((freed + freedByStrip) / 1024 ** 3).toFixed(1)} GB ` +
+    `${dryRun ? "reclaimable" : "reclaimed"} total`,
 );

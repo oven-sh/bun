@@ -13,7 +13,7 @@
 //     [--timeout 60] [--rules 3] [--jobs 4] [--iterations N] [--seed S]
 //     [--work C:\wsfchaos] [--queue C:\wsfqueue]
 
-import { rmSync } from "node:fs";
+import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { FAULTS } from "./faults";
 import {
@@ -219,6 +219,26 @@ async function worker(w: number) {
     const minimal = await minimize(schedule, dir);
     findings++;
     await Bun.write(join(dir, "minimal-schedule.txt"), minimal.join("\n") + "\n");
+    // Retention: the minimal schedule IS the replay; the raw traces of the
+    // original run, its verify replays and the minimization trials are
+    // scratch. Strip them, keep the small text (schedules, stdout/stderr).
+    const stripTraces = (d: string) => {
+      let ents: string[] = [];
+      try {
+        ents = readdirSync(d);
+      } catch {
+        return;
+      }
+      for (const f of ents) {
+        const p = join(d, f);
+        try {
+          const st = statSync(p);
+          if (st.isDirectory()) stripTraces(p);
+          else if (f.startsWith("wsf-") && f.endsWith(".log")) rmSync(p, { force: true });
+        } catch {}
+      }
+    };
+    stripTraces(dir);
     console.log(`   [${n}] CONFIRMED ${outcome} - minimized ${schedule.length} -> ${minimal.length} rule(s)`);
     // Symbolize any bun-frame keys in the minimal schedule for the queue entry.
     const bunRvas = minimal.map(r => r.split(" ")[1]).filter(k => k.startsWith("b:")).map(k => k.slice(2));

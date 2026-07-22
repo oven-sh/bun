@@ -457,6 +457,9 @@ pub(crate) const TEST_NAME_EXACT: [&[u8]; 1] = [b"test"];
 /// [`TEST_NAME_PREFIXES`], or equals one of [`TEST_NAME_EXACT`]. This is a
 /// superset of `node --test`'s default filename patterns (Bun also accepts
 /// `.spec`/`_spec`), minus node's `**/test/**` directory rule.
+///
+/// Comparison is byte-exact; callers must pass a lowercased stem (the scanner
+/// matches on `entry.base_lowercase()`).
 pub(crate) fn is_test_like_basename(name_without_extension: &[u8]) -> bool {
     for suffix in TEST_NAME_SUFFIXES {
         if strings::ends_with(name_without_extension, suffix) {

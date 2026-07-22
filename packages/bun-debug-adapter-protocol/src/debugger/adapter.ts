@@ -2691,7 +2691,8 @@ function isJavaScript(path: string): boolean {
 }
 
 function isTestJavaScript(path: string): boolean {
-  return /\.(test|spec)\.(c|m)?(j|t)sx?$/.test(path);
+  const basename = path.replace(/^.*[/\\]/, "");
+  return /^(?:test|test-.*|.*[._-](?:test|spec))\.[cm]?[jt]sx?$/i.test(basename);
 }
 
 function isSyntaxError(remoteObject: JSC.Runtime.RemoteObject): boolean {

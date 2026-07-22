@@ -981,7 +981,7 @@ _bun_remove_param_package_completion() {
 _bun_test_param_script_completion() {
     local -a scripts_list
 
-    _alternative "files:file:_files -g '*(_|.)(test|spec).(js|ts|jsx|tsx)'"
+    _alternative "files:file:_files -g '(*(.|_|-)(test|spec)|test-*|test).(js|ts|jsx|tsx|mjs|cjs|mts|cts)'"
 }
 
 _set_remove() {

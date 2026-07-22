@@ -559,16 +559,17 @@ describe("BunTestController - Test Discovery and Management", () => {
   describe("customFilePattern", () => {
     test("should return the default test pattern", () => {
       const pattern = internal.customFilePattern();
-      expect(pattern).toBe("**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}");
+      expect(pattern).toBe("**/{*.test,*_test,*-test,*.spec,*_spec,test-*,test}.{js,ts,tsx,jsx,mts,cts,cjs,mjs}");
     });
 
     test("should return a valid glob pattern", () => {
       const pattern = internal.customFilePattern();
-      expect(pattern).toMatch(/^\*\*\/\*/);
-      expect(pattern).toContain(".test.");
-      expect(pattern).toContain(".spec.");
-      expect(pattern).toContain("_test_");
-      expect(pattern).toContain("_spec_");
+      expect(pattern).toMatch(/^\*\*\//);
+      expect(pattern).toContain("*.test");
+      expect(pattern).toContain("*.spec");
+      expect(pattern).toContain("*_test");
+      expect(pattern).toContain("*_spec");
+      expect(pattern).toContain("test-*");
       expect(pattern).toContain("{js,ts,tsx,jsx,mts,cts,cjs,mjs}");
     });
   });

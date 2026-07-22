@@ -11,7 +11,7 @@ import {
 } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
 
-const DEFAULT_TEST_PATTERN = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
+const DEFAULT_TEST_PATTERN = "**/{*.test,*_test,*-test,*.spec,*_spec,test-*,test}.{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
 
 export const debug = vscode.window.createOutputChannel("Bun - Test Runner");
 
@@ -136,9 +136,9 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private isTestFile(document: vscode.TextDocument): boolean {
-    return (
-      document?.uri?.scheme === "file" && /\.(test|spec)\.(js|jsx|ts|tsx|cjs|mjs|mts|cts)$/.test(document.uri.fsPath)
-    );
+    if (document?.uri?.scheme !== "file") return false;
+    const basename = document.uri.fsPath.replace(/^.*[/\\]/, "");
+    return /^(?:test|test-.*|.*[._-](?:test|spec))\.(?:js|jsx|ts|tsx|cjs|mjs|mts|cts)$/i.test(basename);
   }
 
   private async discoverInitialTests(

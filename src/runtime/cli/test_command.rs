@@ -1910,8 +1910,20 @@ pub(crate) extern "C" fn BunTest__shouldGenerateCodeCoverage(
     if let Some(runner) = jest::Jest::runner() {
         if runner.test_options.coverage.skip_test_files {
             let basename = bun_path::basename(slice);
-            let basename_without_ext = &basename[..basename.len() - ext.len()];
-            if scanner::is_test_like_basename(basename_without_ext) {
+            let stem = &basename[..basename.len() - ext.len()];
+            // is_test_like_basename is byte-exact; the scanner feeds it
+            // entry.base_lowercase(), so mirror that here so Test.ts /
+            // Test-foo.ts are skipped the same way they are discovered.
+            let mut buf = [0u8; 256];
+            let lowered: &[u8] = if stem.len() <= buf.len() {
+                for (i, b) in stem.iter().enumerate() {
+                    buf[i] = b.to_ascii_lowercase();
+                }
+                &buf[..stem.len()]
+            } else {
+                stem
+            };
+            if scanner::is_test_like_basename(lowered) {
                 return false;
             }
         }

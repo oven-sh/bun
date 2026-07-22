@@ -204,7 +204,7 @@ const config_cli = [
   process.execPath,
   "build",
   ...bundledEntryPoints,
-  ...(debug ? [] : ["--minify-syntax", "--keep-names"]),
+  ...(debug ? [] : ["--minify-syntax", "--minify-whitespace", "--keep-names"]),
   "--root",
   TMP_DIR,
   "--target",
@@ -243,15 +243,41 @@ for (const entrypoint of bundledEntryPoints) {
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");
+  // The module's completion value. `export default` becomes the $$EXPORT$$
+  // marker; a module that also has named ESM exports gets a trailing
+  // `export { ... };` right after it, and its completion value is then the
+  // object of those named exports. Neither rewrite may depend on the
+  // printer's whitespace (the release build minifies it), and each records
+  // that it fired so the checks below can prove the output has no marker
+  // and no orphaned export statement left.
+  const hasNamedExports = /\$\$EXPORT_END\$\$;?\s*export\s*\{/.test(captured);
+  let namedRewrite = false;
+  let defaultRewrite = false;
   captured =
     captured
-      .replace(/\$\$EXPORT\$\$\((.*)\).\$\$EXPORT_END\$\$;/, "return $1")
+      .replace(
+        /\$\$EXPORT\$\$\((.*?)\)\.\$\$EXPORT_END\$\$;?\s*export\s*\{([^}]*)\}\s*;?/,
+        (_m: string, _dflt: string, names: string) => {
+          // The clause is spliced into an object literal, so only plain
+          // identifier names are representable ("a as b" / "default" are not).
+          if (/[^\w$,\s]/.test(names) || /\bas\b|\bdefault\b/.test(names)) {
+            throw new Error(
+              `Builtin Bundler: unsupported export clause \`{${names}}\` in ${file_path}; export plain names only`,
+            );
+          }
+          namedRewrite = true;
+          return `return{${names}}`;
+        },
+      )
+      .replace(/\$\$EXPORT\$\$\((.*?)\)\.\$\$EXPORT_END\$\$;?/, (_m: string, dflt: string) => {
+        defaultRewrite = true;
+        return `return ${dflt}`;
+      })
       .replace(/]\s*,\s*__(debug|assert)_end__\)/g, ")")
       .replace(/]\s*,\s*__debug_end__\)/g, ")")
       .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
         throw new Error(`Builtin Bundler: do not use import.meta.require() (in ${file_path}))`);
       })
-      .replace(/return \$\nexport /, "return")
       .replace(/__intrinsic__/g, "@")
       .replace(/__no_intrinsic__/g, "") + "\n";
   captured = captured.replace(
@@ -268,6 +294,19 @@ for (const entrypoint of bundledEntryPoints) {
   const errors = [...captured.matchAll(/@bundleError\((.*)\)/g)];
   if (errors.length) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
+  }
+  // The rewrites above must actually fire, and the right one: a printer
+  // output shape they no longer recognize would otherwise ship a builtin
+  // that only fails when it is first required (as a SyntaxError inside the
+  // module wrapper).
+  if (!namedRewrite && !defaultRewrite) {
+    throw new Error(`Builtin Bundler: the export marker was not rewritten in ${file_path}`);
+  }
+  if (hasNamedExports && !namedRewrite) {
+    throw new Error(`Builtin Bundler: the named-export clause of ${file_path} was not rewritten`);
+  }
+  if (captured.includes("$$EXPORT$$")) {
+    throw new Error(`Builtin Bundler: an export marker survived in ${file_path}`);
   }
 
   const outputPath = path.join(JS_DIR, file_path);

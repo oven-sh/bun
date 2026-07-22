@@ -27,7 +27,7 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { buildHost } from "./ci/spec.ts";
+import { buildHost } from "./ci/images.ts";
 import type { Arch, Config } from "./config.ts";
 import { downloadWithRetry, extractTarGz, extractZip } from "./download.ts";
 import { BuildError } from "./error.ts";

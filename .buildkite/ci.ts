@@ -10,8 +10,8 @@
 
 import { join } from "node:path";
 import { checkImages } from "../scripts/build/ci/existence.ts";
-import { generateCiImages } from "../scripts/build/ci/generate.ts";
-import { imageEntry, imageKey, imageName } from "../scripts/build/ci/naming.ts";
+import { generateCiImages } from "../scripts/build/ci/generate/generate.ts";
+import { imageEntry, imageKey, imageName } from "../scripts/build/ci/generate/naming.ts";
 import { alpineRelease } from "../scripts/build/ci/spec.ts";
 import {
   getBuildkiteEmoji,
@@ -239,7 +239,7 @@ function getPlatformLabel(platform) {
  * The spec image key for a platform. Cross-compiled targets and FreeBSD
  * build on a linux host image (the build host cross-compiles everything),
  * so their host OS is linux; native test platforms map to their own entry.
- * See scripts/build/ci/naming.ts.
+ * See scripts/build/ci/generate/naming.ts.
  * @param {Platform} platform
  * @returns {string}
  */

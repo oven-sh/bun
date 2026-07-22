@@ -5,12 +5,12 @@ import { basename, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
 import { azure } from "./azure.mjs";
-import { packerDownload } from "./build/ci/artifacts.ts";
-import { agentEntry } from "./build/ci/components/paths.ts";
-import { LINUX_REMOTE_BOOTSTRAP, LINUX_REMOTE_ROOT, linuxBootstrapCommand } from "./build/ci/delivery.ts";
+import { packerDownload } from "./build/ci/machine/artifacts.ts";
+import { agentEntry } from "./build/ci/machine/components/paths.ts";
+import { nodejsDownload, nodejsFolderName } from "./build/ci/machine/artifacts.ts";
 import { azureToken } from "./build/ci/existence.ts";
-import { imageName as computeImageName, imageEntry } from "./build/ci/naming.ts";
-import { imageOutDir } from "./build/ci/outputs.ts";
+import { imageName as computeImageName, imageEntry } from "./build/ci/generate/naming.ts";
+import { imageOutDir } from "./build/ci/generate/outputs.ts";
 import { packer } from "./build/ci/spec.ts";
 import { docker } from "./docker.mjs";
 import { tart } from "./tart.mjs";
@@ -1110,7 +1110,7 @@ function getCloud(name) {
  * creation, WinRM provisioning, sysprep, and gallery capture. Everything
  * that varies — base image, bake VM, disk, gallery destination, replication
  * regions, the pinned node, the bootstrap command — comes from the image's
- * spec entry via scripts/build/ci/packer.ts, which renders the template as
+ * spec entry via scripts/build/ci/generate/packer.ts, which renders the template as
  * JSON in memory (no checked-in .pkr.hcl). The gallery image definition
  * name (`${key}-${hash}`) and the architecture are derived from `image`.
  *
@@ -1652,6 +1652,55 @@ async function main() {
 
 // Run only when executed as the entry point (node scripts/machine.mjs …),
 // not when the module is imported for its types (e.g. azure.mjs's JSDoc).
+
+// ---------------------------------------------------------------------------
+// Getting the generated bootstrap onto a fresh linux machine and running it.
+//
+// A bare base image has neither bun nor node. The image entry pins the node
+// the image ships with, so the bake fetches exactly that node onto the box
+// and runs the generated, self-contained bootstrap.ts under it (that node
+// executes .ts via type stripping). The same tarball then satisfies the
+// bootstrap's own node install.
+// ---------------------------------------------------------------------------
+
+/** Where the generated bootstrap.ts and the fetched node land on a bake VM. */
+const LINUX_REMOTE_ROOT = "/tmp/bun-bootstrap";
+/** The generated file's remote path (uploaded before the bootstrap runs). */
+const LINUX_REMOTE_BOOTSTRAP = `${LINUX_REMOTE_ROOT}/bootstrap.ts`;
+
+/**
+ * POSIX script that downloads the spec-pinned node into the remote root and
+ * runs the generated bootstrap.ts with the given flags. Reads no host state
+ * and pins nothing itself: the node URL and folder come from the image
+ * entry. Fetches with curl when present and falls back to wget (alpine
+ * cloud images ship busybox wget but not always curl).
+ *
+ * @param {LinuxImage} image
+ * @param {{ci: boolean, repoRef: string}} args
+ * @returns {string}
+ */
+function linuxBootstrapCommand(image, args) {
+  const node = nodejsDownload(image.nodejs, "linux", image.arch, image.abi);
+  const folder = nodejsFolderName(image.nodejs, "linux", image.arch, image.abi);
+  const flags = [];
+  if (args.ci) flags.push("--ci", `--repo-ref=${args.repoRef}`);
+  return [
+    "set -ex",
+    `cd ${LINUX_REMOTE_ROOT}`,
+    `echo ">>> Downloading node from ${node.url}"`,
+    "if command -v curl >/dev/null 2>&1; then",
+    `  curl -fsSL --retry 5 --retry-all-errors ${node.url} -o node.tar.gz`,
+    "else",
+    `  wget -q --tries=5 -O node.tar.gz ${node.url}`,
+    "fi",
+    "tar -xzf node.tar.gz",
+    `NODE=${LINUX_REMOTE_ROOT}/${folder}/bin/node`,
+    `"$NODE" --version`,
+    `echo ">>> Running bootstrap: $NODE ${LINUX_REMOTE_BOOTSTRAP} ${flags.join(" ")}"`,
+    `"$NODE" ${LINUX_REMOTE_BOOTSTRAP} ${flags.join(" ")}`,
+  ].join("\n");
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   await main();
 }

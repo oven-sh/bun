@@ -11,7 +11,7 @@ import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
 import { generateCargoConfig } from "./cargo-config.ts";
-import { generateCiImages } from "./ci/generate.ts";
+import { generateCiImages } from "./ci/generate/generate.ts";
 import {
   type Config,
   type OS,
@@ -298,7 +298,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // Generated CI machine files — written at configure time (not a ninja
   // rule), like the cargo config. build/ci/<key>/ holds each image's
   // self-contained bootstrap.ts, agent bundle, and packer template; the
-  // image name is a hash of those bytes (scripts/build/ci/naming.ts).
+  // image name is a hash of those bytes (scripts/build/ci/generate/naming.ts).
   generateCiImages(cfg.esbuild);
   mark("generateCiImages");
 

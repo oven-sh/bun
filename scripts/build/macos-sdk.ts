@@ -31,7 +31,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { buildHost } from "./ci/spec.ts";
+import { buildHost } from "./ci/images.ts";
 import { BuildError } from "./error.ts";
 
 /**

@@ -564,7 +564,7 @@ export function detectFreebsdSysroot(arch: Arch): string | undefined {
 /**
  * Locate the linux-gnu sysroot: ubuntu:20.04 (glibc 2.31) + gcc-13 libstdc++,
  * matching the WebKit prebuilt's build environment. Arch-specific. See
- * the glibcSysroot component in scripts/build/ci/components/cross-linux.ts.
+ * the glibcSysroot component in scripts/build/ci/machine/components/linux/cross.ts.
  */
 export function detectLinuxGlibcSysroot(arch: Arch): string | undefined {
   const looksValid = (p: string) => existsSync(join(p, "usr", "include", "c++", "13"));
@@ -576,7 +576,7 @@ export function detectLinuxGlibcSysroot(arch: Arch): string | undefined {
 
 /**
  * Locate a linux-musl sysroot — alpine rootfs with musl + modern libstdc++;
- * see the muslSysroot component in scripts/build/ci/components/cross-linux.ts. Checks env var then
+ * see the muslSysroot component in scripts/build/ci/machine/components/linux/cross.ts. Checks env var then
  * well-known install paths. Arch-specific. Returns undefined if none found.
  */
 export function detectLinuxMuslSysroot(arch: Arch): string | undefined {
@@ -1026,7 +1026,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         if (sysroot === undefined) {
           const p = arch === "aarch64" ? "/opt/linux-sysroot-musl-arm64" : "/opt/linux-sysroot-musl";
           throw new BuildError(`--os=linux --arch=${arch} --abi=musl requires a musl sysroot when cross-compiling`, {
-            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see the muslSysroot component in scripts/build/ci/components/cross-linux.ts).`,
+            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see the muslSysroot component in scripts/build/ci/machine/components/linux/cross.ts).`,
           });
         }
       }
@@ -1042,7 +1042,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         if (sysroot === undefined) {
           const p = arch === "aarch64" ? "/opt/linux-sysroot-glibc-arm64" : "/opt/linux-sysroot-glibc";
           throw new BuildError(`--os=linux --arch=${arch} --abi=gnu cross-compile requires a glibc sysroot`, {
-            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see the glibcSysroot component in scripts/build/ci/components/cross-linux.ts).`,
+            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see the glibcSysroot component in scripts/build/ci/machine/components/linux/cross.ts).`,
           });
         }
       }

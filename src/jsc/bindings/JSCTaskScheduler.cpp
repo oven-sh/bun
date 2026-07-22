@@ -1,5 +1,6 @@
 #include "config.h"
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
 
@@ -96,7 +97,7 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
         Bun__eventLoop__incrementRefConcurrently(bunVM, -1);
 }
 
-static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
+static void runPendingWork(JSC::VM& vm, void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
 {
     Locker<Lock> holder { scheduler.m_lock };
     auto pendingTicket = scheduler.m_pendingTicketsKeepingEventLoopAlive.take(job->ticket);
@@ -108,7 +109,16 @@ static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDef
     holder.unlockEarly();
 
     if (pendingTicket && !pendingTicket->isCancelled()) {
-        job->task(job->ticket.get());
+        // Match DeferredWorkTimer::doWork: drop the task once script execution
+        // has stopped (worker.terminate()) or a TerminationException is pending.
+        // Task bodies (JSFinalizationRegistry::runFinalizationCleanup, waitAsync
+        // resolve) enter Interpreter::executeCallImpl, whose entry
+        // scope.assertNoException() aborts if the exception is already set.
+        auto* owner = job->ticket->scriptExecutionOwner();
+        auto* globalObject = owner->globalObject();
+        auto status = globalObject->globalObjectMethodTable()->scriptExecutionStatus(globalObject, owner);
+        if (status == JSC::ScriptExecutionStatus::Running && !vm.hasPendingTerminationException())
+            job->task(job->ticket.get());
     }
 
     delete job;
@@ -119,7 +129,7 @@ extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
     auto& vm = job->vm();
     auto clientData = WebCore::clientData(vm);
 
-    runPendingWork(clientData->bunVM, clientData->deferredWorkTimer, job);
+    runPendingWork(vm, clientData->bunVM, clientData->deferredWorkTimer, job);
 }
 
 // Flip m_isShuttingDown from the owning JS thread before the final concurrent-

@@ -1,5 +1,0 @@
-load fixtures/b/d.js
-load package/index.js
-load fixtures/b/c.js
-load fixtures/a.js
-b/c.js exit

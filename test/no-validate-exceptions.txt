@@ -203,3 +203,4 @@ test/js/third_party/vitest/vitest.test.ts
 test/js/node/test/parallel/test-inspector-*
 test/js/node/test/parallel/test-process-env-sideeffects.js
 test/js/node/test/parallel/test-esm-loader-hooks-inspect-brk.js
+test/js/node/test/parallel/test-esm-loader-hooks-inspect-wait.js

@@ -1,8 +1,0 @@
-overlapping rollovers accepted    : 0
-rollovers refused by the listener : 1 (last: HTTP 503)
-handshake notice printed          : true
-a session was told about the exit : true
-exited within budget              : true (code=55)
-
-================ SUMMARY ================
-PASS  an overlapping reconnect loop cannot keep the process alive

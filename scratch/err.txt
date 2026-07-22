@@ -1,6 +1,0 @@
-[2m--------------------- Bun Inspector ---------------------[22m[49m
-Listening:
-  [2mws://localhost:63685/612d447b-18b4-49a6-b7cf-4722082e80a6[22m
-Inspect in browser:
-  [1m]8;;https://debug.bun.sh/#localhost:63685/612d447b-18b4-49a6-b7cf-4722082e80a6\https://debug.bun.sh/#localhost:63685/612d447b-18b4-49a6-b7cf-4722082e80a6]8;;\[22m
-[2m--------------------- Bun Inspector ---------------------[22m[49m

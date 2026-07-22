@@ -1,4 +1,0 @@
-(fail) server.fetch(string) doesn't leak the URL buffer
-(fail) should be able to abrupt stop the server
-(fail) should support promise returned from error
-(fail) should work with dispose keyword

@@ -136,6 +136,58 @@ describe("backpressure", () => {
     });
   });
 
+  // Node's socketOnEnd: with httpAllowHalfOpen=false (the default) it issues
+  // socket.end(), with it true it marks the last response `_last` so resOnFinish
+  // destroySoon()s. Either way, bytes already handed to the socket via
+  // res.write() drain before the connection shuts down; the client half-closing
+  // right after its request must not truncate them.
+  describe("a client FIN right after the request does not truncate a response that is still flushing", () => {
+    const BODY = 8 * 1024 * 1024;
+    const payload = Buffer.alloc(BODY, "a");
+
+    async function halfCloseRequestBodyBytes(server: http.Server): Promise<{ body: number; ended: boolean }> {
+      const port = (server.address() as AddressInfo).port;
+      const socket = net.connect(port, "127.0.0.1");
+      let body = 0;
+      let head = "";
+      let gotHead = false;
+      let ended = false;
+      socket.on("data", chunk => {
+        if (!gotHead) {
+          head += chunk.toString("latin1");
+          const i = head.indexOf("\r\n\r\n");
+          if (i >= 0) {
+            gotHead = true;
+            body = Buffer.byteLength(head.slice(i + 4), "latin1");
+          }
+        } else {
+          body += chunk.length;
+        }
+      });
+      socket.on("end", () => (ended = true));
+      await once(socket, "connect");
+      socket.end("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      await once(socket, "close");
+      return { body, ended };
+    }
+
+    it.each([
+      ["res.write() then res.end()", false, true],
+      ["res.write() without res.end()", false, false],
+      ["res.write() then res.end(), httpAllowHalfOpen", true, true],
+    ] as const)("%s", async (_name, halfOpen, callEnd) => {
+      await using server = http.createServer((req, res) => {
+        res.writeHead(200, { "Content-Length": String(BODY) });
+        res.write(payload);
+        if (callEnd) res.end();
+      });
+      if (halfOpen) server.httpAllowHalfOpen = true;
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { body, ended } = await halfCloseRequestBodyBytes(server);
+      expect({ body, ended }).toEqual({ body: BODY, ended: true });
+    });
+  });
+
   it("should handle backpressure with INT_MAX bytes", async () => {
     const totalSize = 1024 * 1024 * 1024 * 2; // 2^31, one past INT_MAX
     const chunk = Buffer.alloc(64 * 1024 * 1024, "a");

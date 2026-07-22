@@ -1820,9 +1820,13 @@ impl NodeHTTPResponse {
             return false;
         }
 
-        // Finish any zero-copy write before telling JS we're drained.
+        // Finish any zero-copy write before telling JS we're drained. While
+        // bytes are still outstanding return `false` (the uWS onWritable
+        // contract's "write failed") so HttpContext::onWritable waits for the
+        // next writable event instead of evaluating its close gate against a
+        // bufferedAmount that does not count the pinned tail.
         if self.drain_pending_pinned_write(response) {
-            return true;
+            return false;
         }
 
         response.corked(|| self.on_drain_corked(offset));

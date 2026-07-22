@@ -720,14 +720,21 @@ private:
 
         /* Should we close this connection after a response - and is this response really done? */
         if (httpResponseData->shouldCloseConnection()) {
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                if (asyncSocket->getBufferedAmount() == 0) {
-
-                    asyncSocket->shutdown();
-                    /* We need to force close after sending FIN since we want to hinder
-                     * clients from keeping to send their huge data */
-                    asyncSocket->close();
+            bool responseDone = (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0;
+            if constexpr (IsNodeHttp) {
+                /* Node's socketOnEnd (!httpAllowHalfOpen) issues socket.end():
+                 * once already-queued bytes have drained the connection shuts
+                 * down regardless of whether res.end() was ever called. */
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
+                    && !httpContextData->flags.httpAllowHalfOpen) {
+                    responseDone = true;
                 }
+            }
+            if (responseDone && asyncSocket->getBufferedAmount() == 0) {
+                asyncSocket->shutdown();
+                /* We need to force close after sending FIN since we want to hinder
+                 * clients from keeping to send their huge data */
+                asyncSocket->close();
             }
         }
 
@@ -772,15 +779,20 @@ private:
                 }
             }
 
-            /* Node's socketOnEnd: if !server.httpAllowHalfOpen (the default),
-             * end the socket right away — an in-flight response is dropped
-             * exactly like Node does. If httpAllowHalfOpen is set, keep the
-             * connection open so in-flight and queued responses can still be
-             * written; it is shut down once the pipeline has drained (the
-             * shouldCloseConnection() checks on response completion). */
-            if (httpContextData->flags.httpAllowHalfOpen
-                && (httpResponseData->nodeHttpQueuedPipelinedCount > 0
-                    || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING))) {
+            /* Node's socketOnEnd: with httpAllowHalfOpen, in-flight and queued
+             * responses keep writing (Node marks the last one `_last` so
+             * resOnFinish destroySoon()s after it). Without it, Node does
+             * `socket.end()` — no new writes, but bytes already handed to the
+             * socket via res.write() drain before FIN. Either way, response
+             * bytes already queued (AsyncSocketData::buffer, or a pinned write
+             * an onWritable callback is still draining) must not be discarded
+             * by the close() below; the connection shuts down from the
+             * shouldCloseConnection() gates once they have flushed. */
+            bool hasQueuedOutgoing = asyncSocket->getBufferedAmount() > 0
+                || httpResponseData->onWritable != nullptr;
+            bool responseInFlight = httpResponseData->nodeHttpQueuedPipelinedCount > 0
+                || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
+            if (hasQueuedOutgoing || (httpContextData->flags.httpAllowHalfOpen && responseInFlight)) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN;
                 return s;
             }

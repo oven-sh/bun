@@ -5,6 +5,10 @@ import { bunEnv, bunExe, isDebug } from "harness";
 // is only bundled for debug and canary builds. Non-canary release builds omit
 // it entirely so the module source and testing-only native code are absent from
 // the shipped binary.
+//
+// PR CI only builds debug and canary, so `isBundled` is always true there and
+// the "missing" branch of the first test is only exercised when this file is
+// run against a local `bun run build:release --canary=false` binary.
 const isCanary = Bun.version_with_sha.includes("canary");
 const isBundled = isDebug || isCanary;
 

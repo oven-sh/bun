@@ -172,12 +172,13 @@ it("should call cancel() on ReadableStream when the Request is aborted", async (
     async server => {
       const controller = new AbortController();
       const signal = controller.signal;
-      const request = fetch(server.url, { signal });
+      // Headers are flushed before the first body chunk, so fetch() resolves
+      // here; the abort surfaces on the body reader.
+      const res = await fetch(server.url, { signal });
       await onIncomingRequest.promise;
       controller.abort();
-      expect(async () => await request).toThrow();
-      // Delay for one run of the event loop.
-      await Bun.sleep(1);
+      expect(async () => await res.blob()).toThrow();
+      await waitForCancel.promise;
 
       expect(abortedFn).toHaveBeenCalled();
       expect(cancelledFn).toHaveBeenCalled();
@@ -2737,6 +2738,106 @@ it.concurrent(
     expect(received).toBe(CHUNKS * payload.byteLength);
   },
   20_000,
+);
+
+describe.each(["default", "direct"] as const)(
+  "streaming Response headers are flushed before the first body chunk (%s stream)",
+  streamType => {
+    function makeServer(controllerBox: { enqueue: (s: string) => void; close: () => void }) {
+      return Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        fetch() {
+          const body =
+            streamType === "direct"
+              ? new ReadableStream({
+                  type: "direct",
+                  async pull(ctrl) {
+                    const { promise, resolve } = Promise.withResolvers<void>();
+                    controllerBox.enqueue = (s: string) => {
+                      ctrl.write(s);
+                      ctrl.flush();
+                    };
+                    controllerBox.close = resolve;
+                    await promise;
+                  },
+                })
+              : new ReadableStream({
+                  start(ctrl) {
+                    controllerBox.enqueue = (s: string) => ctrl.enqueue(new TextEncoder().encode(s));
+                    controllerBox.close = () => ctrl.close();
+                  },
+                });
+          return new Response(body, {
+            headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+          });
+        },
+      });
+    }
+
+    it.concurrent("raw socket sees the complete header section immediately", async () => {
+      const controllerBox = { enqueue: (_: string) => {}, close: () => {} };
+      await using server = makeServer(controllerBox);
+
+      let buffered = Buffer.alloc(0);
+      let headResolvers = Promise.withResolvers<string>();
+      let bodyResolvers = Promise.withResolvers<string>();
+      const socket = net.connect(server.port, "127.0.0.1", () => {
+        socket.write("GET /sse HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n");
+      });
+      socket.on("error", e => {
+        headResolvers.reject(e);
+        bodyResolvers.reject(e);
+      });
+      socket.on("data", chunk => {
+        buffered = Buffer.concat([buffered, chunk]);
+        const sep = buffered.indexOf("\r\n\r\n");
+        if (sep !== -1) headResolvers.resolve(buffered.subarray(0, sep).toString());
+        if (buffered.includes("data: hello")) bodyResolvers.resolve(buffered.toString());
+      });
+      try {
+        // The header section must complete before any body chunk has been produced.
+        const head = await headResolvers.promise;
+        expect(head.split("\r\n")[0]).toBe("HTTP/1.1 200 OK");
+        expect(head.toLowerCase()).toContain("content-type: text/event-stream");
+        expect(head.toLowerCase()).toContain("transfer-encoding: chunked");
+        expect(head.toLowerCase()).toContain("date: ");
+        // At this point the body must still be empty (no chunk was ever enqueued).
+        expect(buffered.subarray(buffered.indexOf("\r\n\r\n") + 4).toString()).toBe("");
+
+        // Now produce the first chunk and verify the body is framed correctly.
+        controllerBox.enqueue("data: hello\n\n");
+        const full = await bodyResolvers.promise;
+        const body = full.slice(full.indexOf("\r\n\r\n") + 4);
+        expect(body).toBe("d\r\ndata: hello\n\n\r\n");
+        controllerBox.close();
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    it.concurrent("fetch() resolves before the first body chunk", async () => {
+      const controllerBox = { enqueue: (_: string) => {}, close: () => {} };
+      await using server = makeServer(controllerBox);
+
+      // fetch() must resolve on the completed head, before any body byte exists.
+      const res = await fetch(server.url);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/event-stream");
+      expect(res.headers.get("transfer-encoding")).toBe("chunked");
+
+      const reader = res.body!.getReader();
+      controllerBox.enqueue("data: hello\n\n");
+      controllerBox.close();
+      let text = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (value) text += new TextDecoder().decode(value);
+        if (done) break;
+      }
+      expect(text).toBe("data: hello\n\n");
+    });
+  },
 );
 
 it.concurrent("allow requestIP after async operation", async () => {

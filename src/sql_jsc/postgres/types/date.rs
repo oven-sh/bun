@@ -75,6 +75,15 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
         return Ok(0);
     };
 
+    // Round-trip the ±Infinity the decoder produces back to DT_NOEND /
+    // DT_NOBEGIN; otherwise `f64::INFINITY as i64` saturates to i64::MAX and
+    // the subtract/multiply below overflows.
+    if double_value == f64::INFINITY {
+        return Ok(i64::MAX);
+    }
+    if double_value == f64::NEG_INFINITY {
+        return Ok(i64::MIN);
+    }
     let unix_timestamp: i64 = double_value as i64;
     Ok((unix_timestamp - POSTGRES_EPOCH_DATE) * US_PER_MS)
 }

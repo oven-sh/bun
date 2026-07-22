@@ -47,6 +47,25 @@ function be64(n: bigint): Buffer {
   return b;
 }
 
+function readBindParameters(body: Buffer): Buffer[] {
+  // PostgreSQL FE/BE §55.7 Bind: String(portal) String(stmt) Int16(nFmt)
+  // Int16[nFmt] Int16(nParams) (Int32 len, Byte[len])[nParams] ...
+  let o = body.indexOf(0) + 1;
+  o = body.indexOf(0, o) + 1;
+  const nFmt = body.readInt16BE(o);
+  o += 2 + 2 * nFmt;
+  const nParams = body.readInt16BE(o);
+  o += 2;
+  const out: Buffer[] = [];
+  for (let i = 0; i < nParams; i++) {
+    const len = body.readInt32BE(o);
+    o += 4;
+    out.push(len < 0 ? Buffer.alloc(0) : body.subarray(o, o + len));
+    if (len > 0) o += len;
+  }
+  return out;
+}
+
 // --- scripted backends -----------------------------------------------------
 
 // Simple-query backend: serves one RowDescription + one DataRow, latched per
@@ -201,3 +220,69 @@ test.each(["date_array", "timestamp_array", "timestamptz_array"] as const)(
     expect((row.a[2] as Date).getTime()).toBe(Date.UTC(2000, 0, 2));
   },
 );
+
+// --- encode (bind) path ----------------------------------------------------
+// Binding the ±Infinity the decoder produces back to a timestamp / timestamptz
+// parameter must write DT_NOEND / DT_NOBEGIN on the wire. Before the matching
+// from_js fix, `f64::INFINITY as i64` saturated to i64::MAX and the
+// (ms - epoch) * 1000 arithmetic overflowed: debug panicked, release wrapped
+// to a garbage i64.
+
+test.each(["timestamp", "timestamptz"] as const)("binding ±Infinity to %s writes DT_NOEND / DT_NOBEGIN", async t => {
+  let sent: Buffer[] | undefined;
+  const { port, server } = await listeningServer(socket => {
+    let pending = Buffer.alloc(0);
+    let sawStartup = false;
+    socket.on("data", chunk => {
+      pending = Buffer.concat([pending, chunk]);
+      if (!sawStartup) {
+        if (pending.length < 4) return;
+        const len = pending.readInt32BE(0);
+        if (pending.length < len) return;
+        pending = pending.subarray(len);
+        sawStartup = true;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+      }
+      pending = pgReadFrontendMessages(pending, (type, body) => {
+        if (type === 0x50 /* Parse */) {
+          socket.write(
+            Buffer.concat([
+              pgParseComplete(),
+              pgParameterDescription([OID[t], OID[t], OID[t]]),
+              pgRowDescription([{ name: "x", typeOid: 25 }]),
+              pgReadyForQuery(),
+            ]),
+          );
+        } else if (type === 0x42 /* Bind */) {
+          sent = readBindParameters(body);
+          socket.write(
+            Buffer.concat([pgBindComplete(), pgDataRow([Buffer.from("ok")]), pgCommandComplete("SELECT 1"), pgReadyForQuery()]),
+          );
+        }
+      });
+    });
+    socket.on("error", () => {});
+  });
+  try {
+    const sql = new SQL({
+      adapter: "postgres",
+      hostname: "127.0.0.1",
+      port,
+      username: "u",
+      database: "db",
+      tls: false,
+      max: 1,
+      prepare: true,
+      connectionTimeout: 2,
+    });
+    try {
+      await sql`select ${Infinity}, ${-Infinity}, ${new Date(Date.UTC(2000, 0, 2))}`;
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+    }
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+  expect(sent).toBeDefined();
+  expect(sent!.map(b => b.readBigInt64BE(0))).toEqual([PG_INT64_MAX, PG_INT64_MIN, 86_400_000_000n]);
+});

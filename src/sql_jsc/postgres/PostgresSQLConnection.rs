@@ -1664,6 +1664,19 @@ impl Writer {
     }
 }
 
+impl PostgresSQLConnection {
+    /// Absolute `byte_list` length of the write buffer, for pairing with
+    /// `write_buffer_rollback` around a multi-part write that may fail
+    /// mid-frame (Bind value encoding throwing after the header is committed).
+    pub fn write_buffer_mark(&self) -> usize {
+        self.write_buffer.get().byte_list.len()
+    }
+
+    pub fn write_buffer_rollback(&self, mark: usize) {
+        self.write_buffer.with_mut(|b| b.byte_list.truncate(mark));
+    }
+}
+
 impl protocol::WriterContext for Writer {
     #[inline]
     fn offset(self) -> usize {
@@ -2001,6 +2014,7 @@ impl PostgresSQLConnection {
                                         debug!("parse, bind and execute unnamed stmt");
                                         let query_str = req.query.to_utf8();
                                         let global = self.global_object;
+                                        let mark = self.write_buffer_mark();
                                         if let Err(err) =
                                             PostgresRequest::parse_and_bind_and_execute(
                                                 &global,
@@ -2012,6 +2026,7 @@ impl PostgresSQLConnection {
                                                 self.writer(),
                                             )
                                         {
+                                            self.write_buffer_rollback(mark);
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
@@ -2037,6 +2052,7 @@ impl PostgresSQLConnection {
                                     } else {
                                         debug!("binding and executing stmt");
                                         let global = self.global_object;
+                                        let mark = self.write_buffer_mark();
                                         if let Err(err) = PostgresRequest::bind_and_execute(
                                             &global,
                                             statement,
@@ -2044,6 +2060,7 @@ impl PostgresSQLConnection {
                                             columns_value,
                                             self.writer(),
                                         ) {
+                                            self.write_buffer_rollback(mark);
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
@@ -2198,6 +2215,7 @@ impl PostgresSQLConnection {
                                                 .unwrap_or(JSValue::ZERO);
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
                                         let global = self.global_object;
+                                        let mark = self.write_buffer_mark();
                                         if let Err(err) =
                                             PostgresRequest::parse_and_bind_and_execute(
                                                 &global,
@@ -2209,6 +2227,7 @@ impl PostgresSQLConnection {
                                                 self.writer(),
                                             )
                                         {
+                                            self.write_buffer_rollback(mark);
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {

@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{JSGlobalObject, JSGlobalObjectSqlExt, JSValue, JsResult};
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
 // This is a signed 64-bit integer.
@@ -51,6 +51,25 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
         return Ok(0);
     };
 
+    // Non-finite input, or ms whose `(ms - EPOCH) * 1000` overflows i64, would
+    // otherwise wrap (overflow-checks are off in every build profile) and send
+    // a silently-corrupt timestamp in Bind. Reject with a catchable error.
+    if !double_value.is_finite() {
+        return Err(global_object
+            .err_out_of_range(format_args!(
+                "timestamp value {double_value} is not a finite number of milliseconds"
+            ))
+            .throw());
+    }
     let unix_timestamp: i64 = double_value as i64;
-    Ok((unix_timestamp - POSTGRES_EPOCH_DATE) * US_PER_MS)
+    unix_timestamp
+        .checked_sub(POSTGRES_EPOCH_DATE)
+        .and_then(|v| v.checked_mul(US_PER_MS))
+        .ok_or_else(|| {
+            global_object
+                .err_out_of_range(format_args!(
+                    "timestamp value {double_value} ms is out of range for Postgres timestamp/timestamptz"
+                ))
+                .throw()
+        })
 }

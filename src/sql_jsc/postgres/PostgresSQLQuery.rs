@@ -663,6 +663,7 @@ impl PostgresSQLQuery {
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
+                                let mark = connection.write_buffer_mark();
                                 if let Err(err) = PostgresRequest::bind_and_execute(
                                     global_object,
                                     stmt,
@@ -670,6 +671,7 @@ impl PostgresSQLQuery {
                                     columns_value,
                                     writer,
                                 ) {
+                                    connection.write_buffer_rollback(mark);
                                     release_query_ref();
                                     return Err(throw_write_error(
                                         b"failed to bind and execute query",

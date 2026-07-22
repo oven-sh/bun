@@ -183,11 +183,10 @@ pub fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
             types::Tag::timestamp | types::Tag::timestamptz => {
+                let us = crate::postgres::types::date::from_js(global, value)
+                    .map_err(js_error_to_postgres)?;
                 let l = writer.length()?;
-                writer.int8(
-                    crate::postgres::types::date::from_js(global, value)
-                        .map_err(js_error_to_postgres)?,
-                )?;
+                writer.int8(us)?;
                 l.write_excluding_self()?;
             }
             types::Tag::bytea => {

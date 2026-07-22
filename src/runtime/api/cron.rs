@@ -10,7 +10,7 @@
 
 use std::io::Write as _;
 
-use super::cron_parser::{self, CronExpression};
+use super::cron_parser::{self, CronExpression, CronTz};
 
 use core::ffi::c_char;
 use std::cell::Cell;
@@ -678,15 +678,45 @@ impl CronRegisterJob {
     }
 }
 
+/// Resolve the `{ tz?: string }` option to a `CronTz`.
+fn resolve_cron_tz(global: &JSGlobalObject, opts: JSValue) -> JsResult<CronTz> {
+    if opts.is_empty() || opts.is_undefined_or_null() {
+        return Ok(CronTz::Local);
+    }
+    if !opts.is_object() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Bun.cron: options must be an object"
+        )));
+    }
+    let Some(tz_val) = opts.get_truthy(global, "tz")? else {
+        return Ok(CronTz::Local);
+    };
+    if !tz_val.is_string() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Bun.cron: options.tz must be a string"
+        )));
+    }
+    let tz_str = bun_core::OwnedString::new(tz_val.to_bun_string(global)?);
+    let tz_slice = tz_str.to_utf8();
+    match JSGlobalObject::resolve_time_zone_id(tz_slice.slice()) {
+        Some(id) => Ok(CronTz::Named(id)),
+        None => Err(global.throw_invalid_arguments(format_args!(
+            "Bun.cron: unknown time zone '{}'",
+            bstr::BStr::new(tz_slice.slice())
+        ))),
+    }
+}
+
 // -- JS entry point -- (free fn: `#[host_fn]` Free shim calls bare `cron_register(..)`)
 
 #[bun_jsc::host_fn]
 pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments_as_array::<3>();
 
-    // In-process callback cron: Bun.cron(schedule, handler)
+    // In-process callback cron: Bun.cron(schedule, handler, opts?)
     if args[1].is_callable() {
-        return CronJob::register(global, args[0], args[1]);
+        let tz = resolve_cron_tz(global, args[2])?;
+        return CronJob::register(global, args[0], args[1], tz);
     }
     if args[0].is_string() && args[2].is_undefined() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -1419,6 +1449,8 @@ pub struct CronJob {
     global: GlobalRef,
     // Read-only after construction.
     parsed: CronExpression,
+    // Read-only after construction.
+    tz: CronTz,
     poll_ref: JsCell<KeepAlive>,
     this_value: JsCell<JsRef>,
     stopped: Cell<bool>,
@@ -1640,7 +1672,7 @@ impl CronJob {
         // (clock skew / NTP step); floor next() at the prior target so it can't
         // recompute the same minute and double-fire.
         let from_ms = now_ms.max(self.last_next_ms.get());
-        let next_ms = match self.parsed.next(&self.global, from_ms) {
+        let next_ms = match self.parsed.next(&self.global, from_ms, self.tz) {
             Ok(Some(v)) => v,
             _ => return None,
         };
@@ -1835,6 +1867,7 @@ impl CronJob {
         global: &JSGlobalObject,
         schedule_arg: JSValue,
         callback_arg: JSValue,
+        tz: CronTz,
     ) -> JsResult<JSValue> {
         if !schedule_arg.is_string() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1863,6 +1896,7 @@ impl CronJob {
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(EventLoopTimerTag::CronJob)),
             global: GlobalRef::from(global),
             parsed,
+            tz,
             poll_ref: JsCell::new(KeepAlive::default()),
             this_value: JsCell::new(JsRef::empty()),
             stopped: Cell::new(false),
@@ -2014,7 +2048,7 @@ pub fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> JSValue
 
 #[bun_jsc::host_fn]
 pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_as_array::<2>();
+    let args = frame.arguments_as_array::<3>();
 
     if !args[0].is_string() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -2054,7 +2088,9 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
     }
 
-    let Some(next_ms) = parsed.next(global, from_ms)? else {
+    let tz = resolve_cron_tz(global, args[2])?;
+
+    let Some(next_ms) = parsed.next(global, from_ms, tz)? else {
         return Ok(JSValue::NULL);
     };
     // Return null (not Invalid Date) so callers can rely on `=== null` for "no future match".

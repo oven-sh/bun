@@ -191,7 +191,7 @@ impl JSGlobalObject {
         )
     }
 
-    pub fn ms_to_gregorian_date_time(&self, ms: f64) -> GregorianDateTime {
+    fn ms_to_gregorian_date_time_impl(&self, ms: f64, local: bool) -> GregorianDateTime {
         crate::mark_binding();
         let mut dt = GregorianDateTime::default();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
@@ -200,7 +200,7 @@ impl JSGlobalObject {
             crate::cpp::raw::Bun__msToGregorianDateTime(
                 self.as_ptr(),
                 ms,
-                true,
+                local,
                 &raw mut dt.year,
                 &raw mut dt.month,
                 &raw mut dt.day,
@@ -211,6 +211,75 @@ impl JSGlobalObject {
             );
         }
         dt
+    }
+
+    pub fn ms_to_gregorian_date_time_utc(&self, ms: f64) -> GregorianDateTime {
+        self.ms_to_gregorian_date_time_impl(ms, false)
+    }
+
+    pub fn ms_to_gregorian_date_time(&self, ms: f64) -> GregorianDateTime {
+        self.ms_to_gregorian_date_time_impl(ms, true)
+    }
+
+    pub fn ms_to_gregorian_date_time_in_zone(&self, ms: f64, tz_id: u32) -> GregorianDateTime {
+        crate::mark_binding();
+        let mut dt = GregorianDateTime::default();
+        // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
+        // stack locals (`dt` fields) and remain valid for the duration of the call.
+        unsafe {
+            crate::cpp::raw::Bun__msToGregorianDateTimeInZone(
+                self.as_ptr(),
+                ms,
+                tz_id,
+                &raw mut dt.year,
+                &raw mut dt.month,
+                &raw mut dt.day,
+                &raw mut dt.hour,
+                &raw mut dt.minute,
+                &raw mut dt.second,
+                &raw mut dt.weekday,
+            );
+        }
+        dt
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn gregorian_date_time_to_ms_in_zone(
+        &self,
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+        second: i32,
+        millisecond: i32,
+        tz_id: u32,
+    ) -> f64 {
+        crate::mark_binding();
+        // SAFETY: FFI — &self is a valid JSGlobalObject*.
+        unsafe {
+            crate::cpp::raw::Bun__gregorianDateTimeToMSInZone(
+                self.as_ptr(),
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                millisecond,
+                tz_id,
+            )
+        }
+    }
+
+    /// Resolve an IANA time-zone name to a `TimeZoneID` suitable for
+    /// `*_in_zone`. Returns `None` if the name is not recognised.
+    pub fn resolve_time_zone_id(name: &[u8]) -> Option<u32> {
+        crate::mark_binding();
+        // SAFETY: FFI — `name` is a valid byte slice; len matches. The C++ side reads
+        // only `len` bytes and does not retain the pointer.
+        let id = unsafe { crate::cpp::raw::Bun__resolveTimeZoneID(name.as_ptr(), name.len()) };
+        if id == u32::MAX { None } else { Some(id) }
     }
 
     pub fn throw_todo(&self, msg: &[u8]) -> JsError {

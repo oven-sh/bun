@@ -41,10 +41,11 @@ console.log(next); // => next quarter-hour boundary
 
 ### Parameters
 
-| Parameter      | Type             | Description                                              |
-| -------------- | ---------------- | -------------------------------------------------------- |
-| `expression`   | `string`         | A 5-field cron expression or predefined nickname         |
-| `relativeDate` | `Date \| number` | Starting point for the search (defaults to `Date.now()`) |
+| Parameter      | Type              | Description                                                                    |
+| -------------- | ----------------- | ------------------------------------------------------------------------------ |
+| `expression`   | `string`          | A 5-field cron expression or predefined nickname                               |
+| `relativeDate` | `Date \| number`  | Starting point for the search (defaults to `Date.now()`)                       |
+| `options`      | `{ tz?: string }` | IANA time-zone name to interpret the schedule in (defaults to the system zone) |
 
 ### Returns
 
@@ -120,7 +121,15 @@ console.log(next); // => next local midnight
 
 Schedules are interpreted in the system's **local time zone** — the same way crontab, launchd, and Windows Task Scheduler read them. The OS-level form and the in-process callback form fire at the same wall-clock time.
 
-To use UTC, set `TZ=UTC` in the environment.
+To override, pass an IANA time-zone name as `{ tz }` to `Bun.cron.parse()` or the in-process `Bun.cron(schedule, handler, options)`:
+
+```ts
+// 09:00 UTC, regardless of the server's TZ
+Bun.cron.parse("0 9 * * *", Date.now(), { tz: "UTC" });
+
+// Fire at 09:00 New York time
+Bun.cron("0 9 * * *", handler, { tz: "America/New_York" });
+```
 
 DST transitions:
 
@@ -166,8 +175,9 @@ In-process scheduling is the lightweight option for long-running servers and wor
 | ---------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `schedule` | `string`                     | A [cron expression](#cron-expression-syntax) or nickname like `"@hourly"`.                                                                                                   |
 | `handler`  | `(this: CronJob) => unknown` | Called on each fire. May return a Promise — the next fire is not scheduled until it settles. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
+| `options`  | `{ tz?: string }`            | IANA time-zone name to interpret the schedule in (defaults to the system zone).                                                                                              |
 
-Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` if the expression is invalid or has no future occurrences, like `"0 0 30 2 *"` (February 30th).
+Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` if the expression is invalid, the time-zone name is unknown, or the expression has no future occurrences, like `"0 0 30 2 *"` (February 30th).
 
 ### No-overlap guarantee
 

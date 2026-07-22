@@ -104,10 +104,14 @@ describe("Bun.cron.parse — invalid `from` argument", () => {
          process.stdout.write(JSON.stringify(out));`,
       ],
       env: { ...bunEnv, TZ: "UTC" },
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual([null, "-271821-04-20T00:01:00.000Z", 8.64e15]);
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      out: [null, "-271821-04-20T00:01:00.000Z", 8.64e15],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("does not crash the process on 1e300", async () => {
@@ -121,6 +125,6 @@ describe("Bun.cron.parse — invalid `from` argument", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "Invalid date value", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Invalid date value", stderr: "", exitCode: 0 });
   });
 });

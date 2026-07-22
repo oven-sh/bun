@@ -155,3 +155,97 @@ describe.concurrent("Bun.cron.parse — DST transitions", () => {
     expect(next).toBe("2025-09-07T04:00:00.000Z");
   });
 });
+
+describe.concurrent("Bun.cron.parse — { tz } option", () => {
+  test("overrides process TZ (UTC opt under LA process)", async () => {
+    const next = await evalInTZ(
+      "America/Los_Angeles",
+      `process.stdout.write(Bun.cron.parse("0 9 * * *", new Date("2026-06-15T00:00:00Z"), {tz: "UTC"}).toISOString())`,
+    );
+    expect(next).toBe("2026-06-15T09:00:00.000Z");
+  });
+
+  test("named zone (America/New_York under UTC process)", async () => {
+    const next = await evalInTZ(
+      "UTC",
+      `process.stdout.write(Bun.cron.parse("0 9 * * *", new Date("2026-06-15T00:00:00Z"), {tz: "America/New_York"}).toISOString())`,
+    );
+    // 9am EDT (UTC-4) = 13:00 UTC
+    expect(next).toBe("2026-06-15T13:00:00.000Z");
+  });
+
+  test("tz option matches the same zone set as process TZ", async () => {
+    const zones = ["America/Los_Angeles", "Asia/Tokyo", "Pacific/Auckland", "Australia/Lord_Howe"];
+    const out = await evalInTZ(
+      "UTC",
+      `const zones = ${JSON.stringify(zones)};
+       const r = {};
+       for (const z of zones) {
+         const viaOpt = Bun.cron.parse("0 9 * * *", new Date("2026-06-15T00:00:00Z"), {tz: z}).toISOString();
+         process.env.TZ = z;
+         const viaEnv = Bun.cron.parse("0 9 * * *", new Date("2026-06-15T00:00:00Z")).toISOString();
+         process.env.TZ = "UTC";
+         r[z] = { viaOpt, viaEnv };
+       }
+       process.stdout.write(JSON.stringify(r))`,
+    );
+    const r = JSON.parse(out);
+    for (const z of zones) expect({ zone: z, ...r[z] }).toEqual({ zone: z, viaOpt: r[z].viaEnv, viaEnv: r[z].viaEnv });
+  });
+
+  test("DST via tz option matches DST via process TZ (spring-forward)", async () => {
+    // US 2025 spring-forward: "30 2 * * *" → 03:30 EDT on 2025-03-09.
+    const next = await evalInTZ(
+      "UTC",
+      `process.stdout.write(Bun.cron.parse("30 2 * * *", new Date("2025-03-09T05:00:00Z"), {tz: "America/New_York"}).toISOString())`,
+    );
+    expect(next).toBe("2025-03-09T07:30:00.000Z");
+  });
+
+  test("DST via tz option matches DST via process TZ (fall-back, fixed fires once)", async () => {
+    // From the second 01:30 (EST), "30 1 * * *" → next day.
+    const next = await evalInTZ(
+      "UTC",
+      `process.stdout.write(Bun.cron.parse("30 1 * * *", new Date("2025-11-02T06:30:00Z"), {tz: "America/New_York"}).toISOString())`,
+    );
+    expect(next).toBe("2025-11-03T06:30:00.000Z");
+  });
+
+  test("unknown tz throws", () => {
+    expect(() => Bun.cron.parse("* * * * *", Date.now(), { tz: "Mars/Olympus" })).toThrow(
+      /unknown time zone 'Mars\/Olympus'/,
+    );
+    expect(() => Bun.cron("* * * * *", () => {}, { tz: "Mars/Olympus" })).toThrow(
+      /unknown time zone 'Mars\/Olympus'/,
+    );
+  });
+
+  test("non-string tz throws", () => {
+    // @ts-expect-error
+    expect(() => Bun.cron.parse("* * * * *", Date.now(), { tz: 42 })).toThrow(/options\.tz must be a string/);
+  });
+
+  test("tz: undefined falls back to local", async () => {
+    const next = await evalInTZ(
+      "Asia/Tokyo",
+      `process.stdout.write(Bun.cron.parse("0 9 * * *", new Date("2026-06-15T00:00:00Z"), {tz: undefined}).toISOString())`,
+    );
+    expect(next).toBe("2026-06-16T00:00:00.000Z");
+  });
+
+  test("in-process Bun.cron(schedule, handler, { tz }) uses the override", async () => {
+    const out = await evalInTZ(
+      "UTC",
+      `const { jest } = await import("bun:test");
+       jest.useFakeTimers();
+       jest.setSystemTime(new Date("2026-06-15T00:00:00Z"));
+       const fired = [];
+       using job = Bun.cron("0 9 * * *", () => fired.push(new Date().toISOString()), { tz: "America/New_York" });
+       jest.advanceTimersByTime(14 * 60 * 60 * 1000);
+       jest.useRealTimers();
+       process.stdout.write(JSON.stringify(fired));`,
+    );
+    // 9am EDT = 13:00 UTC; advancing 14h from 00:00Z fires exactly once at 13:00Z.
+    expect(JSON.parse(out)).toEqual(["2026-06-15T13:00:00.000Z"]);
+  });
+});

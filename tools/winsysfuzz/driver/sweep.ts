@@ -670,6 +670,11 @@ for (const r of results) {
   // An allocator-failure fault whose replays exit with an error is
   // crash-on-OOM by design, not a finding worth a human look.
   if (r.job.expect === "abort-expected" && v.outcomes.every(o => o !== "HANG" && o !== "CRASH")) continue;
+  // A short/mangled transfer that only makes the program SLOW is a
+  // correct retry loop paying its retry cost - expected, not a bug.
+  if (r.job.mode.startsWith("mangle") && v.verdict === "slow") continue;
+  // Nothing to look at when no replay reproduced anything.
+  if (v.verdict === "not-reproduced") continue;
   const dedupeKey = r.crashSig ? `crash: ${r.crashSig.signature}` : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;
   queueLines.push(
     JSON.stringify({

@@ -56,10 +56,10 @@ test.skipIf(!isLinux || isASAN || isDebug)(
     );
 
     let sawCaught = false;
-    let sawInputOK = false;
+    const reachedShapes = new Set<string>();
     for (const { shape, size, stdout, stderr, exitCode, signal } of results) {
       if (!stdout.includes("INPUT-OK")) continue;
-      sawInputOK = true;
+      reachedShapes.add(shape);
 
       // Once the input is built, JSON.parse must not kill the process.
       expect({ shape, size, stdout: stdout.trim(), stderr: stderr.trim(), exitCode, signal }).toMatchObject({
@@ -78,9 +78,9 @@ test.skipIf(!isLinux || isASAN || isDebug)(
       }
     }
 
-    // The sweep has to actually reach JSON.parse at least once; otherwise the
-    // address-space cap was too tight and nothing was exercised.
-    expect(sawInputOK).toBe(true);
+    // Every shape must reach JSON.parse; a SETUP-FAIL means the address-space
+    // cap was too tight for that case and nothing was exercised there.
+    expect([...reachedShapes].sort()).toEqual([...new Set(cases.map(([s]) => s))].sort());
     // And at least one of those runs must have taken the out-of-memory branch,
     // otherwise the sweep never exercised the path this test is for.
     expect(sawCaught).toBe(true);

@@ -464,7 +464,7 @@ impl BlobExt for Blob {
                 global.bun_vm().event_loop(),
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
-                self.size.get(),
+                self.read_limit(),
                 handler.cast(),
             );
             return promise_value;
@@ -475,7 +475,7 @@ impl BlobExt for Blob {
             let file_read = read_file::ReadFile::create(
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
-                self.size.get(),
+                self.read_limit(),
                 handler,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
@@ -680,7 +680,7 @@ impl BlobExt for Blob {
                 global.bun_vm().event_loop(),
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
-                self.size.get(),
+                self.read_limit(),
                 NewInternalReadFileHandler::<C, F>::run,
                 ctx.cast::<c_void>(),
             );
@@ -692,7 +692,7 @@ impl BlobExt for Blob {
                 ctx.cast::<c_void>(),
                 NewInternalReadFileHandler::<C, F>::run,
                 self.offset.get(),
-                self.size.get(),
+                self.read_limit(),
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             let read_file_task = read_file::ReadFileTask::create_on_js_thread(
@@ -1975,6 +1975,9 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
+        // `MAX_SIZE` is the "unbounded" sentinel, so an unbounded slice of an
+        // unresolved file blob is still unbounded.
+        blob.size_is_explicit.set(len != MAX_SIZE);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -2312,6 +2315,12 @@ impl BlobExt for Blob {
                 if store.data_mut().as_file().seekable.is_none() {
                     resolve_file_stat(store);
                 }
+                // A sliced view already carries the bounds the caller asked for,
+                // and `stat` cannot clamp them: its size is a hint (see
+                // `Blob::read_limit`), so a 0 from procfs would zero the slice.
+                if self.size_is_explicit.get() {
+                    return;
+                }
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
                 let file = store.data_mut().as_file();
 
@@ -2361,6 +2370,10 @@ impl BlobExt for Blob {
             store::DataTag::File => {
                 if store.data_mut().as_file().seekable.is_none() {
                     resolve_file_stat(store);
+                }
+                // see `resolve_size` — a caller-supplied bound is authoritative.
+                if self.size_is_explicit.get() {
+                    return (self.offset.get(), self.size.get());
                 }
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
                 let file = store.data_mut().as_file();
@@ -3343,6 +3356,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    size_is_explicit: Cell::new(blob.size_is_explicit.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -4028,7 +4042,10 @@ impl FormDataContext<'_> {
                             rf_args.encoding = crate::node::types::Encoding::Buffer;
                             rf_args.path = file.pathlike.clone();
                             rf_args.offset = blob.offset.get();
-                            rf_args.max_size = Some(blob.size.get());
+                            // `None` lets `read_file` read past a `stat` size it
+                            // cannot trust; only a sliced view caps the read.
+                            let limit = blob.read_limit();
+                            rf_args.max_size = (limit != MAX_SIZE).then_some(limit);
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
                             match res {
                                 Err(err) => {

@@ -349,8 +349,8 @@ impl ReadableStream {
                             global_this.bun_vm().as_mut().event_loop().cast(),
                         )),
                         start_offset: Some(blob.offset.get() as usize),
-                        max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
-                            Some(blob.size.get() as usize)
+                        max_size: if blob.read_limit() != webcore::blob::MAX_SIZE {
+                            Some(blob.read_limit() as usize)
                         } else {
                             None
                         },

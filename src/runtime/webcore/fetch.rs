@@ -1786,7 +1786,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
-            let blob_size = body.any_blob().blob().size.get();
+            let read_limit = body.any_blob().blob().read_limit();
             // The `vm.node_fs()` accessor is a jsc↔runtime cycle. `read_file`
             // with an `Fd` path only touches `self.sync_error_buf` for
             // path-variant inputs, so a fresh `NodeFS` is sufficient here.
@@ -1796,7 +1796,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             rf_args.encoding = Encoding::Buffer;
             rf_args.path = PathOrFileDescriptor::Fd(*opened_fd);
             rf_args.offset = blob_offset;
-            rf_args.max_size = Some(blob_size);
+            // `None` lets `read_file` read past a `stat` size it cannot trust;
+            // only a sliced view caps the read.
+            rf_args.max_size = (read_limit != blob::MAX_SIZE).then_some(read_limit);
             let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
             // Eagerly close before constructing the (potentially large) JS

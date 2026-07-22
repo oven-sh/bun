@@ -282,3 +282,104 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
   // page retention inflate RSS even with no leak, so widen the threshold.
   expect(secondHalfMiB).toBeLessThan(isASAN ? 400 : 12);
 }, 60_000);
+
+// https://fetch.spec.whatwg.org/#http-redirect-fetch step 5: "If request's
+// redirect count is 20, then return a network error." A network error rejects
+// the fetch() promise with a TypeError.
+describe("fetch() redirect limit", () => {
+  // `/0 -> /1 -> ... -> /hops` via 302, then a 200. `requests.count` is the
+  // number of round trips the client actually made.
+  function redirectChain(hops: number) {
+    const requests = { count: 0 };
+    const server = Bun.serve({
+      port: 0,
+      fetch(request: Request) {
+        requests.count++;
+        const n = Number(new URL(request.url).pathname.slice("/".length));
+        if (n >= hops) return new Response("done");
+        return new Response(null, { status: 302, headers: { Location: `/${n + 1}` } });
+      },
+    });
+    return { server, requests, [Symbol.dispose]: () => server.stop(true) };
+  }
+
+  async function rejection(promise: Promise<unknown>): Promise<any> {
+    return await promise.then(
+      () => {
+        throw new Error("expected the fetch promise to reject");
+      },
+      (e: unknown) => e,
+    );
+  }
+
+  it.concurrent("follows exactly 20 redirects by default", async () => {
+    using chain = redirectChain(20);
+    const resp = await fetch(`${chain.server.url}0`);
+    expect(await resp.text()).toBe("done");
+    expect(resp.status).toBe(200);
+    expect(chain.requests.count).toBe(21);
+  });
+
+  it.concurrent("rejects the 21st redirect with a TypeError", async () => {
+    using chain = redirectChain(21);
+    const err = await rejection(fetch(`${chain.server.url}0`));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("TooManyRedirects");
+    expect(err.message).toContain("redirected too many times");
+    // 20 redirects were followed; the 21st redirect response is the error.
+    expect(chain.requests.count).toBe(21);
+  });
+
+  it.concurrent("a self-redirect loop makes exactly 21 requests before rejecting", async () => {
+    let requests = 0;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        requests++;
+        return new Response(null, { status: 302, headers: { Location: "/" } });
+      },
+    });
+    const err = await rejection(fetch(server.url));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("TooManyRedirects");
+    expect(requests).toBe(21);
+  });
+
+  it.concurrent("exceeding an explicit maxRedirects rejects with a TypeError", async () => {
+    using chain = redirectChain(3);
+    const err = await rejection(fetch(`${chain.server.url}0`, { maxRedirects: 2 }));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("TooManyRedirects");
+    expect(chain.requests.count).toBe(3);
+  });
+
+  it.concurrent('redirect: "error" rejects with a TypeError', async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(null, { status: 302, headers: { Location: "/elsewhere" } }),
+    });
+    const err = await rejection(fetch(server.url, { redirect: "error" }));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("UnexpectedRedirect");
+  });
+
+  it.concurrent("a redirect to a non-HTTP(S) scheme rejects with a TypeError", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(null, { status: 302, headers: { Location: "ftp://example.com/" } }),
+    });
+    const err = await rejection(fetch(server.url));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("UnsupportedRedirectProtocol");
+  });
+
+  it.concurrent("a redirect to an unparseable URL rejects with a TypeError", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(null, { status: 302, headers: { Location: "http://[/" } }),
+    });
+    const err = await rejection(fetch(server.url));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("RedirectURLInvalid");
+  });
+});

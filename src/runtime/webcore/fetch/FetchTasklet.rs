@@ -1287,7 +1287,8 @@ impl FetchTasklet {
         let fail = self.result.fail.unwrap();
 
         // Fetch-spec "network error" cases that callers feature-detect via
-        // `instanceof TypeError`. Keep this list narrow; the catch-all
+        // `instanceof TypeError`. Keep this list narrow (redirect failures are
+        // handled below so their `code` property survives); the catch-all
         // SystemError below is still a plain Error for backwards compat.
         if fail == http::Error::RequestBodyNotReusable {
             return BodyValueError::TypeError(BunString::static_(
@@ -1567,6 +1568,19 @@ impl FetchTasklet {
             fd: core::ffi::c_int::MIN,
             dest: BunString::EMPTY,
         };
+
+        // HTTP-redirect fetch returns a network error for each of these
+        // (https://fetch.spec.whatwg.org/#http-redirect-fetch), and a network
+        // error rejects fetch() with a `TypeError`. Same `code`/`path`/message.
+        if fail == err!("TooManyRedirects")
+            || fail == err!("UnexpectedRedirect")
+            || fail == err!("RedirectURLInvalid")
+            || fail == err!("InvalidRedirectURL")
+            || fail == err!("RedirectURLTooLong")
+            || fail == err!("UnsupportedRedirectProtocol")
+        {
+            return BodyValueError::SystemTypeError(fetch_error);
+        }
 
         BodyValueError::SystemError(fetch_error)
     }

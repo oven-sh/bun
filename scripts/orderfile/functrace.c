@@ -125,9 +125,8 @@ static void sync_icache(uintptr_t rx, void *rw, size_t n)
 
 // ─── sigaction interposer ───────────────────────────────────────────────────
 // bun installs SIGILL for its crash reporter, and user code can register
-// SIGTRAP. Keep the real sigaction and swallow registrations for the signals
-// our breakpoints raise while armed.
-static sigaction_fn real_sigaction;
+// SIGTRAP. Swallow registrations for the signals our breakpoints raise while
+// armed so nothing replaces the handler.
 
 static int swallow_signal(int sig)
 {
@@ -140,6 +139,8 @@ static int swallow_signal(int sig)
 }
 
 #if defined(__linux__)
+static sigaction_fn real_sigaction;
+
 int sigaction(int sig, const struct sigaction *act, struct sigaction *old)
 {
     if (!real_sigaction) real_sigaction = (sigaction_fn)dlsym(RTLD_NEXT, "sigaction");
@@ -185,7 +186,9 @@ static int interposed_sigaction(int sig, const struct sigaction *act, struct sig
         if (old) memset(old, 0, sizeof *old);
         return 0;
     }
-    return real_sigaction(sig, act, old);
+    // dyld interposition does not redirect this dylib's own calls, so this
+    // reaches the real libSystem sigaction without recursion.
+    return sigaction(sig, act, old);
 }
 
 typedef int (*sigmask_fn)(int, const sigset_t *, sigset_t *);
@@ -323,10 +326,9 @@ static int remap_executable(void)
     return 0;
 }
 #else
-static uintptr_t seg_start, seg_end; // page-aligned __TEXT, the span we remap
-
 static int remap_executable(void)
 {
+    uintptr_t seg_start = 0, seg_end = 0; // page-aligned __TEXT, the span we remap
     long page = sysconf(_SC_PAGESIZE);
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
@@ -364,11 +366,11 @@ static int remap_executable(void)
 
     // VM_PROT_COPY promotes the file-backed pages to anonymous COW copies we
     // can write. RWX is refused on __TEXT even with COPY (maxprot stays r-x),
-    // so the segment goes RW for the duration of the constructor — this code
-    // is in the dylib's own __TEXT, so nothing executing right now loses its
-    // X bit — and back to RX once the breakpoints are in. A separate RW alias
-    // of the same pages is kept so the handler can restore instructions after
-    // the segment is RX again.
+    // so the segment goes RW while the alias is set up — this code is in the
+    // dylib's own __TEXT, so nothing executing right now loses its X bit — and
+    // back to RX before this function returns either way, so an early return
+    // anywhere later still leaves the executable runnable. Writes after that
+    // go through the RW alias; the original stays RX.
     size_t n = seg_end - seg_start;
     kern_return_t kr =
         mach_vm_protect(mach_task_self(), seg_start, n, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
@@ -377,10 +379,12 @@ static int remap_executable(void)
     // visible at both. FALSE = shared, not a fresh copy.
     mach_vm_address_t alias = 0;
     vm_prot_t cur = 0, max = 0;
-    kr = mach_vm_remap(mach_task_self(), &alias, n, 0, VM_FLAGS_ANYWHERE, mach_task_self(), seg_start, FALSE, &cur,
-                       &max, VM_INHERIT_NONE);
-    if (kr != KERN_SUCCESS) return -1;
-    if (mach_vm_protect(mach_task_self(), alias, n, FALSE, VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS) return -1;
+    int ok = mach_vm_remap(mach_task_self(), &alias, n, 0, VM_FLAGS_ANYWHERE, mach_task_self(), seg_start, FALSE, &cur,
+                           &max, VM_INHERIT_NONE) == KERN_SUCCESS &&
+             mach_vm_protect(mach_task_self(), alias, n, FALSE, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS;
+    if (mach_vm_protect(mach_task_self(), seg_start, n, FALSE, VM_PROT_READ | VM_PROT_EXECUTE) != KERN_SUCCESS)
+        return -1;
+    if (!ok) return -1;
     for (int i = 0; i < region_count; i++) regions[i].rw = (uint8_t *)alias + (regions[i].start - seg_start);
     return 0;
 }
@@ -446,12 +450,6 @@ static int install_breakpoints(void)
     }
     for (int r = 0; r < region_count; r++)
         sync_icache(regions[r].start, regions[r].rw, regions[r].end - regions[r].start);
-#if defined(__APPLE__)
-    // Patched; flip __TEXT back to RX. The handler writes through the RW alias.
-    if (mach_vm_protect(mach_task_self(), seg_start, seg_end - seg_start, FALSE, VM_PROT_READ | VM_PROT_EXECUTE) !=
-        KERN_SUCCESS)
-        return -1;
-#endif
     return 0;
 }
 
@@ -460,9 +458,10 @@ static int open_record(const char *path)
     size_t bytes = (TRACE_HEADER_WORDS + start_count) * 8;
     int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
     if (fd < 0 || ftruncate(fd, (off_t)bytes) != 0) return -1;
-    record = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void *map = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     close(fd);
-    if (record == MAP_FAILED) return -1;
+    if (map == MAP_FAILED) return -1;
+    record = map;
     record[0] = TRACE_MAGIC;
     record[1] = FILE_VERSION;
     record[2] = slide;
@@ -500,6 +499,9 @@ __attribute__((constructor(101))) static void functrace_init(void)
     if (remap_executable() != 0) return;
 #endif
     if (read_starts(starts_path) != 0) return;
+    // The record backs every trap, so it must exist before the first breakpoint
+    // can fire: `install_breakpoints()` is the point of no return.
+    if (open_record(out_path) != 0) return;
 
     static char altstack[256 * 1024];
     stack_t ss = { .ss_sp = altstack, .ss_size = sizeof altstack, .ss_flags = 0 };
@@ -515,12 +517,10 @@ __attribute__((constructor(101))) static void functrace_init(void)
     if (!real_sigaction) return;
     real_sigaction(SIGTRAP, &sa, NULL);
 #else
-    real_sigaction = (sigaction_fn)interposers[0].original;
-    real_sigaction(SIGTRAP, &sa, NULL);
-    real_sigaction(SIGILL, &sa, NULL);
+    sigaction(SIGTRAP, &sa, NULL);
+    sigaction(SIGILL, &sa, NULL);
 #endif
 
     if (install_breakpoints() != 0) return;
-    if (open_record(out_path) != 0) return;
     armed = 1;
 }

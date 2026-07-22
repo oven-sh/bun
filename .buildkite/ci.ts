@@ -10,8 +10,7 @@
 
 import { join } from "node:path";
 import { checkImages } from "../scripts/build/ci/existence.ts";
-import { generateCiImages } from "../scripts/build/ci/generate/generate.ts";
-import { imageEntry, imageKey, imageName } from "../scripts/build/ci/generate/naming.ts";
+import { imageEntry, imageKey, imageName } from "../scripts/build/ci/naming.ts";
 import { alpineRelease } from "../scripts/build/ci/spec.ts";
 import {
   getBuildkiteEmoji,
@@ -239,7 +238,7 @@ function getPlatformLabel(platform) {
  * The spec image key for a platform. Cross-compiled targets and FreeBSD
  * build on a linux host image (the build host cross-compiles everything),
  * so their host OS is linux; native test platforms map to their own entry.
- * See scripts/build/ci/generate/naming.ts.
+ * See scripts/build/ci/naming.ts.
  * @param {Platform} platform
  * @returns {string}
  */
@@ -1381,9 +1380,6 @@ async function getPipeline(options = {}) {
   // No fallback: if the credentials aren't resolvable or the cloud query
   // fails, pipeline generation FAILS. A broken existence check must be seen
   // and fixed, never masked by quietly baking everything (or nothing).
-  // Names are hashes of the GENERATED files, so generate them first (the
-  // same generator `bun scripts/build.ts` runs).
-  generateCiImages();
   let existence;
   try {
     existence = await checkImages(

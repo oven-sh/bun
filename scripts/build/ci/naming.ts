@@ -1,41 +1,37 @@
 // Content-addressed CI image names.
 //
 // An image is named `${entry.key}-${imageHash(entry)}` where the hash is a
-// digest of the image's GENERATED files (build/ci/<key>/, from generate.ts):
-// the self-contained bootstrap.ts, the Packer template, and the agent
-// bundle. Those files are derived from spec.ts, so editing the spec (or the
-// recipe code they are built from) changes the files, which changes the
-// name, which makes CI bake. Files unchanged -> name unchanged -> reuse.
+// digest of the image's spec ENTRY as a value: its record from spec.ts,
+// serialized canonically (sorted keys, no whitespace) and sha256'd. It is
+// the value that is hashed, not the source text — a comment, a reformat, or
+// a key reorder in spec.ts changes no value and so renames nothing. Change
+// a fact in the entry → the hash changes → CI bakes it; unchanged → the
+// name matches an existing image → CI reuses it. No version to bump.
 //
 // The same name is used for the AWS AMI and the Azure gallery image
 // definition, and robobun launches CI machines by looking that exact name
 // up — no wildcards, no version numbers, no newest-wins.
 
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { images } from "../images.ts";
-import type { Image } from "../types.ts";
-import { hashImageDir, imageOutDir } from "./outputs.ts";
+import { createHash } from "node:crypto";
+import { images } from "./images.ts";
+import type { Image } from "./types.ts";
 
 /** Length of the hex hash suffix. 16 hex chars = 64 bits; collision odds
  * across the handful of specs that ever exist are negligible. */
 const HASH_LENGTH = 16;
 
-/**
- * The hex digest of one image's GENERATED files (build/ci/<key>/): the
- * self-contained bootstrap.ts, the Packer template, the agent bundle — the
- * exact bytes that are baked. Requires the files to have been generated
- * (bun scripts/build.ts, or scripts/build/ci/generate.ts).
- */
+/** Deterministic JSON: keys sorted at every level, arrays in order. */
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+}
+
+/** The hex digest of one image's entry value. */
 export function imageHash(entry: Image): string {
-  const dir = imageOutDir(entry);
-  if (!existsSync(join(dir, "bootstrap.ts"))) {
-    throw new Error(
-      `image "${entry.key}" has no generated files at ${dir}.\n` +
-        `Run \`node scripts/build/ci/generate.ts\` (or \`bun scripts/build.ts\`) first.`,
-    );
-  }
-  return hashImageDir(dir).slice(0, HASH_LENGTH);
+  return createHash("sha256").update(canonicalJson(entry)).digest("hex").slice(0, HASH_LENGTH);
 }
 
 /** The full name every consumer agrees on: robobun's `image-name` agent
@@ -77,9 +73,9 @@ export function imageEntry(key: string): Image {
   const entry = images.find(image => image.key === key);
   if (!entry) {
     throw new Error(
-      `No image entry with key "${key}" in scripts/build/ci/spec.ts.\n` +
+      `No image entry with key "${key}" in the CI image spec.\n` +
         `Known keys: ${images.map(image => image.key).join(", ")}\n` +
-        `Add an entry to spec.images (or fix the platform) so CI can bake it.`,
+        `Add an entry to the spec so CI can bake it.`,
     );
   }
   return entry;

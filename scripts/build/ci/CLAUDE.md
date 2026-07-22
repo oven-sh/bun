@@ -39,27 +39,23 @@ number to bump anywhere. Merging _is_ publishing.
 
 | file                                                | role |
 | --------------------------------------------------- | ---- |
-| `spec.ts`, `spec.linux.ts`, `spec.windows.ts`      | **The single source of truth.** Pure data. `spec.ts` holds the facts every image references, declared once (the Node.js version, bun, LLVM, cross toolchains, epoch, packer pins); `spec.linux.ts` / `spec.windows.ts` hold the per-platform entries — one typed entry per image (`LinuxBuildHostImage`, `LinuxTestImage`, `WindowsX64Image`, `WindowsArm64Image`), a complete manifest of what's baked. |
+| `spec.ts`, `spec.linux.ts`, `spec.windows.ts`      | **The single source of truth.** Pure data. `spec.ts` holds the facts every image references, declared once (the Node.js version, bun, LLVM, cross toolchains, packer pins); `spec.linux.ts` / `spec.windows.ts` hold the per-platform entries — one typed entry per image (`LinuxBuildHostImage`, `LinuxTestImage`, `WindowsX64Image`, `WindowsArm64Image`), a complete manifest of what's baked. |
 | `images.ts`                                         | The assembled fleet (`images`, `buildHost`) from the two platform specs, for consumers that need every image. |
-| `types.ts`                                          | The types for the spec. The types are the checklist: a field only some images bake exists only on those images' types. |
+| `naming.ts`                                         | The name: `${key}-${imageHash(entry)}` — sha256 of the entry's value, canonically serialized. |
 | `existence.ts`                                      | Asks AWS/Azure whether each content-addressed name exists; the pipeline bakes only the missing ones. |
-| `generate/generate.ts`                              | Renders every image's files into `build/ci/<key>/` (self-contained `bootstrap.ts`, `agent.mjs`, `packer.json`), each bundled by esbuild from the entry + only its own components, and validates each by dry-run as it is written. |
-| `generate/outputs.ts`                               | Where those generated files live, and the digest over them (the image name's hash). |
-| `generate/naming.ts`                                | The name: `${key}-${hash of the generated files}`. |
-| `generate/catalog.ts`                               | (name, os) → component + its module; used by the generator to emit each image's imports. Host-side only, never bundled. |
-| `generate/packer.ts`                                | Renders the Windows Packer template as JSON from a `WindowsImage` entry, bake-time values as `{{placeholders}}` (no checked-in `.pkr.hcl`). |
-| `machine/bootstrap.ts`                              | The bootstrap program (`runBootstrap`). Bundled per image into `build/ci/<key>/bootstrap.ts`, which runs **on the machine** under a bare `node`. `--dry-run` prints the plan. |
+| `packer.ts`                                         | Renders the Windows Packer template as JSON from a `WindowsImage` entry at bake time (no checked-in `.pkr.hcl`). |
+| `machine/bootstrap.ts`                              | The bake entry point run **on the machine** under a bare `node`: `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`. `--dry-run` prints the complete plan for any image from any host. |
 | `machine/artifacts.ts`                              | Turns spec values into concrete `{url, sha256}` downloads. |
 | `machine/runtime.ts`                                | Logging, `run`/`sudo`, `download` (checksum-verified), dry-run, and the failure report. |
 | `machine/ops-posix.ts`, `machine/ops-windows.ts`    | The vocabulary: `ensureDirectory`, `installFile`, `extractArchive`, `ensureSystemUser`, `msiInstall`, `setMachineEnv`, … Each op logs its intent then the exact command. |
 | `machine/components/{linux,windows}/*.ts`           | One file per baked thing, per platform: each owns HOW its thing installs and enumerates its own downloads, reading every fact from the spec entry. A thing on both platforms is two components sharing a name (`linux/nodejs.ts`, `windows/nodejs.ts`). |
 | `machine/components/linux/package-manager.ts`       | apt vs apk, abstracted once (`PackageManager`); an image's bundle imports only its own manager. |
-| `machine/components/registry.ts`                    | Derives BOTH the ordered install steps and the download bundle from an image's resolved component list — one input, so baked and generated agree by construction. |
+| `machine/components/registry.ts`                    | name → component per platform, and the derivations that walk an image's `components` list: the ordered install steps and the download bundle, from one input. |
 | `machine/components/paths.ts`                       | Derived locations composed from the spec's root paths; no path is written twice. |
 
 ## What we provision
 
-Eight images, all in `images` in `spec.ts` (`bun run ci:images` prints their
+Eight images, all in `images` from `images.ts` (`node scripts/build/ci/naming.ts` computes their
 current names). Linux images are AWS AMIs; Windows are Azure gallery images.
 
 | key                                   | os / arch                | role                                                                                  |
@@ -73,10 +69,9 @@ current names). Linux images are AWS AMIs; Windows are Azure gallery images.
 
 ## How do I…
 
-Every change below is a **fact edit** unless noted. Editing a fact (or any
-recipe code under `scripts/build/ci/`) moves the affected images' hashes, so
-they bake once on your PR and are reused after — you never bump a version or
-force a rebuild by hand. Sanity-check with `bun run ci:images` (dry-runs all
+Every change below is a **fact edit**. Editing an image's entry moves its
+hash, so it bakes once on your PR and is reused after — you never bump a
+version or force a rebuild by hand. Sanity-check by dry-running an image (see below;
 8 plans in about a second) before pushing.
 
 | Task                                         | Where                                                                                                                                                                                       |
@@ -95,8 +90,7 @@ force a rebuild by hand. Sanity-check with `bun run ci:images` (dry-runs all
 **Review what a bake will do** without touching anything:
 
 ```sh
-bun scripts/build.ts --configure-only          # generates build/ci/<key>/
-node build/ci/linux-aarch64-13-debian/bootstrap.ts --ci --repo-ref=main --dry-run
+node scripts/build/ci/machine/bootstrap.ts --image=linux-aarch64-13-debian --ci --repo-ref=main --dry-run
 ```
 
 Prints every step, command, download (URL + whether checksum-pinned), and
@@ -114,23 +108,22 @@ file write. Works from any OS.
    name before launching anything (the guard against two simultaneous
    builds of one new hash) and returns immediately if it exists — same
    name means same recipe. Otherwise it bakes.
-3. Linux: launch the base AMI (spec `base.nameGlob`), upload the
-   generated `bootstrap.ts`, run the shim from `delivery.ts` (curl the
-   pinned node, `node bootstrap.ts …`), snapshot as `<name>`.
-   Windows: the generated `packer.json` (with its bake-time placeholders
-   filled in) drives Packer, which creates the VM, uploads the generated
-   `bootstrap.ts`, runs it, then sysprep and gallery publish under `<name>`.
+3. Linux: launch the base AMI (spec `base.nameGlob`), upload
+   `scripts/build/ci/`, fetch the pinned node, run
+   `node bootstrap.ts --image=<key> ...`, snapshot as `<name>`.
+   Windows: `packer.ts` renders the JSON template; Packer creates the VM,
+   uploads `scripts/build/ci/`, runs `bootstrap.ts --image=<key>`, then
+   sysprep and gallery publish under `<name>`.
 4. robobun launches CI machines by looking `<name>` up exactly. No
    wildcards, no newest-wins.
 
 ## What the hash means (and doesn't)
 
-The hash is a digest of the image's **generated files** (`build/ci/<key>/`),
-which `generate.ts` renders from the entry's facts plus only the recipe code
-that entry uses — so changing what a machine gets renames its image, and a
-refactor that renders identical files renames nothing. Bake-time values
-(the branch ref for the prefetch cache, credentials) are `{{placeholders}}`
-in the generated template, deliberately outside the hash.
+The hash is a digest of the image's **entry value** — its record from the
+spec, canonically serialized (sorted keys, no whitespace) and sha256'd. It is
+the value, not the source text: a comment, a reformat, or a key reorder
+renames nothing. Any node process computes the same name from the checked-in
+spec, so the pipeline and the bake job always agree.
 
 The hash means **same recipe**, not **same bytes**. Some inputs float by
 nature and are marked `FLOATING` in `spec.ts`: OS package repositories
@@ -140,8 +133,9 @@ the VS bootstrapper). A pinned `sha256` makes a download exact; `sha256:
 null` marks it FLOATING and it is fetched-but-unverified by design.
 
 If a floating input drifts underneath us in a way that breaks the image —
-the URL string is identical so the artifact bundle can't see it — bump
-`epoch`. Pinning more checksums shrinks how often that's needed.
+the URL string is identical so the value can't see it — pin its checksum
+(or change any fact in the entry) so the value changes and it rebakes.
+Pinning more checksums shrinks how often that happens.
 
 ## Design rules (please keep them)
 

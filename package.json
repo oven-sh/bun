@@ -29,7 +29,6 @@
   },
   "scripts": {
     "build": "bun --silent run build:debug",
-    "ci:images": "node scripts/build/ci/generate/generate.ts",
     "ci:find": "bun scripts/find-build.ts",
     "ci:status": "bun scripts/find-build.ts --status",
     "ci:errors": "bun scripts/find-build.ts --errors",

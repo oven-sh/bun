@@ -1,14 +1,13 @@
 // The single source of truth for what goes into a Bun CI machine image.
 //
-// Every image is one fully-typed entry in `images` below: a complete manifest
-// of what gets baked onto that machine — pinned tool versions, package
-// lists, cross toolchains, base image, bake shape, and system tuning. The
-// values are PLAIN DATA (no functions). Facts shared between images (the
-// Node.js version, the LLVM version, ...) are declared once as constants and
-// referenced by each entry, so there is exactly one place to change them.
-// Nothing else in the repo may re-declare one of these values — bootstrap,
-// ci.mjs, machine.mjs, and scripts/build/* import them from here. URL
-// construction and other logic over this data lives in ./artifacts.ts.
+// Every image is one fully-typed entry (see spec.linux.ts / spec.windows.ts):
+// a complete manifest of what gets baked onto that machine — pinned tool
+// versions, package lists, cross toolchains, base image, bake shape, and
+// system tuning. The values are PLAIN DATA (no functions). Facts shared
+// between images (the Node.js version, the LLVM version, ...) are declared
+// once here and referenced by each entry, so there is exactly one place to
+// change them. URL construction and other logic over this data lives in
+// ./machine/artifacts.ts.
 //
 // The types are the checklist: LinuxBuildHostImage requires the cross
 // toolchains that LinuxTestImage may not have; WindowsX64Image requires the
@@ -16,25 +15,17 @@
 // A field that only some images bake exists only on those images' types.
 //
 // An image is named `${entry.key}-${hash}` (see ./naming.ts) where the hash
-// is a digest of that image's GENERATED files (build/ci/<key>/ — the
-// self-contained bootstrap.ts, the Packer template, the agent bundle),
-// which ./generate.ts renders from the entry here plus the recipe code. So:
+// is a digest of the image's entry VALUE — the parsed object, canonically
+// serialized. So:
 //
-//   - Change a fact an image references, or the code that renders it → its
-//     files change → its hash changes → CI bakes it fresh on that branch and
-//     reuses it on every later push. There is no `[build images]` /
-//     `[publish images]` step and no version number to bump; merging to
-//     main IS publishing, because main renders the same files.
+//   - Change a fact in an entry → its hash changes → CI bakes it fresh on
+//     that branch and reuses it on every later push. There is no
+//     `[build images]` / `[publish images]` step and no version number
+//     to bump; merging to main IS publishing, because main sees the same
+//     values.
 //
-//   - Whether an image bakes is a mechanical consequence of the generated
-//     files — never something to remember. A refactor that renders
-//     identical files renames nothing.
-//
-// What a hash means: "same recipe", not "same bytes". Some inputs float by
-// nature (OS package repositories, `latest` cloud base images, installer
-// scripts served from a fixed URL). Those are marked FLOATING below. When one
-// of them drifts underneath us in a way that breaks the image, bump `epoch`
-// to force a re-bake — the one input that exists solely to be bumped.
+//   - It is the value that is hashed, not this file's text: a comment, a
+//     reformat, or a key reorder here renames nothing.
 //
 // This module is imported by both node (>= 25, via type stripping) and bun.
 // Keep it dependency-free, side-effect-free, function-free, and made of
@@ -42,20 +33,7 @@
 
 import type { AgeSpec, BunSpec, CrossToolchains, LlvmSpec, NodejsSpec, PinnedRelease } from "./types.ts";
 
-// ---------------------------------------------------------------------------
-// Epoch
-// ---------------------------------------------------------------------------
-
-/**
- * Included in every image's hash. Bump to force every image to re-bake
- * without changing any fact or code — for when a FLOATING input drifted
- * underneath us in a way that broke the image.
- */
-export const epoch = 1;
-
-/** Packer + provider plugin pins for the Windows bake (azure-arm). These
- * are recipe inputs: spec.ts is hashed, so bumping a pin renames the images
- * and rebakes them — a Packer upgrade legitimately can change the result. */
+/** Packer + provider plugin pins for the Windows bake (azure-arm). */
 export const packer = {
   version: "1.15.0",
   amazonPluginVersion: "1.3.9",

@@ -1,26 +1,26 @@
 #!/usr/bin/env node
-// The bootstrap program: bakes a Bun CI machine image from one image entry.
+// Bake a Bun CI machine image (or provision a machine like one) from an
+// image entry in the spec. Runs under a bare node (>= 25, type stripping) —
+// no bun, no build step — because it is what installs everything else.
 //
-// runBootstrap() is bundled per image (see scripts/build/ci/generate.ts):
-// each image's build/ci/<key>/bootstrap.ts is this module + that image's
-// resolved entry inlined, standalone, run on the machine under a bare node.
+//   node scripts/build/ci/machine/bootstrap.ts --image=<key> --ci --repo-ref=<ref>
+//   node scripts/build/ci/machine/bootstrap.ts --image=<key> --ci --dry-run
 //
-//   node bootstrap.ts --ci --repo-ref=<ref>
-//   node bootstrap.ts --ci --dry-run
-//
-// --dry-run prints the complete plan (every step, command, download, and
-// file write) without changing the machine.
+// The plan is the image's `components` list from the spec, resolved by
+// ./components/registry.ts. --dry-run prints the complete plan (every step,
+// command, download, and file write) without changing the machine — the
+// way to review what a bake will do, from any host.
 
 import { parseArgs } from "node:util";
-import type { Image } from "../types.ts";
-import type { LinuxComponent, WindowsComponent } from "./components/component.ts";
-import type { PackageManager } from "./components/linux/package-manager.ts";
+import { imageEntry } from "../naming.ts";
+import { managerFor } from "./components/linux/package-manager.ts";
 import { linuxArtifacts, linuxSteps, windowsArtifacts, windowsSteps } from "./components/registry.ts";
 import { detectHost } from "./host.ts";
 import { banner, log, mode, runSteps } from "./runtime.ts";
 
-const USAGE = `Usage: node bootstrap.ts [--ci] [--repo-ref=<ref>] [--dry-run]
+const USAGE = `Usage: node bootstrap.ts --image=<key> [--ci] [--repo-ref=<ref>] [--dry-run]
 
+  --image=<key>     Image entry in the CI image spec to bake (required).
   --ci              Bake a CI image: buildkite user, agent, prefetch caches,
                     system tuning, cleanup. Omit for a plain dev machine.
   --repo-ref=<ref>  Git ref cloned for the prefetch caches / xmac.mjs.
@@ -28,19 +28,10 @@ const USAGE = `Usage: node bootstrap.ts [--ci] [--repo-ref=<ref>] [--dry-run]
   --dry-run         Print every step, command, download and file write
                     without executing anything.`;
 
-/** Bake `image` (the resolved spec entry baked into this bundle). `manager`
- * is that image's package manager, selected in the generated entry so the
- * bundle carries only its own manager's code. */
-export async function runBootstrap(
-  image: Image,
-  components: readonly LinuxComponent[] | readonly WindowsComponent[],
-  epoch: number,
-  manager: PackageManager | undefined,
-  argv: string[],
-): Promise<void> {
+async function main(): Promise<void> {
   const { values } = parseArgs({
-    args: argv,
     options: {
+      "image": { type: "string" },
       "ci": { type: "boolean" },
       "repo-ref": { type: "string" },
       "dry-run": { type: "boolean" },
@@ -52,6 +43,8 @@ export async function runBootstrap(
     console.log(USAGE);
     return;
   }
+  const key = values.image;
+  if (!key) throw new Error(`--image=<key> is required.\n\n${USAGE}`);
   const ci = values.ci === true;
   const dryRun = values["dry-run"] === true;
   const repoRefFlag = values["repo-ref"];
@@ -64,8 +57,9 @@ export async function runBootstrap(
   }
 
   mode.dryRun = dryRun;
+  const image = imageEntry(key);
 
-  banner(`Bun CI image bootstrap: ${image.key} (epoch ${epoch})${ci ? " [CI]" : ""}${dryRun ? " [DRY RUN]" : ""}`);
+  banner(`Bun CI image bootstrap: ${image.key}${ci ? " [CI]" : ""}${dryRun ? " [DRY RUN]" : ""}`);
   log(`spec entry: ${image.key} (${image.os} ${image.arch})`);
   log(`components (${image.components.length}): ${image.components.join(", ")}`);
   log(`repo ref for caches: ${repoRef}`);
@@ -78,18 +72,21 @@ export async function runBootstrap(
         `Image "${image.key}" is linux but this host is ${host.os}. Use --dry-run to inspect the plan from another OS.`,
       );
     }
-    if (manager === undefined) throw new Error(`linux image "${image.key}" needs a package manager`);
-    const linux = components as readonly LinuxComponent[];
-    const ctx = { image, host, ci, repoRef, artifacts: linuxArtifacts(linux, image), manager };
-    await runSteps(`Bootstrap ${image.key}`, linuxSteps(linux, ctx));
+    const manager = managerFor(image.packages.manager);
+    const ctx = { image, host, ci, repoRef, artifacts: linuxArtifacts(image), manager };
+    await runSteps(`Bootstrap ${image.key}`, linuxSteps(image, ctx));
   } else {
     if (host.os !== "windows" && !dryRun) {
       throw new Error(
         `Image "${image.key}" is windows but this host is ${host.os}. Use --dry-run to inspect the plan from another OS.`,
       );
     }
-    const windows = components as readonly WindowsComponent[];
-    const ctx = { image, host, ci, repoRef, artifacts: windowsArtifacts(windows, image) };
-    await runSteps(`Bootstrap ${image.key}`, windowsSteps(windows, ctx));
+    const ctx = { image, host, ci, repoRef, artifacts: windowsArtifacts(image) };
+    await runSteps(`Bootstrap ${image.key}`, windowsSteps(image, ctx));
   }
 }
+
+main().catch(error => {
+  console.error(`\nbootstrap: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+});

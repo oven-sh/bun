@@ -16,7 +16,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { imageName } from "./generate/naming.ts";
+import { imageName } from "./naming.ts";
 import type { Image } from "./types.ts";
 
 export type Existence = {

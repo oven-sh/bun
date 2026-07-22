@@ -39,6 +39,7 @@ type Entry = {
   standalone: string[] | null;
   lastStage: string | null;
   termChain: string[] | null;
+  panicChain?: string[] | null;
   stacks: string[] | null;
   findings: string;
   workDir: string;
@@ -244,6 +245,7 @@ if (showIdx !== undefined) {
   console.log(`  fault: ${e.schedule}`);
   console.log(`  at: ${e.symbol} [${e.module}]`);
   if (e.crashDetail) console.log(`  crash: ${e.crashDetail}`);
+  if (e.panicChain?.length) console.log(`  panic backtrace: ${e.panicChain.slice(0, 10).join(" <- ")}`);
   if (e.termChain?.length) console.log(`  fatal chain: ${e.termChain.slice(0, 8).join(" <- ")}`);
   if (e.lastStage) console.log(`  last stage: ${e.lastStage}`);
   if (e.standalone) console.log(`  standalone: ${e.standalone.join(", ")}`);

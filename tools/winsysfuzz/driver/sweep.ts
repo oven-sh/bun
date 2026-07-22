@@ -32,6 +32,7 @@ import {
   stamp,
   statusName,
   symbolize,
+  symbolizePanicBacktrace,
 } from "./lib";
 
 const argv = process.argv.slice(2);
@@ -450,6 +451,7 @@ interface Verify {
   stage: string | null; // last STAGE marker the program printed
   stacks: string[]; // digested thread stacks (hangs) or crash frames
   termChain: string[]; // in-process terminating stack, symbolized (abort/crash chain)
+  panicChain: string[]; // rust panic backtrace, symbolized via cdb (panic site first)
 }
 const verdicts = new Map<Result, Verify>();
 const queueDir = flag("--queue", "C:\\wsfqueue") as string;
@@ -488,6 +490,7 @@ async function queueFinding(r: Result, v: Verify) {
     standalone: v.outcomes,
     lastStage: v.stage,
     termChain: v.termChain,
+    panicChain: v.panicChain,
     stacks: v.stacks.slice(0, 12),
     findings: findingsPath,
     workDir: workRoot,
@@ -505,6 +508,7 @@ if (findings.length) {
     const outcomes: string[] = [];
     let stage: string | null = null;
     let termChain: string[] = [];
+    let panicChain: string[] = [];
     let stacks: string[] = [];
     for (let n = 1; n <= 3; n++) {
       const rr = await replayCoordinate({
@@ -527,6 +531,12 @@ if (findings.length) {
         // children) leaves one; symbolize each and keep the fatal-looking one.
         // Only a CRASH leaves a meaningful terminating stack; on normal exits
         // the exit-time scrape is unrelated leftovers (symbol soup).
+        // A rust panic prints its own raw-address backtrace; resolve it via
+        // cdb -z so the queue card carries the panic site, not "0x7ff7...".
+        if (rr.crashSig && /panic/.test(rr.crashSig.kind) && rr.stderr) {
+          const t0 = await readTraceDir(rr.dir, { faultsOnly: true }).catch(() => null);
+          if (t0?.bunBase) panicChain = await symbolizePanicBacktrace(bun, rr.stderr, t0.bunBase).catch(() => []);
+        }
         const trace = rr.outcome === "CRASH" || rr.crashSig ? await readTraceDir(rr.dir, { faultsOnly: true }) : null;
         const cands = trace?.termStacks ?? [];
         if (cands.length) {
@@ -557,8 +567,8 @@ if (findings.length) {
           : bad === 0 && fired > 0
             ? "load-dependent"
             : "not-reproduced";
-    verdicts.set(f, { verdict, outcomes, stage, stacks, termChain });
-    await queueFinding(f, { verdict, outcomes, stage, stacks, termChain });
+    verdicts.set(f, { verdict, outcomes, stage, stacks, termChain, panicChain });
+    await queueFinding(f, { verdict, outcomes, stage, stacks, termChain, panicChain });
     console.log(
       `  ${verdict.padEnd(15)} ${f.outcome} ${f.job.coord.sysName} @${f.job.coord.key} ` +
         `standalone: ${outcomes.join(",")}` +
@@ -655,6 +665,9 @@ if (findings.length) {
           siblings.map(s => `${s.job.mode} ${s.job.status} -> ${s.outcome} (${Math.round(s.ms / 100) / 10}s)`).join("; "),
       );
     if (v?.stage) md.push(`- **last stage reached**: \`${v.stage}\` (the program hung/died after this)`);
+    if (v?.panicChain.length) {
+      md.push(`- **panic backtrace** (panic site first): \`${v.panicChain.slice(0, 10).join(" <- ")}\``);
+    }
     if (v?.termChain.length) {
       // The crash's why, straight from the dying process: read top-down.
       md.push(`- **fatal chain** (terminating thread, nearest first): \`${v.termChain.slice(0, 8).join(" <- ")}\``);

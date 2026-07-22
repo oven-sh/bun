@@ -406,6 +406,37 @@ function findCdb(): string | null {
 export const cdb: string | null = findCdb();
 export const symbolServer = "srv*C:\\symbols*https://msdl.microsoft.com/download/symbols";
 
+// --- panic backtrace symbolization -------------------------------------
+// A rust panic prints its own backtrace as raw "0x7ff7... in ??? (???)"
+// frames (bun.exe addresses). wsfsym cannot resolve RVAs this deep into the
+// ~1 GB debug image, so resolve them with cdb -z against the exe: convert
+// each address to an exe-relative offset via the traced module base and
+// "ln bun_debug+0x<off>" it. Returns the resolved symbols, panic-site first.
+export async function symbolizePanicBacktrace(image: string, stderr: string, bunBaseHex: string): Promise<string[]> {
+  if (!cdb || !bunBaseHex) return [];
+  const base = BigInt("0x" + bunBaseHex);
+  const addrs = [...stderr.matchAll(/0x(7[fF][fF]7[0-9a-fA-F]{8,})/g)]
+    .map(m => BigInt("0x" + m[1]))
+    .filter(a => a >= base)
+    .slice(0, 28);
+  if (!addrs.length) return [];
+  const cmds = addrs.map(a => `ln bun_debug+0x${(a - base).toString(16)}`).join(";");
+  const proc = Bun.spawn([cdb, "-z", image, "-c", `${cmds};q`], { stdout: "pipe", stderr: "ignore" });
+  const timer = setTimeout(() => proc.kill(), 90_000);
+  const text = await new Response(proc.stdout).text();
+  clearTimeout(timer);
+  await proc.exited;
+  // "ln" prints "(addr)   bun_debug!<symbol>+0x..   |  (addr) next-symbol";
+  // keep the first (containing) symbol of each match line, in frame order.
+  const syms: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*\([0-9a-f`]+\)\s+bun_debug!(\S+)/i.exec(line);
+    if (m) syms.push(m[1].replace(/\+0x[0-9a-f]+$/i, ""));
+  }
+  return syms;
+}
+
+
 // PID of a running process by image name (first match), or null.
 export function pidOf(image: string): number | null {
   const r = Bun.spawnSync(["powershell", "-NoProfile", "-Command",

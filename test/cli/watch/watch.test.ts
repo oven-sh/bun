@@ -58,10 +58,18 @@ it.skipIf(!isLinux || !cc)("propagates FileWatcher thread spawn failure instead 
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
+#include <sys/resource.h>
 
 static int (*real_inotify_init1)(int);
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
 static volatile int armed = 0;
+
+/* The child is expected to abort; suppress the core file so CI's runner does
+ * not flag it as a crash. RLIMIT_CORE survives execvp. */
+__attribute__((constructor)) static void no_core(void) {
+  struct rlimit rl = {0, 0};
+  setrlimit(RLIMIT_CORE, &rl);
+}
 
 int inotify_init1(int flags) {
   if (!real_inotify_init1) real_inotify_init1 = dlsym(RTLD_NEXT, "inotify_init1");

@@ -40,8 +40,7 @@ test("upgrade with a body: a mid-body client FIN closes the upgraded socket and 
       await gotSocketClose;
       c.destroy();
 
-      // server.close() only resolves once pending_requests has reached zero,
-      // which is the ref the pre-fix half-open path stranded.
+      // server.close() only resolves once pending_requests has reached zero.
       await new Promise((resolve, reject) => {
         server.close(err => err ? reject(err) : resolve());
       });

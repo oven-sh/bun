@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN } from "harness";
 import https from "https";
@@ -717,6 +717,102 @@ it("a write before 'secureConnect' still reports the handshake's own failure", a
   const [error] = await once(client, "error");
   expect(error.code).toBe("ERR_SSL_NO_SUPPORTED_VERSIONS_ENABLED");
   expect(secureConnect).toBe(false);
+});
+
+describe("rejectUnauthorized fails closed for anything other than an explicit false", () => {
+  let server: tls.Server;
+  let port: number;
+  beforeAll(async () => {
+    server = tls.createServer({ cert: COMMON_CERT_.cert, key: COMMON_CERT_.key }, s => s.end());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    port = (server.address() as AddressInfo).port;
+  });
+  afterAll(() => server.close());
+
+  const probe = (value: unknown) =>
+    new Promise<string>(resolve => {
+      const s = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: value as any }, () => {
+        resolve(`connected authorized=${s.authorized}`);
+        s.destroy();
+      });
+      s.on("error", e => resolve(`rejected ${(e as any).code}`));
+    });
+
+  // Node normalizes options.rejectUnauthorized via `!== false`, so `null` keeps
+  // verification on and the self-signed peer is rejected. Only an explicit
+  // `false` opts out.
+  it.concurrent.each([
+    ["null", null, "rejected DEPTH_ZERO_SELF_SIGNED_CERT"],
+    ["undefined", undefined, "rejected DEPTH_ZERO_SELF_SIGNED_CERT"],
+    ["true", true, "rejected DEPTH_ZERO_SELF_SIGNED_CERT"],
+    ["false", false, "connected authorized=false"],
+  ] as const)("rejectUnauthorized: %s", async (_label, value, expected) => {
+    expect(await probe(value)).toBe(expected);
+  });
+
+  it("null keeps verification on even under NODE_TLS_REJECT_UNAUTHORIZED=0", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const tls = require("node:tls");
+         const server = tls.createServer(${JSON.stringify({ cert: COMMON_CERT_.cert, key: COMMON_CERT_.key })}, s => s.end());
+         server.listen(0, "127.0.0.1", () => {
+           const s = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: null }, () => {
+             console.log("connected"); s.destroy(); server.close();
+           });
+           s.on("error", e => { console.log("rejected " + e.code); server.close(); });
+         });`,
+      ],
+      env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr carries the one-time NODE_TLS_REJECT_UNAUTHORIZED process warning
+    // (with a stack trace), so it's captured for the failure diff but not
+    // constrained.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+      stdout: "rejected DEPTH_ZERO_SELF_SIGNED_CERT",
+      exitCode: 0,
+    });
+  });
+
+  it.each([
+    ["null", null],
+    ["0", 0],
+  ] as const)(
+    "server {requestCert: true, rejectUnauthorized: %s} rejects an unverified client certificate",
+    async (_label, value) => {
+      const events: string[] = [];
+      const server = tls.createServer(
+        { cert: COMMON_CERT_.cert, key: COMMON_CERT_.key, requestCert: true, rejectUnauthorized: value as any },
+        s => {
+          events.push(`handler authorized=${s.authorized}`);
+          s.end();
+        },
+      );
+      server.on("tlsClientError", e => events.push(`tlsClientError ${(e as any).code ?? e.message}`));
+      server.on("secureConnection", s => events.push(`secureConnection authorized=${s.authorized}`));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      try {
+        const c = tls.connect({
+          port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
+          cert: COMMON_CERT_.cert,
+          key: COMMON_CERT_.key,
+          rejectUnauthorized: false,
+        });
+        c.on("error", () => {});
+        await once(c, "close");
+      } finally {
+        server.close();
+      }
+      expect({ events, normalized: (server as any)._rejectUnauthorized }).toEqual({
+        events: ["tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT"],
+        normalized: true,
+      });
+    },
+  );
 });
 
 it("https.request reports an impossible version window as a TLS error, not a certificate error", async () => {

@@ -958,7 +958,7 @@ function onconnection(err, clientHandle) {
   }
   clientHandle[kServerSocket] = handle;
   const options = self[bunSocketServerOptions];
-  const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+  const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert } = options;
   // Propagate the server's half-open/highWaterMark settings to the accepted
   // socket so the Duplex's allowHalfOpen matches what the native layer was
   // configured with in kRealListen; without this, net.createServer({
@@ -971,9 +971,10 @@ function onconnection(err, clientHandle) {
   }) as NetSocket | TLSSocket;
   _socket.isServer = true;
   _socket._requestCert = requestCert;
-  // The raw options object only has rejectUnauthorized when the user passed it explicitly;
-  // fall back to the server's normalized value (defaults to true for tls.Server).
-  _socket._rejectUnauthorized = rejectUnauthorized ?? self._rejectUnauthorized;
+  // tls.Server's setSecureContext has already normalized this via `!== false`,
+  // so read the server field, not the raw option (which may be a falsy
+  // non-boolean like 0 that `??` would let through).
+  _socket._rejectUnauthorized = self._rejectUnauthorized;
 
   _socket[kAttach](clientHandle.localPort, clientHandle);
 
@@ -1757,9 +1758,11 @@ Socket.prototype.connect = function connect(...args) {
       // Client always request Cert
       this._requestCert = true;
       if (tls) {
-        if (typeof rejectUnauthorized !== "undefined") {
-          this._rejectUnauthorized = rejectUnauthorized;
-          tls.rejectUnauthorized = rejectUnauthorized;
+        if (rejectUnauthorized !== undefined) {
+          // Node normalizes via `!== false` so any non-`false` value (including
+          // `null`) keeps verification on; only an explicit `false` opts out.
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1781
+          this._rejectUnauthorized = tls.rejectUnauthorized = rejectUnauthorized !== false;
         } else {
           this._rejectUnauthorized = tls.rejectUnauthorized;
         }
@@ -2822,9 +2825,8 @@ function internalConnect(self, options, address, port, addressType, localAddress
     self._requestCert = true; // Client always request Cert
     if (tls) {
       const { rejectUnauthorized, session, checkServerIdentity } = options;
-      if (typeof rejectUnauthorized !== "undefined") {
-        self._rejectUnauthorized = rejectUnauthorized;
-        tls.rejectUnauthorized = rejectUnauthorized;
+      if (rejectUnauthorized !== undefined) {
+        self._rejectUnauthorized = tls.rejectUnauthorized = rejectUnauthorized !== false;
       } else {
         self._rejectUnauthorized = tls.rejectUnauthorized;
       }
@@ -2975,9 +2977,8 @@ function internalConnectMultiple(context, canceled?) {
     self._requestCert = true; // Client always request Cert
     if (tls) {
       const { rejectUnauthorized, session, checkServerIdentity } = context.options;
-      if (typeof rejectUnauthorized !== "undefined") {
-        self._rejectUnauthorized = rejectUnauthorized;
-        tls.rejectUnauthorized = rejectUnauthorized;
+      if (rejectUnauthorized !== undefined) {
+        self._rejectUnauthorized = tls.rejectUnauthorized = rejectUnauthorized !== false;
       } else {
         self._rejectUnauthorized = tls.rejectUnauthorized;
       }

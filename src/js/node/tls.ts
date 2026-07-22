@@ -1281,8 +1281,11 @@ function Server(options, secureConnectionListener): void {
 
       const rejectUnauthorized = options.rejectUnauthorized;
 
-      if (typeof rejectUnauthorized !== "undefined") {
-        this._rejectUnauthorized = rejectUnauthorized;
+      if (rejectUnauthorized !== undefined) {
+        // Node normalizes via `!== false` so any non-`false` value (including
+        // `null`) keeps verification on; only an explicit `false` opts out.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1368
+        this._rejectUnauthorized = rejectUnauthorized !== false;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault();
 
       const ciphers = options.ciphers;

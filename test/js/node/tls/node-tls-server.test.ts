@@ -1303,3 +1303,73 @@ it("tls.connect honors secureOptions when negotiating the protocol version", asy
   }
   await once(server, "close");
 });
+
+describe("tls.createServer pauseOnConnect", () => {
+  it("completes the TLS handshake and delivers the socket paused", async () => {
+    const server: Server = createServer({ ...COMMON_CERT, pauseOnConnect: true });
+    const accepted = Promise.withResolvers<{ paused: boolean; flowing: boolean | null; socket: TLSSocket }>();
+    server.on("secureConnection", s => {
+      accepted.resolve({ paused: s.isPaused(), flowing: s.readableFlowing, socket: s });
+    });
+    server.on("tlsClientError", accepted.reject);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let cli: TLSSocket | undefined;
+    let srv: TLSSocket | undefined;
+    try {
+      const port = (server.address() as AddressInfo).port;
+      cli = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      // Before the fix this hung: onconnection paused the native handle, so the
+      // TLS engine never saw the ClientHello.
+      await once(cli, "secureConnect");
+      const { paused, flowing, socket } = await accepted.promise;
+      srv = socket;
+      expect({ paused, flowing }).toEqual({ paused: true, flowing: false });
+
+      let got = "";
+      srv.on("data", d => (got += d));
+      cli.write("hello");
+      const dataP = once(srv, "data");
+      srv.resume();
+      await dataP;
+      expect(got).toBe("hello");
+    } finally {
+      cli?.destroy();
+      srv?.destroy();
+      server.close();
+    }
+    await once(server, "close");
+  });
+
+  it("honors resume() made inside the secureConnection handler", async () => {
+    const server: Server = createServer({ ...COMMON_CERT, pauseOnConnect: true });
+    const accepted = Promise.withResolvers<TLSSocket>();
+    server.on("secureConnection", s => {
+      s.resume();
+      accepted.resolve(s);
+    });
+    server.on("tlsClientError", accepted.reject);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let cli: TLSSocket | undefined;
+    let srv: TLSSocket | undefined;
+    try {
+      const port = (server.address() as AddressInfo).port;
+      cli = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      await once(cli, "secureConnect");
+      srv = await accepted.promise;
+      expect({ paused: srv.isPaused(), flowing: srv.readableFlowing }).toEqual({ paused: false, flowing: true });
+
+      let got = "";
+      srv.on("data", d => (got += d));
+      cli.write("hello");
+      await once(srv, "data");
+      expect(got).toBe("hello");
+    } finally {
+      cli?.destroy();
+      srv?.destroy();
+      server.close();
+    }
+    await once(server, "close");
+  });
+});

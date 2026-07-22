@@ -4,7 +4,7 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
-const { SafeMap } = require("internal/primordials");
+const { SafeMap, SafeSet } = require("internal/primordials");
 const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
@@ -117,7 +117,7 @@ function injectFakeEmitter(Class) {
   }
 
   function messageEventHandler(event: MessageEvent) {
-    return event.data;
+    return unwrapJSTransferableEnvelope(event.data);
   }
 
   function errorEventHandler(event: ErrorEvent) {
@@ -285,6 +285,16 @@ const _MessagePort = globalThis.MessagePort;
 injectFakeEmitter(_MessagePort);
 
 const MessagePort = _MessagePort;
+
+const nativeMessagePortPostMessage = MessagePort.prototype.postMessage;
+Object.defineProperty(MessagePort.prototype, "postMessage", {
+  value: function postMessage() {
+    return callPostMessageWithJSTransferables(nativeMessagePortPostMessage, this, arguments);
+  },
+  writable: true,
+  enumerable: true,
+  configurable: true,
+});
 
 // node's close(cb) registers cb as a one-time "close" listener before the native close.
 // closedMessagePorts lets moveMessagePortToContext report ERR_CLOSED_MESSAGE_PORT.
@@ -496,6 +506,9 @@ function setupWorkerStdio(stdio) {
 // side where node would deliver it unchanged. That's accepted - it is not a
 // privilege boundary (worker threads share the parent's fd table anyway).
 const kJSTransferableMarker = "__bunNodeWorkerJSTransferable";
+// Distinguishes the postMessage envelope (top-level, value === true) from an
+// individual marker (value is a deserializeInfo string).
+const kJSTransferableEnvelope = true;
 
 function isJSTransferableMarker(value: object): boolean {
   return (
@@ -520,7 +533,7 @@ function deserializeJSTransferable(marker: Record<string, any>): unknown {
 
 function unpackJSTransferables(value: unknown, memo?: Map<object, unknown>): unknown {
   if (value === null || typeof value !== "object") return value;
-  memo ??= new Map();
+  memo ??= new SafeMap();
   // The memo both breaks cycles (containers map to themselves) and preserves
   // reference identity for markers: structured clone keeps a marker shared
   // between graph positions as one object, so the same marker must
@@ -571,11 +584,9 @@ function unpackJSTransferables(value: unknown, memo?: Map<object, unknown>): unk
 const kRestoreJSTransferables = Symbol("kRestoreJSTransferables");
 const kFinalizeJSTransferables = Symbol("kFinalizeJSTransferables");
 
-function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
-  const transferList = options?.transferList;
-  if (!transferList || !$isArray(transferList) || transferList.length === 0) return options;
+function transferListHasJSTransferableCandidate(transferList: unknown): boolean {
+  if (!transferList || !$isArray(transferList) || transferList.length === 0) return false;
   // Avoid loading node:fs for transfer lists that only contain native transferables.
-  let hasCandidate = false;
   for (const item of transferList) {
     if (
       item !== null &&
@@ -584,14 +595,28 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
       !(item instanceof _MessagePort) &&
       !$isTypedArrayView(item)
     ) {
-      hasCandidate = true;
-      break;
+      return true;
     }
   }
-  if (!hasCandidate) return options;
+  return false;
+}
 
+type PackedJSTransferables = {
+  message: unknown;
+  transferList: unknown[];
+  restore: () => void;
+  finalize: () => void;
+};
+
+// Core of Node's JSTransferable protocol: for each transferList entry that
+// implements kTransfer (FileHandle), neuter it and substitute a cloneable
+// marker object throughout the message graph, and strip it from the list that
+// reaches the native structured-clone path (which only accepts ArrayBuffer and
+// MessagePort). Returns null when no JSTransferable was found so the common
+// path stays zero-overhead.
+function packJSTransferablesForMessage(message: unknown, transferList: unknown[]): PackedJSTransferables | null {
   const { kTransfer, kTransferList, kDeserialize } = require("node:fs").promises.$data;
-  let replacements: Map<object, object> | undefined;
+  let replacements: InstanceType<typeof SafeMap> | undefined;
   const nativeTransferList: unknown[] = [];
   // kTransfer() neuters the handle (extracts the bare fd); if anything later
   // in the pack/construct sequence throws, restore the already-neutered
@@ -618,11 +643,16 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
             "DataCloneError",
           );
         }
+        // The native untransferable check never sees this entry (it's stripped
+        // from the list that reaches native postMessage), so enforce it here.
+        if (_isMarkedAsUntransferable(item)) {
+          throw new DOMException("Cannot transfer object marked as untransferable", "DataCloneError");
+        }
         const extraTransfers = item[kTransferList]?.();
         // May throw DataCloneError (e.g. FileHandle in use); propagate synchronously like Node.
         const { data, deserializeInfo } = item[kTransfer]();
         neutered.push([item, data]);
-        (replacements ??= new Map()).set(item, {
+        (replacements ??= new SafeMap()).set(item, {
           [kJSTransferableMarker]: deserializeInfo,
           data,
         });
@@ -635,10 +665,10 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
     restoreNeutered();
     throw e;
   }
-  if (!replacements) return options;
+  if (!replacements) return null;
 
-  const seen = new Map<object, unknown>();
-  const usedMarkers = new Set<object>();
+  const seen = new SafeMap();
+  const usedMarkers = new SafeSet();
   function replace(value: unknown): unknown {
     if (value === null || typeof value !== "object") return value;
     const replacement = replacements!.get(value);
@@ -682,30 +712,23 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
     return value;
   }
   // replace() reads property getters and Proxy traps (Object.keys,
-  // Object.getPrototypeOf, value[key]), and the options spread reads
-  // getters on the user's options object — any of which can throw after
-  // handles are already neutered. Roll back here too so a throwing
-  // workerData graph doesn't orphan the fds it transferred.
-  let packed;
+  // Object.getPrototypeOf, value[key]) — any of which can throw after
+  // handles are already neutered. Roll back here too so a throwing message
+  // graph doesn't orphan the fds it transferred.
+  let newMessage;
   try {
-    packed = {
-      ...options,
-      workerData: replace(options.workerData),
-      transferList: nativeTransferList,
-    };
+    newMessage = replace(message);
   } catch (e) {
     restoreNeutered();
     throw e;
   }
-  packed[kRestoreJSTransferables] = restoreNeutered;
-  // A handle in transferList but never referenced from workerData is still
+  // A handle in transferList but never referenced from the message is still
   // detached from this thread (fd === -1, like node), but no marker will
-  // deserialize it on the worker side - close the orphaned fd instead of
-  // leaking it (node's worker-side instance is reclaimed by GC). This runs
-  // only after WebWorker construction succeeds: if construction throws, the
-  // rollback above must still find the fd open to restore the handle (node
-  // leaves the handle fully usable in that case).
-  packed[kFinalizeJSTransferables] = function finalizeJSTransferables() {
+  // deserialize it on the receiving side - close the orphaned fd instead of
+  // leaking it (node's receiving-side instance is reclaimed by GC). This runs
+  // only after the native send succeeds: if it throws, the rollback must still
+  // find the fd open to restore the handle.
+  function finalizeJSTransferables() {
     for (const { 0: item, 1: data } of neutered) {
       if (!usedMarkers.has(item) && typeof (data as any)?.fd === "number" && (data as any).fd >= 0) {
         try {
@@ -715,8 +738,93 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
         }
       }
     }
+  }
+  return {
+    message: newMessage,
+    transferList: nativeTransferList,
+    restore: restoreNeutered,
+    finalize: finalizeJSTransferables,
   };
-  return packed;
+}
+
+function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
+  const transferList = options?.transferList;
+  if (!transferListHasJSTransferableCandidate(transferList)) return options;
+  const packed = packJSTransferablesForMessage(options.workerData, transferList as unknown[]);
+  if (!packed) return options;
+  // The options spread reads getters on the user's options object, which can
+  // throw after handles are already neutered; roll back there too.
+  let out;
+  try {
+    out = {
+      ...options,
+      workerData: packed.message,
+      transferList: packed.transferList,
+    };
+  } catch (e) {
+    packed.restore();
+    throw e;
+  }
+  out[kRestoreJSTransferables] = packed.restore;
+  out[kFinalizeJSTransferables] = packed.finalize;
+  return out;
+}
+
+// Wraps a native postMessage(value, transferList) so JSTransferables in the
+// transfer list are packed into markers before serialization and restored on
+// failure. Accepts both the array form and {transfer: [...]}.
+function callPostMessageWithJSTransferables(nativePost: Function, self: unknown, args: IArguments) {
+  if (args.length < 2) return nativePost.$apply(self, args);
+  const second = args[1];
+  let transferList;
+  let isOptionsForm = false;
+  if ($isArray(second)) {
+    transferList = second;
+  } else if (second !== null && typeof second === "object" && $isArray((second as any).transfer)) {
+    transferList = (second as any).transfer;
+    isOptionsForm = true;
+  }
+  if (!transferListHasJSTransferableCandidate(transferList)) return nativePost.$apply(self, args);
+  const packed = packJSTransferablesForMessage(args[0], transferList);
+  if (!packed) return nativePost.$apply(self, args);
+  let result;
+  try {
+    result = nativePost.$call(
+      self,
+      wrapJSTransferableEnvelope(packed.message),
+      isOptionsForm ? { ...(second as object), transfer: packed.transferList } : packed.transferList,
+    );
+  } catch (e) {
+    packed.restore();
+    throw e;
+  }
+  packed.finalize();
+  return result;
+}
+
+// postMessage wraps a packed message in a top-level envelope so the receive
+// side can tell in O(1) whether to walk the graph, keeping the common path
+// (no JSTransferables) zero-cost for every message. The unwrap only runs in
+// the node-style receive paths (.on('message'), receiveMessageOnPort,
+// Worker 'message'); addEventListener/onmessage deliver the raw envelope
+// because Bun has no native HostObject hook to reconstruct at clone time. A
+// message queued but never delivered (port closed before drain, worker
+// terminated) leaks the transferred fd for the same reason: the cloned
+// marker is a plain object with no finalizer.
+function wrapJSTransferableEnvelope(message: unknown): unknown {
+  return { [kJSTransferableMarker]: kJSTransferableEnvelope, m: message };
+}
+
+function unwrapJSTransferableEnvelope(value: unknown): unknown {
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    (value as Record<string, unknown>)[kJSTransferableMarker] === kJSTransferableEnvelope &&
+    Object.prototype.hasOwnProperty.$call(value, kJSTransferableMarker)
+  ) {
+    return unpackJSTransferables((value as Record<string, unknown>).m);
+  }
+  return value;
 }
 
 let workerData = unpackJSTransferables(_workerData);
@@ -748,7 +856,7 @@ function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
   if (!res) return undefined;
   return {
-    message: res,
+    message: unwrapJSTransferableEnvelope(res),
   };
 }
 
@@ -775,8 +883,8 @@ function fakeParentPort() {
 
   const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
-    value(...args: [any, any]) {
-      return postMessage.$apply(null, args);
+    value: function () {
+      return callPostMessageWithJSTransferables(postMessage, null, arguments);
     },
   });
 
@@ -1179,8 +1287,8 @@ class Worker extends EventEmitter {
     return (this.#onExitPromise = promise);
   }
 
-  postMessage(...args: [any, any]) {
-    return this.#worker.postMessage.$apply(this.#worker, args);
+  postMessage() {
+    return callPostMessageWithJSTransferables(this.#worker.postMessage, this.#worker, arguments);
   }
 
   getHeapSnapshot(options: unknown) {
@@ -1320,7 +1428,7 @@ class Worker extends EventEmitter {
 
   #onMessage(event: MessageEvent) {
     // TODO: is this right?
-    this.emit("message", event.data);
+    this.emit("message", unwrapJSTransferableEnvelope(event.data));
   }
 
   #onMessageError(event: MessageEvent) {

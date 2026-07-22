@@ -377,7 +377,6 @@ impl CryptoHasher {
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
-        let mut output_digest_slice: &mut [u8] = &mut output_digest_buf;
         // `defer input.deinit()` — handled by Drop on `input`.
 
         if is_bun_file_blob(input) {
@@ -386,6 +385,11 @@ impl CryptoHasher {
             )));
         }
 
+        // Validate the caller buffer length, but do not build a mutable reference
+        // into it yet: `input` and `output` may be views over the same backing
+        // store, and holding `&[u8]` input alongside `&mut [u8]` output over
+        // overlapping bytes violates Rust's aliasing rules. Hash into local
+        // storage, then copy into the caller buffer once the input borrow ends.
         if let Some(output_buf) = &output {
             let size = evp.size() as usize;
             let bytes_len = output_buf.byte_slice().len();
@@ -395,25 +399,29 @@ impl CryptoHasher {
                     size
                 )));
             }
-            // SAFETY: `output_buf.ptr` is the JSC-owned writable backing store
-            // (`bytes_len >= size` checked above; not detached since len > 0);
-            // borrowed for this frame only. Build the `&mut` directly from the
-            // raw `*mut u8` field — never via `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, size) };
         }
 
-        let Some(len) = evp.hash(boring_engine(global), input.slice(), output_digest_slice) else {
+        let Some(len) = evp.hash(boring_engine(global), input.slice(), &mut output_digest_buf)
+        else {
             let err = boring_ssl::ERR_get_error();
             let instance = create_crypto_error(global, err);
             boring_ssl::ERR_clear_error();
             return Err(global.throw_value(instance));
         };
+        let len = len as usize;
 
         if let Some(output_buf) = output {
+            // SAFETY: `output_buf.ptr` is the JSC-owned writable backing store
+            // (length validated `>= len` above; not detached since len > 0). The
+            // input borrow has ended, so this write cannot alias a live shared
+            // reference even when the buffers overlap. Build the `&mut` directly
+            // from the raw `*mut u8` field — never via `&[u8].as_ptr()`.
+            let output = unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, len) };
+            output.copy_from_slice(&output_digest_buf[0..len]);
             Ok(output_buf.value)
         } else {
             // Clone to GC-managed memory
-            ArrayBuffer::create_buffer(global, &output_digest_slice[0..len as usize])
+            ArrayBuffer::create_buffer(global, &output_digest_buf[0..len])
         }
     }
 
@@ -1310,7 +1318,12 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: H::Digest = H::new_digest();
-        let output_digest_slice: &mut H::Digest;
+
+        // Validate the caller buffer length, but do not build a mutable reference
+        // into it yet: `input` and `output` may be views over the same backing
+        // store, and holding `&[u8]` input alongside the `&mut` output over
+        // overlapping bytes violates Rust's aliasing rules. Hash into local
+        // storage, then copy into the caller buffer once the input borrow ends.
         if let Some(output_buf) = &output {
             let bytes_len = output_buf.byte_slice().len();
             if bytes_len < H::DIGEST {
@@ -1319,29 +1332,29 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                     H::DIGEST
                 )));
             }
-            // SAFETY: `bytes_len >= H::DIGEST` checked above; `H::Digest = [u8; H::DIGEST]`;
-            // `output_buf.ptr` is the JSC-owned writable backing store. Build the
-            // `&mut` directly from the raw `*mut u8` field — never via
-            // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
-        } else {
-            output_digest_slice = &mut output_digest_buf;
         }
 
         // SAFETY: `boring_engine` returns the VM-owned engine (live for the
         // process) or null; the else arm passes null.
         unsafe {
             if H::HAS_ENGINE {
-                H::hash(input.slice(), output_digest_slice, boring_engine(global));
+                H::hash(input.slice(), &mut output_digest_buf, boring_engine(global));
             } else {
-                H::hash(input.slice(), output_digest_slice, core::ptr::null_mut());
+                H::hash(input.slice(), &mut output_digest_buf, core::ptr::null_mut());
             }
         }
 
         if let Some(output_buf) = output {
+            // SAFETY: `bytes_len >= H::DIGEST` checked above; `output_buf.ptr` is
+            // the JSC-owned writable backing store. The input borrow has ended,
+            // so this write cannot alias a live shared reference even when the
+            // buffers overlap. Build the `&mut` directly from the raw `*mut u8`
+            // field — never via `&[u8].as_ptr()`.
+            let output = unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, H::DIGEST) };
+            output.copy_from_slice(output_digest_buf.as_ref());
             Ok(output_buf.value)
         } else {
-            ArrayBuffer::create_uint8_array(global, output_digest_slice.as_ref())
+            ArrayBuffer::create_uint8_array(global, output_digest_buf.as_ref())
         }
     }
 

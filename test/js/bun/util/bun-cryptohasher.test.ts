@@ -249,3 +249,55 @@ describe("CryptoHasher", () => {
     });
   }
 });
+
+describe("one-shot hash with overlapping input/output buffers", () => {
+  // Safe JS can pass views over the same backing store as both the hash input
+  // and the output buffer. The digest written into the output must match a run
+  // over a non-overlapping copy of the input. `expected` is computed from a
+  // copy taken before the overlapping call, since that call mutates the store.
+  test("Bun.SHA256.hash supports exact input/output overlap", () => {
+    const buf = new Uint8Array(64).fill(0x61);
+    const expected = Bun.SHA256.hash(new Uint8Array(buf), "hex");
+
+    const result = Bun.SHA256.hash(buf, buf);
+
+    expect(result).toBe(buf);
+    expect(Buffer.from(buf.subarray(0, 32)).toString("hex")).toBe(expected);
+  });
+
+  test("Bun.SHA256.hash supports shifted input/output overlap", () => {
+    const backing = new ArrayBuffer(96);
+    const input = new Uint8Array(backing, 16, 64);
+    input.fill(0x61);
+    const expected = Bun.SHA256.hash(new Uint8Array(input), "hex");
+    const output = new Uint8Array(backing, 17, 32);
+
+    const result = Bun.SHA256.hash(input, output);
+
+    expect(result).toBe(output);
+    expect(Buffer.from(output).toString("hex")).toBe(expected);
+  });
+
+  test("Bun.CryptoHasher.hash supports exact input/output overlap", () => {
+    const buf = new Uint8Array(64).fill(0x61);
+    const expected = Bun.CryptoHasher.hash("sha256", new Uint8Array(buf), "hex");
+
+    const result = Bun.CryptoHasher.hash("sha256", buf, buf);
+
+    expect(result).toBe(buf);
+    expect(Buffer.from(buf.subarray(0, 32)).toString("hex")).toBe(expected);
+  });
+
+  test("Bun.CryptoHasher.hash supports shifted input/output overlap", () => {
+    const backing = new ArrayBuffer(96);
+    const input = new Uint8Array(backing, 16, 64);
+    input.fill(0x61);
+    const expected = Bun.CryptoHasher.hash("sha256", new Uint8Array(input), "hex");
+    const output = new Uint8Array(backing, 17, 32);
+
+    const result = Bun.CryptoHasher.hash("sha256", input, output);
+
+    expect(result).toBe(output);
+    expect(Buffer.from(output).toString("hex")).toBe(expected);
+  });
+});

@@ -487,8 +487,20 @@ mod _impl {
             self.output.pos = 0;
         }
 
-        pub fn set_flush(&mut self, flush: c_int) {
-            self.flush = flush;
+        /// zstd stores the flush value as a raw `c_int` (forwarded to
+        /// `ZSTD_compressStream2` as a `ZSTD_EndDirective`) and has always
+        /// accepted the zlib flush range `0..=6` at the write boundary — keep
+        /// that accepted set unchanged.
+        pub fn flush_op_from_u32(flush: u32) -> Option<c_int> {
+            if flush <= 6 {
+                Some(flush as c_int)
+            } else {
+                None
+            }
+        }
+
+        pub fn set_flush(&mut self, op: c_int) {
+            self.flush = op;
         }
 
         pub fn do_work(&mut self) {
@@ -630,6 +642,9 @@ mod _impl {
     // `CompressionStreamImpl for NativeZstd`, and `pub mod js { … }` so
     // `CompressionStream::<NativeZstd>::*` (write/writeSync/reset/close/
     // emit_error/…) can reach this struct's fields.
-    crate::__impl_compression_stream!(NativeZstd, Context, "NativeZstd");
+    // FlushOp = raw `c_int` (zstd stores the flush value as-is); keep the full
+    // zlib flush range zstd has always accepted at the write boundary so its
+    // behavior is unchanged.
+    crate::__impl_compression_stream!(NativeZstd, Context, "NativeZstd", c_int);
     crate::__compression_stream_mixin_reexports!(NativeZstd);
 } // mod _impl

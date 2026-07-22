@@ -263,7 +263,8 @@ mod _impl {
         }
     }
 
-    crate::__impl_compression_stream!(NativeZlib, super::Context, "NativeZlib");
+    // FlushOp = the full zlib `FlushValue` range (Z_NO_FLUSH..=Z_TREES).
+    crate::__impl_compression_stream!(NativeZlib, super::Context, "NativeZlib", c::FlushValue);
     crate::__compression_stream_mixin_reexports!(NativeZlib);
 } // mod _impl
 
@@ -471,19 +472,25 @@ impl Context {
         };
     }
 
-    pub fn set_flush(&mut self, flush: c_int) {
-        // Checked conversion;
-        // transmuting an arbitrary c_int into a Rust enum is UB.
-        self.flush = match flush {
-            0 => c::FlushValue::NoFlush,
-            1 => c::FlushValue::PartialFlush,
-            2 => c::FlushValue::SyncFlush,
-            3 => c::FlushValue::FullFlush,
-            4 => c::FlushValue::Finish,
-            5 => c::FlushValue::Block,
-            6 => c::FlushValue::Trees,
-            _ => unreachable!("invalid zlib flush value: {flush}"),
-        };
+    /// zlib accepts the full `FlushValue` range (Z_NO_FLUSH..=Z_TREES).
+    /// Checked conversion — transmuting an arbitrary int into a Rust enum is
+    /// UB, and anything outside the range fails here so the shared write path
+    /// rejects it.
+    pub fn flush_op_from_u32(flush: u32) -> Option<c::FlushValue> {
+        match flush {
+            0 => Some(c::FlushValue::NoFlush),
+            1 => Some(c::FlushValue::PartialFlush),
+            2 => Some(c::FlushValue::SyncFlush),
+            3 => Some(c::FlushValue::FullFlush),
+            4 => Some(c::FlushValue::Finish),
+            5 => Some(c::FlushValue::Block),
+            6 => Some(c::FlushValue::Trees),
+            _ => None,
+        }
+    }
+
+    pub fn set_flush(&mut self, op: c::FlushValue) {
+        self.flush = op;
     }
 
     pub fn do_work(&mut self) {

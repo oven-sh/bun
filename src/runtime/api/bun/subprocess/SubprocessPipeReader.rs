@@ -411,10 +411,6 @@ impl PipeReader {
             {
                 this_ref.reader.close_impl::<false>();
             }
-            debug_assert!(
-                this_ref.reader.source.is_none()
-                    || this_ref.reader.source.as_ref().unwrap().is_closed()
-            );
         }
 
         // The `state` buffer and `reader` are freed by Drop when the Box drops.

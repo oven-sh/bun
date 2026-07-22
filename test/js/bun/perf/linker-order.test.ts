@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isMusl, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
 import {
   mustGenerateOrderFile,
@@ -174,6 +174,10 @@ describe("deciding whether a build generates its own order file", () => {
 const compiler = process.env.CC || Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
 const darwin = process.platform === "darwin";
 const supported = process.platform === "linux" || (darwin && process.arch === "arm64");
+// Not musl: the real generator never runs there (bun-musl is statically linked,
+// so LD_PRELOAD cannot load the tracer — see usesOrderFile), so compiling and
+// running the tracer on a musl host exercises nothing the build uses.
+const canTrace = supported && !isMusl && !!compiler;
 /** The injected-library variable the tracer rides in on. */
 const preloadVar = darwin ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD";
 const shared = darwin ? ["-dynamiclib", "-fPIC"] : ["-shared", "-fPIC"];
@@ -245,7 +249,7 @@ describe.skipIf(process.platform !== "linux" || !nodeExe())("interactive workloa
  * order file that missed it would leave all of that scattered. `ptyrun.c` is
  * what provides the terminal.
  */
-describe.skipIf(!supported || !compiler)("pty runner", () => {
+describe.skipIf(!canTrace)("pty runner", () => {
   /** Reports what the process sees on its stdio, plus the one line it was typed. */
   const probe = [
     `process.stdin.once("data", data => {`,
@@ -304,7 +308,7 @@ describe.skipIf(!supported || !compiler)("pty runner", () => {
  * truncated the trace file would wipe the entries recorded so far. Those are
  * the earliest ones, which is to say the hottest.
  */
-describe.skipIf(!supported || !compiler)("function tracer", () => {
+describe.skipIf(!canTrace)("function tracer", () => {
   it.concurrent("records exact entries, and keeps them across an exec'd child", async () => {
     using dir = tempDir("functrace", { "child.c": "int main(void) { return 0; }\n" });
     const root = String(dir);
